@@ -20,9 +20,9 @@ class Fold {
 	// stores have no write barrier (Opt.freshTargets)
 	static inline var MAX_BYTES = 4096;
 
-	public static var on = Sys.getEnv("HXMC_FOLD") != "0";
+	public static var on = true; // (the build's, Options.apply)
 	// (HXMC_FOLD_WHY=1: what stops each allocation's chain, counted: Driver's stats)
-	public static var whyOn = Sys.getEnv("HXMC_FOLD_WHY") == "1";
+	public static var whyOn = false;
 
 	public var why = new Map<String, Int>();
 

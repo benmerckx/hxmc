@@ -66,14 +66,11 @@ class LinkPE extends LinkCore {
 
 	// HXMC_PE_DIAG=<flag,...>: variants of the output for bisecting a loader's
 	// refusal (development)
-	static var diags:Null<Array<String>>;
+	static var diags:Null<Array<String>>; // (the build's, Options.apply; and mapFile)
+	static var mapFile:Null<String>;
 
 	static function diag(f:String):Bool {
-		if (diags == null) {
-			var e = Sys.getEnv("HXMC_PE_DIAG");
-			diags = e == null ? [] : e.split(",");
-		}
-		return diags.indexOf(f) >= 0;
+		return diags != null && diags.indexOf(f) >= 0;
 	}
 
 	public function link(entry:String):Bytes {
@@ -282,7 +279,7 @@ class LinkPE extends LinkCore {
 		};
 		// HXMC_MAP=<file>: the address of every symbol (debugging; no
 		// symbol table is written in PE files)
-		var mapFile = Sys.getEnv("HXMC_MAP");
+		var mapFile = LinkPE.mapFile;
 		if (mapFile != null) {
 			var m = new StringBuf();
 			for (o in objs)

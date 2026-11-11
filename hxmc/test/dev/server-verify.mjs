@@ -6,10 +6,15 @@
 // the same sources makes (and on macOS, an Objective-C program built for the
 // machine runs as the fresh one does). What it checks is an edit that makes
 // the program use code it did not use before while hxmc's LowerCache replays
-// the bodies of the modules not typed again, and what a macro's callback
-// defines while modules are reused, and two programs built in turn under a
-// cap (HXMC_SERVER_MB) that drops the other one's each time.
-//   node hxmc/test/dev/server-verify.mjs <compiler> [native|web]
+// the bodies of the modules not typed again, what a macro's callback
+// defines while modules are reused, and a macro's persistent state while
+// the builds alternate between two signatures (a step's '-D': a define of
+// its build and the fresh one's, not a file), also after an error in a macro
+// (a step's '!': a build that fails, as the fresh one does), and two
+// programs built in turn under a cap (hxmc.server-mb) that drops the other
+// one's each time.
+//   node hxmc/test/dev/server-verify.mjs <compiler> [native|web|frontend]
+// (frontend: the compiler is hxmc/test/frontend/Hook.hx's, its own cases)
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -22,9 +27,48 @@ const repo = path.resolve(here, '../../..');
 const [compilerArg, mode = 'native'] = process.argv.slice(2);
 const compiler = path.resolve(compilerArg ?? 'bin/hxmc/hxmc');
 const web = mode === 'web';
+const frontend = mode === 'frontend';
 
-// name: [the first sources, then each edit (the files it writes)]
+// name: [the first sources, then each edit (the files it writes; '#compiled':
+// the modules whose objects that build compiles, all others' reused)]
 const cases = {
+	// a module's functions are compiled in the order of their symbols
+	// (Driver.build), not in the order the lowering reaches them: Main calling
+	// Lib's functions in another order leaves Lib's object as it was
+	"a module's functions reached in another order": [
+		{
+			'Lib.hx': 'class Lib {\n\tpublic static function a(x:Int):Int\n\t\treturn x + 1;\n\n\tpublic static function b(x:Int):Int\n\t\treturn x * 2;\n\n\tpublic static function c(s:String):String\n\t\treturn s + "!";\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.a(1) + Lib.b(2));\n\t\ttrace(Lib.c("x"));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.c("y"));\n\t\ttrace(Lib.b(2) + Lib.a(1));\n\t}\n}\n', '#compiled': ['Main'] },
+	],
+	// what Facts found in a body (FuncInfo.gcScan: its callees, its GC
+	// points) is kept with the body's LowerCache entry and handed to its
+	// replays, but only to a build that reads stacks as the one that
+	// scanned it did (Reach drops the calls recording a stack otherwise):
+	// haxe.Exception's body, replayed, as the program starts and stops
+	// reading stacks
+	"a replayed body's facts as the program starts reading stacks": [
+		{
+			'Lib.hx': 'class Lib {\n\tpublic static function check(x:Int):Int {\n\t\tif (x < 0) throw new haxe.Exception("negative " + x);\n\t\treturn [for (i in 0...x) i].length;\n\t}\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-1)) catch (e:haxe.Exception) trace(e.message);\n\t\ttrace(Lib.check(3));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-1)) catch (e:haxe.Exception) trace(e.message + " " + (e.stack.length > 0));\n\t\ttrace(Lib.check(3));\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-2)) catch (e:haxe.Exception) trace(e.message);\n\t\ttrace(Lib.check(4));\n\t}\n}\n' },
+	],
+	// a replayed body logs a type once (LowerCache: the types whose objects a
+	// type before them in its log bound are not logged): Lib's body names
+	// Point, arrays of it, nullable ints and a function type many times
+	// over; Main's edit makes the program use a class Lib's types name
+	// that it did not before
+	"a replayed body's many types": [
+		{
+			'Lib.hx': 'class Point {\n\tpublic var x:Int;\n\tpublic var y:Null<Int>;\n\n\tpublic function new(x, y) {\n\t\tthis.x = x;\n\t\tthis.y = y;\n\t}\n}\n\nclass Box {\n\tpublic var p:Point;\n\n\tpublic function new(p) this.p = p;\n}\n\nclass Lib {\n\tpublic static function sum(ps:Array<Point>, f:Point->Int):Int {\n\t\tvar t = 0;\n\t\tfor (p in ps) {\n\t\t\tvar q:Point = p;\n\t\t\tvar n:Null<Int> = q.y;\n\t\t\tt += f(q) + (n == null ? 0 : n);\n\t\t}\n\t\tvar more:Array<Point> = ps.copy();\n\t\tvar g:Point->Int = p -> p.x;\n\t\treturn t + more.length + g(ps[0]);\n\t}\n\n\tpublic static function boxed(b:Box):Int\n\t\treturn b.p.x;\n}\n',
+			'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(1, 2), new Point(3, null)], p -> p.x * 10));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(1, 2)], p -> p.x) + Lib.boxed(new Box(new Point(5, 6))));\n\t}\n}\n' },
+		{ 'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(7, null)], p -> p.x - 1));\n\t}\n}\n' },
+	],
 	// a Dynamic called as a function goes through an adapter per signature
 	// (Lower.dynAdapter): Lib's body, replayed, asks for the one of Int->Int,
 	// and Main's, lowered anew, for the same one, which the program has once
@@ -136,6 +180,116 @@ class Gen {
 		{ 'Other.hx': '@:build(Gen.other())\nclass Other {\n\tpublic static var y = 3;\n}\n' },
 		{},
 	],
+	// a build macro keeps its class's fields in a @:persistent static, from
+	// which a later macro makes a class (helder's HostMacro: its template of
+	// ViewRuntime, for ViewRuntime_<renderer>). The builds alternate between
+	// two signatures, as a check's --no-output and a build do: two contexts
+	// of the server, one macro interpreter. Upstream starts a macro class's
+	// statics again from their initializers whenever it is handed over from
+	// the other context's module: when -D one comes back, Rt is restored (its
+	// build macro does not run), Gen is not (the other context's definition
+	// tainted it), and the static is null: "Rt's fields are not known", in
+	// every build of that signature after it (a failed build is not cached).
+	// Each context gets back the values its own modules left
+	// (EvalPrototype.addTypes, persistentStash; a divergence from upstream,
+	// docs/porting.md)
+	"a build macro's persistent state, in builds of two signatures": [
+		{
+			'Tpl.hx': `#if macro
+import haxe.macro.Context;
+#end
+import haxe.macro.Expr;
+
+class Tpl {
+	#if macro
+	@:persistent static var template:Null<Array<Field>> = null;
+
+	public static function build():Array<Field> {
+		template = Context.getBuildFields();
+		return [];
+	}
+	#end
+
+	public static macro function use():Expr {
+		try {
+			Context.getType("Gen");
+		} catch (_:Dynamic) {
+			if (template == null)
+				switch Context.getType("Rt") {
+					case TInst(c, _): c.get().statics.get();
+					case _:
+				}
+			if (template == null) Context.fatalError("Rt's fields are not known", Context.currentPos());
+			Context.defineType({pack: [], name: "Gen", pos: Context.currentPos(), kind: TDClass(), fields: template.copy()});
+		}
+		return macro Gen.hello();
+	}
+}
+`,
+			'Rt.hx': '@:build(Tpl.build())\nclass Rt {\n\tpublic static function hello():String\n\t\treturn "hello";\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Tpl.use());\n\t}\n}\n',
+			'-D': 'one',
+		},
+		{ '-D': 'two' },
+		{ '-D': 'one' },
+		{ '-D': 'one' },
+		{ '-D': 'two' },
+	],
+};
+{
+	const persistent = cases["a build macro's persistent state, in builds of two signatures"];
+	// (the static without an initializer: given back all the same)
+	const noInit = structuredClone(persistent);
+	noInit[0]['Tpl.hx'] = noInit[0]['Tpl.hx'].replace('@:persistent static var template:Null<Array<Field>> = null;', '@:persistent static var template:Null<Array<Field>>;');
+	cases["a build macro's persistent state without an initializer, in builds of two signatures"] = noInit;
+	// an error in a macro (Bad.hx's, Other's build macro) discards the macro
+	// interpreter, persistent statics and all (upstream's
+	// MacroContext.create_macro_interp): Rt, restored, would never run its build
+	// macro again in the next one, and every build after the fix would fail. The
+	// modules whose macros ran in the discarded interpreter are typed again
+	// (CompilationCache.taintMacroModules; a divergence from upstream). The
+	// erroneous build fails as the fresh one does ('!')
+	const good = '#if macro\nclass Bad {\n\tpublic static function build():Array<haxe.macro.Expr.Field>\n\t\treturn null;\n}\n#end\n';
+	const bad = '#if macro\nclass Bad {\n\tpublic static function build():Array<haxe.macro.Expr.Field>\n\t\treturn 1 + "x" * 2;\n}\n#end\n';
+	cases["a build macro's persistent state, after an error in a macro"] = [
+		{
+			...persistent[0],
+			'Bad.hx': good,
+			'Other.hx': '@:build(Bad.build())\nclass Other {\n\tpublic static var y = 3;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Tpl.use() + Other.y);\n\t}\n}\n',
+		},
+		{ '-D': 'two' },
+		{ '-D': 'one', 'Bad.hx': bad, '!': true },
+		{ '-D': 'one', 'Bad.hx': good },
+		{ '-D': 'two' },
+		{ '-D': 'one' },
+	];
+}
+
+// a frontend's hook (hxmc/test/frontend/Hook.hx) changes Lib's bodies, which
+// no edit changes, after the lowering: each build must be the fresh one's,
+// and Lib's bodies reused (a callee of the body the hook made in an earlier
+// build is not this one's: the whole lowering again)
+const frontendCases = {
+	// (the hook adds a call of a function it makes anew each build)
+	"a body a frontend's hook rewrites every build": [
+		{
+			'Lib.hx': 'class Lib {\n\tpublic static function f(x:Int):Int\n\t\treturn x * 3 + 1;\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(2));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(3));\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(4) + 1);\n\t}\n}\n' },
+	],
+	// (Lib.g reaches no GC point but when the hook adds the call of Lib.alloc:
+	// then main keeps `keep`, live across its call alone, in its frame)
+	"a body a frontend's hook makes allocate": [
+		{
+			'Lib.hx': 'class Lib {\n\t// (too large to be inlined: its own no-GC flag is what main\'s call reads)\n\tpublic static function g(x:Int):Int {\n\t\tvar t = 0;\n\t\tfor (i in 0...x) {\n\t\t\tt += i * 3 + (t >> 1) - (i & 7);\n\t\t\tif (t > 1000) t -= 999;\n\t\t\tt ^= i << 2;\n\t\t}\n\t\treturn t + x * 3 + 1 + (x & 5) * 7 - (x >> 2);\n\t}\n\n\tstatic var made:Array<String> = [];\n\n\tpublic static function alloc():Int {\n\t\tmade.push("x" + made.length);\n\t\treturn made.length;\n\t}\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.g(2) + Lib.alloc());\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic var last:Array<Int>;\n\n\tstatic function extra():Int\n\t\treturn 5;\n\n\tstatic function main() {\n\t\tvar n = Lib.alloc();\n\t\tvar keep = [extra() + n];\n\t\tvar r = Lib.g(2);\n\t\tlast = keep;\n\t\ttrace(keep[0] + r);\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.g(3) + Lib.alloc());\n\t}\n}\n' },
+	],
 };
 
 // the cases built for this machine and run (their arguments), the server's
@@ -200,11 +354,15 @@ const args = (o, more = []) => [...more, '-cp', 'src', '-main', 'Main', ...(web 
 // (hxmc's std as an installation gives it, HXMC_STD: the server adds it to the
 // requests for hxmc, which name no std, as an editor's client sends them)
 const std = path.join(path.dirname(compiler), 'std');
-const env = { ...process.env, HXMC_MODULE_CACHE: '0', HAXE_STD_PATH: process.env.HAXE_STD_PATH ?? path.join(repo, 'haxe/upstream/std'),
+const env = { ...process.env, HXMC_MODULE_CACHE: '0', HXMC_STATS: '1', HAXE_STD_PATH: process.env.HAXE_STD_PATH ?? path.join(repo, 'haxe/upstream/std'),
 	...(fs.existsSync(std) ? { HXMC_STD: std } : {}) };
 
-// a compilation server per case (its modules by path: a case's Main is not another's)
-async function serve(run) {
+// a compilation server per case (its modules by path: a case's Main is not
+// another's): one waiting for connections (--wait, a request per connection),
+// or one connected to us (--server-connect, as helder's studio and helder dev
+// run it: requests and answers on one connection, each after its length)
+async function serve(connected, env, run) {
+	if (connected) return serveConnected(env, run);
 	const port = await new Promise((r) => {
 		const s = net.createServer().listen(0, '127.0.0.1', () => {
 			const p = s.address().port;
@@ -227,45 +385,129 @@ async function serve(run) {
 		go(100);
 	});
 	try {
-		await run(request, () => output.slice(-2000), () => output);
+		await run(request, () => output.slice(-2000), () => output.length, (from) => output.slice(from));
 	} finally {
 		server.kill();
 	}
 }
 
+async function serveConnected(env, run) {
+	const listener = net.createServer();
+	await new Promise((r) => listener.listen(0, '127.0.0.1', r));
+	const server = spawn(compiler, ['--server-connect', '127.0.0.1:' + listener.address().port], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+	let output = '';
+	server.stdout.on('data', (d) => (output += d));
+	server.stderr.on('data', (d) => (output += d));
+	const sock = await new Promise((r) => listener.once('connection', r));
+	listener.close();
+	let buf = Buffer.alloc(0), waiting = null, reads = 0;
+	const take = () => {
+		if (waiting && buf.length >= 4 && buf.length >= 4 + buf.readInt32LE(0)) {
+			// (a small answer in one write arrives in one read)
+			answers++;
+			if (reads > 1 && buf.readInt32LE(0) < 16384) split++;
+			const n = buf.readInt32LE(0), answer = buf.subarray(4, 4 + n).toString('utf8');
+			buf = buf.subarray(4 + n);
+			const w = waiting;
+			waiting = null;
+			w(answer);
+		}
+	};
+	sock.on('data', (d) => {
+		reads = buf.length === 0 ? 1 : reads + 1;
+		buf = Buffer.concat([buf, d]);
+		take();
+	});
+	sock.on('close', () => waiting && waiting('\x02 the compilation server closed the connection'));
+	// (the length and the request in one write, as each answer comes)
+	const request = (cwd, words) => new Promise((resolve) => {
+		waiting = resolve;
+		const body = Buffer.from(['--cwd', cwd, ...words].join('\n'));
+		const head = Buffer.alloc(4);
+		head.writeInt32LE(body.length);
+		sock.write(Buffer.concat([head, body]));
+		take();
+	});
+	try {
+		await run(request, () => output.slice(-2000), () => output.length, (from) => output.slice(from));
+	} finally {
+		sock.destroy();
+		server.kill();
+	}
+}
+
 let failures = 0;
-// (the server's typed modules kept in memory, as `hxmc dev` asks, and read back from HXB, its default)
-for (const hxb of [false, true])
-	for (const [name, steps] of Object.entries(cases)) {
+// the connected server's answers, and the small ones that took more than one
+// read: written as two writes (its length, then its text), an answer waits
+// for the client's delayed ACK of the first (40 ms), and its text comes in a
+// read of its own; one write comes in one
+let answers = 0, split = 0;
+// (the server's typed modules kept in memory, as `hxmc dev` asks, and read
+// back from HXB, its default; and the connected server, in memory, as helder's)
+for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
+	for (const [name, steps] of Object.entries(frontend ? frontendCases : cases)) {
 		const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hxmc-server-verify-'));
 		fs.mkdirSync(path.join(work, 'src'));
-		await serve(async (request, serverOutput) => {
+		// (an object store of its own: what '#compiled' counts is what this
+		// server, and the fresh builds after each of its builds, made)
+		const caseEnv = { ...env, HXMC_CACHE: path.join(work, 'cache') };
+		await serve(connected, caseEnv, async (request, serverOutput, mark = () => 0, since = () => '') => {
 			for (let i = 0; i < steps.length; i++) {
-				for (const [f, text] of Object.entries(steps[i])) {
+				const { '-D': define, '!': fails, ...files } = steps[i];
+				const more = [...(runs.get(name) ?? []), ...(define ? ['-D', define] : [])];
+				for (const [f, text] of Object.entries(files)) {
+					if (f.startsWith('#')) continue;
 					fs.writeFileSync(path.join(work, 'src', f), text);
 					await request(work, ['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file: path.join(work, 'src', f) } })]);
 				}
-				const answer = await request(work, [...args(out, runs.get(name)), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
-				const fresh = spawnSync(compiler, args(ref, runs.get(name)), { cwd: work, env, encoding: 'utf8' });
+				const from = mark();
+				const answer = await request(work, [...args(out, more), ...(hxb ? [] : ['-D', 'disable-hxb-cache'])]);
+				const fresh = spawnSync(compiler, args(ref, more), { cwd: work, env: caseEnv, encoding: 'utf8' });
+				// (a build that fails, as the fresh one does)
+				if (fails) {
+					const ok = answer.includes('\x02') && fresh.status !== 0;
+					console.log((ok ? 'ok   ' : 'FAIL ') + `${name} (${mode}${hxb ? ', HXB' : ''}${connected ? ', connected' : ''}): edit ${i} (-D ${define}), fails as the fresh build`);
+					if (!ok) failures++;
+					continue;
+				}
 				let same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(work, out)), fs.readFileSync(path.join(work, ref))) === 0;
 				// (and the server's output runs as the fresh one does)
 				const ran = same && runs.has(name) ? [out, ref].map((o) => spawnSync(path.join(work, o), { cwd: work, encoding: 'utf8' })) : null;
 				if (ran) same = ran[0].status === 0 && ran[0].stdout === ran[1].stdout;
-				const what = `${name} (${mode}${hxb ? ', HXB' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`);
+				// (the modules whose objects the build compiled: HXMC_STATS, the
+				// server's output, or the answer's, after the request)
+				const expect = steps[i]['#compiled'];
+				let compiled = null, counted = false, restarted = null;
+				// (a frontend's: Lib's bodies reused, the lowering not done again)
+				if (frontend && same && i > 0) {
+					await new Promise((r) => setTimeout(r, 100));
+					restarted = /lowered again: ([^)\n]*)/.exec(since(from) + answer)?.[1] ?? null;
+					if (restarted != null) same = false;
+				}
+				if (expect && same) {
+					counted = true;
+					await new Promise((r) => setTimeout(r, 100));
+					const text = since(from) + answer;
+					const m = /hxmc: compiled ([^\n\x01]*)/.exec(text);
+					compiled = /hxmc: modules \d+: \d+ cached, 0 compiled/.test(text) ? [] : m ? m[1].split(', ') : null;
+					same = compiled != null && compiled.join(',') === expect.join(',');
+				}
+				const what = `${name} (${mode}${hxb ? ', HXB' : ''}${connected ? ', connected' : ''}): ` + (i === 0 ? 'the first build' : `edit ${i}`) + (define ? ` (-D ${define})` : '');
 				console.log((same ? 'ok   ' : 'FAIL ') + what);
 				if (!same) {
 					failures++;
-					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}` : 'the outputs differ');
+					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}`
+						: restarted != null ? `the lowering was done again (${restarted})` : counted ? `compiled ${compiled == null ? '(no stats)' : '[' + compiled.join(', ') + ']'}, expected [${expect.join(', ')}]` : 'the outputs differ');
 				}
 			}
 		});
 		fs.rmSync(work, { recursive: true, force: true });
 	}
-// a server under a cap (HXMC_SERVER_MB, hxmc/src/hxmc/ServerMemory.hx) of
+// a server under a cap (hxmc.server-mb, hxmc/src/hxmc/ServerMemory.hx) of
 // 1 MB: two programs (two signatures) built in turn, so that each build of
 // one drops the other's contexts, objects and lowered bodies before it types
 // anything, and after it; each build, then cold again, is the fresh one
-{
+if (!frontend) {
 	const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hxmc-server-verify-'));
 	const programs = {
 		a: { 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(1));\n\t}\n}\n', 'Lib.hx': 'class Lib {\n\tpublic static function f(x:Int):Int\n\t\treturn x + 1;\n}\n' },
@@ -276,12 +518,11 @@ for (const hxb of [false, true])
 		fs.mkdirSync(path.join(work, p, 'src'), { recursive: true });
 		for (const [f, text] of Object.entries(files)) fs.writeFileSync(path.join(work, p, 'src', f), text);
 	}
-	const saved = { HXMC_SERVER_MB: process.env.HXMC_SERVER_MB, HXMC_STATS: process.env.HXMC_STATS };
-	env.HXMC_SERVER_MB = '1';
-	env.HXMC_STATS = '1';
-	await serve(async (request, serverOutput, allOutput) => {
+	// (the cap a define of each request: each compilation reads its own)
+	const cap = ['-D', 'hxmc.server-mb=1'];
+	await serve(false, { ...env, HXMC_STATS: '1' }, async (request, serverOutput, mark, since) => {
 		const steps = ['a', 'b', 'a', 'a', 'b', 'a'];
-		const drops = () => allOutput().split('server memory:').length - 1;
+		const drops = () => since(0).split('server memory:').length - 1;
 		for (let i = 0; i < steps.length; i++) {
 			const p = steps[i], dir = path.join(work, p);
 			// (the second build of a in a row: after an edit of Lib)
@@ -291,8 +532,8 @@ for (const hxb of [false, true])
 					await request(dir, ['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file: path.join(dir, 'src', f) } })]);
 				}
 			const before = drops();
-			const answer = await request(dir, [...args(out), '-D', 'disable-hxb-cache', '-D', 'program=' + p]);
-			const fresh = spawnSync(compiler, [...args(ref), '-D', 'program=' + p], { cwd: dir, env, encoding: 'utf8' });
+			const answer = await request(dir, [...args(out, cap), '-D', 'disable-hxb-cache', '-D', 'program=' + p]);
+			const fresh = spawnSync(compiler, [...args(ref, cap), '-D', 'program=' + p], { cwd: dir, env, encoding: 'utf8' });
 			const same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(dir, out)), fs.readFileSync(path.join(dir, ref))) === 0;
 			// (the other program's dropped: before each build of the other one; a's
 			// second build in a row drops nothing)
@@ -305,8 +546,11 @@ for (const hxb of [false, true])
 			}
 		}
 	});
-	for (const [k, v] of Object.entries(saved)) if (v === undefined) delete env[k]; else env[k] = v;
 	fs.rmSync(work, { recursive: true, force: true });
 }
+// (the connected server answers at once: its length and text in one write, Server.mkLengthPrefixedCommunication)
+const prompt = split === 0;
+console.log((prompt ? 'ok   ' : 'FAIL ') + `the connected server's answers come in one write: ${split} of ${answers} came in more than one read`);
+if (!prompt) failures++;
 console.log(failures === 0 ? 'server-verify: ok' : `server-verify: ${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);

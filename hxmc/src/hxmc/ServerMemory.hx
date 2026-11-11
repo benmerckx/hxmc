@@ -4,7 +4,8 @@ import compiler.server.ServerCompilationContext;
 import context.Common;
 
 // What a compilation server keeps between requests, kept under a cap
-// (HXMC_SERVER_MB=<n>: n MB of live heap; unset or 0: no cap). The server
+// (-D hxmc.server-mb=<n>, else HXMC_SERVER_MB=<n>: n MB of live heap; unset
+// or 0: no cap; each compilation's own, read at its start). The server
 // keeps a context per signature (the typed modules of every program it built,
 // with their macros' contexts), hxmc keeps the objects of each output it wrote
 // (Driver.memObjs), the lowered bodies of the last program (LowerCache) and
@@ -30,13 +31,12 @@ import context.Common;
 // they are its program's, and the macro interpreter (it holds the types of
 // every macro context it ran: made again by the next compilation). A dropped
 // project's next build is a cold one. What a single group keeps is never
-// dropped: the cap is not a limit on one project. HXMC_STATS=1 prints what
-// is dropped.
+// dropped: the cap is not a limit on one project. hxmc.stats (HXMC_STATS=1)
+// prints what is dropped.
 class ServerMemory {
-	static var cap:Float = {
-		var v = Std.parseFloat(Sys.getEnv("HXMC_SERVER_MB") ?? "");
-		Math.isNaN(v) || v <= 0 ? -1 : v * 1048576;
-	}
+	// (the running or last compilation's: -D hxmc.server-mb, else HXMC_SERVER_MB, read in begin)
+	static var cap:Float = -1;
+	static var stats = false; // (-D hxmc.stats, else HXMC_STATS)
 
 	static var groups:Array<Group> = [];
 	static var current:Null<Group> = null; // the running compilation's
@@ -49,6 +49,9 @@ class ServerMemory {
 
 	// the start of a compilation of the server (ModuleCache.hook, before its typing)
 	public static function begin(com:CommonContext) {
+		var v = Std.parseFloat(Options.flag("hxmc.server-mb", com.defines) ?? "");
+		cap = Math.isNaN(v) || v <= 0 ? -1 : v * 1048576;
+		stats = Options.on("hxmc.stats", false, com.defines);
 		var key = core.Define.getSignature(com.defines);
 		requests++;
 		var g = Lambda.find(groups, g -> g.key == key);
@@ -131,7 +134,7 @@ class ServerMemory {
 		@:privateAccess hxmc.ir.Lower.basic = null;
 		x.signs = [];
 		x.outs = [];
-		if (Sys.getEnv("HXMC_STATS") == "1")
+		if (stats)
 			Sys.println('hxmc: server memory: ${gone} contexts of another group dropped $why (live ${Std.int(before / 1048576)} MB, cap ${Std.int(cap / 1048576)} MB)');
 	}
 

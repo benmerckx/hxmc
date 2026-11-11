@@ -43,8 +43,8 @@ class BundleCache {
 
 	// the cache for this compilation (null: off)
 	public static function open(com:context.Common.CommonContext, arm:Bool):Null<BundleCache> {
-		var env = Sys.getEnv("HXMC_MIR_CACHE");
-		if (env == "0" || env != "1" && (Sys.getEnv("HXMC_MODULE_CACHE") == "0" || CacheDir.define(com, "hxmc.no-module-cache") != null)) return null;
+		var env = Options.flag("hxmc.mir-cache", com.defines);
+		if (env == "0" || env != "1" && !ModuleCache.wanted(com)) return null;
 		// (the list of the objects used: per command line and directory, as an output's is per output)
 		var store = CacheStore.open();
 		return store == null ? null : new BundleCache(store, CacheKey.of(ObjectList, "hxmc-mir-macros|" + Sys.getCwd() + "|" + Sys.args().join("\x00")), arm);

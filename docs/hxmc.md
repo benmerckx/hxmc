@@ -28,6 +28,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint, lowered bodies reused by the server |
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
 | `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM, dead code, barriers and frame slots nothing needs |
+| `LoopVersion.hx` | counted loops over Arrays they cannot change: a copy whose Array reads have no tests, entered when one test before the loop finds the arrays of the kind and long enough (`-D hxmc.loop-version=0`: off) |
 | `Fold.hx`, `DivConst.hx` | allocation folding; division by constants |
 | `SimdOps.hx` | `hxmc.simd`'s vector operations by their WebAssembly opcodes: what Mir's `VOp` carries and every back end implements ([interop.md](interop.md#simd-vectors), [plans/simd.md](plans/simd.md)) |
 | `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection, linear-scan register allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
@@ -56,6 +57,10 @@ Conventions:
 - Program-wide numbers (type indices, field ids, offsets) are absolute
   symbols the linker resolves, so a module's code does not change when the
   numbering does.
+- A module's object has its functions in the order of their symbols, not
+  in the order the lowering reached them (`Driver.build`): an edit elsewhere
+  that makes the program reach them in another order leaves its key and
+  object as they were.
 - A change of the runtime's interface or the IR's conventions needs a tool
   that knows it: build once against the previous runtime first, or
   bootstrap again.
@@ -88,7 +93,9 @@ The hook may push functions on `prog.funcs` (a `FuncInfo` with a
 `module`: hxmc compiles each module's functions into one object), and
 reach them from code it changes or from `prog.roots`. Under a compilation
 server the lowered bodies are reused between builds (`LowerCache`): give a
-function a new `body` vector rather than writing into the one it has.
+function a new `body` vector rather than writing into the one it has (a
+body the hook replaced is scanned anew by Facts: what LowerCache keeps of a
+scan is the lowering's body's).
 `hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.
@@ -823,6 +830,29 @@ typed again in the server's next compilation (`ServerCallbacks.hx`,
 `ServerCache.checkModuleHook`), as the module cache types such a module
 every build.
 
+A server has one macro interpreter for all its contexts (one per
+signature: a check's `--no-output` and a build, a display request, another
+program), each with its own modules. Upstream starts a macro class's
+statics again from their initializers whenever the interpreter is handed
+the class from another module than the last one, so builds that alternate
+between two signatures reset its `@:persistent` statics at each switch,
+while each context keeps reusing the modules whose macros set them. The
+port keeps those values by the dropped module's signature and gives them
+back when that same module comes back (`EvalPrototype.addTypes`, a
+divergence from upstream,
+[porting.md](porting.md#divergences-from-the-reference)): each context
+sees what its own modules left (helder's `HostMacro.template`, ViewRuntime's
+fields kept by its build macro: "the runtime's fields are not known" in
+every build once a check and a build had alternated). A signature's values
+go when the server removes its context (stale, `clear`, `softClear`).
+An error in the macro context discards the interpreter, those values
+with it (as upstream); the server then taints every cached module whose
+typing ran macros or loaded the macro context's modules, in every context
+(`CompilationCache.Cache.taintMacroModules`, a divergence from upstream),
+so their macros run again in the next interpreter: else a module whose
+build macro kept state there stays restored without it, and every later
+build that reads the state fails.
+
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
 WASI. A callback registered outside a module's typing, or a macro setting
@@ -852,8 +882,8 @@ interpreter and the rest 75 MB.
   of another signature is lowered (`Main.lowerSign`: a body is found by
   its field object, or by its module read back from that signature's
   context, so none of them would be reused).
-- `HXMC_SERVER_MB=<n>` caps what it keeps (`ServerMemory.hx`). A
-  compilation's group is its signature at the start of its typing and the
+- `-D hxmc.server-mb=<n>` (else `HXMC_SERVER_MB`, each compilation's own)
+  caps what it keeps (`ServerMemory.hx`). A compilation's group is its signature at the start of its typing and the
   contexts it touched (and their children). When a compilation is of
   another group than the last request's, a major collection runs first,
   and if what is live, and as much again for its group when that is not
@@ -865,7 +895,7 @@ interpreter and the rest 75 MB.
   the objects of its outputs, its lowered bodies, the macro interpreter
   (made again by the next compilation's first macro) and the filters of
   the last macro context; its next build is a cold one. What one group
-  keeps is never dropped: the cap is no limit on one program. `HXMC_STATS=1`
+  keeps is never dropped: the cap is no limit on one program. `hxmc.stats`
   prints what is dropped; `make dev-check` builds two programs in turn
   under a cap of 1 MB, each build against a fresh one.
 
@@ -1106,6 +1136,11 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   items, genpy's order by them).
 - An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
   `String.length` counts UTF-16 units (Eval: code points).
+- A class handed over from another context's module (a server's builds of
+  two signatures) starts its `@:persistent` statics again from their
+  initializers, as upstream's Eval does; the port's Eval gives each
+  context's values back ([module cache](#module-cache), the compilation
+  server).
 - Not available: `Context.getMacroStack`, macro arguments that are
   functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
   hxmc's.
@@ -1570,29 +1605,71 @@ natively; `CallStacks` checks against the reference on Linux, Windows
 stack), inlined frames, stacks without frame pointers, and the null-access
 report's innermost line, which may be the statement before.
 
-## Environment variables
+## Flags and environment variables
 
-For the tool and the compiler (build time):
+Each flag of the tool and the compiler is a define and a variable:
+`-D hxmc.x-y=v` first, else `HXMC_X_Y` (`Options.flag`); empty is unset, `0`
+turns a switch off. Each build reads them from its own defines, a server's
+too (`Options.apply`). Those that change the code (`Options.FLAGS`):
+the object cache's key has the ones a build sets, an up-to-date check's key
+their variables. Four are read before any build, so only as the variable:
+`HXMC_MIR_TIER`, `HXMC_MIR_TIER_WINDOW`, `HXMC_MIR_TYPE_RUNTIME`,
+`HXMC_MIR_LAZY_BODIES`; `HXMC_STATS` for an up-to-date build too; and
+`HXMC_MODULE_CACHE=0` wins over its define (the tool sets it to run a build again).
 
-| Variable | |
-| --- | --- |
-| `HXMC_STATS=1` | what the build did and how long it took; live functions |
-| `HXMC_OPT=0` | no Mir optimizations |
-| `HXMC_INLINE=<flat>,<loop>,<runtime>` | inlining limits |
-| `HXMC_ESCAPE=0`, `HXMC_ESCAPE_LOG=1`, `HXMC_ESCAPE_NO=<...>`, `HXMC_ESCAPE_HASH=<lo>-<hi>` | escape analysis off, logged, or bisected (not in the object cache's key) |
-| `HXMC_FOLD=0`, `HXMC_FOLD_WHY=1` | allocation folding off, or why an allocation did not fold |
-| `HXMC_REACH=0`, `HXMC_REACH_WHY=<fn>` | keep everything; why a function is kept |
-| `HXMC_SYMBOLS=1` | a symbol table |
-| `HXMC_SIZE_STATS=1` | sizes by part |
-| `HXMC_DUMP=<functions>` | print machine code |
-| `HXMC_MAP=<file>` | Windows: a link map |
-| `HXMC_FRAME_POINTERS=0` | no frame pointers on x86-64 |
-| `HXMC_JOBS=<n>` | parallel module compilations |
-| `HXMC_RT_DIR`, `HXMC_RT_OBJ` | where the runtime objects are: a list of directories searched first, before the compiler's own directory (npm's platform package), its `rt/` (a checkout's `bin/hxmc/rt`) and the target's platform package beside it ([using.md](using.md#cross-builds); the npm launcher adds the installed platform packages), or one object |
-| `HXMC_MODULE_CACHE=0`, `HXMC_MODULE_CACHE_LOG=1`, `HXMC_CACHE`, `HXMC_CACHE_SIZE` | the module cache ([using.md](using.md#fast-rebuilds)) |
-| `HXMC_MACRO_STATS=1`, `HXMC_MIR_*` | Mir macros ([above](#macros-on-the-mir-interpreter)) |
-| `HXMC_SERVER_MB=<n>` | a compilation server keeps what it keeps between requests under n MB of live heap, dropping the least recently used other programs' ([below](#what-a-compilation-server-keeps)) |
-| `HXMC_LOWER_CACHE=0` | a compilation server lowers every body again each build (`LowerCache` off: less memory kept, slower warm builds) |
+| Define | Variable | Code | |
+| --- | --- | --- | --- |
+| `hxmc.opt=0` | `HXMC_OPT` | yes | no Mir optimizations |
+| `hxmc.loop-version=0\|why` | `HXMC_LOOP_VERSION` | yes | no loop versioning, or why a loop is left alone |
+| `hxmc.inline=<flat>,<loop>,<runtime>` | `HXMC_INLINE` | yes | inlining limits (16,48,3; wasm 4,16) |
+| `hxmc.devirt=0` | `HXMC_DEVIRT` | yes | no devirtualization |
+| `hxmc.sroa=0` | `HXMC_SROA` | yes | no scalar replacement |
+| `hxmc.licm=0` | `HXMC_LICM` | yes | no loop-invariant code motion |
+| `hxmc.escape=0` | `HXMC_ESCAPE` | yes | no escape analysis |
+| `hxmc.escape-no=<parts>` | `HXMC_ESCAPE_NO` | yes | parts of it off (closures, frames, again, boxes, replace, screen, anon) |
+| `hxmc.escape-hash=<lo>-<hi>` | `HXMC_ESCAPE_HASH` | yes | it on the functions whose names hash to lo...hi of 1024 only (bisecting) |
+| `hxmc.fold=0` | `HXMC_FOLD` | yes | no allocation folding |
+| `hxmc.reach=0` | `HXMC_REACH` | yes | every function kept |
+| `hxmc.dup-dispatch=0` | `HXMC_DUP_DISPATCH` | yes | jump tables not copied into their predecessors |
+| `hxmc.dup-min=<n>` | `HXMC_DUP_MIN` | yes | the smallest jump table copied (64) |
+| `hxmc.frames-live=0` | `HXMC_FRAMES_LIVE` | yes | frame stores kept that no load sees |
+| `hxmc.framespill=0` | `HXMC_FRAMESPILL` | yes | a frame push on every slow path |
+| `hxmc.noshadow=1` | `HXMC_NOSHADOW` | yes | no shadow stack (measurements) |
+| `hxmc.trymem=all` | `HXMC_TRYMEM` | yes | every local assigned in a `try` in memory |
+| `hxmc.falign=<n>`, `hxmc.fshift=<n>` | `HXMC_FALIGN`, `HXMC_FSHIFT` | yes | x86-64: function alignment (16), padding before each (measuring layout noise) |
+| `hxmc.wasm-coalesce=0` | `HXMC_WASM_COALESCE` | yes | wasm: a local per value |
+| `hxmc.interp-coalesce=0` | `HXMC_INTERP_COALESCE` | yes | the interpreter's code: a register per value |
+| `hxmc.wasm-stack-kb=<n>` | `HXMC_WASM_STACK_KB` | yes | wasm: the linker's stack (64) |
+| `hxmc.nogc=1` | `HXMC_NOGC` | yes | unreached runtime sections kept |
+| `hxmc.frame-pointers=0` | `HXMC_FRAME_POINTERS` | yes | x86-64: no frame pointers (or `-D hxmc.no-frame-pointers`) |
+| `hxmc.symbols` | `HXMC_SYMBOLS` | yes | a symbol table |
+| `hxmc.jobs=<n>` | `HXMC_JOBS` | no | parallel module compilations |
+| `hxmc.stats` | `HXMC_STATS` | no | what the build did and how long it took |
+| `hxmc.verbose` | `HXMC_VERBOSE` | no | live functions |
+| `hxmc.dump=<functions>` | `HXMC_DUMP` | no | print their machine code |
+| `hxmc.size-stats` | `HXMC_SIZE_STATS` | no | code sizes by part |
+| `hxmc.escape-log`, `hxmc.escape-dump=<fn>` | `HXMC_ESCAPE_LOG`, `HXMC_ESCAPE_DUMP` | no | what escape analysis does to each allocation; a function's Mir before and after it |
+| `hxmc.fold-why` | `HXMC_FOLD_WHY` | no | why allocations did not fold, counted |
+| `hxmc.reach-why=<fn>` | `HXMC_REACH_WHY` | no | why a function is kept |
+| `hxmc.survey=<file>` | `HXMC_SURVEY` | no | the lowering records what it cannot do and goes on |
+| `hxmc.map=<file>`, `hxmc.pe-diag=<parts>` | `HXMC_MAP`, `HXMC_PE_DIAG` | no | Windows: a link map; variants for a loader's refusal |
+| `hxmc.module-cache=0` | `HXMC_MODULE_CACHE` | no | no module cache (or `-D hxmc.no-module-cache`; [using.md](using.md#fast-rebuilds)) |
+| `hxmc.module-cache-log` | `HXMC_MODULE_CACHE_LOG` | no | why each module was typed again |
+| `hxmc.lower-cache=0`, `hxmc.lower-check`, `hxmc.lower-only` | `HXMC_LOWER_CACHE`, `..._CHECK`, `..._ONLY` | no | a server: no reused lowering, or checked against a fresh one; stop after the lowering |
+| `hxmc.server-mb=<n>` | `HXMC_SERVER_MB` | no | a server keeps what it keeps between requests under n MB of live heap, dropping the least recently used other programs' ([above](#what-a-compilation-server-keeps)) |
+| `hxmc.lower-why`, `hxmc.lower-noskip` | `HXMC_LOWER_WHY`, `HXMC_LOWER_NOSKIP` | no | the lowering cache: why a body was lowered again; every type bound again |
+| `hxmc.macro-stats`, `hxmc.macro-debug` | `HXMC_MACRO_STATS`, `HXMC_MACRO_DEBUG` | no | Mir macros ([above](#macros-on-the-mir-interpreter)): counts and times; the loader's log |
+| `hxmc.mir-cache=0\|1`, `hxmc.mir-host=0` | `HXMC_MIR_CACHE`, `HXMC_MIR_HOST` | no | their compiled functions kept or not; all interpreted |
+| `hxmc.mir-lazy=0`, `hxmc.mir-cold=<words>` | `HXMC_MIR_LAZY`, `HXMC_MIR_COLD` | no | every function compiled with its bundle; above this size without the optimizer |
+| `hxmc.mir-tier-log`, `hxmc.mir-tier-max=<n>` | `HXMC_MIR_TIER_LOG`, `HXMC_MIR_TIER_MAX` | no | the native tier: what it compiles, at most n |
+| | `HXMC_MIR_TIER`, `HXMC_MIR_TIER_WINDOW`, `HXMC_MIR_TYPE_RUNTIME`, `HXMC_MIR_LAZY_BODIES` | no | the native tier (calls, window); the runtime's functions typed, bodies parsed lazily (variable only) |
+
+Plain variables of the tool: `HXMC_RT_DIR` (directories of runtime objects
+searched first, before the compiler's own directory, which is npm's platform
+package, its `rt/`, a checkout's `bin/hxmc/rt`, and the target's platform
+package beside it: [using.md](using.md#cross-builds); the npm launcher adds the
+installed platform packages), `HXMC_RT_OBJ` (one runtime object),
+`HXMC_CACHE`, `HXMC_CACHE_SIZE` (the cache: [using.md](using.md#fast-rebuilds)).
 
 For compiled programs (run time):
 

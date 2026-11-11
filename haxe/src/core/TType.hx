@@ -70,6 +70,9 @@ enum ModuleTaintingReason {
 	ServerInvalidate;
 	ServerInvalidateFiles;
 	ServerInvalidateModule;
+	// port: (not upstream) the macro interpreter discarded after an error: what its macros
+	// made and kept (their statics) is gone with it (CompilationCache.taintMacroModules)
+	MacroInterpreterReset;
 }
 
 enum ModuleSkipReason {

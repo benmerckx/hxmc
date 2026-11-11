@@ -283,7 +283,11 @@ class FuncInfo {
 	public var blocksHere:Bool = false;
 	// (Facts: what a scan of its body found, made once: a program lowered in
 	// steps, interp.MirMacros, makes its facts again at each step)
-	public var gcScan:Null<{gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>}> = null;
+	public var gcScan:Null<GcScan> = null;
+	// (the scan of the same body in an earlier build of the compilation
+	// server, its callees this build's: LowerCache, taken by findNoGc when
+	// that build's p.stacks is this one's, Reach dropping the same calls)
+	public var gcScanned:Null<{stacks:Bool, scan:GcScan}> = null;
 	// the native code of the compiler lowering it runs it, and its body was
 	// not typed (@:hxmc.hostCode, Lower.hostCode): no body here, never
 	// compiled nor inlined; its gcScan says what that code does
@@ -672,3 +676,8 @@ class Ir {
 			case ENewAnon(_): TRef(RAnon);
 		}
 }
+
+// what Facts.scanGc finds in a function's body: whether it has GC points of
+// its own, enters a safe region or takes a raw address; the functions it
+// calls, in the order first called; the names it reads or writes by name
+typedef GcScan = {gc:Bool, here:Bool, addr:Bool, callees:Array<FuncInfo>, names:Array<String>};

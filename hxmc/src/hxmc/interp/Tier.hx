@@ -59,7 +59,7 @@ class TierSite {
 @:access(hxmc.rt.Gc)
 class Tier {
 	public static var calls = {
-		var v = Sys.getEnv("HXMC_MIR_TIER");
+		var v = Options.flag("hxmc.mir-tier");
 		var n = v == null ? DEFAULT : v == "native" ? 1 : Std.parseInt(v);
 		if (n == null || n < 0) n = 0;
 		var p = 1;
@@ -69,7 +69,7 @@ class Tier {
 	};
 	static inline var DEFAULT = 1024;
 	// (HXMC_MIR_TIER=native: compiled when first called, compileStub)
-	public static final eager = Sys.getEnv("HXMC_MIR_TIER") == "native";
+	public static final eager = Options.flag("hxmc.mir-tier") == "native";
 	// the native code's own symbol, which its forwarder calls
 	static inline var NATIVE = "hxmc_tier$";
 
@@ -84,8 +84,8 @@ class Tier {
 	public static var failed = 0;
 	public static var time = 0.0;
 	// (HXMC_MIR_TIER_MAX: at most this many functions compiled, to bisect)
-	static var max = Sys.getEnv("HXMC_MIR_TIER_MAX") == null ? -1 : Std.parseInt(Sys.getEnv("HXMC_MIR_TIER_MAX"));
-	static var stats = Sys.getEnv("HXMC_MACRO_STATS") == "1" || Sys.getEnv("HXMC_MIR_TIER_LOG") == "1";
+	static var max = -1; // (the build's, Options.apply; and stats)
+	static var stats = false;
 
 	// whether hot functions are compiled to native code (Loader.nativeTier, HXMC_MIR_TIER)
 	public static function on():Bool

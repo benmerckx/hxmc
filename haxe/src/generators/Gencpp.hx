@@ -214,8 +214,8 @@ class Gencpp {
 		outputString("<set name=\"HAXE_OUTPUT\" value=\"" + exeName + "\" />\n");
 		outputString("<include name=\"${HXCPP}/build-tool/BuildCommon.xml\"/>\n");
 		outputString(buildExtra);
-		if (Gctx.defined(commonCtx, Define.HxcppSmartStings))
-			outputString("<error value=\"Hxcpp is out of date - please update\" unlessApi=\"" + apiString + "\" />\n");
+		outputString("<error value=\"Hxcpp is out of date - please update. If you use hxcpp from git, rebuild its build tool by running 'haxe compile.hxml' in hxcpp's tools/hxcpp directory.\" unlessApi=\""
+			+ apiString + "\" />\n");
 		outputString("</xml>\n");
 		sys.io.File.saveBytes(filename, haxe.io.Bytes.ofString(buildfile.toString()));
 	}

@@ -265,6 +265,10 @@ class Scope {
 				// (-libcp: a class path from node_modules)
 				case "-cp" | "-libcp":
 					out.push(Path.addTrailingSlash(resolved[++i]));
+				// (-libcp-of <name> <path>: haxelib's own lines name it again, its -D)
+				case "-libcp-of":
+					i++;
+					out.push(Path.addTrailingSlash(resolved[++i]));
 				case v if (v.charCodeAt(0) == "-".code):
 					out.push('$v ${resolved[++i]}');
 				default:
