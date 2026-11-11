@@ -73,7 +73,9 @@ class UnwindTables {
 		if (n < 0 || top.isNull()) return "ok";
 		var rets:Array<Ptr> = [];
 		while (f != top) {
-			var up = Mem.getPtr(f, 0);
+			// (the saved rbp; windows-x86_64 with -D hxmc.llvm: LLVM's frames keep
+			// their record a constant above rbp, hxmc.rt.Stacks.callerOf)
+			var up = @:privateAccess hxmc.rt.Stacks.callerOf(f, Mem.getPtr(f, 8));
 			if (up.isNull() || !f.ult(up) || rets.length > 100000) return "broken frame chain";
 			rets.push(Mem.getPtr(f, 8));
 			f = up;

@@ -235,8 +235,10 @@ class Gc {
 		robjsCap = 256;
 		robjs = Heap.malloc(8 * robjsCap);
 		robjsRecent = Heap.calloc(256, 8);
-		// (RT_VERIFY: a stack that never grows, so the rescan of an overflow runs)
-		gcCap = verifying ? 16 : 4096;
+		// (RT_VERIFY: a stack that never grows, so the rescan of an overflow runs:
+		// 256 entries, as a compaction marks through it and rescans the heap on
+		// each overflow, DeepGc's list and tree overflowing 16 entries constantly)
+		gcCap = verifying ? 256 : 4096;
 		gcStack = Heap.malloc(16 * gcCap);
 		hxmc.rt.Boxes.init();
 		fixedBytes = Heap.memoryBytes() - nurseryCap;
