@@ -1,0 +1,6 @@
+exit 0
+CBindingsArrays.hx:34: 27
+CBindingsArrays.hx:36: -0.5,-0.5,3,4 0.5,0.5,5,6 2,2,1,1
+CBindingsArrays.hx:37: 9, 0
+CBindingsArrays.hx:40: [0,0.5,1,1.5,2]
+CBindingsArrays.hx:44: 499500
