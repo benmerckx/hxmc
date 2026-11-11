@@ -350,6 +350,7 @@ class Threads {
 		var m:Ptr<Mutator> = t;
 		self = m;
 		Gc.hcur = Ptr.nil();
+		Os.threadStackCoreDump(CSTACK_BYTES);
 		Os.lock(wl); // no collection runs: the record is the thread's from now on
 		m.value.started = 1;
 		Os.unlock(wl);

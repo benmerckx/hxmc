@@ -201,6 +201,21 @@ class Os {
 		if (bytes > (STACK_DUMP : I64)) coreDump(down ? p : p.add(STACK_DUMP), bytes - STACK_DUMP, false);
 	}
 
+	// the calling thread's C stack (Linux: a thread of Threads.spawn, its
+	// bytes a mapping of their own, dumped whole once touched) as a stack's
+	// reservation in a core dump, from a frame near its top: [top - bytes +
+	// 1 MB, top) is the stack's (the C library's guard is below it, its
+	// thread record and TLS above); its bounds Faults.dumpStacks's
+	@:hxmc.unsafe public static function threadStackCoreDump(bytes:I64) {
+		if (Mem.os() == 0) {
+			var top = Mem.stack(16);
+			var lo = top.addL(((1 << 20) : I64) - bytes);
+			stackCoreDump(lo, top.diff(lo), true);
+			Gc.cstackLo = lo;
+			Gc.cstackHi = top;
+		}
+	}
+
 	// transparent huge pages (Linux only: RT_HUGE)
 	// [p, p + bytes) faulted in now, by this thread alone (Linux 5.14:
 	// MADV_POPULATE_WRITE; elsewhere nothing): threads that fault in fresh

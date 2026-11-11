@@ -942,7 +942,7 @@ The runtime reserves about 35 GB of address space natively (two 16 GB
 old-space regions, the nursery, 1 GB stacks for the main thread). On Linux
 and Android the reservations are marked `MADV_DONTDUMP`, except what the
 program uses: each old-space region up to its limit, the nursery up to its
-size, each stack's last 8 MB, and the faulting thread's stacks. Without
+size, each stack's last 8 MB (threads' C stacks too), and the faulting thread's stacks. Without
 this, a crash piped to systemd-coredump wrote tens of gigabytes. The corpus
 case `CoreDumpSize` checks it.
 

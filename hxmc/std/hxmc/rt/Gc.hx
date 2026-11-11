@@ -179,9 +179,10 @@ class Gc {
 	static var dumpTop0:Ptr;
 	static var dumpTop1:Ptr;
 	static var youngDump:Ptr;
-	// the main thread's C stack (Start.runMain; null: the system's)
-	static var cstackLo:Ptr;
-	static var cstackHi:Ptr;
+	// the calling thread's C stack (the main thread's: Start.runMain, a
+	// thread's: Os.threadStackCoreDump; null: unknown), for Faults.dumpStacks
+	@:hxmc.threadLocal("rt_cstack_lo") static var cstackLo:Ptr;
+	@:hxmc.threadLocal("rt_cstack_hi") static var cstackHi:Ptr;
 
 	@:hxmc.export("rt_globals") static var globals:Ptr;
 	static var nglobals:Int;
