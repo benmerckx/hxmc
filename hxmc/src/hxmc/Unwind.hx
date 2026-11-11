@@ -50,6 +50,19 @@ class Unwind {
 	public static inline var RESTOREFPLR = 13;
 	public static inline var RET = 14;
 	public static inline var PASS = 15;
+	// LLVMFRAME encoding: an LLVM function's frame (LlvmGen: its compact unwind
+	// encoding, arm64 frame mode): the frame record at the frame pointer, the
+	// callee-saved pairs the encoding names below it, from the function's start
+	public static inline var LLVMFRAME = 16;
+	// LLVMCFI n, then n numbers (a byte + 256 each: no operation's kind): an
+	// LLVM function's own CFI, for this CIE (LlvmGen.ehFrame)
+	public static inline var LLVMCFI = 17;
+	// NONE: no unwind information (an LLVM function described in no way read
+	// here): left out of the tables
+	public static inline var NONE = 18;
+
+	public static inline function none(ops:haxe.ds.Vector<Int>):Bool
+		return ops.length >= 4 && ops[0] == NONE;
 
 	// ---- DWARF call frame information
 
@@ -103,10 +116,57 @@ class Unwind {
 	}
 
 	// the CFA instructions of a function of `size` bytes from its operations
+	// (LLVMFRAME) an arm64 frame-mode compact unwind encoding as CFI: CFA =
+	// x29 + 16, x30 and x29 below it, then each pair the encoding names
+	// (x19/x20 ... x27/x28, d8/d9 ... d14/d15), the first of a pair above
+	// the second, as libunwind's compact unwinder reads them
+	static function llvmFrame(enc:Int, arm:Bool, b:Buf) {
+		if (!arm) throw "hxmc: unwind: an LLVM frame on x86-64";
+		b.u8(0x0c);
+		b.uleb(29);
+		b.uleb(16);
+		var at = 8;
+		function save(r:Int) {
+			if (r < 64) b.u8(0x80 | r) else {
+				b.u8(0x05);
+				b.uleb(r);
+			}
+			b.uleb(at >> 3);
+			at += 8;
+		}
+		save(30);
+		save(29);
+		var k = 0;
+		for (bit in [0x1, 0x2, 0x4, 0x8, 0x10]) {
+			if (enc & bit != 0) {
+				save(19 + 2 * k);
+				save(20 + 2 * k);
+			}
+			k++;
+		}
+		k = 0;
+		for (bit in [0x100, 0x200, 0x400, 0x800]) {
+			if (enc & bit != 0) {
+				save(72 + 2 * k);
+				save(73 + 2 * k);
+			}
+			k++;
+		}
+	}
+
 	public static function cfi(ops:haxe.ds.Vector<Int>, size:Int, arm:Bool, b:Buf) {
 		var codeAlign = arm ? 4 : 1;
 		var sp = arm ? 31 : 7, fp = arm ? 29 : 6;
 		var loc = 0;
+		if (ops.length >= 4 && ops[0] == LLVMFRAME) {
+			llvmFrame(ops[2], arm, b);
+			return;
+		}
+		if (ops.length >= 4 && ops[0] == LLVMCFI) {
+			for (k in 0...ops[2])
+				b.u8(ops[4 + k] - 256);
+			return;
+		}
 		function advance(to:Int) {
 			var d = Std.int((to - loc) / codeAlign);
 			if (d <= 0) return;

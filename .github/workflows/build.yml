@@ -49,6 +49,9 @@
 #   then the Mir lane: the compiler with Mir macros and --run running the
 #   corpus in itself, the macro cases against the reference, and a benchmark
 #   macro and the formatter's build timed against Eval.
+# - llvm (experimental, continue-on-error): hxmc's corpus with the LLVM back
+#   end (-D hxmc.llvm, the runner's clang) on linux-x86_64, linux-arm64 and
+#   macos-arm64 machines.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
 #   playground: the website in Chromium, Firefox and WebKit (make site-check).
 # - npm: the eight packages (@hxmc/cli and its six platform packages, each
@@ -483,6 +486,52 @@ jobs:
           ls -l dist/corpus
       - uses: actions/upload-artifact@v7
         with: {name: 'corpus-${{ matrix.group }}', path: dist/corpus/, retention-days: 3}
+
+  # (experimental) the LLVM back end (docs/plans/llvm.md): hxmc's corpus on
+  # the runner's machine with every function LLVM takes, the runtime's too,
+  # compiled by the runner's clang (-D hxmc.llvm, -D hxmc.llvm-rt; as
+  # variables, for every build the corpus makes). Its failures block nothing
+  # (continue-on-error)
+  llvm:
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: linux-x86_64, os: ubuntu-24.04}
+          - {target: linux-arm64, os: ubuntu-24.04-arm}
+          - {target: macos-arm64, os: macos-15}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # (zig: the C companions of corpus cases, Corpus.nativeInputs)
+      - id: zig
+        run: echo "version=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Runtime objects and the tool
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make hxmc std
+      - name: clang
+        run: clang --version
+      - name: Corpus with LLVM
+        env:
+          HXMC_LLVM: 1
+          HXMC_LLVM_RT: 1
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus
 
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
@@ -948,7 +997,24 @@ jobs:
         if: always() && runner.os != 'Windows'
         run: |
           set -ex
-          if [ "$RUNNER_OS" = Linux ] && ! command -v gdb > /dev/null; then sudo apt-get install -qqy gdb; fi
+          # gdb on Linux: a static build from GitHub's releases (guyush1/gdb-static,
+          # pinned, checked by its hash), not the runners' package mirror, which
+          # failed to resolve for hours; the mirror only when that fails
+          retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
+          if [ "$RUNNER_OS" = Linux ] && ! command -v gdb > /dev/null; then
+            case "$(uname -m)" in
+              x86_64) a=x86_64 h=47f29d8697e2659dd1def3c78446dcfdf54c4cdc4f652dce5b14e50c9e6cb827 ;;
+              aarch64) a=aarch64 h=1a57632c82be4c6e1fa8a507d9c6e90de6b150d2d6f34acb4a99b0a5c375fd1b ;;
+            esac
+            t="$RUNNER_TEMP/gdb-static.tar.gz"
+            if retry curl -fsSL -o "$t" "https://github.com/guyush1/gdb-static/releases/download/v18.1-static/gdb-static-slim-$a.tar.gz" \
+              && echo "$h  $t" | sha256sum -c -; then
+              mkdir -p "$RUNNER_TEMP/gdb" && tar xzf "$t" -C "$RUNNER_TEMP/gdb" ./gdb && export PATH="$RUNNER_TEMP/gdb:$PATH"
+            else
+              retry sudo apt-get install -qqy gdb
+            fi
+            gdb --version | head -1
+          fi
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run DebugCheck --run corpus/_debug
       # Linux: the corpus in the dynamic glibc mode (-D hxmc.libc=glibc) against

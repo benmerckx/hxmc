@@ -40,6 +40,32 @@ class Options {
 	public var loopVersionWhy = false;
 	// -D hxmc.compact=0: @:hxmc.compact changes nothing, its reference fields 8 bytes (Main.compactRefs)
 	public var compact = true;
+	// (experimental) LLVM (docs/plans/llvm.md); flags (Options.flag: a define, else its variable):
+	//   hxmc.llvm[=O1|O2|O3|Os]   the functions LlvmGen takes compiled by clang
+	//   hxmc.llvm-rt              the runtime's modules too
+	//   hxmc.llvm-cpu=<cpu>       clang's -mcpu (arm64) or -march (x86-64): apple-m3, x86-64-v3, native
+	//   hxmc.llvm-whole           the whole program one LLVM module
+	//   hxmc.llvm-consts          the program-wide numbers as constants
+	//   hxmc.llvm-release         both (either compiles LLVM's code after the data, not cached)
+	//   hxmc.llvm-tbaa=1|<list>   Mir's memory classes as alias information (LlvmGen.tbaaTag)
+	//   hxmc.llvm-flags=<args>    more of clang's arguments, separated by spaces
+	//   hxmc.llvm-clang=<path>    the clang (default: clang on the path)
+	//   hxmc.llvm-pgo=gen         profile-guided optimization: an instrumented program (LLVM's
+	//                             profile runtime linked; it writes default.profraw, or LLVM_PROFILE_FILE;
+	//                             macOS, and Linux static with musl: hxmc.rt.Pgo writes it)
+	//   hxmc.llvm-pgo=<file>      ... compiled with the profile (llvm-profdata merge -o <file> *.profraw)
+	//   hxmc.llvm-inline          LLVM inlines in a program that reads its stacks too (they then lack
+	//                             the frames of what it inlined; default: the frames the native code has)
+	public var llvm:Null<String> = null;
+	public var llvmRt = false;
+	public var llvmCpu:Null<String> = null;
+	public var llvmWhole = false;
+	public var llvmConsts = false;
+	public var llvmTbaa:Null<String> = null;
+	public var llvmFlags:Null<String> = null;
+	public var llvmClang = "clang";
+	public var llvmPgo:Null<String> = null;
+	public var llvmInline = false;
 
 	// the variable a flag falls back to: HXMC_LOOP_VERSION for hxmc.loop-version
 	public static function flagVar(name:String):String
@@ -67,7 +93,9 @@ class Options {
 		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
 		"hxmc.fold", "hxmc.frames-live", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
 		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc",
-		"hxmc.checked", "hxmc.compact"
+		"hxmc.checked", "hxmc.compact",
+		// (experimental) the LLVM back end's (Options.llvm)
+		"hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-tbaa", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-flags", "hxmc.llvm-clang", "hxmc.llvm-pgo", "hxmc.llvm-inline"
 	];
 	// the switches of the passes, read again for each build (a server's too)
 	// from its defines, before its typing (TargetFlags' hook): the passes
@@ -351,6 +379,25 @@ class Options {
 		o.loopVersion = lv != "0";
 		o.loopVersionWhy = lv == "why";
 		o.compact = on("hxmc.compact", true, com.defines);
+		var llv = flag("hxmc.llvm", com.defines);
+		if (llv != null && llv != "0") o.llvm = llv == "1" ? "O2" : llv;
+		o.llvmRt = on("hxmc.llvm-rt", false, com.defines);
+		o.llvmCpu = flag("hxmc.llvm-cpu", com.defines);
+		var rel = on("hxmc.llvm-release", false, com.defines);
+		o.llvmWhole = rel || on("hxmc.llvm-whole", false, com.defines);
+		o.llvmConsts = rel || on("hxmc.llvm-consts", false, com.defines);
+		o.llvmTbaa = flag("hxmc.llvm-tbaa", com.defines);
+		o.llvmFlags = flag("hxmc.llvm-flags", com.defines);
+		var cl = flag("hxmc.llvm-clang", com.defines);
+		if (cl != null) o.llvmClang = cl;
+		o.llvmPgo = flag("hxmc.llvm-pgo", com.defines);
+		o.llvmInline = on("hxmc.llvm-inline", false, com.defines);
+		if (o.llvmPgo != null && o.llvmPgo != "gen") {
+			if (!sys.FileSystem.exists(o.llvmPgo)) throw "hxmc: -D hxmc.llvm-pgo=" + o.llvmPgo + ": no such profile (gen, or a file of llvm-profdata merge)";
+			o.llvmPgo = sys.FileSystem.fullPath(o.llvmPgo);
+		}
+		// (LLVM drops a load whose value is not used, the fault of a null access with it: explicit tests, as on WebAssembly)
+		if (o.llvm != null && nc == null) o.nullChecks = true;
 		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {
