@@ -2021,8 +2021,11 @@ class Gc {
 	static inline var MULT_FIRST = 4;
 	static inline var MULT_MAX = 16;
 
-	@:hxmc.unsafe static function majorLimit(collected:I64, need:I64) {
-		var live = oldPtr.diff(oldStart);
+	@:hxmc.unsafe static function majorLimit(collected:I64, need:I64)
+		oldEnd = oldStart.addL(limitFor(oldPtr.diff(oldStart), collected, need));
+
+	// (the policy: of what is live, a kernel over the policy's statics)
+	@:hxmc.kernel static function limitFor(live:I64, collected:I64, need:I64):I64 {
 		if (growthMult < 1) growthMult = 1;
 		var little = live * 4 >= collected * 3;
 		if (little) {
@@ -2045,7 +2048,7 @@ class Gc {
 		var least = live + need + minorSize;
 		if (limit < least) limit = least;
 		if (limit > regionBytes - minorSize) limit = regionBytes - minorSize;
-		oldEnd = oldStart.addL(limit);
+		return limit;
 	}
 
 	// [region, top) of the old space's region in a core dump (2 MB aligned:
@@ -2178,6 +2181,12 @@ class Gc {
 	// after a minor collection that promoted `promoted` of `used` bytes, by
 	// `threads` threads (the policy above)
 	@:hxmc.unsafe static function adaptNursery(promoted:I64, used:I64, threads:Int) {
+		var size = nurseryFor(promoted, used, threads);
+		if (size != minorSize) resizeNursery(size);
+	}
+
+	// (the policy: the nursery's next size, a kernel over its statics)
+	@:hxmc.kernel static function nurseryFor(promoted:I64, used:I64, threads:Int):I64 {
 		adaptThreads(threads);
 		var floor:I64 = (MINOR_MIN : I64) * mutators;
 		var ceiling:I64 = (MINOR_CAP : I64) * mutators;
@@ -2193,13 +2202,12 @@ class Gc {
 			}
 		} else
 			lowFor = 0;
-		var size = promotionSize < floor ? floor : promotionSize > ceiling ? ceiling : promotionSize;
-		if (size != minorSize) resizeNursery(size);
+		return promotionSize < floor ? floor : promotionSize > ceiling ? ceiling : promotionSize;
 	}
 
 	// the threads that allocated in the cycle that ended: more at once, fewer
 	// after FEWER_THREADS_AFTER collections (then the most of those cycles)
-	@:hxmc.unsafe static function adaptThreads(n:Int) {
+	@:hxmc.kernel static function adaptThreads(n:Int) {
 		if (n < 1) n = 1;
 		if (n >= mutators) {
 			mutators = n;
@@ -3041,16 +3049,16 @@ class Gc {
 	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
 		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
 
-	@:hxmc.unsafe public static function recordCount():Int
+	@:hxmc.kernel public static function recordCount():Int
 		return nrecords;
 
 	@:hxmc.unsafe public static function clock():Float
 		return Os.now();
 
-	@:hxmc.unsafe public static function counts(which:Int):Int
+	@:hxmc.kernel public static function counts(which:Int):Int
 		return which == 0 ? collections : which == 1 ? minors : majors;
 
-	@:hxmc.unsafe public static function pause(which:Int):Float
+	@:hxmc.kernel public static function pause(which:Int):Float
 		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
 
 	// what the old space holds (large objects included) and the nursery up to

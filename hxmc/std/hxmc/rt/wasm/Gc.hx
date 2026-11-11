@@ -1237,16 +1237,23 @@ class Gc {
 	// halved after LOW_PROMOTION_AFTER in a row that promoted less than a
 	// 64th, between MINOR_MIN and MINOR_MAX
 	@:hxmc.unsafe static function adaptNursery(promoted:Int, used:Int) {
+		var size = nurseryFor(promoted, used);
+		if (size != minorSize) resizeNursery(size);
+	}
+
+	// (the policy: the nursery's next size, a kernel over its statics)
+	@:hxmc.kernel static function nurseryFor(promoted:Int, used:Int):Int {
 		if ((promoted : I64) * 16 > (used : I64)) {
 			lowFor = 0;
-			if (!growthOff && minorSize < MINOR_MAX) resizeNursery(minorSize * 2);
+			if (!growthOff && minorSize < MINOR_MAX) return minorSize * 2;
 		} else if ((promoted : I64) * 64 < (used : I64)) {
 			if (++lowFor >= LOW_PROMOTION_AFTER && minorSize > MINOR_MIN) {
-				resizeNursery(minorSize >> 1);
 				lowFor = 0;
+				return minorSize >> 1;
 			}
 		} else
 			lowFor = 0;
+		return minorSize;
 	}
 
 	// (right after a minor collection: the nursery is empty, so it may move)
@@ -1521,7 +1528,7 @@ class Gc {
 	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
 		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
 
-	@:hxmc.unsafe public static function recordCount():Int
+	@:hxmc.kernel public static function recordCount():Int
 		return nrecords;
 
 	@:hxmc.unsafe public static function clock():Float {
@@ -1529,10 +1536,10 @@ class Gc {
 		return ns * 1e-9;
 	}
 
-	@:hxmc.unsafe public static function counts(which:Int):Int
+	@:hxmc.kernel public static function counts(which:Int):Int
 		return which == 0 ? collections : which == 1 ? minors : majors;
 
-	@:hxmc.unsafe public static function pause(which:Int):Float
+	@:hxmc.kernel public static function pause(which:Int):Float
 		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
 
 	// RT_STATS at the program's end (Exit.mainDone), as the native Gc.report:

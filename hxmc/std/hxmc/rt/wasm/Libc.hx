@@ -20,13 +20,13 @@ class Libc {
 	@:hxmc.export("strtod") @:hxmc.unsafe static function strtod(s:Ptr, end:Ptr):Float
 		return hxmc.rt.FloatText.parse(s, end);
 
-	@:hxmc.export("rand") @:hxmc.unsafe static function rand():Int {
+	@:hxmc.export("rand") @:hxmc.kernel static function rand():Int {
 		var a:I64 = ((0x5851F42D : I64) << 32) | (0x4C957F2D : I64);
 		seed = a * seed + 1;
 		return (seed >>> 33).toInt();
 	}
 
-	@:hxmc.export("srand") @:hxmc.unsafe static function srand(s:Int):Void
+	@:hxmc.export("srand") @:hxmc.kernel static function srand(s:Int):Void
 		seed = ((s : I64) & m32()) - 1;
 
 	@:hxmc.export("__errno_location") @:hxmc.unsafe static function errnoLocation():Ptr {
