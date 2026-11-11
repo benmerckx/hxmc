@@ -997,7 +997,9 @@ jobs:
         if: always() && runner.os != 'Windows'
         run: |
           set -ex
-          if [ "$RUNNER_OS" = Linux ] && ! command -v gdb > /dev/null; then sudo apt-get install -qqy gdb; fi
+          # (the package mirror fails to resolve now and then: tried again)
+          retry() { for n in 1 2 3; do "$@" && return 0; echo "retry: $* failed (try $n)"; sleep 10; done; return 1; }
+          if [ "$RUNNER_OS" = Linux ] && ! command -v gdb > /dev/null; then retry sudo apt-get install -qqy gdb; fi
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run DebugCheck --run corpus/_debug
       # Linux: the corpus in the dynamic glibc mode (-D hxmc.libc=glibc) against
