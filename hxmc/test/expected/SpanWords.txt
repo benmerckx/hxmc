@@ -1,0 +1,3 @@
+exit 2
+SpanWords.hx:52: 3070, 8D867F78, 2B241D16
+SpanWords.hx:53: 30, -1

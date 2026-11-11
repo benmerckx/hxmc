@@ -260,6 +260,7 @@ converts to a `ReadOnlySpan`, never back.
 | `s[i]`, `s[i] = v` | element i, checked; writing only through a `Span` |
 | `s[i].x = v` | a struct element's field, in place (a `Span` only); `var e = s[i]` copies |
 | `s.sub(pos, len)` | elements pos .. pos + len - 1, the same memory, checked; the same type |
+| `s.getI64(i)`, `s.getI32(i)` | the 8 or 4 bytes from element i on as one integer (little-endian, any alignment), checked as `sub(i, 8 / size(T))`: of elements of 1, 2, 4 or 8 bytes (a string's units a word at a time) |
 | `s.reinterpret()` | the same bytes as elements of another type: `var f:Span<Float> = bytes.reinterpret()`, length * size(T) / size(U) of them |
 | `dst.blit(pos, src, srcpos, len)` | a copy between spans, overlapping too, checked |
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1, checked |
@@ -298,9 +299,12 @@ recognizes these patterns:
   one tested `<= c.length - m` while `i >= 0` (`SpanWindows`).
 
 A test of two lengths at once counts as two (`if (n > a.length || n >
-b.length) return ...`). A range (`sub`, `fill`, `blit`) is proved after
+b.length) return ...`). A range (`sub`, `fill`, `blit`, a word) is proved after
 `if (p < 0 || p > s.length - k) return ...` for a constant k, or `... ||
-k < 0 || p > s.length - k` for any (`SpanRanges`).
+k < 0 || p > s.length - k` for any (`SpanRanges`); in a loop stepping a
+word at a time, `while (i < n - 8) { s.getI64(i); ...; i += 8; }` (a word
+at `i + d` too when `n - c` leaves room for it), and at `n - 8` after `n >=
+8` (`SpanWords`).
 
 Other accesses keep their check, as do counters that may start below 0 or
 step by more than 1. `SpanLoops` names the checks left in each of its

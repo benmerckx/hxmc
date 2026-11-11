@@ -21,6 +21,12 @@ abstract ReadOnlySpan<T>(SpanData) {
 	public inline function sub(pos:Int, len:Int):ReadOnlySpan<T>
 		return cast this.sub(pos, len);
 
+	public inline function getI64(i:Int):I64
+		return this.getI64(i);
+
+	public inline function getI32(i:Int):Int
+		return this.getI32(i);
+
 	public macro function reinterpret(self:Expr):Expr
 		return SpanData.reinterpretOf(self);
 

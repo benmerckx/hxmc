@@ -736,8 +736,13 @@ class Opt {
 	// (haxe.io.Bytes' test of a k-byte access, then a view's sub(p, k)), or
 	// p < n - j (signed) with p never negative; for any q, p <= n - q with p
 	// and q never negative (`pos > length - len` tested); p + q a constant
-	// at most n's least value (`if (b.length < 16) return`). A negative n
-	// passes it too (sext(n) is at least 2^63), so n - j may wrap there.
+	// at most n's least value (`if (b.length < 16) return`); p = n - j for a
+	// constant q = k <= j, n at least j (`if (n >= 8) s.getI64(n - 8)`). p is
+	// never negative also as a loop's counter stepping up by s from such a
+	// value where p < n - c, c >= s - 1, held (`while (i < n - 8) { ... i += 8; }`:
+	// stepped); p = x + d for a constant d if x < n - j, j >= d + k - 1, holds
+	// (a step's second word). A negative n passes it too (sext(n) is at least
+	// 2^63), so n - j may wrap there.
 	function fits(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Bool {
 		if (c.imm != (CULt : Int)) return false;
 		var sn = f.vals[c.a], e = f.vals[c.b];
@@ -766,7 +771,11 @@ class Opt {
 		var k = konst(qv), q = zextOf(qv);
 		if (k < 0 && q < 0) return false;
 		function atLeast0(v:Int):Bool
-			return nonNeg(v, cfg, 0) || lowerBound(v, r.lx, r.ly, r.strict) >= 0;
+			return nonNeg(v, cfg, 0) || lowerBound(v, r.lx, r.ly, r.strict) >= 0 || stepped(v, n, cfg);
+		if (k >= 0) {
+			var px = f.vals[p];
+			if (px.op == Sub && px.ty == I32 && px.a == n && constOf(px.b) >= k && lowerBound(n, r.lx, r.ly, r.strict) >= constOf(px.b)) return true;
+		}
 		// (s = n - j, or n: j)
 		function less(s:Int):Int {
 			if (s == n) return 0;
@@ -783,16 +792,84 @@ class Opt {
 				var j = less(fb[i]);
 				if (sameVal(fa[i], p) && j >= (lt ? k - 1 : k) && (j == 0 || lowerBound(n, r.lx, r.ly, r.strict) >= j)) return true;
 			}
+		// (p = x + d, a constant d >= 0: x < n - j with j >= d + k - 1, the
+		// second word of a loop's step)
+		var px = f.vals[p], d = 0, base = p;
+		if (k >= 0 && px.op == Add && px.ty == I32 && constOf(px.b) >= 0 && constOf(px.b) <= 1 << 16) {
+			base = px.a;
+			d = constOf(px.b);
+		}
 		for (i in 0...r.lx.length) {
-			if (!sameVal(r.lx[i], p)) continue;
+			if (!sameVal(r.lx[i], p) && !(d > 0 && sameVal(r.lx[i], base))) continue;
 			var s = r.ly[i];
 			if (k >= 0) {
-				var j = less(s);
-				if (j >= (r.strict[i] ? k - 1 : k) && atLeast0(p)) return true;
+				var j = less(s), dd = sameVal(r.lx[i], p) ? 0 : d;
+				if (j >= (r.strict[i] ? k + dd - 1 : k + dd) && atLeast0(dd == 0 ? p : base)) return true;
 			} else {
 				var x = f.vals[s];
 				if (x.op == Sub && x.ty == I32 && x.a == n && x.b == q && atLeast0(p) && atLeast0(q)) return true;
 			}
+		}
+		return false;
+	}
+
+	// whether v (an I32 phi) is never negative as a loop's counter: its
+	// operands never negative, or v + s for a constant s > 0 computed where
+	// a dominating branch found v < n - c with c >= s - 1 (or v <= n - c, c >=
+	// s): v + s <= n then, no wrap (n a length, never negative)
+	function stepped(v:Int, n:Int, cfg:Cfg<MBlock>):Bool {
+		var x = f.vals[v];
+		if (x.op != Phi || x.ty != I32) return false;
+		var any = false;
+		for (a in x.args) {
+			if (a == v) continue;
+			var y = f.vals[a];
+			var s = y.op == Add && y.ty == I32 ? (y.a == v ? constOf(y.b) : y.b == v ? constOf(y.a) : -1) : -1;
+			if (s > 0 && s <= 1 << 16) {
+				if (!belowLength(v, y.block, n, s, cfg)) return false;
+				any = true;
+			} else if (!nonNeg(a, cfg, 0)) return false;
+		}
+		return any;
+	}
+
+	// whether a branch dominating block b found v < n - c (c >= s - 1) or v <= n - c (c >= s)
+	function belowLength(v:Int, b:MBlock, n:Int, s:Int, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		inline function less(y:Int):Int {
+			var z = f.vals[y];
+			return z.op == Sub && z.ty == I32 && z.a == n ? constOf(z.b) : -1;
+		}
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead) {
+						// (v < y or v <= y, as the branch found it)
+						var y = -1, strict = false;
+						switch c.imm {
+							case CLt if (taken && c.a == v): y = c.b; strict = true;
+							case CGe if (!taken && c.a == v): y = c.b; strict = true;
+							case CLe if (taken && c.a == v): y = c.b;
+							case CGt if (!taken && c.a == v): y = c.b;
+							case CGt if (taken && c.b == v): y = c.a; strict = true;
+							case CLe if (!taken && c.b == v): y = c.a; strict = true;
+							case CGe if (taken && c.b == v): y = c.a;
+							case CLt if (!taken && c.b == v): y = c.a;
+							case _:
+						}
+						if (y >= 0) {
+							var j = less(y);
+							if (j >= 0 && j >= (strict ? s - 1 : s)) return true;
+						}
+					}
+				}
+			}
+			k = idom[k];
 		}
 		return false;
 	}

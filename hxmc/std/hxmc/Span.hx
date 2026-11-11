@@ -42,6 +42,13 @@ abstract Span<T>(SpanData) {
 	// elements pos .. pos + len - 1: the same memory
 	extern public function sub(pos:Int, len:Int):Span<T>;
 
+	// the 8 (getI64) or 4 (getI32) bytes from element i on as one integer
+	// (little-endian, any alignment), checked as sub(i, 8 / size(T)) is: of
+	// elements of 1, 2, 4 or 8 bytes (a word at a time over a string's units)
+	extern public function getI64(i:Int):hxmc.I64;
+
+	extern public function getI32(i:Int):Int;
+
 	// the same bytes as elements of U (length * size(T) / size(U) of them,
 	// rounded down): `var words:Span<Int> = bytes.reinterpret();`
 	extern public function reinterpret<U>():Span<U>;

@@ -3880,6 +3880,13 @@ class FnLower {
 				if (k != null) out.push(SExpr(ECallHost("hxmc_unsafe_Mem_set" + k.n + "At", vector(ptr, EInt(0), i, coerce(v, restTy(1), k.t)), TVoid))) else
 					cStore(elem(ptr, i), 0, ct, v, restTy(1), e);
 				coerce(v, restTy(1), tyOf(e));
+			case "getI64" | "getI32":
+				// (a word of the elements from i: as many as its bytes, checked as a sub)
+				var w = name == "getI64" ? 8 : 4, t = name == "getI64" ? TI64 : TI32;
+				if (w % size != 0) cfail("hxmc." + a.aPath.name + "." + name + ": " + w + " bytes are not whole elements of " + size + " bytes", e);
+				var i = int(0);
+				range(i, EInt(Std.int(w / size)), len);
+				coerce(temp(t, ECallHost("hxmc_unsafe_Mem_" + name, vector(elem(ptr, i), EInt(0)), t)), t, tyOf(e));
 			case "sub":
 				var pos = int(0), cnt = int(1);
 				range(pos, cnt, len);

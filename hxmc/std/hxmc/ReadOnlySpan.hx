@@ -23,6 +23,11 @@ abstract ReadOnlySpan<T>(SpanData) {
 
 	extern public function sub(pos:Int, len:Int):ReadOnlySpan<T>;
 
+	// (Span.getI64)
+	extern public function getI64(i:Int):hxmc.I64;
+
+	extern public function getI32(i:Int):Int;
+
 	extern public function reinterpret<U>():ReadOnlySpan<U>;
 
 	// an atomic load of element i (Span.load)

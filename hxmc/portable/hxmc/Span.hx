@@ -32,6 +32,14 @@ abstract Span<T>(SpanData) {
 	public inline function sub(pos:Int, len:Int):Span<T>
 		return cast this.sub(pos, len);
 
+	// the 8 or 4 bytes from element i on as one integer (little-endian),
+	// checked as sub(i, 8 / size(T)) is (hxmc.Span.getI64)
+	public inline function getI64(i:Int):I64
+		return this.getI64(i);
+
+	public inline function getI32(i:Int):Int
+		return this.getI32(i);
+
 	// the same bytes as elements of U, the type the result is given:
 	// `var words:Span<Int> = bytes.reinterpret();`
 	public macro function reinterpret(self:Expr):Expr
@@ -158,6 +166,21 @@ class SpanError extends haxe.Exception {}
 				b.setInt32(p + 4, x.high);
 			case _: copy(objs[at + i], v);
 		}
+
+	// (a word of bytes elements: of elements of 1, 2, 4 or 8 bytes, a whole number of them)
+	function words(i:Int, bytes:Int):Int {
+		if (kind == STRUCT || bytes % size != 0) throw new SpanError('a word of $bytes bytes over elements of $size');
+		checkRange(i, Std.int(bytes / size));
+		return off + i * size;
+	}
+
+	public function getI32(i:Int):Int
+		return b.getInt32(words(i, 4));
+
+	public function getI64(i:Int):I64 {
+		var p = words(i, 8);
+		return haxe.Int64.make(b.getInt32(p + 4), b.getInt32(p));
+	}
 
 	public function sub(pos:Int, len:Int):SpanData {
 		checkRange(pos, len);
