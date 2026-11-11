@@ -64,7 +64,7 @@ class Inline {
 		MAX_IR = at(3, IR_DEFAULT);
 		DEPTH = at(4, DEPTH_DEFAULT);
 	}
-	public static var DEPTH = DEPTH_DEFAULT; // levels of inlining (Fingerprint keys callers to that depth)
+	public static var DEPTH = DEPTH_DEFAULT; // levels of inlining, a view's functions one more (Fingerprint keys callers to that depth)
 	// a kernel called at one place of its module, inlined there (once): no
 	// bigger than this, its loops included (Str's first11 and the like:
 	// a string's widths split into kernels, each called once)

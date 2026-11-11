@@ -169,13 +169,16 @@ class Driver {
 				// to a depth (Fingerprint keys callers with their callees' callees);
 				// (fn and the kernels called once inlined into it: each is in mf
 				// once, and so is each one's single call of a kernel called once)
+				// (a view's functions a round more: they stand for the inline
+				// accessors the kernel calling them had, Fingerprint)
 				var here = [fn => true];
 				function rounds(todo:Array<{call:MIns, fn:FuncInfo}>) {
-					for (_ in 0...Inline.DEPTH) {
+					for (r in 0...Inline.DEPTH + 1) {
 						if (todo.length == 0) break;
 						var sites = [];
 						var inLoop = Inline.loopBlocks(mf);
 						for (s in todo) {
+							if (r == Inline.DEPTH && !s.fn.view) continue;
 							var t = template(s.fn);
 							// (a kernel of the runtime as any function, and a view's function
 							// (StrView) as at a call in a loop: what the runtime's code read
@@ -553,10 +556,10 @@ class Driver {
 		if (MirBuild.inlineCands != null) {
 			var cands = MirBuild.inlineCands;
 			inlined = new Fingerprint.Inlined(prep, haxe.ds.Vector.fromArrayCopy([for (f in p.funcs) if (cands.exists(f)) f]));
-			var d = Inline.DEPTH;
+			var d = Fingerprint.Inlined.DEEPEST;
 			while (d >= 1) {
 				var depth = d;
-				parallel(inlined.funcs.length, jobs, k -> inlined.compute(depth, k));
+				parallel(inlined.funcs.length, jobs, k -> if (inlined.at(depth, k)) inlined.compute(depth, k));
 				d--;
 			}
 		}

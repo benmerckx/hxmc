@@ -729,10 +729,10 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (cache != null && MirBuild.inlineCands != null) {
 			var cands = MirBuild.inlineCands;
 			inlined = new Fingerprint.Inlined(prep, haxe.ds.Vector.fromArrayCopy([for (f in prog.funcs) if (cands.exists(f)) f]));
-			var dd = Inline.DEPTH;
+			var dd = Fingerprint.Inlined.DEEPEST;
 			while (dd >= 1) {
 				for (k in 0...inlined.funcs.length)
-					inlined.compute(dd, k);
+					if (inlined.at(dd, k)) inlined.compute(dd, k);
 				dd--;
 			}
 		}

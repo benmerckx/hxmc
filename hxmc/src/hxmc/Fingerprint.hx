@@ -481,7 +481,8 @@ class Fingerprint {
 				ty(f.ret);
 				args(xs);
 				// a callee that may be inlined: its body too (Inline), as its digest
-				if (depth < Inline.DEPTH && inlined != null) {
+				// (a view's one level deeper: Driver inlines views a round more)
+				if ((depth < Inline.DEPTH || depth == Inline.DEPTH && f.view) && inlined != null) {
 					var k = inlined.index.get(f);
 					if (k != null) {
 						var d = depth + 1;
@@ -585,16 +586,17 @@ class Fingerprint {
 }
 
 // The functions that may be inlined (MirBuild.inlineCands), each hashed as
-// a caller's key takes it at each depth of inlining (1 to Inline.DEPTH: the
-// calls it makes of others at the depth below, by their digests), with the
-// literals that walk collects. Driver computes them before the keys, depth
-// by depth from the deepest, in parallel.
+// a caller's key takes it at each depth of inlining (1 to Inline.DEPTH, a
+// view's function to Inline.DEPTH + 1: the calls it makes of others at the
+// depth below, by their digests), with the literals that walk collects.
+// Driver computes them before the keys, depth by depth from the deepest, in
+// parallel.
 class Inlined {
 	public var funcs:haxe.ds.Vector<FuncInfo>;
 	public var index = new Map<FuncInfo, Int>();
 	// per depth, per function k: its digest's words (2k, 2k + 1) and literals (literal, symbol, ...)
-	public var digests = new haxe.ds.Vector<haxe.ds.Vector<Int>>(Inline.DEPTH + 1);
-	public var literals = new haxe.ds.Vector<haxe.ds.Vector<Array<String>>>(Inline.DEPTH + 1);
+	public var digests = new haxe.ds.Vector<haxe.ds.Vector<Int>>(Inline.DEPTH + 2);
+	public var literals = new haxe.ds.Vector<haxe.ds.Vector<Array<String>>>(Inline.DEPTH + 2);
 
 	var prep:Prep;
 
@@ -603,11 +605,21 @@ class Inlined {
 		this.funcs = funcs;
 		for (k in 0...funcs.length)
 			index.set(funcs[k], k);
-		for (d in 0...Inline.DEPTH + 1) {
+		for (d in 0...Inline.DEPTH + 2) {
 			digests[d] = new haxe.ds.Vector(d == 0 ? 0 : 2 * funcs.length);
 			literals[d] = new haxe.ds.Vector(d == 0 ? 0 : funcs.length);
 		}
 	}
+
+	// the deepest depth (a view's)
+	public static var DEEPEST(get, never):Int;
+
+	static inline function get_DEEPEST():Int
+		return Inline.DEPTH + 1;
+
+	// whether function k has a digest at depth d (a view's to DEEPEST)
+	public function at(d:Int, k:Int):Bool
+		return d <= Inline.DEPTH || funcs[k].view;
 
 	// function k at depth d (the deeper ones done)
 	public function compute(d:Int, k:Int) {
