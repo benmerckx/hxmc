@@ -19,7 +19,7 @@ The fixpoint and crosshost must stay byte-identical.
 | Tier | What it runs |
 | --- | --- |
 | `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared libraries, Java through JNI (JniCheck), iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
+| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, CompactParGc x10, CompactEnums x10 and HeaderEnums x10 (parallel collections of compact objects), crosshost on three cases, debug info, shared libraries, Java through JNI (JniCheck), iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
 | `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference
@@ -34,12 +34,12 @@ of each file.
 
 | Script | Lane | Compares | Result |
 | --- | --- | --- | --- |
-| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 67/67, 8/8 |
+| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 68/68, 8/8 |
 | `Display` | `display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
 | `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, an empty connection ([a divergence](porting.md#divergences-from-the-reference)), `--server-connect` | 674/674 |
 | `ServerJsonRpc` | `jsonrpc` | the `server/*` methods, both cache modes | 107/107 |
 | `UpstreamTargets` | `targets` | upstream's unit suite compiled for js, lua, python, php, neko, hl, hl/c, cpp, cppia, jvm and flash by both, every output file | 12/12 identical |
-| `Interp` | `interp` | `--interp` runs of the case lists (not in CI) | 314/315 (`eval-eventLoop-compile` depends on thread timing) |
+| `Interp` | `interp` | `--interp` runs of the case lists (not in CI) | 315/316 (`eval-eventLoop-compile` depends on thread timing) |
 | `Haxelib` | `haxelib` | `-L` through lix's haxelib shim, batch and `--server` | 14/14 |
 | `LibResolution` | `libs` | hxmc's own `-lib` resolution against haxelib and lix's shims: repositories, versions, dependencies, every `resolveLibs` mode, errors | 130/130 |
 | `EvalDebugger` | `debugger` | scripted Eval debugger sessions (`SHARD=i/n`) | 6/6 |
@@ -90,7 +90,7 @@ each lane on the kept cases and 400 random programs.
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
 | `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
-| `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`), a module defined in its definer's typing that calls back into it, the definer edited and back (`--defined`), a registry a macro class keeps whose readers' fields come from it, two programs of one class path filling it (`--state`); for hxmc, JS and Eval (`PORT=1` adds the port) |
+| `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`), a module defined in its definer's typing that calls back into it, the definer edited and back (`--defined`), a registry a macro class keeps whose readers' fields come from it, two programs of one class path filling it (`--state`), macros that use state no macro keeps (a class's own static initialisation, a std override's statics) restoring the modules they ran in; for hxmc, JS and Eval (`PORT=1` adds the port) |
 | `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
 | `LowerQueriesCheck` | `quick` | each lowering query is covered by the server's reuse of bodies |
 | `RtSearchCheck` | `quick` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
@@ -110,11 +110,13 @@ each lane on the kept cases and 400 random programs.
 **The corpus.** Golden files are frozen: a new case gets one with
 `--bless` (checked by hand); a changed output is an edit of its golden file
 with the reason in the commit. A `// build-seconds: <n>` line bounds a
-case's build time. A `// not-live: <function>` line names a function
+case's build time. A `// not-live: <function> ...` line names functions
 reachability must drop when the case is also built from its source, as
 programs are (`HXMC_REACH_WHY`): the archive's build loads only the modules
 its program reaches, so what typing loads and DCE keeps shows only there
-(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop). A
+(`TimerStamp`: `haxe.Timer.stamp()` keeps no event loop; `CompactFree`: a
+program without `@:hxmc.compact` classes has none of the collector's code for
+compressed references). A
 `// span-checks: <Class.function>=<n> ...` line names the span element
 checks left in each function's optimized code, which a build with
 `HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped); a

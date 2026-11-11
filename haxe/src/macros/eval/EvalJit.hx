@@ -51,9 +51,11 @@ class EvalJit {
 	// module cache, which finds the modules whose macros keep state
 	public static var staticVarHook:Null<(c:TClass, write:Bool) -> Void> = null;
 
-	static function hookStatic(c:TClass, cf:Null<TClassField>, write:Bool, exec:EvalEmitter.Emitter):EvalEmitter.Emitter {
+	// (a class's static initialisation using its own variables, as when
+	// typing made it: the class's constants, kept by no macro)
+	static function hookStatic(jit:JitContext, c:TClass, cf:Null<TClassField>, write:Bool, exec:EvalEmitter.Emitter):EvalEmitter.Emitter {
 		var h = staticVarHook;
-		if (h == null || (cf != null && !cf.cfKind.match(Var(_)))) return exec;
+		if (h == null || (cf != null && !cf.cfKind.match(Var(_))) || jit.initOf == c) return exec;
 		return env -> {
 			h(c, write);
 			exec(env);
@@ -160,7 +162,7 @@ class EvalJit {
 						return EvalEmitter.emitBytesLengthWrite(exec1, exec2);
 					case FStatic(c = {clPath: path}, _):
 						var proto = EvalContext.getStaticPrototype(jit.ctx, EvalHash.pathHash(path), ef.epos);
-						return hookStatic(c, null, true, EvalEmitter.emitProtoFieldWrite(proto, EvalContext.getProtoFieldIndex(proto, name), exec2));
+						return hookStatic(jit, c, null, true, EvalEmitter.emitProtoFieldWrite(proto, EvalContext.getProtoFieldIndex(proto, name), exec2));
 					case FEnum({ePath: path}, _):
 						var proto = EvalContext.getStaticPrototype(jit.ctx, EvalHash.pathHash(path), ef.epos);
 						return EvalEmitter.emitProtoFieldWrite(proto, EvalContext.getProtoFieldIndex(proto, name), exec2);
@@ -213,7 +215,7 @@ class EvalJit {
 				switch fa {
 					case FStatic(c = {clPath: path}, _):
 						var proto = EvalContext.getStaticPrototype(jit.ctx, EvalHash.pathHash(path), ef.epos);
-						return hookStatic(c, null, true, EvalEmitter.emitProtoFieldReadWrite(proto, EvalContext.getProtoFieldIndex(proto, name), exec2, op, prefix));
+						return hookStatic(jit, c, null, true, EvalEmitter.emitProtoFieldReadWrite(proto, EvalContext.getProtoFieldIndex(proto, name), exec2, op, prefix));
 					case FInstance(c, _, _) if (!hasClassFlag(c, CInterface)):
 						var proto = EvalContext.getInstancePrototype(jit.ctx, EvalHash.pathHash(c.clPath), ef.epos);
 						var i = EvalContext.getInstanceFieldIndex(proto, name, ef.epos);
@@ -548,7 +550,7 @@ class EvalJit {
 							return EvalEmitter.emitBytesLengthRead(jitExprRec(jit, false, e1), e1.epos);
 						case FStatic(c = {clPath: path}, cf) if (staticVarHook != null && cf.cfKind.match(Var(_))):
 							var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), e1.epos);
-							return hookStatic(c, cf, false, EvalEmitter.emitProtoFieldRead(proto, EvalContext.getProtoFieldIndex(proto, name)));
+							return hookStatic(jit, c, cf, false, EvalEmitter.emitProtoFieldRead(proto, EvalContext.getProtoFieldIndex(proto, name)));
 						case FStatic(c = {clPath: path}, cf) if (missingExternHook != null):
 							var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), e1.epos);
 							var stub = missingExtern(proto, c, cf, name, e.epos);
@@ -890,9 +892,10 @@ class EvalJit {
 	}
 
 	/** JITs expression [e] to a function. This is used for expressions that are not in a method. **/
-	public static function jitExpr(ctx:Context, e:TExpr):{jit:JitContext, f:Emitter} {
+	public static function jitExpr(ctx:Context, e:TExpr, ?initOf:TClass):{jit:JitContext, f:Emitter} {
 		function f():{jit:JitContext, f:Emitter} {
 			var jit = EvalJitContext.create(ctx);
+			jit.initOf = initOf; // port: (hookStatic)
 			var f = jitExprRec(jit, false, mkBlock(e));
 			return {jit: jit, f: f};
 		}

@@ -102,6 +102,17 @@ class Os {
 	@:hxmc.unsafe public static function yield()
 		if (windows()) K.SwitchToThread() else C.sched_yield();
 
+	// the processors online (Linux; elsewhere 1)
+	@:hxmc.unsafe public static function cpus():Int
+		return Mem.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
+
+	// the physical memory in bytes, 0 when unknown (Linux but Android: _SC_PHYS_PAGES)
+	@:hxmc.unsafe public static function physicalBytes():I64 {
+		if (Mem.os() != 0 || Mem.target() >= 9) return 0;
+		var pages = C.sysconf(85); // _SC_PHYS_PAGES
+		return pages > 0 ? pages * (pageSize() : I64) : 0;
+	}
+
 	// ---- memory: reservations committed as touched (MAP_NORESERVE; Windows:
 	// WinRt commits the pages of its reservations on first touch)
 
@@ -118,6 +129,31 @@ class Os {
 		var p = C.mmap(Ptr.nil(), bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE, -1, 0);
 		return p.toI64() == -1 ? Ptr.nil() : p;
 	}
+
+	// reserve's at address `at` exactly, else null: taken (Linux:
+	// MAP_FIXED_NOREPLACE, a hint to kernels before 4.17, whose other address
+	// is given back; Windows: VirtualAlloc's address, a multiple of 64 KB)
+	@:hxmc.unsafe public static function reserveAt(at:Ptr, bytes:I64):Ptr {
+		if (windows()) return WinRt.reserveAt(at, bytes);
+		var p = C.mmap(at, bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+		if (p.toI64() == -1) return Ptr.nil();
+		if (p.toI64() != at.toI64()) {
+			C.munmap(p, bytes);
+			return Ptr.nil();
+		}
+		return p;
+	}
+
+	static inline var MAP_FIXED_NOREPLACE = 0x100000; // (Linux's, x86-64 and arm64 alike)
+
+	// reserve's at address `at`, over what is mapped there (the program's
+	// own reservation: macOS's __HXHEAP segment, Gc.macWindow), else null
+	@:hxmc.unsafe public static function mapOver(at:Ptr, bytes:I64):Ptr {
+		var p = C.mmap(at, bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE | MAP_FIXED, -1, 0);
+		return p.toI64() != at.toI64() ? Ptr.nil() : p;
+	}
+
+	static inline var MAP_FIXED = 0x10; // (Linux's and macOS's)
 
 	@:hxmc.unsafe public static function release(p:Ptr, bytes:I64)
 		if (windows()) WinRt.release(p, bytes) else C.munmap(p, bytes);
@@ -165,7 +201,29 @@ class Os {
 		if (bytes > (STACK_DUMP : I64)) coreDump(down ? p : p.add(STACK_DUMP), bytes - STACK_DUMP, false);
 	}
 
+	// the calling thread's C stack (Linux: a thread of Threads.spawn, its
+	// bytes a mapping of their own, dumped whole once touched) as a stack's
+	// reservation in a core dump, from a frame near its top: [top - bytes +
+	// 1 MB, top) is the stack's (the C library's guard is below it, its
+	// thread record and TLS above); its bounds Faults.dumpStacks's
+	@:hxmc.unsafe public static function threadStackCoreDump(bytes:I64) {
+		if (Mem.os() == 0) {
+			var top = Mem.stack(16);
+			var lo = top.addL(((1 << 20) : I64) - bytes);
+			stackCoreDump(lo, top.diff(lo), true);
+			Gc.cstackLo = lo;
+			Gc.cstackHi = top;
+		}
+	}
+
 	// transparent huge pages (Linux only: RT_HUGE)
+	// [p, p + bytes) faulted in now, by this thread alone (Linux 5.14:
+	// MADV_POPULATE_WRITE; elsewhere nothing): threads that fault in fresh
+	// pages of one process together wait for each other in the kernel (8
+	// threads: 2.6 GB in 0.93 s, against 0.28 s for one)
+	@:hxmc.unsafe public static function populate(p:Ptr, bytes:I64)
+		if (Mem.os() == 0) C.madvise(p, bytes, 23);
+
 	@:hxmc.unsafe public static function hugePages(p:Ptr, bytes:I64)
 		if (Mem.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
 

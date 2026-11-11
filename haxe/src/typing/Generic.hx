@@ -329,7 +329,7 @@ class Generic {
 			case MetaTag.Access | Allow | Final | Hack | Keep | KeepSub | NoClosure | NullSafety | Pure | Struct | StructInit | Using | AutoBuild | Unreflective: true;
 			case _: false;
 		});
-		cg.clMeta.unshift({meta: MetaTag.NoDoc, exprs: vector(), pos: nullPos});
+		cg.clMeta = VectorTools.cons(({meta: MetaTag.NoDoc, exprs: vector(), pos: nullPos} : MetadataEntry), cg.clMeta);
 		mg.mTypes = [TClassDecl(cg)];
 		ctx.com.moduleLut.add(mg.mPath, mg);
 		addDependency(mg, c.clModule, MDepFromTyping);
@@ -411,7 +411,7 @@ class Generic {
 		// In rare cases the class name can become too long, so let's shorten it (issue #3090).
 		if (cg.clPath.name.length > 254) {
 			var name = getShortName();
-			cg.clMeta.unshift({meta: MetaTag.Native, exprs: vector({expr: EConst(String(name, SDoubleQuotes)), pos: p}), pos: nullPos});
+			cg.clMeta = VectorTools.cons(({meta: MetaTag.Native, exprs: vector({expr: EConst(String(name, SDoubleQuotes)), pos: p}), pos: nullPos} : MetadataEntry), cg.clMeta);
 		}
 		cg.clUsing = c.clUsing;
 		if (g.genericDebug) Sys.println("[GENERIC] " + Printer.sTclass("  ", cg));
@@ -525,11 +525,11 @@ class Generic {
 				if (!hasClassFieldFlag(cf, CfPublic)) removeClassFieldFlag(field, CfPublic);
 				var meta = cf.cfMeta.filter(function(m) return !Type.enumEq(m.meta, MetaTag.Generic));
 				var zero = mkZeroRangePos(p);
-				field.cfMeta = ([
-					{meta: MetaTag.NoCompletion, exprs: vector(), pos: zero},
+				field.cfMeta = VectorTools.prependArray(meta, [
+					({meta: MetaTag.NoCompletion, exprs: vector(), pos: zero} : core.Ast.MetadataEntry),
 					{meta: MetaTag.NoUsing, exprs: vector(), pos: zero},
 					{meta: MetaTag.GenericInstance, exprs: vector(), pos: zero}
-				] : Array<core.Ast.MetadataEntry>).concat(meta);
+				]);
 				field.cfParams = params;
 			}
 			inline function makeField(name:String):TClassField return mkField(name, type, cf.cfPos, cf.cfNamePos, true, stat);

@@ -12,8 +12,7 @@ using core.ds.VectorTools;
 // functions (F_<name>), string literals (S_<hash>) and program-wide numbers
 // (TY_*, FID_*, SIG_*, GI_*, DSP_*: absolute symbols in hxmc's objects), lays
 // out objects, assigns type indices and field ids, finds the functions that
-// never reach a GC point and marks the statements whose only GC point is a
-// slow path (SCold). The runtime (hxmc.rt) agrees on every number this way.
+// never reach a GC point. The runtime (hxmc.rt) agrees on every number this way.
 class Facts {
 	public static inline var T_FIRST = 32;
 	// the tag of a closure type: a Dynamic converted to a function type (Lower.dynAdapter, hxmc.rt.Types)
@@ -60,7 +59,6 @@ class Facts {
 		}
 		findNoGc();
 		checkHeapSpans();
-		markCold();
 		checkRawAddresses();
 		assignTypes();
 		collectNames();
@@ -201,11 +199,15 @@ class Facts {
 	// start with its superclass's, so the layout of a subclass extends the
 	// superclass's. Returns per field its location (see `at`); appends the
 	// physical slots (for the pointer map) to `slots`.
-	static function layout(slots:Array<Null<Ty>>, tys:Array<Ty>):Vector<Int> {
+	//
+	// A compressed reference (compact[k]: @:hxmc.compact) is a 4-byte field
+	// too, packed as Int/Bool are; its 4-byte index is appended to `halves`
+	// (the type's compact map, DataGen) and its location has COMPACT set.
+	static function layout(slots:Array<Null<Ty>>, tys:Array<Ty>, ?compact:Array<Bool>, ?halves:Array<Int>):Vector<Int> {
 		var locs = new Vector<Int>(tys.length), half = -1;
 		for (k in 0...tys.length)
 			switch tys[k] {
-				case TI32 | TBool:
+				case t if (t.match(TI32 | TBool) || (compact != null && compact[k])):
 					if (half >= 0) {
 						locs[k] = 2 * half + 1;
 						half = -1;
@@ -213,6 +215,10 @@ class Facts {
 						half = slots.length;
 						locs[k] = 2 * half;
 						slots.push(TI32);
+					}
+					if (!t.match(TI32 | TBool)) {
+						halves.push(locs[k]);
+						locs[k] |= COMPACT;
 					}
 				case TStruct(_, size):
 					// (a struct's memory: whole slots, none a reference)
@@ -230,6 +236,49 @@ class Facts {
 	// Int/Bool are addressed by 4-byte index (FH), the rest by slot
 	static function at(slot:Int, t:Ty):Int
 		return t.match(TI32 | TBool) ? 2 * slot : slot;
+
+	// a class field's location (ClassInfo.locs) is that of a compressed reference: its 4-byte index | COMPACT
+	public static inline var COMPACT = 1 << 29;
+
+	// a constructor's argument i: its location (a slot, or a 4-byte index:
+	// -1 a header constructor's, CtorInfo.header), and whether it is a
+	// compressed reference (OInfo.compact)
+	public static inline function argLoc(c:CtorInfo, i:Int):Int
+		return c.header ? -1 : c.locs[i] & ~COMPACT;
+
+	public static inline function argCompact(c:CtorInfo, i:Int):Bool
+		return c.header ? !c.params[i].match(TI32 | TBool) : c.locs[i] & COMPACT != 0;
+
+	// a type record's flags (word 20, hxmc.rt.Types): bit 0 compressed
+	// references (a compact map after the pointer map), bit 1 a header
+	// constructor (hxmc.rt.Types.headerArg)
+	public static function typeFlags(t:TypeEntry):Int
+		return (t.halves != null && t.halves.length > 0 ? 1 : 0) | (t.hdr == true ? 2 : 0);
+
+	// the compact map's bit of half h: a header constructor's half -1 (it has
+	// no slots) is bit 0 (hxmc.rt.GcCore.cmapHalf)
+	public static inline function cmapBit(h:Int):Int
+		return h < 0 ? 0 : h;
+
+	// whether a field of type t of a @:hxmc.compact class is a compressed
+	// reference where the target has them (Lower.compact): a reference, not
+	// a tagged word (an Int or Float may be encoded in it)
+	public static function compressible(t:Ty):Bool
+		return t.match(TRef(_)) && !Ir.isWord(t);
+
+	// the most slots of a class with compressed references (the collector
+	// scans such an object with one word of its pointer map and one of its
+	// compact map: hxmc.rt.Gc.SMALL_SLOTS)
+	public static inline var COMPACT_MAX_SLOTS = 32;
+
+	// the slots of a @:hxmc.compact class's layout with its compressed
+	// references (whatever the target: Lower checks COMPACT_MAX_SLOTS on every
+	// target alike)
+	public static function compactSlots(fields:Array<{name:String, ty:Ty, ?compact:Bool}>):Int {
+		var slots:Array<Null<Ty>> = [];
+		layout(slots, [for (f in fields) f.ty], [for (f in fields) f.compact == true && compressible(f.ty)], []);
+		return slots.length;
+	}
 
 	function assignTypes() {
 		// (hxmc.rt.Types: records below 16, with their slots; 16 to 31 arrays,
@@ -253,17 +302,30 @@ class Facts {
 			addType(entry(i < rtNames.length ? rtNames[i] : "Reserved", "TK_RUNTIME", i < rtSlots.length ? rtSlots[i] : [], "rt" + i));
 		for (c in p.classes) {
 			var slots:Array<Null<Ty>> = [];
-			c.locs = layout(slots, [for (f in c.fields) f.ty]);
+			var compact = [for (f in c.fields) Lower.compact && f.compact == true && compressible(f.ty)];
+			var halves = [];
+			c.locs = layout(slots, [for (f in c.fields) f.ty], compact, halves);
 			c.nslots = slots.length;
+			// (Lower.classInfo reported it with the class's position)
+			if (halves.length > 0 && slots.length > COMPACT_MAX_SLOTS)
+				throw "hxmc: @:hxmc.compact class " + c.name + " has " + slots.length + " slots, more than " + COMPACT_MAX_SLOTS;
+			// (the runtime's code for them was folded away without: Lower.compactTypes, Main.generate)
+			if (halves.length > 0 && Lower.compactTypes == 0) throw "hxmc: @:hxmc.compact class " + c.name + " in a program lowered without compressed references (Mem.compact)";
 			// (a record's header counts 16 bits of slots, 0xFFFF an array's mark: Types)
 			if (slots.length >= 0xFFFF) throw "hxmc: class " + c.name + " has more than 65534 slots";
 			var t = entry(c.unnamed ? "" : c.name, "TK_CLASS", slots, c.name);
-			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it)
-			t.fields = [for (i in 0...c.fields.length) if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD)) {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}];
+			t.halves = halves;
+			// (a struct field, or a hidden one, is not reachable by name: Dynamic access and reflection skip it;
+			// a compressed reference's kind is c, Dyn.boxSlot)
+			t.fields = [
+				for (i in 0...c.fields.length)
+					if (!c.fields[i].ty.match(TStruct(_)) && !StringTools.startsWith(c.fields[i].name, Lower.HIDDEN_FIELD))
+						c.locs[i] & COMPACT != 0 ? {name: c.fields[i].name, slot: c.locs[i] & ~COMPACT, ty: c.fields[i].ty, kind: "c".code} : {name: c.fields[i].name, slot: c.locs[i], ty: c.fields[i].ty}
+			];
 			// (a derived field: its NativeArray field's slot, kind L, the runtime's Dyn.boxSlot)
 			for (d in c.derived) {
 				var i = c.fieldIndex(d.of);
-				if (!c.fields[i].ty.match(TRef(RNativeArr(_))))
+				if (!c.fields[i].ty.match(TRef(RNativeArr(_))) || c.locs[i] & COMPACT != 0)
 					throw "hxmc: @:hxmc.lengthOf(\"" + d.of + "\") on " + c.name + "." + d.name + ": not a NativeArray field";
 				t.fields.push({name: d.name, slot: c.locs[i], ty: c.fields[i].ty, kind: "L".code});
 			}
@@ -281,12 +343,52 @@ class Facts {
 			e.tindex = addType(et);
 			for (c in e.ctors) {
 				// no tag slot: the constructor is the type index (Gc.hx)
-				var slots:Array<Null<Ty>> = [for (pt in c.params) pt];
+				var slots:Array<Null<Ty>> = [];
+				var halves = [];
+				// (@:hxmc.compact: packed as a compact class's fields, Int/Bool and
+				// compressed references in halves; else a slot per argument)
+				c.packed = e.compact && Lower.compact;
+				// (one argument of 4 bytes: the header's upper half, where the runtime
+				// forwards in the header, hxmc.rt.GcCore.fwdLow: Lower.compactTypes)
+				c.header = c.packed && Lower.compactTypes == 1 && c.params.length == 1 && (c.params[0].match(TI32 | TBool) || compressible(c.params[0]));
+				if (c.header) {
+					c.locs = Vector.fromArrayCopy([-1]);
+					if (compressible(c.params[0])) halves.push(-1);
+				} else if (c.packed) {
+					c.locs = layout(slots, [for (pt in c.params) pt], [for (pt in c.params) compressible(pt)], halves);
+					// (Lower.enumInfo reported it with the enum's position)
+					if (slots.length > COMPACT_MAX_SLOTS)
+						throw "hxmc: @:hxmc.compact enum " + e.name + "." + c.name + " has " + slots.length + " slots, more than " + COMPACT_MAX_SLOTS;
+					if (halves.length > 0 && Lower.compactTypes == 0) throw "hxmc: @:hxmc.compact enum " + e.name + " in a program lowered without compressed references (Mem.compact)";
+				} else {
+					for (pt in c.params)
+						slots.push(pt);
+					c.locs = Vector.fromArrayCopy([for (i in 0...c.params.length) at(i, c.params[i])]);
+				}
+				c.nslots = slots.length;
 				var t = entry(c.name, "TK_CTOR", slots, e.name + "." + c.name);
+				t.halves = halves;
+				t.hdr = c.header;
 				t.sup = e.tindex;
 				t.tag = c.tag;
 				if (c.global >= 0) t.single = c.global;
-				t.fields = [for (i in 0...c.params.length) {name: c.paramNames[i], slot: at(i, c.params[i]), ty: c.params[i]}];
+				// (packed: the argument's position too, hxmc.rt.Dyn.ctorArg; else
+				// the slot gives it)
+				t.fields = [
+					for (i in 0...c.params.length)
+						!c.packed ? {name: c.paramNames[i], slot: c.locs[i], ty: c.params[i]} : argCompact(c, i) ? {
+							name: c.paramNames[i],
+							slot: argLoc(c, i),
+							ty: c.params[i],
+							kind: "c".code,
+							arg: i
+						} : {
+							name: c.paramNames[i],
+							slot: c.locs[i],
+							ty: c.params[i],
+							arg: i
+						}
+				];
 				c.tindex = addType(t);
 			}
 			types[e.tindex].ctors = [for (c in e.ctors) c.tindex];
@@ -467,8 +569,6 @@ class Facts {
 			case SLoop(body):
 				for (x in body)
 					fs(x);
-			case SCold(_, x):
-				fs(x);
 			case SBreak | SContinue | SPos(_):
 			case SSwitch(e, cases, def):
 				fe(e);
@@ -493,8 +593,9 @@ class Facts {
 	// Functions that never reach a GC point: no allocation, no impure native,
 	// no throw, and direct calls only to such functions (the largest such set:
 	// candidates are dropped until none calls a dropped one, so recursion
-	// stays in). A call to one keeps the caller's references in registers. They also never stop at a safepoint (Threads.hx),
-	// so another thread's collection cannot move objects under them.
+	// stays in). This summary alone does not rule out movement by other
+	// threads: safe-region transitions are classified separately by GcPoints,
+	// with blocks marking functions that enter a safe region.
 	//
 	// One walk of the bodies finds what the other passes ask of them too: the
 	// functions taking raw addresses (checkRawAddresses) and the names of
@@ -789,56 +890,14 @@ class Facts {
 		var errors = [];
 		for (f in takesAddr) {
 			// (checked once: a program lowered in steps makes its facts again)
-			if (f.noGc || f.rawChecked) continue;
+			// Inferred noGc still permits concurrent movement in safe regions.
+			// Only declared low-level contracts opt out of this check.
+			if (f.declNoGc || f.rawChecked) continue;
 			f.rawChecked = true;
 			for (v in Roots.rawViolations(f))
 				errors.push(where(f) + '${displayName(f)}: a raw heap address (Mem.addr) $v; take the address after the GC point, or move the work into a @:hxmc.unsafe function');
 		}
 		if (errors.length > 0) throw errors.join("\n");
-	}
-
-	// Wraps the statements whose only GC point is an allocation or an array
-	// store's slow path in SCold (functions without try blocks)
-	function markCold() {
-		var next = 0;
-		function gcFree(e:Ex):Bool
-			return GcPoints.gcPoint(e) == 0 && !GcPoints.nestedGc(e);
-		function mark(ss:Vector<Stmt>) {
-			for (k in 0...ss.length) {
-				var st = ss[k];
-				switch st {
-					case SArrSet(_, _, ix, v) if (gcFree(ix) && gcFree(v)):
-						ss[k] = SCold(next++, st);
-					case SArrPush(_, _, v) if (gcFree(v)):
-						ss[k] = SCold(next++, st);
-					case SSet(_, e) if (e.match(ENewObj(_) | ENewEnum(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_)) && !GcPoints.nestedGc(e)):
-						ss[k] = SCold(next++, st);
-					case SSet(_, ECallHost("hxmc_narray_new", args, _)) if (args.filter(a -> !gcFree(a)).length == 0):
-						ss[k] = SCold(next++, st);
-					// (a type parameter's value as Dynamic: boxed on the slow path only)
-					case SSet(_, EUntag(TRef(_), a)) if (gcFree(a)):
-						ss[k] = SCold(next++, st);
-					// (a NativeArray seen as Dynamic: the runtime, on the slow path only)
-					case SSet(_, ECallHost("hxmc_narray_dget", args, _)) | SExpr(ECallHost("hxmc_narray_dset", args, _)) if (args.filter(a -> !gcFree(a)).length == 0):
-						ss[k] = SCold(next++, st);
-					case SIf(_, a, b):
-						mark(a);
-						mark(b);
-					case SLoop(body):
-						mark(body);
-					case SSwitch(_, cases, def):
-						for (c in cases)
-							mark(c.body);
-						mark(def);
-					case _:
-				}
-			}
-		}
-		for (f in p.funcs)
-			if (!f.hasTry && !f.coldMarked) {
-				f.coldMarked = true;
-				mark(f.body);
-			}
 	}
 
 	// (@:hxmc.export("symbol") on a scalar static: that symbol)
@@ -853,7 +912,12 @@ typedef TypeEntry = {
 	sup:Int,
 	slots:Array<Null<Ty>>,
 	// (kind: the runtime's field kind when not the type's: L, Dyn.boxSlot)
-	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int}>,
+	// (arg: a packed constructor's argument position, DataGen)
+	fields:Array<{name:String, slot:Int, ty:Ty, ?kind:Int, ?arg:Int}>,
+	// the 4-byte indices of the compressed references (@:hxmc.compact, Facts.layout;
+	// -1 a header constructor's argument: Facts.cmapBit)
+	?halves:Array<Int>,
+	?hdr:Bool, // a header constructor (CtorInfo.header, Facts.typeFlags)
 	// (dfn, dsig: the entry for dynamic calls, FuncInfo.dfltEntry)
 	methods:Array<{name:String, fn:String, sig:Int, ?dfn:String, ?dsig:Int}>,
 	ifaces:Array<Int>,
@@ -890,6 +954,34 @@ class GcPoints {
 			case ENewObj(_) | ENewEnum(_) | ENewArr(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_): 2;
 			case _: 0;
 		}
+
+	// A statement whose only collection point is a slow path. This is an
+	// analysis fact, not a wrapper in the frontend's expression/statement IR.
+	public static function cold(s:Stmt):Bool
+		return switch s {
+			case SArrSet(_, _, ix, v): free(ix) && free(v);
+			case SArrPush(_, _, v): free(v);
+			case SSet(_, e) if (e.match(ENewObj(_) | ENewEnum(_) | ENewClos(_) | ENewBox(_) | ENewAnon(_))): !nestedGc(e);
+			case SSet(_, ECallHost("hxmc_narray_new", args, _)):
+				allFree(args);
+			case SSet(_, EUntag(TRef(_), a)): free(a);
+			case SSet(_, ECallHost("hxmc_narray_dget", args, _)) | SExpr(ECallHost("hxmc_narray_dset", args, _)):
+				allFree(args);
+			case _: false;
+		}
+
+	static function allFree(args:Vector<Ex>):Bool {
+		var ok = true;
+		for (a in args)
+			if (!free(a)) {
+				ok = false;
+				break;
+			}
+		return ok;
+	}
+
+	static inline function free(e:Ex):Bool
+		return gcPoint(e) == 0 && !nestedGc(e);
 
 	// a GC point nested inside an expression's operands
 	public static function nestedGc(e:Ex):Bool {

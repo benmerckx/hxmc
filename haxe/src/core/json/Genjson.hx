@@ -241,7 +241,7 @@ class Genjson {
 	}
 
 	public static function generateMetadata(ctx:GenjsonContext, ml:Metadata):JsonValue {
-		var ml = ml.filter(function(m) return !Meta.getInfo(m.meta).info.mInternal);
+		var ml = core.ds.VectorTools.filter(ml, function(m) return !Meta.getInfo(m.meta).info.mInternal);
 		return jlist(generateMetadataEntry.bind(ctx), ml);
 	}
 

@@ -85,14 +85,24 @@ class Tiers {
 		{ok: r.code == 0, detail: lastLine(r.out)};
 	}
 
-	// (kb 0: the adaptive nursery, RT_MINOR_KB unset)
-	static function threads(n:Int, kb:Int) return () -> {
-		exec(SCRIPT.concat(["Corpus", "ThreadNatives"]));
-		var d = "bin/hxmc-t/ThreadNatives";
-		var exp = File.getContent("hxmc/test/expected/ThreadNatives.txt");
+	static function rootFacts() {
+		var dir = "bin/hxmc-t/root-facts";
+		mkdirs(dir);
+		var out = dir + "/m" + (windows ? ".exe" : "");
+		var r = exec(["bin/hxmc/hxmc", out, "-cp", "haxe/src", "-cp", "hxmc/src", "-cp", "hxmc/test", "-D", "disable-parallelism",
+			"-D", "hih_no_generators", "-main", "RootFactsCheck", "-cp", "bin/hxmc/std", "--custom-target", "hxmc"], {merge: true});
+		if (r.code == 0) r = exec([FileSystem.fullPath(out)], {merge: true, env: ["RT_VERIFY" => "1", "RT_MINOR_KB" => "64"]});
+		return {ok: r.code == 0, detail: lastLine(r.out)};
+	}
+
+	// (kb 0: the adaptive nursery, RT_MINOR_KB unset; verify: RT_VERIFY=1)
+	static function threads(n:Int, kb:Int, name = "ThreadNatives", verify = false) return () -> {
+		exec(SCRIPT.concat(["Corpus", name]));
+		var d = 'bin/hxmc-t/$name';
+		var exp = File.getContent('hxmc/test/expected/$name.txt');
 		var bad = 0;
 		for (_ in 0...n) {
-			var r = exec([FileSystem.fullPath(d + "/m")], {cwd: d, env: ["RT_MINOR_KB" => kb == 0 ? null : Std.string(kb)], timeout: 60});
+			var r = exec([FileSystem.fullPath(d + "/m")], {cwd: d, env: ["RT_MINOR_KB" => kb == 0 ? null : Std.string(kb), "RT_VERIFY" => verify ? "1" : null], timeout: 60});
 			if (r.timedOut || 'exit ${r.code}\n' + r.out != exp) bad++;
 		}
 		{ok: bad == 0, detail: '${n - bad}/$n runs'};
@@ -176,6 +186,7 @@ class Tiers {
 		var tier = args[0], port = args.contains("--port");
 		var cases = [for (a in args.slice(1)) if (a != "--port") a];
 		var t0 = now();
+		lane("root facts", rootFacts);
 		if (tier != "full") {
 			lane("x64", corpus(cases));
 			lane("x64 RT_VERIFY verify-tags", corpus(null, ["RT_VERIFY" => "1"], cases, VERIFY_TAGS));
@@ -208,6 +219,10 @@ class Tiers {
 			lane("wasm node legacy EH", corpus("wasm32-wasi", null, cases, LEGACY));
 			lane("ThreadNatives x30", threads(30, 16));
 			lane("ThreadNatives x30 adaptive", threads(30, 0));
+			// (a nursery of a megabyte or more: parallel minor collections of @:hxmc.compact objects)
+			lane("CompactParGc x10 adaptive RT_VERIFY", threads(10, 0, "CompactParGc", true));
+			lane("CompactEnums x10 adaptive RT_VERIFY", threads(10, 0, "CompactEnums", true));
+			lane("HeaderEnums x10 adaptive RT_VERIFY", threads(10, 0, "HeaderEnums", true));
 			lane("cross-host", crosshost(["--targets", "linux-x86_64,linux-arm64,wasm32-wasi,linux-x86_64-glibc"].concat(cases.length > 0 ? cases : ["Unsafe", "SwitchIndex", "Regress"])));
 			debugLanes();
 			if (port) lane("port self-compile", portNative);

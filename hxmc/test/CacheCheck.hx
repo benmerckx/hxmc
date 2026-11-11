@@ -174,6 +174,43 @@ class CacheCheck {
 			&& du(capped + "/modules") <= cap);
 		check("capped: a removed program builds again", build(a, std, capped, "p0", size) && du(capped + "/modules") <= cap);
 
+		// the runtime's code for compressed references is folded away in a
+		// program without @:hxmc.compact classes (Mem.compact, a constant of
+		// its bodies: hxmc.ir.Lower.compactTypes): the same program made
+		// compact and back, in one cache, never links the collector's object
+		// compiled for the other (a stale one loses the compressed references
+		// of B's young objects, or keeps A's scans of them)
+		var ab = dir + "/ab";
+		mkdirs(ab);
+		var ac = dir + "/ab-cache";
+		function compactProg(compact:Bool)
+			File.saveContent(ab + "/Main.hx", (compact ? "@:hxmc.compact " : "")
+				+ "class Node { public var v:Int; public var next:Node; public function new(v, next) { this.v = v; this.next = next; } }\n"
+				+ "class Main { static function main() { var n:Node = null; for (i in 0...300000) { n = new Node(i, n); if (i % 64 == 0) [for (k in 0...32) k]; }\n"
+				+ "var s = 0.0, c = 0; while (n != null) { s += n.v; c++; n = n.next; } Sys.println(c + \" \" + s); } }\n");
+		function abBuild(exe:String, cache:String):Null<String> {
+			var r = exec([a, exe, "-cp", ab, "-main", "Main", "-cp", std, "--custom-target", "hxmc"], {
+				env: ["HXMC_CACHE" => cache, "HXMC_MODULE_CACHE" => null, "HXMC_STATS" => null, "HXMC_RT_DIR" => FileSystem.fullPath("bin/hxmc/rt")],
+				merge: true
+			});
+			if (r.code != 0) {
+				Sys.println(tail(r.out, 600));
+				return null;
+			}
+			return exec([exe], {env: ["RT_MINOR_KB" => "64"], merge: true}).out;
+		}
+		var want = "300000 44999850000\n";
+		compactProg(false);
+		check("compact and back: A, without @:hxmc.compact", abBuild(ab + "/a1", ac) == want);
+		compactProg(true);
+		check("compact and back: B, with it, after A", abBuild(ab + "/b", ac) == want);
+		check("compact and back: B as built in a cache of its own", abBuild(ab + "/b-cold", dir + "/ab-cold") == want
+			&& File.getBytes(ab + "/b").compare(File.getBytes(ab + "/b-cold")) == 0);
+		compactProg(false);
+		check("compact and back: A again, after B (the cache warm)", abBuild(ab + "/a2", ac) == want);
+		check("compact and back: A again is A", File.getBytes(ab + "/a1").compare(File.getBytes(ab + "/a2")) == 0
+			&& File.getBytes(ab + "/a1").length < File.getBytes(ab + "/b").length);
+
 		// a cache that cannot be written: the build types everything
 		File.saveContent(dir + "/file", "");
 		check("an unwritable cache: the build goes on without it", build(a, std, dir + "/file/cache"));

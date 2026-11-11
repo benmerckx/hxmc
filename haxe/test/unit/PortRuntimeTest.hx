@@ -21,7 +21,7 @@ class PortRuntimeTest {
   parallelCompletion();
   deferredTypes();
   var missingNative=false;
-  try core.Native.getNativeName([]) catch(_:NotFound) missingNative=true;
+  try core.Native.getNativeName(new haxe.ds.Vector(0)) catch(_:NotFound) missingNative=true;
   check(missingNative,"Absent native metadata must raise the canonical lookup exception used by override checking");
  }
  static function check(condition:Bool,message:String):Void {if(!condition) throw message;}

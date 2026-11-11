@@ -559,7 +559,7 @@ class ModuleInterface {
 				expr(t);
 				expr(el);
 			case EMeta(m, x):
-				metadata([m]);
+				metadata(core.ds.VectorTools.vector(m));
 				expr(x);
 		}
 		pos(e.pos);

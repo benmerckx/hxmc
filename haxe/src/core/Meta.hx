@@ -1,5 +1,7 @@
 package core;
 
+import core.ds.VectorTools.vector;
+
 import Type as StdType;
 import core.Ast.Metadata;
 import core.Ast.MetadataEntry;
@@ -107,9 +109,15 @@ class Meta {
 	}
 
 	public static function remove(m:StrictMeta, ml:Metadata):Metadata {
-		if (ml.length == 0) return [];
-		if (metaEq(m, ml[0].meta)) return ml.slice(1);
-		return [ml[0]].concat(remove(m, ml.slice(1)));
+		// port: the list up to the first entry of `m`, then the rest after it (the list itself without one)
+		var i = 0;
+		while (i < ml.length && !metaEq(m, ml[i].meta)) i++;
+		if (i == ml.length) return ml;
+		if (ml.length == 1) return vector();
+		var r = new haxe.ds.Vector<MetadataEntry>(ml.length - 1);
+		haxe.ds.Vector.blit(ml, 0, r, 0, i);
+		haxe.ds.Vector.blit(ml, i + 1, r, i, ml.length - 1 - i);
+		return r;
 	}
 
 	public static function registerUserMeta(userMetas:StringMap<UserMeta>, s:String, data:UserMeta):Void userMetas.set(s, data);

@@ -1,0 +1,20 @@
+exit 0
+CompactEnums.hx:120: sizes ok
+CompactEnums.hx:121: 34
+CompactEnums.hx:129: true, true
+CompactEnums.hx:131: true
+CompactEnums.hx:133: true
+CompactEnums.hx:134: 12521390
+CompactEnums.hx:142: -3, str1, 2.25, true, 99, 5, [1,2], -3, str1, 2.25, false, null, 6, 7, [3]
+CompactEnums.hx:150: plain, 2, dyn, 4, in, 8, 3, 5, null
+CompactEnums.hx:155: [-3,str1,2.25,true,99,Leaf(5),[1,2]]
+CompactEnums.hx:156: [Leaf(1),Empty,t]
+CompactEnums.hx:157: 3, Mixed, 4
+CompactEnums.hx:158: Mixed(-3,str1,2.25,true,99,Leaf(5),[1,2]), Pair(Leaf(2),3), Link(a,Link(b,End))
+CompactEnums.hx:161: true, false, false, false, true, false
+CompactEnums.hx:165: 8, 33, Mixed(7,s,0.5,true,null,Node(Leaf(1),Leaf(2),made1),[8])
+CompactEnums.hx:168: wy4:Treey4:Node:3wR0y5:Mixed:7i5y2:m5d2.5fnwR0R1:3wR0y4:Pair:2wR0R1:3wR0y4:Leaf:1i23wR0R5:1i24ni11wR0R4:2wR0R1:3wR0R5:1i25wR0R5:1i26ni12y1:xai5i2hwR0R2:7i6y2:m6i3ti6wR0R1:3wR0R4:2wR0R1:3wR0R5:1i27wR0R5:1i28ni13wR0R4:2wR0R1:3wR0R5:1i29wR0R5:1i30ni14R6ai6i2hy2:n2, true, true
+CompactEnums.hx:176: 50, null
+CompactEnums.hx:178: true, true
+CompactEnums.hx:203: [true,true,true,true]
+CompactEnums.hx:204: true

@@ -560,7 +560,7 @@ class FnLower {
 	// the intrinsics of hxmc.unsafe (MirBuild.intrinsic): no GC point but the
 	// allocations; these are pure (they read no memory)
 	public static var PURE_INTRINSICS = [
-		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "ult", "spanUlt", "zext", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
+		for (n in ["addr", "obj", "sym", "cstr", "abi", "os", "arm", "target", "platform", "mirHost", "compact", "ult", "spanUlt", "zext", "udiv", "urem", "stack", "structSlot", "f64Bits", "bitsF64", "words", "tagInt", "tagFloat", "tagBool"])
 			"hxmc_unsafe_Mem_" + n => true
 	];
 
@@ -675,7 +675,6 @@ class FnLower {
 				for (c in cs)
 					if (!r && (c.l == l || any(c.body))) r = true;
 				r;
-			case SCold(_, s2): assigns(s2, l);
 			case _: false;
 		}
 	}
@@ -1661,12 +1660,47 @@ class FnLower {
 		}
 	}
 
-	// FNV-1a over the UTF-16 units, never 0, as Str.hash computes (and
-	// caches) it at run time
+	// The hash of the units, never 0, as Str.hash computes (and caches) it at
+	// run time: chunks of 8 units (the last one the last 8, overlapping, or
+	// all of a shorter string), each mixed in as its low bytes and, where one
+	// is not 0, its high bytes, the length first; avalanched, folded to 32 bits
+	// (or FNV-1a over the units, where the program's std computes that: Lower.strWordHash)
+	public static var wordHash = true;
+
 	public static function strHash(s:String):Int {
-		var x = 0x811C9DC5;
-		for (i in 0...s.length)
-			x = (x ^ StringTools.fastCodeAt(s, i)) * 16777619;
+		if (!wordHash) {
+			var x = 0x811C9DC5;
+			for (i in 0...s.length)
+				x = (x ^ StringTools.fastCodeAt(s, i)) * 16777619;
+			return x == 0 ? 1 : x;
+		}
+		inline function k64(hi:Int, lo:Int)
+			return haxe.Int64.make(hi, lo);
+		inline function mix(h:haxe.Int64, w:haxe.Int64) {
+			h = (h ^ w) * k64(0x9E3779B9, 0x7F4A7C15);
+			return h ^ haxe.Int64.ushr(h, 32);
+		}
+		function chunk(h:haxe.Int64, at:Int, n:Int) {
+			var lo = haxe.Int64.ofInt(0), hi = haxe.Int64.ofInt(0);
+			for (k in 0...n) {
+				var u = StringTools.fastCodeAt(s, at + k);
+				lo = lo | haxe.Int64.shl(haxe.Int64.ofInt(u & 0xFF), 8 * k);
+				hi = hi | haxe.Int64.shl(haxe.Int64.ofInt(u >> 8), 8 * k);
+			}
+			h = mix(h, lo);
+			return hi != 0 ? mix(h, hi) : h;
+		}
+		var n = s.length;
+		var h = mix(k64(0x243F6A88, 0x85A308D3), haxe.Int64.ofInt(n));
+		var i = 0;
+		while (i + 8 < n) {
+			h = chunk(h, i, 8);
+			i += 8;
+		}
+		if (n > 0) h = n >= 8 ? chunk(h, n - 8, 8) : chunk(h, 0, n);
+		h = (h ^ haxe.Int64.ushr(h, 33)) * k64(0xFF51AFD7, 0xED558CCD);
+		h = h ^ haxe.Int64.ushr(h, 33);
+		var x = h.low;
 		return x == 0 ? 1 : x;
 	}
 
@@ -3617,6 +3651,11 @@ class FnLower {
 			var ci = l.classInfo(oc);
 			var idx = Lambda.findIndex(ci.fields, f -> f.name == fname);
 			if (idx < 0) cfail("Struct.fieldOffset: " + oc.clPath.name + " has no field " + fname, e);
+			// (on every target alike: also where it would be 8 bytes, Lower.compact false)
+			if (ci.fields[idx].compact == true && Facts.compressible(ci.fields[idx].ty))
+				cfail("Struct.fieldOffset: " + oc.clPath.name + "." + fname
+					+ " is a compressed reference (@:hxmc.compact: 4 bytes holding the address shifted right by 3), which has no address to load, store or update atomically; declare the field in a class that is not @:hxmc.compact",
+					e);
 			var o = asLocal(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RObj(ci))), TRef(RObj(ci)));
 			var base = temp(TI64, ECallHost("hxmc_unsafe_Mem_addr", vector(ELocal(o)), TI64));
 			return coerce(EConv(L2I, EBin(LSub, EFieldAddr(ci, idx, ELocal(o)), base)), TI32, tyOf(e));

@@ -279,6 +279,19 @@ class MemLower extends MirWriter {
 			case NewDyn:
 				allocDyn(r(x.a), r(x.b), r(x.c), o.zero);
 			// (the field accesses rewritten in place: the same instruction)
+			case InitField if (o.compact):
+				storeM(Opt.MInit, 4, r(x.a), 4 * o.loc, compress(r(x.b)));
+				if (o.next >= 0) storeM(Opt.MInit, 8, r(x.a), 8 * o.next, lconst(0, 0));
+				-1;
+			case GetField if (o.compact):
+				decompress(loadM(Opt.MField, I32, 4, r(x.a), 4 * o.loc));
+			case SetField if (o.compact && (o.flag || o.fresh)):
+				// (null, or into a young object: no barrier; the store publishing what it stores)
+				storeM(Opt.MField, 4, r(x.a), 4 * o.loc, compress(r(x.b)), -1, 1, !o.flag);
+				-1;
+			case SetField if (o.compact):
+				setCompact(r(x.a), op2(Add, I64, r(x.a), lconst32(4 * o.loc)), r(x.b));
+				-1;
 			case InitField:
 				var v = r(x.a);
 				if (o.t != TVoid) access(x, Store, Opt.MInit, v, r(x.b), o.loc, o.t);
@@ -480,7 +493,57 @@ class MemLower extends MirWriter {
 		br(cmp(CULt, op2(Sub, I64, obj, ys), size), done, slow);
 		seal(slow);
 		cur = slow;
+		// (a slot that held a young pointer is remembered already: no call)
+		var call_ = newBlock();
+		call_.cold = true;
+		br(cmp(CULt, op2(Sub, I64, prev, ys), size), done, call_);
+		seal(call_);
+		cur = call_;
 		call("hxmc_barrier_slow", vector(obj, slot, val, prev), Void);
+		jmp(done);
+		seal(done);
+		cur = done;
+	}
+
+	// ---- compressed references (@:hxmc.compact fields: OInfo.compact):
+	// 4 bytes, the address shifted right by 3 (the heap and the image are
+	// below 32 GB, hxmc.rt.Gc.init); null is 0
+
+	function compress(v:Int):Int {
+		// (a reference just decompressed: its 4 bytes as they were)
+		var x = f.vals[v];
+		if (x.op == Shl && x.ty == I64 && f.vals[x.b].op == Const && f.vals[x.b].imm == 3 && f.vals[x.a].op == ZExt) return f.vals[x.a].a;
+		return op1(Trunc, I32, op2(Shr, I64, v, iconst(3)));
+	}
+
+	function decompress(c:Int):Int
+		return op2(Shl, I64, op1(ZExt, I64, c), iconst(3));
+
+	// setPtr's for a compressed reference at slot (a 4-byte address); the
+	// slow path remembers the slot's address plus 1 (hxmc.rt.Gc.remember)
+	function setCompact(obj:Int, slot:Int, val:Int) {
+		var cls = Opt.MField;
+		var prev = decompress(loadM(cls, I32, 4, slot, 0));
+		storeM(cls, 4, slot, 0, compress(val), -1, 1, true);
+		var ys = youngStart, size = youngSize;
+		if (ys < 0) {
+			ys = loadM(Opt.MCallOnly, I64, 8, symAddr("rt_young_start"), 0);
+			size = op2(Sub, I64, loadM(Opt.MCallOnly, I64, 8, symAddr("rt_young_end"), 0), ys);
+		}
+		var check = newBlock(), slow = newBlock(), done = joinBlock();
+		slow.cold = true;
+		br(cmp(CULt, op2(Sub, I64, val, ys), size), check, done);
+		seal(check);
+		cur = check;
+		br(cmp(CULt, op2(Sub, I64, obj, ys), size), done, slow);
+		seal(slow);
+		cur = slow;
+		var call_ = newBlock();
+		call_.cold = true;
+		br(cmp(CULt, op2(Sub, I64, prev, ys), size), done, call_);
+		seal(call_);
+		cur = call_;
+		call("hxmc_barrier_slow", vector(obj, op2(Or, I64, slot, lconst32(1)), val, prev), Void);
 		jmp(done);
 		seal(done);
 		cur = done;
@@ -996,7 +1059,7 @@ class MemLower extends MirWriter {
 	// reference storage directly, else through the runtime (rt/NArray's
 	// hx_narray_get_slow, hx_narray_set_slow: the other kinds, wrappers). A
 	// wrapper's kind changes, but never to AK_PTR, so the test may be shared
-	// as that of a constant. At a cold site (Facts.markCold), the live
+	// as that of a constant. At a cold site (Roots), the live
 	// references are spilled around that call only (v: the value set, -1:
 	// a read)
 	function narrayDyn(a:Int, i:Int, v:Int):Int {

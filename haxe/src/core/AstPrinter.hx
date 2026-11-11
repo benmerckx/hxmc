@@ -108,7 +108,7 @@ class AstPrinter {
 
 	public static function sClassField(tabs:String, f:ClassField):String {
 		var doc = f.cffDoc == null ? "" : "/**\n\t" + tabs + AstTools.genDocText(f.cffDoc) + "\n**/\n";
-		inline function metas(ml:Metadata):String return separated(m -> sMetadata(tabs, m), "\n" + tabs, ml);
+		inline function metas(ml:Metadata):String return separated(m -> sMetadata(tabs, m), "\n" + tabs, ml.toArray());
 		function access(al:Array<PlacedAccess>):String return separated((a:PlacedAccess) -> AstTools.sAccess(a.access), " ", al);
 		return switch f.cffKind {
 			case FVar(t, e):
@@ -120,7 +120,7 @@ class AstPrinter {
 					}
 					return true;
 				});
-				var ml = f.cffMeta.filter(function(m) {
+				var ml = core.ds.VectorTools.filter(f.cffMeta, function(m) {
 					if (m.meta == MetadataTools.Optional) {
 						question = "?";
 						return false;

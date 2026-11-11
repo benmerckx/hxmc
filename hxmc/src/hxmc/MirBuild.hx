@@ -21,7 +21,7 @@ using core.ds.VectorTools;
 //   locals become SSA values (Braun et al., "Simple and Efficient
 //   Construction of Static Single Assignment Form", on the structured input:
 //   MirWriter);
-// - cold sites (SCold) give their GC points (an allocation, an array store)
+// - cold sites (Roots) give their GC points (an allocation, an array store)
 //   the references live across them, which the lowering roots on the slow
 //   path only, and read back after it (the phis of its continuation);
 // - exceptions (the handler record, setjmp), C calls and their structs by
@@ -368,8 +368,8 @@ class MirBuild extends MirWriter {
 		var maxId = 0;
 		for (l in fn.args.concat(fn.locals)) {
 			if (l.id >= maxId) maxId = l.id + 1;
-			varTy.set(l.id, mty(l.ty) == Void ? I32 : mty(l.ty));
-			localTy.set(l.id, l.ty);
+			varTy[l.id] = mty(l.ty) == Void ? I32 : mty(l.ty);
+			localTy[l.id] = l.ty;
 		}
 		nextVar = maxId;
 		roots = Roots.analyze(fn);
@@ -378,7 +378,12 @@ class MirBuild extends MirWriter {
 		// unassigned last (zeroed, unshared; in a try function, a handler may
 		// read what its body had not assigned yet when it threw)
 		var all = fn.args.concat(fn.locals);
-		var unset = Roots.maybeUnset(fn);
+		// Without root cells, definite-assignment facts cannot affect slots.
+		var unset = roots.rooted;
+		for (w in unset.w) if (w != 0) {
+			unset = Roots.maybeUnset(fn);
+			break;
+		}
 		var a = roots.assign(all, unset, unset);
 		for (l in all) {
 			var k = a.slotOf.get(l.id);
@@ -587,7 +592,8 @@ class MirBuild extends MirWriter {
 		// (a nested list's positions end with it: the code after it, or another
 		// branch, has the position it had before)
 		var saved = curPos;
-		for (s in ss) {
+		for (k in 0...ss.length) {
+			var s = ss[k];
 			switch s {
 				case SPos(file, line):
 					curPos = SrcPos.id(file, line);
@@ -595,18 +601,19 @@ class MirBuild extends MirWriter {
 				case _:
 			}
 			if (terminated()) deadBlock();
-			stmt(s);
+			stmt(s, roots.coldAt(ss, k));
 		}
 		curPos = saved;
 	}
 
-	function stmt(s:Stmt) {
+	function stmt(s:Stmt, list:Null<Array<Local>>) {
+		if (list != null) {
+			coldList = [for (l in list) if (!refSlot.exists(l)) l];
+			coldStmt(s);
+			coldList = null;
+			return;
+		}
 		switch s {
-			case SCold(id, x):
-				var list = roots.spills.get(id);
-				coldList = list == null ? [] : [for (l in list) if (!refSlot.exists(l)) l];
-				coldStmt(x);
-				coldList = null;
 			case SSet(l, e):
 				writeLocal(l, ex(e));
 			case SExpr(e):
@@ -616,6 +623,7 @@ class MirBuild extends MirWriter {
 				var x = ex(v);
 				var i = info();
 				i.cls = c;
+				i.compact = isCompact(c, idx);
 				setField(o, fieldLoc(c, idx), c.fields[idx].ty, x, isNullConst(v), i);
 			case SBoxSet(t, bx, v):
 				var o = ex(bx);
@@ -815,7 +823,11 @@ class MirBuild extends MirWriter {
 
 	// a field's slot
 	inline function fieldLoc(c:ClassInfo, idx:Int):Int
-		return c.locs[idx];
+		return c.locs[idx] & ~hxmc.ir.Facts.COMPACT;
+
+	// a compressed reference (@:hxmc.compact: OInfo.compact)
+	inline function isCompact(c:ClassInfo, idx:Int):Bool
+		return c.locs[idx] & hxmc.ir.Facts.COMPACT != 0;
 
 	// ---- object slots
 
@@ -837,11 +849,12 @@ class MirBuild extends MirWriter {
 
 	// a field of a new object (into its young storage: no barrier); next:
 	// the slot cleared after it (OInfo.next)
-	function initField(o:Int, loc:Int, t:Ty, v:Int, next = -1) {
+	function initField(o:Int, loc:Int, t:Ty, v:Int, next = -1, compact = false) {
 		var i = info();
 		i.t = t;
 		i.loc = loc;
 		i.next = next;
+		i.compact = compact;
 		obj(InitField, Void, i, o, v);
 	}
 
@@ -1076,7 +1089,7 @@ class MirBuild extends MirWriter {
 		var i = info();
 		i.t = t;
 		// (as Dynamic: a GC point on the slow path only, which a cold site's
-		// references are rooted around, Facts.markCold)
+		// references are rooted around, Roots)
 		if (Ir.isRef(t)) {
 			f.allocs++;
 			return gcPoint(Untag, I64, i, v).id;
@@ -1214,8 +1227,12 @@ class MirBuild extends MirWriter {
 			case EField(c, idx, obj):
 				var i = info();
 				i.cls = c;
+				i.compact = isCompact(c, idx);
 				getField(nullCheck(ex(obj)), fieldLoc(c, idx), c.fields[idx].ty, i);
 			case EFieldAddr(c, idx, obj):
+				// (a compressed reference has no 8-byte slot to take the address of:
+				// FnLower reports Struct.fieldOffset's, the only way here)
+				if (isCompact(c, idx)) throw new Unsupported("the address of " + c.name + "." + c.fields[idx].name + ", a compressed reference (@:hxmc.compact)");
 				var i = info();
 				i.cls = c;
 				i.loc = c.locs[idx];
@@ -1235,7 +1252,10 @@ class MirBuild extends MirWriter {
 			case EEnumParam(c, idx, x):
 				var i = info();
 				i.ctor = c;
-				getField(nullCheck(ex(x)), at(idx, c.params[idx]), c.params[idx], i);
+				// (its location, Facts: packed for @:hxmc.compact, CtorInfo.locs; a
+				// header constructor's in the header, -4)
+				i.compact = hxmc.ir.Facts.argCompact(c, idx);
+				getField(nullCheck(ex(x)), hxmc.ir.Facts.argLoc(c, idx), c.params[idx], i);
 			case EArrLen(a): obj(ArrayLength, I32, info(), nullCheck(ex(a))).id;
 			case EArrGet(elem, a, i): arrGet(elem, a, i, true);
 			case EArrGetU(elem, a, i): arrGet(elem, a, i, false);
@@ -1284,16 +1304,21 @@ class MirBuild extends MirWriter {
 				alloc(c.nslots < 1 ? 1 : c.nslots, c.tindex, Abi.K_OBJ, true, i, OInfo.NEW_OBJECT);
 			case ENewEnum(c, args):
 				// (the storage is not zeroed: an Int's or Bool's word is cleared
-				// before the parameter is evaluated, OInfo.next)
+				// before the parameter is evaluated, OInfo.next; packed, a slot of
+				// halves before the first of them, its low half, CtorInfo.locs)
+				// (a header constructor: no slot; the allocation's header has the hash
+				// word 0, the argument's place, until the argument is stored: CtorInfo.header)
+				inline function half(i:Int):Bool
+					return c.params[i].match(TI32 | TBool) || c.locs[i] & hxmc.ir.Facts.COMPACT != 0;
 				inline function next(i:Int):Int
-					return i < args.length && c.params[i].match(TI32 | TBool) ? i : -1;
-				var n = c.params.length == 0 ? 1 : c.params.length;
+					return i < args.length && !c.header && half(i) && c.locs[i] & 1 == 0 ? (c.locs[i] & ~hxmc.ir.Facts.COMPACT) >> 1 : -1;
+				var n = c.header ? 0 : c.nslots == 0 ? 1 : c.nslots;
 				var i = info();
 				i.ctor = c;
 				i.next = c.params.length == 0 ? 0 : next(0);
 				var o = alloc(n, c.tindex, Abi.K_OBJ, false, i, OInfo.NEW_ENUM);
 				for (i in 0...args.length)
-					initField(o, at(i, c.params[i]), c.params[i], ex(args[i]), next(i + 1));
+					initField(o, hxmc.ir.Facts.argLoc(c, i), c.params[i], ex(args[i]), next(i + 1), hxmc.ir.Facts.argCompact(c, i));
 				o;
 			case ENewArr(elem, vs): newArr(elem, vs);
 			case ENewClos(l, []) if (p.staticClosures):

@@ -307,7 +307,7 @@ class IterationKind {
 		}
 		inline function genIntIter(e1:TExpr, pt:T, get:TExpr->TExpr->T->Pos->TExpr, len:TExpr->Pos->TExpr):TExpr {
 			var index = genLocal(ctx, ti, v.vPos);
-			index.vMeta.unshift({meta: MetaTag.ForLoopVariable, exprs: vector(), pos: nullPos});
+			index.vMeta = core.ds.VectorTools.cons(({meta: MetaTag.ForLoopVariable, exprs: vector(), pos: nullPos} : core.Ast.MetadataEntry), index.vMeta);
 			var arr = e1;
 			var avar = null;
 			switch e1.eexpr {

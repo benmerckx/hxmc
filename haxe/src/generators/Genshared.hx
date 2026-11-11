@@ -59,9 +59,7 @@ class InfoContext<A> {
 			implicitCtors: [],
 		};
 		classInfos.push(infos);
-		c.clMeta = [
-			({meta: MetaTag.Custom(":jvm.classInfo"), exprs: vector({expr: EConst(Int(Std.string(index), null)), pos: nullPos}), pos: nullPos} : MetadataEntry)
-		].concat(c.clMeta);
+		c.clMeta = core.ds.VectorTools.cons(({meta: MetaTag.Custom(":jvm.classInfo"), exprs: vector({expr: EConst(Int(Std.string(index), null)), pos: nullPos}), pos: nullPos} : MetadataEntry), c.clMeta);
 		return infos;
 	}
 }
@@ -144,11 +142,11 @@ class Preprocessor<A> {
 	}
 
 	static function makeNative(cf:TClassField):Void {
-		cf.cfMeta = [({meta: MetaTag.NativeGen, exprs: vector(), pos: nullPos} : MetadataEntry)].concat(cf.cfMeta);
+		cf.cfMeta = core.ds.VectorTools.cons(({meta: MetaTag.NativeGen, exprs: vector(), pos: nullPos} : MetadataEntry), cf.cfMeta);
 	}
 
 	static function makeHaxe(cf:TClassField):Void {
-		cf.cfMeta = [({meta: MetaTag.HxGen, exprs: vector(), pos: nullPos} : MetadataEntry)].concat(cf.cfMeta);
+		cf.cfMeta = core.ds.VectorTools.cons(({meta: MetaTag.HxGen, exprs: vector(), pos: nullPos} : MetadataEntry), cf.cfMeta);
 	}
 
 	static function getConstructor(c:TClass):TClassField {
@@ -327,13 +325,11 @@ class Preprocessor<A> {
 							var info = preprocessConstructorExpr(c, cf, e);
 							var index = fieldInfos.length;
 							fieldInfos.push(info);
-							cf.cfMeta = [
-								({
+							cf.cfMeta = core.ds.VectorTools.cons(({
 									meta: MetaTag.Custom(":jvm.fieldInfo"),
 									exprs: vector({expr: EConst(Int(Std.string(index), null)), pos: nullPos}),
 									pos: nullPos
-								} : MetadataEntry)
-							].concat(cf.cfMeta);
+								} : MetadataEntry), cf.cfMeta);
 							if (!core.Meta.has(MetaTag.HxGen, cf.cfMeta)) {
 								function loop(next:TClass->Void, c:TClass):Void {
 									if (hasClassFlag(c, CExtern)) makeNative(cf) else switch c.clConstructor {

@@ -858,7 +858,7 @@ class Converter {
 		var tp:TypeParam = {
 			tpName: {name: name, pos: p},
 			tpParams: vector(),
-			tpMeta: [],
+			tpMeta: vector(),
 			tpDefault: null,
 			tpConstraints: switch constraints {
 				case []: null;
@@ -870,8 +870,8 @@ class Converter {
 
 	public static function convertEnum(jc:JClass, file:String):TypeDecl {
 		var p = filePos(file);
-		var meta:Metadata = [];
-		function addMeta(m:MetadataEntry) meta.unshift(m);
+		var meta:Metadata = vector();
+		function addMeta(m:MetadataEntry) meta = VectorTools.cons(m, meta);
 		var data:Array<EnumConstructor> = [];
 		for (jf in jc.jcFields) switch jf.jfDescriptor {
 			case JObject(path, []) if (context.Common.samePath(path, jc.jcPath) && AccessFlags.hasFlag(jf.jfFlags, MStatic)
@@ -879,7 +879,7 @@ class Converter {
 				data.unshift({
 					ecName: {name: jf.jfName, pos: p},
 					ecDoc: null,
-					ecMeta: [],
+					ecMeta: vector(),
 					ecArgs: vector(),
 					ecPos: p,
 					ecParams: vector(),
@@ -928,9 +928,9 @@ class Converter {
 		var p:Pos = {pfile: p.pfile + "@" + jf.jfName, pmin: p.pmin, pmax: p.pmax};
 		var isStatic = AccessFlags.hasFlag(jf.jfFlags, MStatic);
 		var access:Array<PlacedAccess> = [];
-		var meta:Metadata = [];
+		var meta:Metadata = vector();
 		function addAccess(a:PlacedAccess) access.unshift(a);
-		function addMeta(m:MetadataEntry) meta.unshift(m);
+		function addMeta(m:MetadataEntry) meta = VectorTools.cons(m, meta);
 		if (isStatic) addAccess({access: AStatic, pos: p});
 		for (a in jf.jfAttributes) switch a {
 			case AttrDeprecated if (!isPathEq(jc.jcPath, ["java", "util"], "Date")):
@@ -1017,7 +1017,7 @@ class Converter {
 						return {
 							name: {name: name, pos: p},
 							optional: false,
-							meta: [],
+							meta: vector(),
 							type: {type: hxSig, pos: p},
 							expr: null
 						};
@@ -1052,9 +1052,9 @@ class Converter {
 	public static function convertClass(ctx:JavaLibCtx, jc:JClass, file:String):TypeDecl {
 		var p = filePos(file);
 		var flags:Array<ClassFlag> = [HExtern];
-		var meta:Metadata = [];
+		var meta:Metadata = vector();
 		function addFlag(f:ClassFlag) flags.unshift(f);
-		function addMeta(m:MetadataEntry) meta.unshift(m);
+		function addMeta(m:MetadataEntry) meta = VectorTools.cons(m, meta);
 		addMeta(Converter.meta(MetaTag.LibType, vector(), p));
 		var isInterface = AccessFlags.hasFlag(jc.jcFlags, MInterface);
 		if (isInterface) addFlag(HInterface) else if (AccessFlags.hasFlag(jc.jcFlags, MAbstract)) addFlag(HAbstract);

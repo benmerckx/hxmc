@@ -595,6 +595,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		if (l == null) start();
 		if (typingBodies) throw "-D hxmc.macros=mir: a macro called while the macro context types the std's bodies Mir macros lower (hxmc.interp.MacroRuntime; HXMC_MIR_LAZY_BODIES=0 types them all first)";
 		hxmc.ir.Lower.basic = com.basic;
+		hostCompact();
 		scan();
 		hxmc.ir.Lower.callSites = {site: site, pending: "hxmc_mir_macro_pending", current: "hxmc_mir_macro_current", wants: wantsSites};
 		// (the lines of the code, as a native build's: hxmc.rt.Stacks names an interpreted frame by them)
@@ -657,11 +658,21 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		l.findHosts(fresh);
 	}
 
+	// the compiler's compressed references (macro.Loader.compactHost): the
+	// code shares its heap, its runtime and the std's functions it has; set
+	// again for each build, after a generation's lowering (hxmc.Main.generate)
+	// set the program's (a callback of onAfterGenerate's calling a macro)
+	static function hostCompact() {
+		hxmc.ir.Lower.compact = hxmc.macro.Loader.compactHost();
+		hxmc.ir.Lower.compactTypes = hxmc.macro.Loader.compactTypes();
+	}
+
 	function start() {
 		opts = Options.read(com);
 		opts.interp = "1";
 		var abi = Abi.get(opts.target);
 		hxmc.ir.Lower.targetOs = abi.osCode();
+		hostCompact();
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();

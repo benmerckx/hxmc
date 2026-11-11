@@ -18,7 +18,7 @@ using StringTools;
 // line of a case's source adds that -D to its build, a `// resource:
 // <file>@<name>` line that resource (the file next to the source), a `//
 // build-seconds: <n>` line a bound on hxmc's time to build it, a `//
-// not-live: <function>` line a function reachability must drop when the
+// not-live: <function> ...` line functions reachability must drop when the
 // case is built from its source (notLive). --target cross-builds
 // for another target (linux-arm64 runs under qemu-aarch64-static, windows-x86_64 under
 // wine64, wasm32-wasi under node or, with HXMC_WASM_RUNNER=wasmtime,
@@ -51,8 +51,8 @@ class Corpus {
 	static final FUZZ_ZIP = "hxmc/test/fuzz-1000.zip";
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
-	static final WASM_EXCLUDED = ["FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ForeignKinds" => "foreign objects: the native runtime only (docs/plans/foreign-objects.md)", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "ConditionTimedWait" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
-		"NullAccessThreads" => "no threads on wasm32-wasi", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
+	static final WASM_EXCLUDED = ["CompactRefs" => "threads, and an object's size (compressed references: native only)", "CompactParGc" => "threads (the native collector's parallel collections)", "CompactRefsChecked" => "CompactRefs's (threads, an object's size)", "CompactParGcChecked" => "CompactParGc's (threads)", "FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ForeignKinds" => "foreign objects: the native runtime only (docs/plans/foreign-objects.md)", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "ConditionTimedWait" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
+		"NullAccessThreads" => "no threads on wasm32-wasi", "TlsSymbol" => "native TLS symbols: wasm32-wasi uses linker cells", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code", "ComElsewhere" => "COM's operations where there is no COM (they throw)"];
 	// the cases iOS cannot run: they start other programs (the simulator's are
@@ -228,7 +228,8 @@ class Corpus {
 			for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
 			cmd = cmd.concat(["-cp", FileSystem.fullPath(STD), "-main", c.main, "--custom-target", 'hxmc=$d/x', "--hxb", hxb, "-D", "disable-parallelism", "--no-output"]);
 			if (wasm) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
-			var r = exec(cmd.concat(defines));
+			// (a case with Mir macros, `// define: hxmc.macros=mir`: they need hxmc's std, MirMacros)
+			var r = exec(cmd.concat(defines), defines.contains("hxmc.macros=mir") ? {env: ["HXMC_STD" => FileSystem.fullPath(STD)]} : null);
 			if (r.code != 0) return {name: c.name, status: "hxb-fail", detail: tail(r.out + r.err, 1500)};
 			// (a type parameter the HXB writer finds unbound: an expression of hxmc's std
 			// or the case whose type left its scope, the archive keeping a type of nothing)
@@ -333,10 +334,13 @@ class Corpus {
 		var cmd = [tool, exe];
 		for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
 		cmd = cmd.concat(["-cp", FileSystem.fullPath(STD), "-main", c.main]).concat(args);
-		var r = exec(cmd, {env: ["HXMC_REACH_WHY" => name]});
+		var names = [for (n in name.split(" ")) if (n != "") n];
+		var r = exec(cmd, {env: ["HXMC_REACH_WHY" => names.join(",")]});
 		if (r.code != 0) return "the build from source failed: " + tail(r.out + r.err, 2000);
 		if (FileSystem.exists(exe)) FileSystem.deleteFile(exe);
-		if (r.out.split("\n").indexOf("hxmc: reach: why " + name) >= 0) return '$name is live:\n' + tail(r.out, 1500);
+		var lines = r.out.split("\n");
+		var live = [for (n in names) if (lines.indexOf("hxmc: reach: why " + n) >= 0) n];
+		if (live.length > 0) return live.join(", ") + (live.length == 1 ? " is" : " are") + " live:\n" + tail(r.out, 1500);
 		return null;
 	}
 

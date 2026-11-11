@@ -218,14 +218,14 @@ enum UnifyMinResult {
 class Monomorph {
 	public static function create():TMono return {
 		tmType: null,
-		tmDownConstraints: [],
-		tmUpConstraints: [],
-		tmModifiers: []
+		tmDownConstraints: vector(),
+		tmUpConstraints: vector(),
+		tmModifiers: vector()
 	};
 
-	public static function addModifier(m:TMono, mod:TMonoModifier):Void m.tmModifiers.unshift(mod);
+	public static function addModifier(m:TMono, mod:TMonoModifier):Void m.tmModifiers = VectorTools.cons(mod, m.tmModifiers);
 
-	public static function hasModifier(m:TMono, f:TMonoModifier->Bool):Bool return core.ds.ArrayTools.exists(m.tmModifiers, f);
+	public static function hasModifier(m:TMono, f:TMonoModifier->Bool):Bool return m.tmModifiers.exists(f);
 
 	public static function isDynamic(m:TMono):Bool return hasModifier(m, function(mod) return switch mod {
 		case MDynamic: true;
@@ -235,19 +235,19 @@ class Monomorph {
 	// constraining
 
 	public static function addUpConstraint(m:TMono, c:{type:T, name:Null<String>}):Void {
-		m.tmUpConstraints.unshift(c);
+		m.tmUpConstraints = VectorTools.cons(c, m.tmUpConstraints);
 		switch c.type {
 			case TMono(m2):
-				m2.tmDownConstraints.unshift(MMono(m, c.name));
+				m2.tmDownConstraints = VectorTools.cons(MMono(m, c.name), m2.tmDownConstraints);
 			case _:
 		}
 	}
 
 	public static function addDownConstraint(m:TMono, c:TMonoConstraint):Void {
-		m.tmDownConstraints.unshift(c);
+		m.tmDownConstraints = VectorTools.cons(c, m.tmDownConstraints);
 		switch c {
 			case MMono(m2, s):
-				m2.tmUpConstraints.unshift({type: TMono(m), name: s});
+				m2.tmUpConstraints = VectorTools.cons({type: TMono(m), name: s}, m2.tmUpConstraints);
 			case _:
 		}
 	}
@@ -352,8 +352,8 @@ class Monomorph {
 			case MOpenStructure, MDynamic:
 		}
 		m.tmType = t;
-		m.tmDownConstraints = [];
-		m.tmUpConstraints = [];
+		m.tmDownConstraints = vector();
+		m.tmUpConstraints = vector();
 	}
 
 	public static function bind(m:TMono, t:T):Void switch t {

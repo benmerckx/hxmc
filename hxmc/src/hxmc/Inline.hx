@@ -20,14 +20,18 @@ using core.ds.VectorTools;
 // of each operation, counted on the operation; a shadow-stack frame stays the
 // copy's own: it pushes and pops it).
 class Inline {
-	public static inline var MAX_IR = 40; // IR nodes of a candidate
+	// the limits: -D hxmc.inline=<flat>,<loop>,<runtime flat>,<IR nodes>,<depth>
+	// (else HXMC_INLINE), for every target; an empty or missing field keeps its
+	// default (configure, the build's: Options.apply; the object cache's key has
+	// the flag: Options.codeKey)
+	static inline var IR_DEFAULT = 40;
+	public static var MAX_IR = IR_DEFAULT; // IR nodes of a candidate
 	// instructions outside slow paths: of a callee inlined anywhere, at a
 	// call in a loop, and of the runtime's Haxe functions (hxmc.rt) outside
 	// loops: 3, those no bigger than their call (Bytes.get, set and length, then:
 	// the tool 0.2% smaller, its self-compile 1% less CPU; 16 inlines
 	// hx_str_or_null at every concatenation too: 0.5% faster still, the
-	// port 1.2% larger) (size against speed;
-	// HXMC_INLINE=<flat>,<loop>,<runtime flat>, for every target)
+	// port 1.2% larger) (size against speed)
 	static inline var MAX_FLAT = 16;
 	static inline var MAX_LOOP = 48;
 	static inline var MAX_FLAT_RT = 3;
@@ -37,14 +41,30 @@ class Inline {
 	// run times unchanged (4, 8 makes mandelbrot 60% slower)
 	static inline var WASM_FLAT = 4;
 	static inline var WASM_LOOP = 16;
-	public static var limits:Array<Int> = []; // HXMC_INLINE's (the build's, Options.apply)
+	static inline var DEPTH_DEFAULT = 2;
+	// the first three fields of the flag (-1: the default)
+	static var flat = -1;
+	static var loop = -1;
+	static var flatRt = -1;
 
 	// the limits of a call site (in a loop, of a runtime function, else)
-	public static function maxSize(wasm:Bool, inLoop:Bool, rt:Bool):Int {
-		var k = inLoop ? 1 : rt ? 2 : 0;
-		return k < limits.length ? limits[k] : inLoop ? (wasm ? WASM_LOOP : MAX_LOOP) : rt ? MAX_FLAT_RT : wasm ? WASM_FLAT : MAX_FLAT;
+	public static function maxSize(wasm:Bool, inLoop:Bool, rt:Bool):Int
+		return inLoop ? (loop >= 0 ? loop : wasm ? WASM_LOOP : MAX_LOOP) : rt ? (flatRt >= 0 ? flatRt : MAX_FLAT_RT) : flat >= 0 ? flat : wasm ? WASM_FLAT : MAX_FLAT;
+
+	// the limits of a build: hxmc.inline's (null: the defaults)
+	public static function configure(spec:Null<String>) {
+		var p = spec == null ? [] : spec.split(",");
+		function at(k:Int, d:Int):Int {
+			var v = k < p.length ? Std.parseInt(StringTools.trim(p[k])) : null;
+			return v == null ? d : v;
+		}
+		flat = at(0, -1);
+		loop = at(1, -1);
+		flatRt = at(2, -1);
+		MAX_IR = at(3, IR_DEFAULT);
+		DEPTH = at(4, DEPTH_DEFAULT);
 	}
-	public static inline var DEPTH = 2; // levels of inlining (Fingerprint keys callers to that depth)
+	public static var DEPTH = DEPTH_DEFAULT; // levels of inlining (Fingerprint keys callers to that depth)
 
 	// whether f may be inlined (the IR test); not a function that runs the
 	// collector (@:hxmc.collects): the calls in its body are to the
@@ -60,7 +80,9 @@ class Inline {
 		}
 		function st(s:Stmt) {
 			if (s.match(SPos(_))) return; // (-debug: the same decisions)
-			if (++n > MAX_IR) return;
+			// A cold site's slow path has a cost even without an IR wrapper.
+			n += hxmc.ir.Facts.GcPoints.cold(s) ? 2 : 1;
+			if (n > MAX_IR) return;
 			hxmc.ir.Facts.iterStmt(st, ex, s);
 		}
 		for (s in f.body) {

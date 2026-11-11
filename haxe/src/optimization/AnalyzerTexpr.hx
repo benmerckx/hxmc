@@ -757,7 +757,7 @@ class Fusion {
 					accRev.push(e);
 				// no-side-effect
 				case TFunction(_) | TConst(_) | TTypeExpr(_):
-				case TMeta(meta = {meta: core.MetaList.StrictMeta.Pure}, _) if (PurityStateTools.getPurityFromMeta([meta]) == Pure):
+				case TMeta(meta = {meta: core.MetaList.StrictMeta.Pure}, _) if (PurityStateTools.getPurityFromMeta(vector(meta)) == Pure):
 				case TCall({eexpr: TField(e1, fa)}, args) if (PurityStateTools.isPureFieldAccess(fa) && config.localDce):
 					pushAll(args);
 					stack.push(e1);
@@ -1268,7 +1268,7 @@ class Purity {
 		}
 		function loop(e:TExpr):Void switch e.eexpr {
 			case TMeta(m = {meta: core.MetaList.StrictMeta.Pure}, _):
-				if (PurityStateTools.getPurityFromMeta([m]) == Impure) taintRaise(node);
+				if (PurityStateTools.getPurityFromMeta(vector(m)) == Impure) taintRaise(node);
 			case TThrow(_):
 				taintRaise(node);
 			case TBinop(OpAssign | OpAssignOp(_), e1, e2):
@@ -1340,13 +1340,11 @@ class Purity {
 		for (node in nodeLut) switch node.pnPurity {
 			case Pure | MaybePure if (!exists((m:core.Ast.MetadataEntry) -> m.meta == core.MetaList.StrictMeta.Pure, node.pnField.cfMeta)):
 				var p = Globals.mkZeroRangePos(node.pnField.cfPos);
-				node.pnField.cfMeta = [
-					({
-						meta: core.MetaList.StrictMeta.Pure,
-						exprs: vector({expr: EConst(Ident("inferredPure")), pos: p}),
-						pos: p
-					} : core.Ast.MetadataEntry)
-				].concat(node.pnField.cfMeta);
+				node.pnField.cfMeta = core.ds.VectorTools.cons(({
+					meta: core.MetaList.StrictMeta.Pure,
+					exprs: vector({expr: EConst(Ident("inferredPure")), pos: p}),
+					pos: p
+				} : core.Ast.MetadataEntry), node.pnField.cfMeta);
 			case _:
 		}
 	}

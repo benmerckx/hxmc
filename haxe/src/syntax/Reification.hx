@@ -228,7 +228,7 @@ class Reification {
 			if (f.cffMeta.length > 0) fields.push(fld("meta", toMeta(f.cffMeta, p)));
 			return obj(fields, p);
 		};
-		toMeta = function(meta, p) return arr(function(m:MetadataEntry, _) {
+		toMeta = function(meta, p) return vec(function(m:MetadataEntry, _) {
 			var p = m.pos;
 			return obj([
 				fld("name", toString(core.Meta.toString(m.meta), p)),

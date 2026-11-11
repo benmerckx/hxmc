@@ -38,6 +38,8 @@ class Options {
 	// -D hxmc.loop-version=0: no loop versioning (LoopVersion); =why: why each loop is left alone
 	public var loopVersion = true;
 	public var loopVersionWhy = false;
+	// -D hxmc.compact=0: @:hxmc.compact changes nothing, its reference fields 8 bytes (Main.compactRefs)
+	public var compact = true;
 
 	// the variable a flag falls back to: HXMC_LOOP_VERSION for hxmc.loop-version
 	public static function flagVar(name:String):String
@@ -59,11 +61,13 @@ class Options {
 	}
 
 	// the flags that change the code (UpToDate: their variables are in the
-	// key; Driver.toolKey: Options.codeKey)
+	// key; Driver.toolKey: Options.codeKey). (hxmc.checked: the define only, the
+	// std reads it too)
 	public static final FLAGS = [
 		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
 		"hxmc.fold", "hxmc.frames-live", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
-		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc"
+		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc",
+		"hxmc.checked", "hxmc.compact"
 	];
 	// the switches of the passes, read again for each build (a server's too)
 	// from its defines, before its typing (TargetFlags' hook): the passes
@@ -84,8 +88,7 @@ class Options {
 		Driver.nogc = on("hxmc.nogc", false, d);
 		Driver.wasmStackKb = flag("hxmc.wasm-stack-kb", d);
 		Frames.live = on("hxmc.frames-live", true, d);
-		var il = flag("hxmc.inline", d);
-		Inline.limits = il == null ? [] : [for (x in il.split(",")) Std.parseInt(x)];
+		Inline.configure(flag("hxmc.inline", d));
 		Inline.devirtOn = on("hxmc.devirt", true, d);
 		Lir.LFunc.dupDispatch = on("hxmc.dup-dispatch", true, d);
 		Lir.LFunc.minTable = Std.parseInt(flag("hxmc.dup-min", d) ?? "64");
@@ -347,6 +350,7 @@ class Options {
 		var lv = flag("hxmc.loop-version", com.defines);
 		o.loopVersion = lv != "0";
 		o.loopVersionWhy = lv == "why";
+		o.compact = on("hxmc.compact", true, com.defines);
 		o.verifyTags = def("hxmc.verify_tags") != null;
 		var sc = def("hxmc.span_checks");
 		o.spanChecks = switch sc {
@@ -370,6 +374,16 @@ class Options {
 		if (ls != null)
 			for (p in ls.split(","))
 				if (StringTools.trim(p) != "") o.links.push(sys.FileSystem.absolutePath(StringTools.trim(p)));
+		// A diagnostic reference for optimized code: keep the generated
+		// checks by disabling Mir optimization, including check elimination.
+		// Apply last so narrower switches cannot weaken the checked build.
+		if (def("hxmc.checked") != null) {
+			o.opt = false;
+			o.bounds = hxmc.ir.Lower.BOUNDS_THROWS;
+			o.nullChecks = true;
+			o.spanChecks = true;
+			o.verifyTags = true;
+		}
 		return o;
 	}
 }

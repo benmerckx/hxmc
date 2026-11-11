@@ -38,6 +38,8 @@ package hxmc;
 //                                   throws instead, hxmc.rt.Faults)
 //   -D hxmc.gc-prefault             Linux: the collector faults in the old space's pages on a helper
 //                                   thread: less wall time for more CPU time (the compilers' builds)
+//   -D hxmc.compact=0               @:hxmc.compact changes nothing: reference fields 8 bytes everywhere
+//                                   (HXMC_COMPACT=0 too; docs/hxmc.md, "Compressed references")
 //   HXMC_RT_OBJ                     the runtime object (default: <target>/rt.o where Options.rtSearch finds it)
 //   HXMC_RT_DIR                     directories of runtime objects, searched first (added to the search)
 //   HXMC_STATS=1                    print what the build did and how long it took
@@ -163,6 +165,23 @@ class Main {
 	// program before Driver.run, to add functions to it
 	public static var beforeCodegen:Null<(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void> = null;
 
+	// whether @:hxmc.compact fields are 4 bytes (docs/hxmc.md, "Compressed
+	// references"): an executable whose image is below 32 GB (Link, LinkDyn's
+	// glibc mode and LinkPE's x86-64: at 0x400000; a macOS executable, slid,
+	// at 4 GB and a little), whose heap hxmc.rt.Gc.init reserves below 32 GB
+	// too (macOS: in the image's __HXHEAP segment, LinkMachO.heapWindow), so
+	// that an address shifted right by 3 fits 32 bits with no base. Not a
+	// shared library (loaded anywhere: Android's, -D hxmc.shared), iOS and
+	// Mac Catalyst, Windows on arm64 (relocatable), nor WebAssembly
+	// (references are 4 bytes there): there the fields stay 8 bytes, as
+	// everywhere with -D hxmc.compact=0. A Mir host (opts.mirHost) has them
+	// as any executable; the code it loads takes its decision
+	// (macro.Loader.compactHost: MirMacros, MirRun), as -D hxmc.interp's
+	// interpreted functions take their program's
+	public static function compactRefs(abi:Abi, opts:Options):Bool
+		return opts.compact && !abi.wasm && !abi.android && !opts.shared && abi.output != Abi.OutputKind.SharedLibrary
+			&& (abi.os == "linux" || abi.os == "windows" && !abi.arm || abi.os == "macos" && !abi.uikit());
+
 	// the program typed (com) to machine code at out: lowered (hxmc.ir.Lower),
 	// given to beforeCodegen (this argument, else Main.beforeCodegen), compiled
 	public static function generate(com:context.Common.CommonContext, out:String, ?beforeCodegen:(com:context.Common.CommonContext, prog:hxmc.ir.Ir.Program) -> Void) {
@@ -199,6 +218,14 @@ class Main {
 			case _: false;
 		}) ? 1 : 0;
 		opts.mirHost = hxmc.ir.Lower.mirHost == 1;
+		hxmc.ir.Lower.compact = compactRefs(abi, opts);
+		// (Mem.compact: a class of the program asks for compressed references; one
+		// Lower never reaches keeps the runtime's tests, which then find none)
+		hxmc.ir.Lower.compactTypes = hxmc.ir.Lower.compact && Lambda.exists(com.types, t -> switch t {
+			case TClassDecl(c): hxmc.ir.Lower.hasMeta(":hxmc.compact", c.clMeta);
+			case TEnumDecl(e): hxmc.ir.Lower.hasMeta(":hxmc.compact", e.eMeta);
+			case _: false;
+		}) ? 1 : 0;
 		// (the positions of every statement, natively: a program that reads
 		// stacks gets the table of its functions and lines, which Reach finds
 		// out after the lowering, StackTable; -debug writes DWARF lines from

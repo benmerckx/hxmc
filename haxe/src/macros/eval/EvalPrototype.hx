@@ -230,9 +230,9 @@ class PrototypeBuilder {
 
 class EvalPrototype {
 	/** JITs expression [e] and executes the result immediately. **/
-	public static function evalExpr(ctx:Context, kind:EnvKind, e:TExpr):Null<Value> {
+	public static function evalExpr(ctx:Context, kind:EnvKind, e:TExpr, ?initOf:TClass):Null<Value> {
 		return switch EvalExceptions.catchExceptions(ctx, () -> {
-			var r = EvalJit.jitExpr(ctx, e);
+			var r = EvalJit.jitExpr(ctx, e, initOf);
 			var jit = r.jit;
 			var f = r.f;
 			var numCaptures = jit.captures.length();
@@ -330,7 +330,7 @@ class EvalPrototype {
 									persistent: persistent,
 									name: persistent ? name : 0,
 									f: proto -> {
-										proto.pfields[i] = switch evalExpr(ctx, EKMethod(key, name), e) {
+										proto.pfields[i] = switch evalExpr(ctx, EKMethod(key, name), e, c) {
 											case null: VNull;
 											case e: e;
 										}
@@ -348,7 +348,7 @@ class EvalPrototype {
 							persistent: false,
 							name: 0,
 							f: _ -> {
-								evalExpr(ctx, EKMethod(key, EvalHash.key___init__), e);
+								evalExpr(ctx, EKMethod(key, EvalHash.key___init__), e, c);
 							}
 						});
 				}

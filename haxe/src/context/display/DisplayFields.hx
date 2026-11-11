@@ -479,10 +479,10 @@ class DisplayFields {
 		};
 		var t = r.t;
 		var cf = mkField(i, t, pfield, Globals.nullPos, false);
-		cf.cfMeta = [
-			{meta: MetaTag.CompilerGenerated, exprs: vector(), pos: Globals.nullPos},
-			{meta: MetaTag.NoCompletion, exprs: vector(), pos: Globals.nullPos}
-		];
+		cf.cfMeta = vector(
+			({meta: MetaTag.CompilerGenerated, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry),
+			({meta: MetaTag.NoCompletion, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry)
+		);
 		cf.cfKind = r.kind;
 		var r = switch follow(tthis) {
 			case TInst(c, _): {mt: TClassDecl(c), scope: CFSMember, pub: !Typecore.canAccess(ctx, c, cf, false)};

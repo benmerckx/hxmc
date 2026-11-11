@@ -653,7 +653,7 @@ class HxbWriter {
 		chunk.writeVector(entry.exprs, writeExpr);
 	}
 
-	function writeMetadata(ml:Metadata):Void chunk.writeList(ml, writeMetadataEntry);
+	function writeMetadata(ml:Metadata):Void chunk.writeVector(ml, writeMetadataEntry);
 
 	// expr
 
@@ -729,7 +729,7 @@ class HxbWriter {
 		chunk.writeVector(tp.tpParams, writeTypeParam);
 		chunk.writeOption(tp.tpConstraints, writeTypeHint);
 		chunk.writeOption(tp.tpDefault, writeTypeHint);
-		chunk.writeList(tp.tpMeta, writeMetadataEntry);
+		chunk.writeVector(tp.tpMeta, writeMetadataEntry);
 	}
 
 	function writeFuncArg(a:FuncArg):Void {

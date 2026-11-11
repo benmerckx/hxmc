@@ -46,6 +46,12 @@ extern class Mem {
 	// docs/hxmc.md, "Macros on the Mir interpreter"), else 0; a constant, as
 	// target() (one comparison folds)
 	static function mirHost():Int;
+	// 1 in a program whose classes may have compressed references (a
+	// @:hxmc.compact class, where the target has them: hxmc.Main.compactRefs),
+	// else 0; a constant, as mirHost() (the runtime's tests of them,
+	// hxmc.rt.GcCore.compactTypes, fold away without; a tool that knows it
+	// defines hxmc.memcompact: the committed stage0 does not)
+	static function compact():Int;
 	// the Apple platform where os() is 1: 0 macOS, 1 iOS, 2 the iOS simulator, 3 Mac Catalyst
 	// (target() macOS's: macos-arm64's libSystem and layouts, 3, or 2 for
 	// macos-catalyst-x86_64; packages

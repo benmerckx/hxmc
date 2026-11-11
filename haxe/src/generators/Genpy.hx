@@ -2101,7 +2101,7 @@ class Generator {
 			case TFunction(f):
 				var args = if (addSelf) {
 					var v = core.TFunctions.allocVar(VGenerated, "self", tDynamic, p);
-					v.vMeta = [({meta: Meta.This, exprs: vector(), pos: p} : MetadataEntry)].concat(v.vMeta);
+					v.vMeta = core.ds.VectorTools.cons(({meta: Meta.This, exprs: vector(), pos: p} : MetadataEntry), v.vMeta);
 					VectorTools.cons({variable: v, defaultValue: (null : Null<TExpr>)}, f.tfArgs);
 				} else
 					f.tfArgs;

@@ -124,6 +124,8 @@ class Dyn {
 				var a:Dynamic = Mem.getRef(p, 8 * slot);
 				Str.isNull(a) ? null : (arrLength(a) : Dynamic);
 			case "t".code: Tagged.dyn(Mem.getI64(p, 8 * slot));
+			// (a compressed reference, @:hxmc.compact: slot is its 4-byte index)
+			case "c".code: Mem.obj(GcCore.getC(p, slot));
 			case _: Mem.getRef(p, 8 * slot);
 		}
 	}
@@ -147,6 +149,10 @@ class Dyn {
 				var a:Dynamic = Mem.getRef(Mem.addr(o), 8 * slot);
 				var n:Null<Int> = v;
 				if (Str.isNull(a) || n == null || n != arrLength(a)) Rt.rt_throw("a length without storage (@:hxmc.lengthOf) cannot be set");
+			case "c".code:
+				// (native only: WebAssembly's references are 4 bytes already, Lower.compact;
+				// a program without such a field has no storeCompact, GcCore.compactTypes)
+				if (Mem.os() != 3 && GcCore.compactTypes()) Gc.storeCompact(o, slot, v);
 			case _:
 				Mem.setRefBarrier(o, 8 * slot, v);
 		}
@@ -639,7 +645,9 @@ class Dyn {
 		if (isNativeArray(tindex(a))) {
 			var n = arrLength(a);
 			if (!Mem.ult(i, n)) {
-				#if (hxmc.native_array_outofbounds == "silent")
+				#if hxmc.checked
+				throw NArray.outOfBounds(i, n, null, 0, null, null);
+				#elseif (hxmc.native_array_outofbounds == "silent")
 				return NArray.defaultOf(a);
 				#elseif (hxmc.native_array_outofbounds == "throws")
 				throw NArray.outOfBounds(i, n, null, 0, null, null);
@@ -658,7 +666,9 @@ class Dyn {
 		if (isNativeArray(tindex(a))) {
 			var n = arrLength(a);
 			if (!Mem.ult(i, n)) {
-				#if (hxmc.native_array_outofbounds == "silent")
+				#if hxmc.checked
+				throw NArray.outOfBounds(i, n, null, 0, null, null);
+				#elseif (hxmc.native_array_outofbounds == "silent")
 				return;
 				#elseif (hxmc.native_array_outofbounds == "throws")
 				throw NArray.outOfBounds(i, n, null, 0, null, null);
@@ -935,7 +945,7 @@ class Dyn {
 				if (depth > PRINT_DEPTH) return "<...>";
 				var b = new StringBuf();
 				b.add(Str.ofAscii(name(ty)));
-				var np = slotCount(ty);
+				var np = nfields(ty);
 				if (np > 0) {
 					b.addChar("(".code);
 					for (i in 0...np) {
@@ -972,17 +982,20 @@ class Dyn {
 
 	// an enum constructor's argument i, boxed
 	static function ctorValue(v:Dynamic, ty:Ptr, i:Int):Dynamic {
-		var k = "p".code;
-		for (f in 0...nfields(ty)) {
-			var fk = fKind(field(ty, f));
-			if (fSlot(field(ty, f)) == (fk == "i".code || fk == "b".code ? 2 * i : i)) k = fk;
-		}
+		var k = "p".code, s = i;
+		for (f in 0...nfields(ty))
+			if (ctorArg(field(ty, f)) == i) {
+				k = fKind(field(ty, f));
+				s = fSlot(field(ty, f));
+			}
 		return switch k {
-			case "i".code: (Mem.getI32(Mem.addr(v), 8 * i) : Dynamic);
-			case "b".code: (Mem.getI32(Mem.addr(v), 8 * i) != 0 : Dynamic);
-			case "f".code: (Mem.getF64(Mem.addr(v), 8 * i) : Dynamic);
-			case "t".code: Tagged.dyn(Mem.getI64(Mem.addr(v), 8 * i));
-			case _: Mem.getRef(Mem.addr(v), 8 * i);
+			case "i".code: (Mem.getI32(Mem.addr(v), 4 * s) : Dynamic);
+			case "b".code: (Mem.getI32(Mem.addr(v), 4 * s) != 0 : Dynamic);
+			case "f".code: (Mem.getF64(Mem.addr(v), 8 * s) : Dynamic);
+			case "t".code: Tagged.dyn(Mem.getI64(Mem.addr(v), 8 * s));
+			// (a compressed reference, @:hxmc.compact: s is its 4-byte index)
+			case "c".code: Mem.obj(GcCore.getC(Mem.addr(v), s));
+			case _: Mem.getRef(Mem.addr(v), 8 * s);
 		}
 	}
 
@@ -1036,6 +1049,20 @@ class Dyn {
 		var t = tindex(o);
 		if (isString(t)) return Str.hash(o) * (0x9E3779B1 : Int);
 		if (isArray(t)) return (arrLength(o) * 31 + t) * (0x9E3779B1 : Int);
+		// (a header constructor's value: its argument is where the hash would
+		// be; its type and its argument's value, or that reference's hash,
+		// which never change; a chain of them in a loop)
+		if (headerArg(ty(t))) {
+			var h = 0, x:Dynamic = o;
+			while (true) {
+				t = tindex(x);
+				h = h * 31 + t;
+				if (fKind(field(ty(t), 0)) != "c".code) return (h * 31 + Mem.getI32(Mem.addr(x), -4)) * (0x9E3779B1 : Int);
+				x = Mem.obj(GcCore.getC(Mem.addr(x), -1));
+				if (Str.isNull(x) || !headerArg(ty(tindex(x)))) break;
+			}
+			return (h * 31 + objHash(x)) * (0x9E3779B1 : Int);
+		}
 		var hp = Mem.addr(o).add(-8);
 		var h = Mem.getI32(hp, 4);
 		if (h == 0) {
@@ -1182,10 +1209,12 @@ class Dyn {
 		return a;
 	}
 
-	// the position of an enum constructor's argument (its slot: no packing)
+	// the position of an enum constructor's argument: a packed constructor's
+	// (@:hxmc.compact, hxmc.ir.Facts) is in the byte after the kind, + 1;
+	// else its slot (no packing)
 	static inline function ctorArg(f:Ptr):Int {
-		var k = fKind(f);
-		return k == "i".code || k == "b".code ? fSlot(f) >> 1 : fSlot(f);
+		var k = fKind(f), a = Mem.getU8(f, 9);
+		return a != 0 ? a - 1 : k == "i".code || k == "b".code ? fSlot(f) >> 1 : fSlot(f);
 	}
 
 	public static function enumCreate(e:Dynamic, index:Int, params:Array<Dynamic>):Dynamic {
@@ -1198,7 +1227,8 @@ class Dyn {
 		if ((Str.isNull(params) ? 0 : params.length) != (g >= 0 ? 0 : nfields(ty(ct)))) Rt.rt_throw("Invalid number of constructor arguments");
 		if (g >= 0) return Mem.getRef(globalSlot(g), 0);
 		var n = slotCount(ty(ct));
-		var o = Mem.alloc(n > 0 ? n : 1, ct, K_OBJ);
+		// (a header constructor's: no slot, Types.headerArg)
+		var o = Mem.alloc(n > 0 || headerArg(ty(ct)) ? n : 1, ct, K_OBJ);
 		for (i in 0...nfields(ty(ct))) {
 			var f = field(ty(ct), i);
 			var v:Dynamic = Str.isNull(params) ? null : params[ctorArg(f)];
@@ -1217,7 +1247,7 @@ class Dyn {
 	public static function enumParams(v:Dynamic):Array<Dynamic> {
 		var t = tindex(v);
 		var a:Array<Dynamic> = [];
-		a.resize(slotCount(ty(t)));
+		a.resize(nfields(ty(t)));
 		for (i in 0...nfields(ty(t))) {
 			var f = field(ty(t), i);
 			var b = boxSlot(v, fSlot(f), fKind(f));
@@ -1246,8 +1276,10 @@ class Dyn {
 				// two references as below)
 				case "t".code if (Tagged.isScalar(Mem.getI64(pa, 8 * s)) || Tagged.isScalar(Mem.getI64(pb, 8 * s))):
 					if (!Tagged.eq(Mem.getI64(pa, 8 * s), Mem.getI64(pb, 8 * s))) return false;
-				case _:
-					var x = Mem.getRef(pa, 8 * s), y = Mem.getRef(pb, 8 * s);
+				case k:
+					// (a compressed reference, @:hxmc.compact: s is its 4-byte index)
+					var x:Dynamic = k == "c".code ? Mem.obj(GcCore.getC(pa, s)) : Mem.getRef(pa, 8 * s),
+						y:Dynamic = k == "c".code ? Mem.obj(GcCore.getC(pb, s)) : Mem.getRef(pb, 8 * s);
 					if (Mem.addr(x) == Mem.addr(y)) continue;
 					if (!Str.isNull(x) && !Str.isNull(y) && tindex(x) >= T_FIRST && tk(Types.ty(tindex(x))) == TK_CTOR) {
 						if (!enumEq(x, y)) return false;
@@ -1409,6 +1441,8 @@ class Dyn {
 		var n = nslots(o);
 		var c = Mem.alloc(n, tindex(o), K_OBJ); // (a generated type: a record)
 		LibC.memcpy(Mem.addr(c), Mem.addr(o), (8 * n : I64));
+		// (a header constructor's argument; new, c needs no barrier)
+		if (headerArg(ty(tindex(o)))) Mem.setI32(Mem.addr(c), -4, Mem.getI32(Mem.addr(o), -4));
 		// an anonymous object's dynamic fields (slot 0) are its own
 		if (tk(ty(tindex(o))) == TK_ANON && !Str.isNull(Mem.getRef(Mem.addr(o), 0))) {
 			var m = nslots(Mem.getRef(Mem.addr(o), 0));

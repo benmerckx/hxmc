@@ -55,7 +55,7 @@ class EvalCompat {
 		var ty = ty(t);
 		switch tk(ty) {
 			case TK_CTOR:
-				var np = slotCount(ty);
+				var np = nfields(ty);
 				if (np == 0) return Str.ofAscii(name(ty));
 				var b = new StringBuf();
 				b.add(Str.ofAscii(name(ty)));

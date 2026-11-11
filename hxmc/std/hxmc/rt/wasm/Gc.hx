@@ -1475,6 +1475,32 @@ class Gc {
 	@:hxmc.collects public static function collect(full:Bool):Void
 		collectFor(full, 0);
 
+	// The old space's limit while no major collection has run (RT_OLD_MB, 32
+	// MB by default, which wins over this), as the native Gc.setOldLimit
+	// (hxmc.NativeGc.setOldLimit works on both): a program that keeps most of
+	// what it allocates until it exits (a compiler's syntax trees and types)
+	// raises it, so that its first major collections do not move what it is
+	// still building (tsc-haxe). It only raises it, and at most to 3 GB, where
+	// a compaction of the old space still fits in a 4 GB memory (its marks,
+	// its table, the nursery: a quarter of it), within what the rest of
+	// memory leaves, and within RT_MAX_MB's room when set, as setLimit caps
+	// the limits a compacting major collection sets. With RT_COMPACT=0 a
+	// major collection copies: half of what the rest leaves (about 2 GB)
+	@:hxmc.unsafe public static function setOldLimit(mb:Int):Void {
+		if (majors > 0 || mb <= 0 || Wasi.envInt("RT_OLD_MB", -1) >= 0) return;
+		var l:I64 = (mb : I64) << 20;
+		var other = Heap.memoryBytes() - oldBytes - poolBytes;
+		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> (compacting ? 0 : 1);
+		var most:I64 = (3 : I64) << 30;
+		if (cap > most) cap = most;
+		if (budget > 0) {
+			var fits = budget - fixedBytes - nurseryCap - (minorSize : I64) - (Heap.memoryBytes() >> 5) - 4 * CHUNK;
+			if (cap > fits) cap = fits;
+		}
+		if (l > cap) l = cap;
+		if (oldLimit < l) oldLimit = l;
+	}
+
 	// (finalisers never run: WebAssembly programs have no resources to free behind values)
 	@:hxmc.unsafe public static function finalise(fn:Dynamic->Void, v:Dynamic):Void {}
 

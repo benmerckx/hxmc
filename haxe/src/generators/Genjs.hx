@@ -1872,9 +1872,7 @@ class Genjs {
 						var alias = try {
 							core.Native.getNativeName(c.clMeta).name;
 						} catch (_:NotFound) {
-							c.clMeta = [
-								({meta: Meta.Native, exprs: vector({expr: EConst(String(flatPath, SDoubleQuotes)), pos: nullPos}), pos: nullPos} : MetadataEntry)
-							].concat(c.clMeta);
+							c.clMeta = core.ds.VectorTools.cons(({meta: Meta.Native, exprs: vector({expr: EConst(String(flatPath, SDoubleQuotes)), pos: nullPos}), pos: nullPos} : MetadataEntry), c.clMeta);
 							core.Native.applyNativePaths(mt);
 							flatPath;
 						}

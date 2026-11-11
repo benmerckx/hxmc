@@ -876,9 +876,11 @@ private typedef ExceptionOutput = {var value:Dynamic; var mutex:sys.thread.Mutex
 
 class Run {
 	// port: actx.withTimer without the dynamic call (the field holds a polymorphic
-	// function, which Haxe can only type as Dynamic)
+	// function, which Haxe can only type as Dynamic); when times are not measured,
+	// f is called here, before the id's list (a literal at the call) is built
 	public static inline function timed<A>(actx:AnalyzerContext, s:Array<String>,
-			f:Void->A):A return withTimer(actx.com.timerCtx, actx.config.detailTimes, actx.identifier, s, f);
+			f:Void->A):A return actx.com.timerCtx.measureTimes == core.Timer.MeasureTimes.No ? f() : withTimer(actx.com.timerCtx,
+				actx.config.detailTimes, actx.identifier, s, f);
 
 	public static function withTimer<A>(timerCtx:core.Timer.TimerContext, level:Int, identifier:Null<String>, s:Array<String>,
 			f:Void->A):A {

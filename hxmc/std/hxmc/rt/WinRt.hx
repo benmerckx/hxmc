@@ -97,9 +97,17 @@ class WinRt {
 		return ok ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 	}
 
-	@:hxmc.host("rt_win_reserve") @:hxmc.unsafe static function reserve(bytes:I64):Ptr {
-		var p = K.VirtualAlloc(Ptr.nil(), bytes, MEM_RESERVE, PAGE_READWRITE);
+	@:hxmc.host("rt_win_reserve") @:hxmc.unsafe static function reserve(bytes:I64):Ptr
+		return reserveAt(Ptr.nil(), bytes);
+
+	// reserve's at address `at` (a multiple of 64 KB), else null; anywhere for null
+	@:hxmc.unsafe static function reserveAt(at:Ptr, bytes:I64):Ptr {
+		var p = K.VirtualAlloc(at, bytes, MEM_RESERVE, PAGE_READWRITE);
 		if (p.isNull()) return p;
+		if (!at.isNull() && p != at) {
+			K.VirtualFree(p, 0, MEM_RELEASE);
+			return Ptr.nil();
+		}
 		if (table.isNull()) {
 			var size:I64 = 8 + RANGE * MAX_RANGES;
 			var t = LibC.malloc(size);

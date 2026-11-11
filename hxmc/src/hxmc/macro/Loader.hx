@@ -131,6 +131,56 @@ class Loader {
 		genGlobals = new Map();
 	}
 
+	// a program of its own (interp.MirRun: --run's program, while the macro
+	// context's bundles are loaded too), loaded and run by `f`: its bundles
+	// are not linked against this generation's, nor are later bundles of this
+	// generation against its (a type of the same name may differ, e.g. by
+	// `#if macro`), and this generation's types are not found by name while
+	// it runs; then its entries are an earlier generation's
+	public static function apart(f:() -> Void) {
+		hostSyms();
+		var names = [];
+		for (t in hostNtypes...nextType) {
+			var e = Mem.sym("rt_types").add(t * TS);
+			var n = Mem.getPtr(e, 0);
+			names.push(n);
+			if (t != emptyAnon && !n.isNull()) Mem.setPtr(e, 0, n.add(LibC.strlen(n)));
+		}
+		var saved = {
+			xb: xb,
+			entries: entries,
+			rows: rows,
+			types: genTypes,
+			sigs: genSigs,
+			globals: genGlobals,
+			scalars: genScalars
+		};
+		xb = new Map();
+		entries = new Map();
+		rows = new Map();
+		genTypes = new Map();
+		genSigs = new Map();
+		genGlobals = new Map();
+		genScalars = new Map();
+		function back() {
+			newGeneration();
+			for (i in 0...names.length)
+				Mem.setPtr(Mem.sym("rt_types").add((hostNtypes + i) * TS), 0, names[i]);
+			xb = saved.xb;
+			entries = saved.entries;
+			rows = saved.rows;
+			genTypes = saved.types;
+			genSigs = saved.sigs;
+			genGlobals = saved.globals;
+			genScalars = saved.scalars;
+		}
+		try f() catch (e:Dynamic) {
+			back();
+			throw e;
+		}
+		back();
+	}
+
 	// the facts of a type that decide whether an entry of an earlier generation
 	// is its (a class's: with the span of its descendants' type indices)
 	static function typeKey(t:Dynamic, spans:Map<String, Int>):String {
@@ -627,11 +677,22 @@ class Loader {
 			Mem.setI32(e, 12, tyNum(t.sup));
 			var slots:String = t.slots;
 			Mem.setI32(e, 16, slots.length);
-			if (slots.length > 0) {
-				var nw = Std.int((slots.length + 63) / 64);
-				var pm = zalloc(8 * nw);
+			// (compressed references, @:hxmc.compact: the compact map after the
+			// pointer map, a bit per 4-byte half, as DataGen writes it; at most 32 slots)
+			// (word 20: its flags, a header constructor's too, hxmc.ir.Facts.typeFlags;
+			// a header constructor's compressed reference has a map without slots)
+			var halves:Null<Array<Int>> = t.halves;
+			Mem.setI32(e, 20, t.flags);
+			if (slots.length > 0 || halves != null) {
+				var nw = slots.length == 0 ? 1 : Std.int((slots.length + 63) / 64);
+				var pm = zalloc(8 * nw + (halves != null ? 8 : 0));
 				for (j in 0...slots.length)
 					if (slots.charAt(j) == "p") Mem.setI32(pm, 4 * (j >> 5), Mem.getI32(pm, 4 * (j >> 5)) | (1 << (j & 31)));
+				if (halves != null)
+					for (x in halves) {
+						var h = hxmc.ir.Facts.cmapBit(x);
+						Mem.setI32(pm, 8 + 4 * (h >> 5), Mem.getI32(pm, 8 + 4 * (h >> 5)) | (1 << (h & 31)));
+					}
 				Mem.setPtr(e, 24, pm);
 			}
 			var fs:Array<Dynamic> = (t.fields : Array<Dynamic>).copy();
@@ -642,7 +703,7 @@ class Loader {
 				for (i in 0...fs.length) {
 					Mem.setI32(p, 12 * i, fids.get(fs[i].name));
 					Mem.setI32(p, 12 * i + 4, fs[i].slot);
-					Mem.setI32(p, 12 * i + 8, (fs[i].kind : String).charCodeAt(0));
+					Mem.setI32(p, 12 * i + 8, kindWord(fs[i]));
 				}
 				Mem.setPtr(e, 40, p);
 			}
@@ -932,10 +993,28 @@ class Loader {
 		return p;
 	}
 
-	// n zeroed bytes for a bundle: in the window with the native tier, else malloc's (never freed)
+	// whether this compiler has compressed references (hxmc.rt.Gc.compactRefs:
+	// @:hxmc.compact types, its heap and image below 32 GB): the code it loads
+	// is lowered with them too (interp.MirMacros, interp.MirRun), so that both
+	// lay out and read the same objects alike and agree on the functions they
+	// share (Mem.compact, HostTable's fingerprints), and a bundle's data,
+	// which their fields may refer to (a string literal, a class value, a
+	// closure without captures), is below 32 GB too (alloc)
+	public static function compactHost():Bool
+		return Gc.compactRefs();
+
+	// the compiler's Mem.compact, the code it loads lowered with it (a tool
+	// without Mem.compact, which defines no hxmc.memcompact, tests each type
+	// at run time: hxmc.rt.GcCore.compactTypes)
+	public static function compactTypes():Int
+		return #if hxmc.memcompact Mem.compact() #else compactHost() ? 1 : 0 #end;
+
+	// n zeroed bytes for a bundle: in the window with the native tier, else
+	// malloc's (never freed); with compressed references (compactHost) pages
+	// below 32 GB past the heap when not in the window (Gc.reserveLow)
 	static function alloc(n:Int):Ptr {
 		if (n < 8) n = 8;
-		if (!low) {
+		if (!low && !compactHost()) {
 			var p = LibC.malloc((n : I64));
 			if (p.isNull()) throw "no memory for a bundle";
 			LibC.memset(p, 0, (n : I64));
@@ -943,12 +1022,14 @@ class Loader {
 		}
 		n = (n + 63) & ~63;
 		if (n > chunkLeft) {
-			var c = lowMap(n >= CHUNK ? n : CHUNK);
-			if (c.isNull()) {
-				// (the window full: malloc's, as without the tier)
+			var size = n >= CHUNK ? (n + 4095) & ~4095 : CHUNK;
+			var c = low ? lowMap(size) : Gc.reserveLow((size : I64));
+			if (c.isNull() && low) {
+				// (the window full: malloc's, as without the tier, or below 32 GB)
 				low = false;
 				return alloc(n);
 			}
+			if (c.isNull()) throw "no memory below 32 GB for a bundle (the compiler's compressed references, @:hxmc.compact)";
 			if (n >= CHUNK) return c;
 			chunk = c;
 			chunkLeft = CHUNK;
@@ -1118,6 +1199,13 @@ class Loader {
 	}
 
 	// null when the compiler's type `idx` has the bundle's layout (slots, pointer map, fields)
+	// a field entry's kind word: its kind's byte, and a packed constructor's
+	// argument position + 1 in the next (DataGen, hxmc.rt.Dyn.ctorArg)
+	static function kindWord(f:Dynamic):Int {
+		var arg:Null<Int> = f.arg;
+		return (f.kind : String).charCodeAt(0) | (arg != null ? (arg + 1) << 8 : 0);
+	}
+
 	static function sameLayout(idx:Int, t:Dynamic, fids:Map<String, Int>):Null<String> {
 		var e = Mem.sym("rt_types").add(idx * TS);
 		var slots:String = t.slots;
@@ -1127,6 +1215,17 @@ class Loader {
 			var bit = pm.isNull() ? 0 : (Mem.getI32(pm, 4 * (j >> 5)) >>> (j & 31)) & 1;
 			if ((bit == 1) != (slots.charAt(j) == "p")) return "pointer map at slot " + j;
 		}
+		// (compressed references: the compact map, hxmc.rt.Types.hasCompact)
+		var halves:Null<Array<Int>> = t.halves;
+		if (Mem.getI32(e, 20) != t.flags) return "type flags (compressed references, a header constructor) " + Mem.getI32(e, 20) + " vs " + t.flags;
+		if (halves != null) {
+			var lo = 0, hi = 0;
+			for (x in halves) {
+				var h = hxmc.ir.Facts.cmapBit(x);
+				if (h < 32) lo |= 1 << h else hi |= 1 << (h - 32);
+			}
+			if (Mem.getI32(pm, 8) != lo || Mem.getI32(pm, 12) != hi) return "compact map";
+		}
 		var fs:Array<Dynamic> = t.fields;
 		if (Mem.getI32(e, 32) != fs.length) return "fields " + Mem.getI32(e, 32) + " vs " + fs.length;
 		var hf = Mem.getPtr(e, 40);
@@ -1134,7 +1233,7 @@ class Loader {
 			var fid = fids.get(f.name), found = false;
 			for (i in 0...fs.length)
 				if (Mem.getI32(hf, 12 * i) == fid) {
-					found = Mem.getI32(hf, 12 * i + 4) == f.slot && Mem.getI32(hf, 12 * i + 8) & 255 == (f.kind : String).charCodeAt(0);
+					found = Mem.getI32(hf, 12 * i + 4) == f.slot && Mem.getI32(hf, 12 * i + 8) & 0xffff == kindWord(f);
 					break;
 				}
 			if (!found) return "field " + f.name;

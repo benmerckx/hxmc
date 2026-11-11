@@ -1,0 +1,24 @@
+exit 0
+HeaderEnums.hx:139: sizes ok
+HeaderEnums.hx:140: 30
+HeaderEnums.hx:147: true, true
+HeaderEnums.hx:149: true
+HeaderEnums.hx:151: true, 1376617
+HeaderEnums.hx:169: 0, 4286
+HeaderEnums.hx:172: 100000
+HeaderEnums.hx:174: 100000, 1001
+HeaderEnums.hx:179: [42,7,1,7,2,9,3,0,0]
+HeaderEnums.hx:186: [Full(a),Pair(b,2),Full(null)], [Full(3),Pair(4,5)]
+HeaderEnums.hx:190: [CInt(5)], [true], [null], [q]
+HeaderEnums.hx:191: 4, CString, 1
+HeaderEnums.hx:192: Call(Local(Var),[EConst(CString(s)),EConst(CBool(false)),Return(null),Paren(EConst(CInt(-2)))]), Paren(Return(EConst(CString(z))))
+HeaderEnums.hx:193: true, false, true, true, false, true
+HeaderEnums.hx:200: 7, CInt(8), CBool(true), CString(made1), true, true
+HeaderEnums.hx:203: awy4:Expry4:Call:2wR0y5:Local:1cy3:Vary2:idi1y4:namey1:fgawR0y6:EConst:1wy5:Consty7:CString:1y1:swR0R7:1wR8y5:CBool:1fwR0y6:Return:1nwR0y5:Paren:1wR0R7:1wR8y4:CInt:1i-2hwR0R13:1wR0R1:2wR0R12:1wR0y5:Block:1awR0R7:1wR8R9:1y4:s196wR0R2:1cR3R4i197R5y4:v197ghawR0R12:1wR0R15:1awR0R7:1wR8R14:1i205wR0R7:1wR8R9:1y4:s206hwR0R7:1wR8R14:1i7hh, true, true
+HeaderEnums.hx:211: 50, null, null
+HeaderEnums.hx:223: 400, null
+HeaderEnums.hx:225: EConst(CString(copied)), true
+HeaderEnums.hx:227: true, true
+HeaderEnums.hx:235: true, true
+HeaderEnums.hx:261: [true,true,true,true]
+HeaderEnums.hx:262: true, 100000

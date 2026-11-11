@@ -862,9 +862,7 @@ private class ConstructorInlining {
 		if (allCancelled) return original;
 		var result = finalMap(e);
 		var cf:TClassField = scom.curfield;
-		if (includedUntyped && !Meta.has(HasUntyped, cf.cfMeta)) cf.cfMeta = [
-			({meta: core.MetaList.StrictMeta.HasUntyped, exprs: vector(), pos: Globals.mkZeroRangePos(e.epos)} : core.Ast.MetadataEntry)
-		].concat(cf.cfMeta);
+		if (includedUntyped && !Meta.has(HasUntyped, cf.cfMeta)) cf.cfMeta = core.ds.VectorTools.cons(({meta: core.MetaList.StrictMeta.HasUntyped, exprs: vector(), pos: Globals.mkZeroRangePos(e.epos)} : core.Ast.MetadataEntry), cf.cfMeta);
 		e = makeExprForRevList(result.exprs, e.etype, e.epos);
 		// port: Globals.IntMap compares keys in reverse (compare i1 i2 = i2 - i1): iterate descending.
 		var ids = [for (id in vars.keys()) id];

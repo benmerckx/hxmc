@@ -2201,7 +2201,7 @@ class Genswf9 {
 					write(ctx, HGetProp(id));
 					var j = jump(ctx, J3True);
 					write(ctx, HFindProp(id));
-					write(ctx, HFunction(generate_method(ctx, fdata, false, [])));
+					write(ctx, HFunction(generate_method(ctx, fdata, false, vector())));
 					write(ctx, HInitProp(id));
 					j();
 				case _:
@@ -2514,7 +2514,7 @@ class Genswf9 {
 
 	static final has_protected_meta = Meta.Custom(":has_protected");
 
-	static function mark_has_protected(c:TClass):Void c.clMeta.unshift(({meta: has_protected_meta, exprs: vector(), pos: nullPos} : MetadataEntry));
+	static function mark_has_protected(c:TClass):Void c.clMeta = core.ds.VectorTools.cons(({meta: has_protected_meta, exprs: vector(), pos: nullPos} : MetadataEntry), c.clMeta);
 
 	static function find_first_nonextern_accessor_implementor(cl:TClass, name:String):TClass {
 		function loop(cl:TClass, cl_found:TClass):TClass {
@@ -2751,7 +2751,7 @@ class Genswf9 {
 									hlf_name: ident(getter_name),
 									hlf_slot: 0,
 									hlf_kind: HFMethod({
-										hlm_type: generate_method(ctx, getter_func, false, []),
+										hlm_type: generate_method(ctx, getter_func, false, vector()),
 										hlm_final: false,
 										hlm_override: false,
 										hlm_kind: MK3Normal,
@@ -2779,7 +2779,7 @@ class Genswf9 {
 									hlf_name: ident(setter_name),
 									hlf_slot: 0,
 									hlf_kind: HFMethod({
-										hlm_type: generate_method(ctx, setter_func, false, []),
+										hlm_type: generate_method(ctx, setter_func, false, vector()),
 										hlm_final: false,
 										hlm_override: false,
 										hlm_kind: MK3Normal,
@@ -2839,8 +2839,8 @@ class Genswf9 {
 				var f2 = (if (stat) c.clStatics else c.clFields).get(f.cfName);
 				if (f2 != null && !hasClassFieldFlag(f2, CfOverride)) return f2.cfMeta;
 				return switch c.clSuper {
-					case null: [];
-					case _ if (stat): [];
+					case null: vector();
+					case _ if (stat): vector();
 					case {cls: c}: find_meta(c);
 				}
 			}
@@ -2893,7 +2893,7 @@ class Genswf9 {
 									var getter_cf = r.field;
 									var func = mk_instance_getter_func(c, tl, actual_cl, actual_tl, getter_cf, f);
 									// port: right-to-left record field evaluation: the method before the slot.
-									var m = generate_method(ctx, func, false, []);
+									var m = generate_method(ctx, func, false, vector());
 									acc.unshift({
 										hlf_name: ident(f.cfName),
 										hlf_slot: alloc_slot(),
@@ -2920,7 +2920,7 @@ class Genswf9 {
 									var setter_cf = r.field;
 									var func = mk_instance_setter_func(ctx.com, c, tl, actual_cl, actual_tl, setter_cf, f);
 									// port: right-to-left record field evaluation: the method before the slot.
-									var m = generate_method(ctx, func, false, []);
+									var m = generate_method(ctx, func, false, vector());
 									acc.unshift({
 										hlf_name: ident(f.cfName),
 										hlf_slot: alloc_slot(),
