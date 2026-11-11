@@ -734,7 +734,8 @@ class Driver {
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
 		// (the functions and their lines for the runtime's stacks: StackTable)
 		Dwarf.enabled = o.debugLines;
-		data.defineAbs(StackTable.FLAGS, (prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0) | (jni > 0 ? StackTable.JNI : 0));
+		data.defineAbs(StackTable.FLAGS, (prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0) | (jni > 0 ? StackTable.JNI : 0)
+			| (o.llvm != null && abi.os == "windows" && !abi.arm ? StackTable.WIN64_LLVM : 0));
 		// (LLVM, deferred: compiled now, the program-wide numbers known: -D hxmc.llvm-consts)
 		if (llvmPending.length > 0) {
 			var abs:Null<Map<String, Int>> = null;

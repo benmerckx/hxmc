@@ -764,6 +764,61 @@ class LlvmGen {
 		linePrograms(b, dlOff, dlOff + dlSize, fns, p -> addrs.exists(p) ? addrs.get(p) : -1);
 	}
 
+	// the same of a COFF object (x86_64-pc-windows-gnu: DWARF): DW_LNE_set_address's
+	// operand holds the addend, its address a relocation (IMAGE_REL_AMD64_ADDR64,
+	// ARM64's 14: a symbol, as the function's or its section's); each text section
+	// placed after the one before, as elfLineTable
+	function coffLineTable(b:Bytes, obj:Obj) {
+		var nsec = b.getUInt16(2), symOff = b.getInt32(8), nsym = b.getInt32(12), optSize = b.getUInt16(16);
+		var strOff = symOff + 18 * nsym;
+		function cstr(at:Int):String {
+			var e = at;
+			while (b.get(e) != 0)
+				e++;
+			return b.getString(at, e - at);
+		}
+		function name8(at:Int):String {
+			var e = 0;
+			while (e < 8 && b.get(at + e) != 0)
+				e++;
+			var s = b.getString(at, e);
+			return s.charAt(0) == "/" ? cstr(strOff + Std.parseInt(s.substr(1))) : s;
+		}
+		// the text sections' places (by COFF section number, from 1: the loaded
+		// ones are CoffReader's text sections in the same order)
+		var texts = [for (s in obj.sections) if (s.kind == Text) s];
+		var base = new Map<Int, Int>(), placed = new haxe.ds.ObjectMap<Obj.Section, Int>();
+		var at = 0, t = 0, dl = -1;
+		for (i in 0...nsec) {
+			var h = 20 + optSize + 40 * i;
+			var chars = b.getInt32(h + 36);
+			if (name8(h) == ".debug_line") dl = h;
+			if ((chars & 0x20000020) != 0 && (chars & 0xA00) == 0 && t < texts.length) {
+				base.set(i + 1, at);
+				placed.set(texts[t], at);
+				at += (texts[t++].buf.len + 15) & ~15;
+			}
+		}
+		if (dl < 0) return;
+		var fns = [];
+		for (s in obj.symbols)
+			if (s.section != null && s.section.kind == Text && defined.exists(s.name) && placed.exists(s.section))
+				fns.push({at: placed.get(s.section) + s.offset, size: s.size, name: s.name});
+		var dlOff = b.getInt32(dl + 20), dlSize = b.getInt32(dl + 16);
+		var relOff = b.getInt32(dl + 24), nrel = b.getUInt16(dl + 32);
+		var addrs = new Map<Int, Int>();
+		for (r in 0...nrel) {
+			var e = relOff + 10 * r;
+			var type = b.getUInt16(e + 8);
+			if (type != 1 && type != 14) continue;
+			var y = symOff + 18 * b.getInt32(e + 4);
+			var bs = base.get(b.getUInt16(y + 12));
+			var opnd = dlOff + b.getInt32(e);
+			if (bs != null) addrs.set(opnd, bs + b.getInt32(y + 8) + b.getInt32(opnd));
+		}
+		linePrograms(b, dlOff, dlOff + dlSize, fns, p -> addrs.exists(p) ? addrs.get(p) : -1);
+	}
+
 	// the line programs of a DWARF 4 line table (bytes [p, end) of b) as rows of
 	// the functions fns (their addresses as setAddr's: the address of the operand
 	// of DW_LNE_set_address at an offset in b)
@@ -929,7 +984,15 @@ class LlvmGen {
 				ehFrame(bytes, mo);
 				if (lines) lineTable(bytes, mo);
 				mo;
-			case "windows": CoffReader.read(bytes).obj;
+			case "windows":
+				// (the members of COMDAT sections, a definition each module makes, as
+				// the .refptr.<name> words of the external globals: weak, as ElfReader's)
+				var r = CoffReader.read(bytes);
+				for (s in r.obj.symbols)
+					if (s.global && s.section != null && r.reader.comdat.exists(s.section)) s.weak = true;
+				sizeFunctions(r.obj);
+				if (lines) coffLineTable(bytes, r.obj);
+				r.obj;
 			case _:
 				var eo = ElfReader.read(bytes);
 				if (lines) elfLineTable(bytes, eo);
@@ -1611,6 +1674,18 @@ private class FnWriter {
 	function call(bl:MBlock, i:MIns, d:String) {
 		if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL)) {
 			special(bl, i, d, i.sym.substr(MirBuild.SPECIAL.length));
+			return;
+		}
+		if (i.sym == MirBuild.STUB_FRAME && g.abi.os == "windows" && !g.abi.arm) {
+			// (Mem.frame: the function's frame record, the saved rbp then the
+			// return address, as the native code's rbp is; LLVM's Win64 prologue
+			// pushes rbp first but sets it below the other pushes and the frame:
+			// the record is the word below the return address's, hxmc.rt.Stacks.callerOf)
+			intrinsic("declare ptr @llvm.addressofreturnaddress.p0()");
+			var a = t(), x = t();
+			line('$a = call ptr @llvm.addressofreturnaddress.p0()');
+			line('$x = ptrtoint ptr $a to i64');
+			line('$d = sub i64 $x, 8');
 			return;
 		}
 		var n = i.args.length;

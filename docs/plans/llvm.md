@@ -134,6 +134,24 @@ the same tools: cpu 0.47, 0.44, 0.43, 0.40 s.
   unwind information (`uwtable`): a compact unwind frame encoding
   (Unwind.LLVMFRAME) or the CFI of the object's `__eh_frame` rescaled to
   hxmc's CIE (Unwind.LLVMCFI); else Unwind.NONE, left out of the tables.
+- Windows (`x86_64-pc-windows-gnu`, COFF with DWARF lines): the functions
+  sized from the symbols' layout, their rows from the object's
+  `.debug_line` (LlvmGen.coffLineTable); their unwind information is
+  clang's own `.pdata`/`.xdata`, linked as the runtime object's. The
+  `.refptr.<name>` words of external globals, a COMDAT section in each
+  object, are weak (the first definition wins).
+- Win64 frames: LLVM's prologue pushes rbp first, then the other
+  registers and the frame, and only then sets rbp (`lea rbp, [rsp+N]`,
+  `.seh_setframe`), so rbp is not the frame record and the saved-rbp chain
+  is not one; no option of LLVM's changes that. `Mem.frame()` in LLVM's
+  code is its record (`llvm.addressofreturnaddress` - 8), and the walk of
+  a stack (hxmc.rt.Stacks.callerOf) adds to a saved rbp the caller's
+  distance from its rbp to its record, from the caller's UNWIND_INFO
+  (RtlLookupFunctionEntry: 0 for the native code's push rbp; mov rbp, rsp),
+  cached by return address; only in a program with LLVM's functions
+  (StackTable.WIN64_LLVM in `hxmc_stack_flags`). A profiler following rbp
+  does not see a chain through them; the system's unwinders, which use
+  `.pdata`, do.
 - A program that reads its stacks (`Program.stacks`) keeps the native
   code's frames: `noinline` and `disable-tail-calls` (LLVM inlines nothing
   more than hxmc did), unless `-D hxmc.llvm-inline`. `-trap-unreachable`
@@ -180,6 +198,13 @@ byte-identical self-compile, faster, cold (median of 5):
 Release mode changes the small benchmarks little (binarytrees 1.24x to
 1.29x, the others within noise).
 
+Windows x86-64 (clang 23.1.5, LLVM's release for Windows, 2026-11-10): the
+corpus with the runtime through LLVM 325/325 (53 excluded), as natively.
+The corpus there runs one case at a time (`-j 1`: Harness.execWindows
+sets the working directory and the environment for the whole process).
+The compiler through LLVM there (all 15944 functions, the runtime's too)
+writes a self-compile byte-identical to the native tool's.
+
 ## Next
 
 For the program's speed, in order:
@@ -216,4 +241,5 @@ For the program's speed, in order:
   reads) instead of the explicit tests.
 - Larger: the shadow stack's stores and reloads (LLVM's statepoints and
   stack maps), profile-guided optimization.
-- The other targets: Linux and Windows objects are written but untested.
+- Windows arm64: untested (no machine); its frame records are x29's, as
+  the native code's, so Stacks.callerOf leaves them alone.

@@ -34,6 +34,8 @@ class Stacks {
 	// neither walks no stack when it throws.
 	public static inline var EXCEPTION_STACKS = 1;
 	public static inline var STACKS = 2;
+	// functions compiled by LLVM on windows-x86_64 (StackTable.WIN64_LLVM: callerOf)
+	public static inline var WIN64_LLVM = 8;
 
 	@:hxmc.unsafe public static inline function flags():Int
 		return Mem.sym("hxmc_stack_flags").toI64().toInt();
@@ -131,6 +133,91 @@ class Stacks {
 		return true;
 	}
 
+	// the frame record of the caller of record f's function (ret: f's return
+	// address, into the caller): the rbp f's function saved, the caller's
+	// record where the caller keeps it there (the native code: push rbp, mov
+	// rbp, rsp). LLVM's Win64 prologue (windows-x86_64, -D hxmc.llvm) pushes
+	// rbp first too, but sets it below the other pushes and the frame, so its
+	// record is a constant of the function above its rbp: win64Delta, from the
+	// function's unwind information (0 for the native code's)
+	@:hxmc.unsafe static inline function callerOf(f:Ptr, ret:Ptr):Ptr {
+		var up = Mem.getPtr(f, 0);
+		return Mem.target() == 4 && (flags() & WIN64_LLVM) != 0 && !up.isNull() ? up.add(win64Delta(ret)) : up;
+	}
+
+	// the deltas by return address, one word each (the address shifted left 16
+	// bits, the delta below: a thread reads an entry whole), as `cache`
+	static var deltas:Ptr;
+
+	@:hxmc.unsafe static function win64Delta(ret:Ptr):Int {
+		if (deltas.isNull()) {
+			var c = LibC.malloc(8 * CACHE);
+			LibC.memset(c, 0, 8 * CACHE);
+			deltas = c;
+		}
+		var h = ((ret.toI64() >> 2).toInt() ^ (ret.toI64() >> 15).toInt()) & (CACHE - 1);
+		var e = Mem.getI64(deltas, 8 * h);
+		if ((e >>> 16) == ret.toI64()) return (e & 0xffff).toInt();
+		var d = unwindDelta(ret.add(-1));
+		if (d >= 0 && d < 0x10000) Mem.setI64(deltas, 8 * h, (ret.toI64() << 16) | d);
+		return d;
+	}
+
+	// UNWIND_INFO of the function at pc (RtlLookupFunctionEntry; chained
+	// information: its function's, whose prologue it is): its codes, the
+	// prologue's operations from the last, give each one's depth below the
+	// entry's stack pointer; the delta is from rbp (FrameOffset * 16 above the
+	// stack pointer where UWOP_SET_FPREG sets it) to the pushed rbp. 0 where
+	// rbp is no frame pointer or not pushed
+	@:hxmc.unsafe static function unwindDelta(pc:Ptr):Int {
+		var imageBase = Mem.stack(8);
+		var rf = W.RtlLookupFunctionEntry(pc, imageBase, Ptr.nil());
+		if (rf.isNull()) return 0;
+		var b = Mem.getPtr(imageBase, 0);
+		var ui = b.add(Mem.getI32(rf, 8));
+		var guard = 0;
+		while ((Mem.getU8(ui, 0) >> 3) & 4 != 0 && guard++ < 8) // (UNW_FLAG_CHAININFO)
+			ui = b.add(Mem.getI32(ui, 4 + 2 * ((Mem.getU8(ui, 2) + 1) & ~1) + 8));
+		var n = Mem.getU8(ui, 2), fr = Mem.getU8(ui, 3);
+		if (fr & 15 != 5) return 0;
+		// (the slots of each code, its change of the depth: two passes, the total first)
+		var total = 0, before = 0, rbpAt = -1, fpAt = -1;
+		for (pass in 0...2) {
+			var k = 0;
+			while (k < n) {
+				var c = Mem.getU8(ui, 4 + 2 * k + 1);
+				var op = c & 15, info = c >> 4;
+				var slots = 1, change = 0;
+				switch op {
+					case 0: change = 8; // UWOP_PUSH_NONVOL
+					case 1: // UWOP_ALLOC_LARGE
+						if (info == 0) {
+							slots = 2;
+							change = Mem.getU16(ui, 4 + 2 * k + 2) * 8;
+						} else {
+							slots = 3;
+							change = Mem.getI32(ui, 4 + 2 * k + 2);
+						}
+					case 2: change = info * 8 + 8; // UWOP_ALLOC_SMALL
+					case 3: // UWOP_SET_FPREG
+					case 4 | 8: slots = 2; // UWOP_SAVE_NONVOL, UWOP_SAVE_XMM128
+					case 5 | 9: slots = 3; // (their _FAR forms)
+					case 6: // UWOP_EPILOG (version 2: not the prologue's)
+					case _: return 0; // (a machine frame, unknown codes)
+				}
+				if (pass == 1) {
+					var after = total - before;
+					if (op == 0 && info == 5) rbpAt = after;
+					if (op == 3) fpAt = after;
+				} else total += change;
+				if (pass == 1) before += change;
+				k += slots;
+			}
+		}
+		if (rbpAt < 0 || fpAt < 0) return 0;
+		return fpAt - rbpAt - 16 * (fr >> 4);
+	}
+
 	// the return addresses from frame record f up, at most max, into out,
 	// below `limit` (an address in a frame: the frames of the functions it
 	// calls are below it, the stack growing down; null: none); how many.
@@ -142,7 +229,7 @@ class Stacks {
 		var interp = !ic.isNull();
 		while (n < max && !f.isNull() && (f.toI64() & 7) == 0 && (limit.isNull() || f.ult(limit))) {
 			var ret = Mem.getPtr(f, 8);
-			var up = Mem.getPtr(f, 0);
+			var up = callerOf(f, ret);
 			if (limit.isNull()) {
 				// (the caller is a function of the table: its frame record is one)
 				if (!known(ret)) break;
@@ -427,7 +514,7 @@ class Stacks {
 		// (the catching function's record on the stack of this call: its frame is live)
 		var f = Mem.frame();
 		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(Mem.getPtr(f, 8)))
-			f = Mem.getPtr(f, 0);
+			f = callerOf(f, Mem.getPtr(f, 8));
 		if (f != top) return n;
 		return n + walkFrom(top, buf.add(8 * n), MAX - n, Ptr.nil(), thrownTopKind, thrownTopFrames);
 	}
@@ -601,4 +688,8 @@ class Stacks {
 		Os.write(c, LibC.strlen(c).toInt());
 		LibC.free(c);
 	}
+}
+
+@:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class W {
+	static function RtlLookupFunctionEntry(pc:Ptr, imageBase:Ptr, history:Ptr):Ptr;
 }
