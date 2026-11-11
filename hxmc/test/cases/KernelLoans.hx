@@ -34,5 +34,11 @@ class KernelLoans {
 		var h = new Map<String, Int>();
 		h.set("k" + 1, 7);
 		trace(h.get("k1"), Reflect.compare("a€", "a"));
+		var b = new StringBuf();
+		b.add("añ€");
+		var n = b.length;
+		b.clear();
+		b.add("x");
+		trace(n, b.length, b.toString());
 	}
 }
