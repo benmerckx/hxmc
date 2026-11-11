@@ -25,7 +25,8 @@ using core.TFunctions;
 //     no allocation (string literals are static data);
 //   - no raw memory: no value of hxmc.unsafe's types but its C scalars
 //     (Ptr, IoBuffer, Arena, CString, Slice, ...) nor of an abstract over
-//     one, no call of Mem, Atomic, Callback or a C function;
+//     one, no call of Mem (but its pure functions: unsigned comparisons
+//     and divisions, bit casts), Atomic, Callback or a C function;
 //   - no unchecked cast but between scalars;
 //   - no write of a static (reading one is fine);
 //   - no closure, no call but of static @:hxmc.kernel functions, Math's
@@ -269,7 +270,11 @@ class KernelCheck {
 		}
 	}
 
-	// the extern functions a safe kernel may call: Math's, Std.int, Struct's layout constants
+	// Mem's functions of values alone: unsigned comparisons and divisions, bit casts
+	static final PURE_MEM = ["ult", "spanUlt", "udiv", "urem", "f64Bits", "bitsF64", "f32Bits", "bitsF32"];
+
+	// the extern functions a safe kernel may call: Math's, Std.int, Struct's
+	// layout constants, Mem's pure ones
 	static function allowedExtern(c:TClass, cf:TClassField):Bool {
 		switch c.clKind {
 			// (a span's accessors; making one from a Ptr needs @:hxmc.unsafe)
@@ -279,6 +284,7 @@ class KernelCheck {
 		var path = core.Globals.sTypePath(c.clPath);
 		// (hxmc.simd's intrinsics: values; their raw memory accesses need hxmc.unsafe)
 		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct"
+			|| path == "hxmc.unsafe.Mem" && PURE_MEM.indexOf(cf.cfName) >= 0
 			|| path == "hxmc.simd.Simd" && cf.cfName != "load" && cf.cfName != "store";
 	}
 

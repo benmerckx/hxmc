@@ -2382,6 +2382,8 @@ class MirBuild extends MirWriter {
 			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));
 			case "bitsF64": op1(BitsToF, F64, ex(args[0]));
+			case "f32Bits": special("f64_to_f32", vector(ex(args[0])), I32);
+			case "bitsF32": special("f32_to_f64", vector(ex(args[0])), F64);
 			case "tagInt": tagFrom(TI32, ex(args[0]));
 			case "tagFloat": tagFrom(TF64, ex(args[0]));
 			case "tagBool": tagFrom(TBool, ex(args[0]));

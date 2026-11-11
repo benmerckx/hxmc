@@ -180,7 +180,7 @@ position):
 | | Allowed | Rejected |
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
-| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants | `Mem`, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`) | `Mem`'s other functions, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast, and one to a proof (below) |
 | statics | reads | writes, also of a struct static's fields |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
@@ -243,7 +243,7 @@ Kernel.hx:14: Kernel.sum: a write of the static total (kernel: statics are read-
 
 `@:hxmc.kernel` plus `@:hxmc.unsafe` keeps the freedom of raw memory, as
 above: the escape hatch for trusted code. `KernelFunctions` (unsafe) and
-`KernelSafe` check both paths, `KernelProofs` proofs, `reject/Kernel*` the rules. The design:
+`KernelSafe` check both paths, `KernelProofs` proofs, `KernelBits` Mem's functions of values, `reject/Kernel*` the rules. The design:
 [plans/io.md](plans/io.md#kernels).
 
 ### Spans

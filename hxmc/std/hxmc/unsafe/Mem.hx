@@ -72,6 +72,9 @@ extern class Mem {
 	// the bits of a double, and the double of bits (a register move)
 	static function f64Bits(v:Float):I64;
 	static function bitsF64(b:I64):Float;
+	// a Float rounded to float32 (to nearest even): its bits; float32 bits as a Float (exactly)
+	static function f32Bits(v:Float):Int;
+	static function bitsF32(b:Int):Float;
 	// the tagged word of a value of a type parameter (hxmc.rt.Tagged; docs/hxmc.md,
 	// "Values of type parameters"), as MemLower encodes and decodes it inline:
 	// an Int or Float (pure), a Bool (its static box); back to an Int, Float or
