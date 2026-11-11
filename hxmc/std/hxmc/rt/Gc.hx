@@ -3092,13 +3092,19 @@ class Gc {
 		Mem.setI64(s, 16, 0);
 	}
 
-	@:hxmc.unsafe static function psetSlot(keys:Ptr, cap:I64, p:Ptr):Int {
-		var h = (p.toI64() >>> 3) * (((0x9E3779B9 : I64) << 32) | ((0x7F4A7C15 : I64) & 0xFFFFFFFF));
-		var i = (h & (cap - 1)).toInt();
+	// (the keys lent as a span of cap words, a power of two: the index masked)
+	@:hxmc.unsafe static inline function psetSlot(keys:Ptr, cap:I64, p:Ptr):Int
+		return psetProbe(hxmc.ReadOnlySpan.unsafeOf((cast keys : Ptr<I64>), cap.toInt()), p.toI64());
+
+	@:hxmc.kernel static function psetProbe(keys:hxmc.ReadOnlySpan<I64>, p:I64):Int {
+		var m = keys.length - 1;
+		if (m < 0 || keys.length & m != 0) return 0;
+		var h = (p >>> 3) * (((0x9E3779B9 : I64) << 32) | ((0x7F4A7C15 : I64) & 0xFFFFFFFF));
+		var i = h.toInt() & m;
 		while (true) {
-			var k = Mem.getPtr(keys, 8 * i);
-			if (k.isNull() || k == p) return i;
-			i = ((i + 1 : I64) & (cap - 1)).toInt();
+			var k = keys[i];
+			if (k == (0 : I64) || k == p) return i;
+			i = (i + 1) & m;
 		}
 	}
 
