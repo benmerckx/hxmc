@@ -158,6 +158,14 @@ abstract Span<T>(SpanData) {
 		end(r, where);
 	}
 
+	// (a typed C call given a handle of its invalid value: FnLower.typedCall)
+	@:hxmc.unsafe @:hxmc.kernel public static function invalidHandle(v:Int, where:Ptr):Void {
+		var r = report("hxmc: invalid handle ");
+		r.int(v, 0);
+		r.str(" passed to C");
+		end(r, where);
+	}
+
 	@:hxmc.unsafe @:hxmc.kernel public static function badRange(pos:Int, len:Int, n:Int, where:Ptr):Void {
 		var r = report("hxmc: span range ");
 		r.int(pos, 0);

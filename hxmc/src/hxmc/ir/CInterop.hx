@@ -35,6 +35,23 @@ typedef CLayout = {size:Int, align:Int, fields:Array<CField>};
 // the C signature of an extern: the argument and result types
 typedef CSig = {args:Array<CTy>, ret:CTy};
 
+// how a call passes one Haxe parameter of a C function (docs/interop.md,
+// "Typed bindings"): as its C type, a span as its address and its length,
+// a span as its address alone (its length another parameter's, or a
+// minimum), a handle (checked against its invalid value), a callback's address
+enum CArg {
+	AValue;
+	ASpan;
+	ASpanPtr(count:Int, min:Int);
+	AHandle(invalid:Null<Int>, close:Bool);
+	ACallback;
+}
+
+// a C function's parameters as its calls pass them; ret: the length of a
+// span result (@:hxmc.len(n)), else -1; typed: whether any parameter or
+// the result is passed otherwise than as its C type
+typedef CPlan = {args:Array<CArg>, ret:Int, typed:Bool};
+
 class CInterop {
 	// C functions by symbol: their signature (one per symbol: every
 	// declaration must agree, but for the variadic arguments of a
@@ -234,6 +251,8 @@ class CInterop {
 					case "hxmc.unsafe.Float32": CF32;
 					case "hxmc.unsafe.UInt64" | "hxmc.I64": CI64;
 					case "hxmc.unsafe.Ptr" | "hxmc.unsafe.CString" | "hxmc.unsafe.Arena": CPtr;
+					// (a size_t: pointer-sized, as wide as a CPtr on every target)
+					case "hxmc.unsafe.USize": CPtr;
 					case "Int" | "UInt": CI32;
 					case "Bool": CBool;
 					case "Float": CF64;
@@ -452,14 +471,29 @@ class CInterop {
 		// it: the runtime's own C functions); a call in a safe region may not
 		function gc(ct:CTy):CTy
 			return ct == CNone && fast ? CPtr : ct;
+		var p = plan(c, cf, s, shown, where);
 		var args = [];
 		for (i in 0...s.args.length) {
+			switch p.args[i] {
+				case ASpan:
+					// (the address, then the length: a size_t, pointer-sized)
+					args.push(CPtr);
+					args.push(CPtr);
+					continue;
+				case ASpanPtr(_) | ACallback:
+					args.push(CPtr);
+					continue;
+				case AHandle(_):
+					args.push(handleType(s.args[i].type));
+					continue;
+				case AValue:
+			}
 			var ct = gc(ctype(s.args[i].type));
 			if (!isScalar(ct) && !ct.match(CStruct(_)))
 				throw new LowerError('C function $shown: parameter ${s.args[i].name} has no C type a call can pass (${describe(ct)}; scalars, Ptr, CString and structs)', where);
 			args.push(ct);
 		}
-		var ret = gc(ctype(s.ret));
+		var ret = p.ret >= 0 ? CPtr : handleOf(s.ret) != null ? handleType(s.ret) : gc(ctype(s.ret));
 		if (ret != CVoid && !isScalar(ret) && !ret.match(CStruct(_)))
 			throw new LowerError('C function $shown: the result has no C type a call can return (${describe(ret)}; scalars, Ptr, CString, a struct or Void)', where);
 		var sig = {args: args, ret: ret};
@@ -505,7 +539,171 @@ class CInterop {
 		// (the program's, not the runtime's: outside the package hxmc, or of a
 		// library, as packages/os and packages/gfx declare theirs)
 		if (lib != null || c.clPath.pack.length == 0 || c.clPath.pack[0] != "hxmc") USER.set(sym, true);
+		if (HeaderCheck.on) HeaderCheck.declare(sym, c, cf, s, sig, p);
 		return sig;
+	}
+
+	// ---- typed bindings (docs/interop.md, "Typed bindings")
+
+	// @:hxmc.safe on the field or its class: the declaration vouches that the
+	// function is memory-safe given its typed parameters (no raw memory among
+	// them), so safe kernels call it
+	public static function isSafe(c:TClass, cf:TClassField):Bool
+		return Lower.hasMeta(":hxmc.safe", cf.cfMeta) || Lower.hasMeta(":hxmc.safe", c.clMeta);
+
+	// a @:hxmc.handle abstract t is (or an abstract over one): a value only
+	// C functions' results and @:hxmc.unsafe code make; invalid: its
+	// @:hxmc.handle(v) value, which calls taking one refuse
+	public static function handleOf(t:T):Null<{a:TAbstract, invalid:Null<Int>}> {
+		for (_ in 0...16)
+			switch TFunctions.follow(t) {
+				case TAbstract(a, pl):
+					var m = a.aMeta.length > 0 ? core.Meta.getOpt(Custom(":hxmc.handle"), a.aMeta) : null;
+					if (m != null) return {a: a, invalid: m.exprs.length == 1 ? intOf(m.exprs[0]) : null};
+					if (core.Meta.has(CoreType, a.aMeta)) return null;
+					t = TFunctions.applyParams(a.aParams, pl, a.aThis);
+				case _:
+					return null;
+			}
+		return null;
+	}
+
+	// a handle's C type: what it stands on, one abstract at a time (a Ptr
+	// is a pointer, which ctype would see through as the I64 it stands on)
+	// whether t is hxmc.unsafe.USize, C's size_t (HeaderCheck: an integer, not a pointer)
+	public static function isSize(t:T):Bool
+		return switch TFunctions.follow(t) {
+			case TAbstract(a, _): path(a) == "hxmc.unsafe.USize";
+			case _: false;
+		}
+
+	public static function handleType(t:T):CTy {
+		for (_ in 0...16)
+			switch TFunctions.follow(t) {
+				case TAbstract(a, pl) if (path(a) == "hxmc.unsafe.Ptr"):
+					return CPtr;
+				case TAbstract(a, pl) if (!core.Meta.has(CoreType, a.aMeta)):
+					t = TFunctions.applyParams(a.aParams, pl, a.aThis);
+				case _:
+					return ctype(t);
+			}
+		return ctype(t);
+	}
+
+	static function intOf(e:core.Ast.Expr):Null<Int>
+		return switch e.expr {
+			case EConst(core.Ast.Constant.Int(v, _)): Std.parseInt(v);
+			case EUnop(Neg, Prefix, x):
+				var v = intOf(x);
+				v == null ? null : -v;
+			case EParenthesis(x): intOf(x);
+			case _: null;
+		}
+
+	static function identOf(e:core.Ast.Expr):Null<String>
+		return switch e.expr {
+			case EConst(core.Ast.Constant.Ident(n)): n;
+			case _: null;
+		}
+
+	// the parameters of C function cf as its calls pass them: spans (their
+	// @:hxmc.len), handles (@:hxmc.close), callbacks; for a @:hxmc.safe one,
+	// the check that no raw memory crosses it
+	public static function plan(c:TClass, cf:TClassField, s:TSignature, shown:String, where:String):CPlan {
+		var args = [for (a in s.args) AValue], ret = -1, typed = false;
+		function index(name:String):Int {
+			for (i in 0...s.args.length)
+				if (s.args[i].name == name) return i;
+			return -1;
+		}
+		for (m in cf.cfMeta) {
+			if (core.Meta.metaEq(Custom(":hxmc.len"), m.meta)) {
+				// @:hxmc.len(n): the result is a span of n elements
+				if (m.exprs.length == 1) {
+					var n = intOf(m.exprs[0]);
+					if (n == null || n < 0 || KernelCheck.spanOf(s.ret) == null)
+						throw new LowerError('C function $shown: @:hxmc.len(n) gives the length of a span result: a constant', where);
+					ret = n;
+					continue;
+				}
+				// @:hxmc.len(buf, n): the span buf passes its address alone, its
+				// length the parameter n (checked: at most buf's), or at least
+				// the constant n
+				var name = m.exprs.length == 2 ? identOf(m.exprs[0]) : null;
+				var k = name == null ? -1 : index(name);
+				if (k < 0 || KernelCheck.spanOf(s.args[k].type) == null)
+					throw new LowerError('C function $shown: @:hxmc.len(buf, n) names a span parameter, then a parameter or a constant', where);
+				var min = intOf(m.exprs[1]);
+				var count = min == null ? index(identOf(m.exprs[1])) : -1;
+				if (min == null && (count < 0 || count == k || !isCount(s.args[count].type)))
+					throw new LowerError('C function $shown: @:hxmc.len(${name}, n): n is an integer parameter or a constant', where);
+				args[k] = ASpanPtr(count, min == null ? 0 : min);
+			}
+		}
+		var closes = [];
+		for (m in cf.cfMeta)
+			if (core.Meta.metaEq(Custom(":hxmc.close"), m.meta))
+				for (e in m.exprs) {
+					var k = identOf(e) == null ? -1 : index(identOf(e));
+					var h = k < 0 ? null : handleOf(s.args[k].type);
+					if (h == null || h.invalid == null)
+						throw new LowerError('C function $shown: @:hxmc.close names a parameter of a handle type with an invalid value (@:hxmc.handle(-1))', where);
+					closes.push(k);
+				}
+		for (i in 0...s.args.length) {
+			var t = s.args[i].type;
+			if (KernelCheck.spanOf(t) != null) {
+				if (args[i].match(AValue)) args[i] = ASpan;
+				typed = true;
+				continue;
+			}
+			var h = handleOf(t);
+			if (h != null) {
+				args[i] = AHandle(h.invalid, closes.indexOf(i) >= 0);
+				if (h.invalid != null) typed = true;
+				continue;
+			}
+			if (TFunctions.follow(t).match(TFun(_))) {
+				args[i] = ACallback;
+				typed = true;
+			}
+		}
+		if (ret >= 0) typed = true;
+		if (KernelCheck.spanOf(s.ret) != null && ret < 0)
+			throw new LowerError('C function $shown: a span result needs its length (@:hxmc.len(n))', where);
+		if (isSafe(c, cf)) {
+			if (Lower.hasMeta(":hxmc.indirect", cf.cfMeta)) throw new LowerError('C function $shown: @:hxmc.safe and @:hxmc.indirect (a raw address)', where);
+			for (i in 0...s.args.length)
+				if (args[i].match(AValue) && !safeValue(s.args[i].type))
+					throw new LowerError('C function $shown is @:hxmc.safe but its parameter ${s.args[i].name} is raw memory or a GC value (${core.TPrinting.Printer.sType(s.args[i].type)}: spans, handles, scalars and structs of them)', where);
+			if (ret < 0 && ctype(s.ret) != CVoid && !safeValue(s.ret))
+				throw new LowerError('C function $shown is @:hxmc.safe but its result is raw memory or a GC value (${core.TPrinting.Printer.sType(s.ret)})', where);
+		}
+		return {args: args, ret: ret, typed: typed};
+	}
+
+	static function isInteger(ct:CTy):Bool
+		return ct.match(CI8 | CU8 | CI16 | CU16 | CI32 | CI64);
+
+	static function isCount(t:T):Bool
+		return isSize(t) || isInteger(ctype(t));
+
+	// what a @:hxmc.safe function passes as its C type: a scalar that is no
+	// raw memory, a handle, a struct of such fields
+	static function safeValue(t:T, depth = 0):Bool {
+		if (depth > 8) return false;
+		if (handleOf(t) != null) return true;
+		if (KernelCheck.isRaw(t)) return false;
+		return switch ctype(t) {
+			case CStruct(sc):
+				var ok = true;
+				for (f in sc.clOrderedFields)
+					if (f.cfKind.match(Var(_)) && !safeValue(f.cfType, depth + 1)) ok = false;
+				ok;
+			case CPtr: isSize(t);
+			case CNone | CVoid | COpaque(_): false;
+			case _: true;
+		}
 	}
 
 	// a C variable: a static var of an extern class that @:hxmc.c names (on
@@ -574,6 +772,14 @@ class CInterop {
 		var fixed = va + (StringTools.startsWith(sym, INDIRECT) ? 1 : 0);
 		return scalarTail(sig, fixed) ? fixed : sig.args.length;
 	}
+
+	// a C type as errors and the header check name it (a struct by its name)
+	public static function abiName(t:CTy):String
+		return switch t {
+			case CStruct(c) | COpaque(c): c.clPath.name;
+			case CNone: "gc";
+			case _: name(t);
+		}
 
 	static function abiKey(t:CTy):String
 		return switch t {

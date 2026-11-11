@@ -3633,6 +3633,15 @@ class FnLower {
 				}
 			case _:
 		}
+		if (c.clPath.name == "Handle" && c.clPath.pack.join(".") == "hxmc" && cf.cfName == "valid") {
+			// (a handle against its invalid value: CInterop.handleOf)
+			var h = CInterop.handleOf(cargs[0].etype);
+			if (h == null) cfail("Handle.valid: the argument is no @:hxmc.handle", e);
+			var x = value(cargs[0]), t = tyOf(cargs[0]);
+			if (h.invalid == null) return coerce(EInt(1), TBool, tyOf(e));
+			var ne = t == TI64 ? EBin(LNe, x, EConv(I2L, EInt(h.invalid))) : EBin(Ne, coerce(x, t, TI32), EInt(h.invalid));
+			return coerce(temp(TBool, ne), TBool, tyOf(e));
+		}
 		if (c.clPath.name == "Callback" && c.clPath.pack.join(".") == "hxmc.unsafe" && cf.cfName == "addr") {
 			switch strip(cargs[0]).eexpr {
 				case TField(_, FStatic(fc, fcf)) if (Lower.hasMeta(":hxmc.callback", fcf.cfMeta)):
@@ -3988,6 +3997,8 @@ class FnLower {
 			if (err.where == "") err.where = where(e);
 			throw err;
 		};
+		var p = CInterop.plan(c, cf, s, sym, where(e));
+		if (p.typed) return typedCall(sym, c, cf, s, p, cargs, e);
 		var t = ty(s.ret);
 		var ats = s.args.map(a -> ty(a.type));
 		var xs = args(cargs, ats, null);
@@ -4009,6 +4020,172 @@ class FnLower {
 			return coerce(ELocal(lo), t, tyOf(e));
 		}
 		return coerceRhs(ECallHost(sym, xs, t), t, tyOf(e));
+	}
+
+	// a call of a typed binding (CInterop.plan; docs/interop.md, "Typed
+	// bindings"): a span passed as its address and length (or its address
+	// alone, its count checked against its length), a handle checked against
+	// its invalid value and cleared by the function that closes it, a
+	// callback as its address. Spans GC code makes are filled last, as a
+	// kernel's (spanCall), and a Bytes is lent only to a call that enters no
+	// safe region.
+	function typedCall(sym:String, c:TClass, cf:TClassField, s:core.TType.TSignature, p:CInterop.CPlan, cargs:Vector<TExpr>, e:TExpr):Ex {
+		var at = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(spanWhere(e))), TI64);
+		function fatal(fn:FuncInfo, xs:Array<Ex>):Vector<Stmt>
+			return vector(SExpr(ECall(fn, Vector.fromArrayCopy(xs.concat([at])))), SLoop(vector()));
+		function dataOf(t:core.TType.T):TClass {
+			var sd = switch TFunctions.follow(t) {
+				case TAbstract(a, _): structOf(a.aThis);
+				case _: null;
+			};
+			return sd != null ? sd : cfail("hxmc.Span: its data is no struct", e);
+		}
+		function support(name:String):FuncInfo {
+			var k = Lower.spanSupport;
+			var f = k == null ? null : k.clStatics.get(name);
+			return f != null ? l.staticFunc(k, f) : cfail("a typed C call needs hxmc.Span (import it)", e);
+		}
+		var es = cargs.copy();
+		var ats = s.args.map(a -> ty(a.type));
+		var cbs = new Map<Int, Ex>();
+		for (i in 0...cargs.length)
+			if (p.args[i].match(ACallback)) {
+				cbs.set(i, callbackAddr(cargs[i], s.args[i].type, cf, e));
+				// (the function itself is no value here: its address)
+				es[i] = ({eexpr: TConst(TNull), etype: cargs[i].etype, epos: cargs[i].epos} : TExpr);
+				ats[i] = tyOf(cargs[i]);
+			}
+		var made = [for (a in es) if (spanMaker(a)) strip(a)];
+		var outer = boundary;
+		boundary = made.length > 0 ? {direct: made, fills: []} : null;
+		var xs = args(es, ats, null);
+		var fills = boundary != null ? boundary.fills : null;
+		boundary = outer;
+		var enters = CInterop.BLOCKING.exists(sym) || CInterop.blockingCall(c, cf) && !fi.declBlocking;
+		if (enters)
+			for (m in made)
+				switch m.eexpr {
+					case TCall({eexpr: TField(_, FStatic(_, {cfName: "ofBytes"}))}, _):
+						spanFail(m, "a span over a Bytes passed to the C function " + cf.cfName + ", which runs in a safe region (other threads collect meanwhile, and the Bytes may move)",
+							"a Bytes is lent only to a call that enters no region: lend an IoBuffer's, or declare the function @:hxmc.fast");
+					case _:
+				}
+		var vs = [
+			for (i in 0...xs.length)
+				isConst(xs[i]) || xs[i].match(ELocal(_)) || ats[i].match(TStruct(_)) ? xs[i] : ELocal(asLocal(xs[i], ats[i]))
+		];
+		if (fills != null)
+			for (fill in fills)
+				fill();
+		var cx:Array<Ex> = [], cts:Array<Ty> = [], words:Array<Bool> = [];
+		function push(x:Ex, t:Ty, word = false) {
+			cx.push(x);
+			cts.push(t);
+			words.push(word);
+		}
+		for (i in 0...vs.length)
+			switch p.args[i] {
+				case ASpan | ASpanPtr(_):
+					var sd = dataOf(s.args[i].type);
+					var ptr = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(vs[i], EInt(CInterop.field(sd, "ptr").off)), TI64));
+					var len = temp(TI32, ECallHost("hxmc_unsafe_Mem_getI32", vector(vs[i], EInt(CInterop.field(sd, "length").off)), TI32));
+					push(ptr, TI64, true);
+					switch p.args[i] {
+						case ASpanPtr(count, min):
+							if (count >= 0) {
+								// (0 <= count <= length: one unsigned comparison, the count widened)
+								var n = temp(TI64, coerce(vs[count], ats[count], TI64));
+								out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, len), n), TBool),
+									fatal(spanSupport(sd, "badRange"), [EInt(0), EConv(L2I, n), len]), vector()));
+							}
+							if (min > 0) out.push(SIf(EBin(Lt, len, EInt(min)), fatal(spanSupport(sd, "badRange"), [EInt(0), EInt(min), len]), vector()));
+						case _:
+							push(EConv(I2L, len), TI64, true);
+					}
+				case AHandle(invalid, _) if (invalid != null):
+					var bad = ats[i] == TI64 ? EBin(LEq, vs[i], EConv(I2L, EInt(invalid))) : EBin(Eq, vs[i], EInt(invalid));
+					out.push(SIf(bad, fatal(support("invalidHandle"), [EInt(invalid)]), vector()));
+					push(vs[i], ats[i], CInterop.handleType(s.args[i].type) == CPtr);
+				case ACallback:
+					push(cbs.get(i), TI64, true);
+				case _:
+					push(vs[i], ats[i], CInterop.isSize(s.args[i].type));
+			}
+		// (as wide as the declarations agree on, CInterop.sameSig: an earlier
+		// one of the import may take an address as an Int, wasm32's i32)
+		var sig = CInterop.SIGS.get(sym);
+		for (k in 0...cx.length) {
+			var want = sig != null && k < sig.args.length ? sig.args[k] : null;
+			// (wasm32: the runtime's imports take an address, a size_t, as an
+			// i32, WasiApi's; a program's are wrapped by WasmGen.call)
+			if (words[k] && Lower.targetOs == 3 && !CInterop.USER.exists(sym)) want = CI32;
+			switch [want, cts[k]] {
+				case [CI32 | CI16 | CU16 | CI8 | CU8, TI64]:
+					cx[k] = EConv(L2I, cx[k]);
+					cts[k] = TI32;
+				case [CI64 | CPtr, TI32]:
+					cx[k] = EConv(I2L, cx[k]);
+					cts[k] = TI64;
+				case _:
+			}
+		}
+		var t = p.ret >= 0 ? TI64 : ty(s.ret);
+		var call = Vector.fromArrayCopy(cx);
+		var r:Ex;
+		if (CInterop.blockingCall(c, cf) && !fi.declBlocking && Lower.targetOs != 3)
+			r = inRegion(call, Vector.fromArrayCopy(cts), xs -> ECallHost(sym, xs, t), t, t);
+		else if (t == TVoid) {
+			out.push(SExpr(ECallHost(sym, call, t)));
+			r = EInt(0);
+		} else {
+			var lo = newLocal("cr", t);
+			out.push(SSet(lo, ECallHost(sym, call, t)));
+			if (t.match(TStruct(_))) freshSlots.set(lo, true);
+			r = ELocal(lo);
+		}
+		// (@:hxmc.close: the place the handle came from holds the invalid value from now on)
+		for (i in 0...cargs.length)
+			switch p.args[i] {
+				case AHandle(invalid, true):
+					switch strip(cargs[i]).eexpr {
+						case TLocal(_) | TField({eexpr: TConst(TThis) | TLocal(_)}, FInstance(_)) | TField(_, FStatic(_)):
+						case _: cfail("C function " + cf.cfName + " closes its handle " + s.args[i].name + ": pass it from a variable, a static or a field of this or of a local", cargs[i]);
+					}
+					var v = ats[i] == TI64 ? EConv(I2L, EInt(invalid)) : EInt(invalid);
+					assign(cargs[i], () -> {x: v, t: ats[i]}, cargs[i]);
+				case _:
+			}
+		if (p.ret < 0) return coerce(r, t, tyOf(e));
+		// (a span result: n elements at the address, which the declaration vouches for)
+		if (!fi.declKernel) spanFail(e, "the result of the C function " + cf.cfName + " has a span type", KernelCheck.SPANS_KERNEL + ": only a @:hxmc.kernel function holds one");
+		var sd = dataOf(s.ret);
+		out.push(SIf(EBin(LEq, r, EConv(I2L, EInt(0))), fatal(spanSupport(sd, "badRange"), [EInt(0), EInt(p.ret), EInt(0)]), vector()));
+		var slot = newSlot(structTy(sd), true);
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(slot), EInt(CInterop.field(sd, "ptr").off), r), TVoid)));
+		out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(slot), EInt(CInterop.field(sd, "length").off), EInt(p.ret)), TVoid)));
+		return coerce(ELocal(slot), structTy(sd), tyOf(e));
+	}
+
+	// a typed callback (a parameter of a function type): the address of the
+	// static @:hxmc.callback function the argument names, whose C signature
+	// is the parameter's
+	function callbackAddr(arg:TExpr, t:core.TType.T, cf:TClassField, e:TExpr):Ex {
+		var fc:TClass, fcf:TClassField;
+		switch strip(arg).eexpr {
+			case TField(_, FStatic(k, kf)) if (Lower.hasMeta(":hxmc.callback", kf.cfMeta)):
+				fc = k;
+				fcf = kf;
+			case _:
+				return cfail("C function " + cf.cfName + " takes a callback: pass a static function declared @:hxmc.callback, by name", arg);
+		}
+		function csig(ft:core.TType.T):String
+			return switch TFunctions.follow(ft) {
+				case TFun(fs): [for (a in fs.args) CInterop.abiName(CInterop.ctype(a.type))].join(",") + ":" + CInterop.abiName(CInterop.ctype(fs.ret));
+				case _: "";
+			}
+		if (csig(fcf.cfType) != csig(t))
+			cfail("C function " + cf.cfName + ": the callback " + fcf.cfName + " has other C types than the parameter (" + csig(fcf.cfType) + " for " + csig(t) + ")", arg);
+		return ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(l.callbackSym(l.staticFunc(fc, fcf)))), TI64);
 	}
 
 	// ---- COM (docs/interop.md, "COM"; Com): calls through vtables, a Haxe

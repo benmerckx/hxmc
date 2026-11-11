@@ -1,0 +1,2 @@
+exit 2
+CBindingsOutOfRange.hx:20: 8

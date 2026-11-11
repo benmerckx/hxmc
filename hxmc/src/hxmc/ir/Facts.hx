@@ -953,6 +953,15 @@ class Facts {
 								+ ", which lets other threads collect (a safe region) while the Bytes may move (kernel: a Bytes is lent only to a kernel that enters no region; lend an IoBuffer's instead)";
 							if (errors.indexOf(m) < 0) errors.push(m);
 						}
+					// (a typed C call, FnLower.typedCall: one in a safe region lets
+					// other threads collect)
+					case ECallHost(n, _, _) if (pending && CInterop.BLOCKING.exists(n)):
+						pending = false;
+						var m = where(f) + displayName(f) + ": a span over a Bytes is passed to the C function " + n
+							+ ", which runs in a safe region while the Bytes may move (kernel: a Bytes is lent only to a call that enters no region; lend an IoBuffer's instead)";
+						if (errors.indexOf(m) < 0) errors.push(m);
+					case ECallHost(n, _, _) if (pending && FnLower.C_EXTERNS.exists(n) && !StringTools.startsWith(n, "rt_blocking_")):
+						pending = false;
 					case _:
 				}
 				Facts.iterEx(ex, e);

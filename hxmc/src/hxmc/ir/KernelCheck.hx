@@ -153,9 +153,19 @@ class KernelCheck {
 		return false;
 	}
 
-	// a value src where one of type t is expected: a proof only from a proof of its kind
-	function flow(t:T, src:TExpr) {
+	public static inline var HANDLE = "a handle is made only by a C function or @:hxmc.unsafe code";
+
+	// the kind of value only trusted code makes: a proof or a handle, or null
+	static function vouched(t:T):Null<TAbstract> {
 		var p = proofOf(t);
+		if (p != null) return p;
+		var h = CInterop.handleOf(t);
+		return h != null ? h.a : null;
+	}
+
+	// a value src where one of type t is expected: a proof (a handle) only from one of its kind
+	function flow(t:T, src:TExpr) {
+		var p = vouched(t);
 		if (p == null) return;
 		switch src.eexpr {
 			case TParenthesis(x) | TMeta(_, x):
@@ -170,8 +180,8 @@ class KernelCheck {
 					flow(t, c.caseExpr);
 				if (sw.switchDefault != null) flow(t, sw.switchDefault);
 			case _:
-				if (proofOf(src.etype) != p)
-					fail(src.epos, "a value of type " + typeName(src.etype) + " as the proof " + typeName(t), PROOF);
+				if (vouched(src.etype) != p)
+					fail(src.epos, "a value of type " + typeName(src.etype) + " as the " + (proofOf(t) != null ? "proof " : "handle ") + typeName(t), proofOf(t) != null ? PROOF : HANDLE);
 		}
 	}
 
@@ -179,17 +189,19 @@ class KernelCheck {
 
 	// hxmc.unsafe's C scalars, values like Int (docs/interop.md, "C interop")
 	static final SCALARS = [
-		"Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32"
+		"Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32", "USize"
 	];
 
 	// whether t is raw memory: hxmc.unsafe's types but its C scalars, or an
 	// abstract over one (a handle such as an IoBuffer or a Ptr wrapped)
-	static function isRaw(t:T):Bool {
+	public static function isRaw(t:T):Bool {
 		var depth = 0;
 		while (depth++ < 16)
 			switch t.follow() {
 				case TAbstract(a, pl):
 					if (a.aPath.pack.join(".") == "hxmc.unsafe" && SCALARS.indexOf(a.aPath.name) < 0) return true;
+					// (a handle: a value, also over a Ptr, that only a C result makes)
+					if (a.aMeta.length > 0 && Lower.hasMeta(":hxmc.handle", a.aMeta)) return false;
 					if (core.Meta.has(core.Meta.CoreType, a.aMeta)) return false;
 					// (one abstract at a time: getUnderlyingType goes past Ptr)
 					t = core.TFunctions.applyParams(a.aParams, pl, a.aThis);
@@ -307,7 +319,7 @@ class KernelCheck {
 		}
 		var path = core.Globals.sTypePath(c.clPath);
 		// (hxmc.simd's intrinsics: values; their raw memory accesses need hxmc.unsafe)
-		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct"
+		return path == "Math" || (path == "Std" && cf.cfName == "int") || path == "hxmc.unsafe.Struct" || path == "hxmc.Handle"
 			|| path == "hxmc.unsafe.Mem" && PURE_MEM.indexOf(cf.cfName) >= 0
 			|| path == "hxmc.simd.Simd" && cf.cfName != "load" && cf.cfName != "store";
 	}
@@ -337,11 +349,22 @@ class KernelCheck {
 			case _: null;
 		}
 
+	// a static @:hxmc.callback function named as a typed C function's
+	// argument: its address, no closure (FnLower.callbackAddr)
+	static function callbackRef(a:TExpr):Bool
+		return switch a.eexpr {
+			case TField(_, FStatic(_, cf)): cf.cfKind.match(Method(_)) && Lower.hasMeta(":hxmc.callback", cf.cfMeta);
+			case TParenthesis(x) | TMeta(_, x): callbackRef(x);
+			case _: false;
+		}
+
 	function call(f:TExpr, args:haxe.ds.Vector<TExpr>, e:TExpr) {
 		switch f.eexpr {
 			case TField(_, FStatic(c, cf)):
 				var name = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
 				if (c.hasClassFlag(CExtern) || cf.cfExpr == null || CInterop.cSymbol(c, cf) != null) {
+					// (a typed binding the declaration vouches for: CInterop.plan checked its types)
+					if (CInterop.cSymbol(c, cf) != null && CInterop.isSafe(c, cf)) return;
 					if (!allowedExtern(c, cf))
 						fail(e.epos, "a call of " + name, "Mem, Atomic and C functions need @:hxmc.unsafe");
 				} else if (!isKernelDecl(c, cf))
@@ -420,7 +443,7 @@ class KernelCheck {
 				// (the callee is no value: its arguments only)
 				var named = simdIntrinsic(f);
 				for (a in args)
-					if (!(named && a.eexpr.match(TConst(TString(_)))))
+					if (!(named && a.eexpr.match(TConst(TString(_)))) && !callbackRef(a))
 						expr(a);
 				switch f.eexpr {
 					case TField(o, _): expr(o);
@@ -461,6 +484,9 @@ class KernelCheck {
 				return;
 			case TCast(x, null) if (proofOf(e.etype) != null && proofOf(x.etype) != proofOf(e.etype)):
 				fail(e.epos, "a cast from " + typeName(x.etype) + " to the proof " + typeName(e.etype), PROOF);
+				return;
+			case TCast(x, null) if (CInterop.handleOf(e.etype) != null && vouched(x.etype) != vouched(e.etype)):
+				fail(e.epos, "a cast from " + typeName(x.etype) + " to the handle " + typeName(e.etype), HANDLE);
 				return;
 			case TCast(x, null):
 				if (!(scalar(x.etype) && scalar(e.etype)) && !core.TUnification.fastEq(x.etype.follow(), e.etype.follow()) && !toUnderlying(x.etype, e.etype)

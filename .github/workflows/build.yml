@@ -628,6 +628,11 @@ jobs:
       - uses: actions/download-artifact@v8
         if: needs.changes.outputs.rt_hit != 'true'
         with: {name: rt, path: bin/hxmc/rt}
+      - id: zig
+        run: echo "version=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
       - name: Android's .so, Java through JNI and iOS's Mach-O
         run: |
           set -ex
@@ -636,6 +641,9 @@ jobs:
           export JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}"
           "$JAVA_HOME/bin/java" -version || true
           make native-check
+      # (the typed C declarations against every target's headers: zig's C libraries)
+      - name: The declarations against the headers
+        run: make header-check
 
   # the port against the reference compiler (docs/testing.md): make test
   # LANES=<suite> and make test-fuzz LANE=<lane>, as locally, on the release

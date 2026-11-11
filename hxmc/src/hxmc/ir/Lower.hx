@@ -182,7 +182,12 @@ class Lower implements LowerQueries {
 	// shared library's export, Abi.exports), always compiled.
 	var hostImpls = new Map<String, {c:TClass, cf:TClassField}>();
 
+	// hxmc.SpanSupport, whose kernels the typed C calls end the program
+	// with (FnLower.typedCall: an invalid handle), when the program has it
+	public static var spanSupport:Null<TClass> = null;
+
 	function findHosts(types:Array<core.TType.ModuleType>) {
+		spanSupport = null;
 		for (t in types)
 			switch t {
 				case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !(c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc")):
@@ -199,6 +204,7 @@ class Lower implements LowerQueries {
 							staticFunc(c, cf);
 						}
 				case TClassDecl(c) if (runtimeClass(c)):
+					if (c.clPath.name == "SpanSupport" && c.clPath.pack.length == 1) spanSupport = c;
 					if (!ofTarget(c)) continue;
 					for (cf in c.clOrderedStatics) {
 						if (cf.cfMeta.length == 0) continue;
