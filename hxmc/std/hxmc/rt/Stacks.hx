@@ -170,6 +170,7 @@ class Stacks {
 	// stack pointer where UWOP_SET_FPREG sets it) to the pushed rbp. 0 where
 	// rbp is no frame pointer or not pushed
 	@:hxmc.unsafe static function unwindDelta(pc:Ptr):Int {
+		if (Mem.target() != 4) return 0; // (RtlLookupFunctionEntry: windows-x86_64 only, linked nowhere else)
 		var imageBase = Mem.stack(8);
 		var rf = W.RtlLookupFunctionEntry(pc, imageBase, Ptr.nil());
 		if (rf.isNull()) return 0;
