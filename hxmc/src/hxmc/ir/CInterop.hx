@@ -39,7 +39,8 @@ typedef CSig = {args:Array<CTy>, ret:CTy};
 // "Typed bindings"): as its C type, a span as its address and its length,
 // a span as its address alone (its length another parameter's, or a
 // minimum), a handle (checked against its invalid value), a callback's address,
-// a String as a NUL-terminated UTF-8 copy for the call's duration (NULL for null)
+// a String as a NUL-terminated UTF-8 copy for the call's duration (NULL for null),
+// an hxmc.com.Out<IFoo> as the address of a slot C stores an IFoo * in (Windows)
 enum CArg {
 	AValue;
 	ASpan;
@@ -47,6 +48,7 @@ enum CArg {
 	AHandle(invalid:Null<Int>, close:Bool);
 	ACallback;
 	AString;
+	AOut(iface:TClass);
 }
 
 // a C function's parameters as its calls pass them; ret: the length of a
@@ -484,7 +486,7 @@ class CInterop {
 					args.push(CPtr);
 					args.push(CPtr);
 					continue;
-				case ASpanPtr(_) | ACallback | AString:
+				case ASpanPtr(_) | ACallback | AString | AOut(_):
 					args.push(CPtr);
 					continue;
 				case AHandle(_):
@@ -594,7 +596,7 @@ class CInterop {
 		return ctype(t);
 	}
 
-	static function intOf(e:core.Ast.Expr):Null<Int>
+	public static function intOf(e:core.Ast.Expr):Null<Int>
 		return switch e.expr {
 			case EConst(core.Ast.Constant.Int(v, _)): Std.parseInt(v);
 			case EUnop(Neg, Prefix, x):
@@ -604,7 +606,7 @@ class CInterop {
 			case _: null;
 		}
 
-	static function identOf(e:core.Ast.Expr):Null<String>
+	public static function identOf(e:core.Ast.Expr):Null<String>
 		return switch e.expr {
 			case EConst(core.Ast.Constant.Ident(n)): n;
 			case _: null;
@@ -670,6 +672,12 @@ class CInterop {
 			if (TFunctions.follow(t).match(TFun(_))) {
 				args[i] = ACallback;
 				typed = true;
+			}
+			var oi = Com.outOf(t);
+			if (oi != null) {
+				args[i] = AOut(oi);
+				typed = true;
+				continue;
 			}
 			if (isString(t) && isSafe(c, cf)) {
 				args[i] = AString;

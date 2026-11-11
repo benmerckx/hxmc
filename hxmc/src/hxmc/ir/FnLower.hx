@@ -4150,7 +4150,7 @@ class FnLower {
 			for (fill in fills)
 				fill();
 		var cx:Array<Ex> = [], cts:Array<Ty> = [], words:Array<Bool> = [];
-		var strs:Array<Ex> = [];
+		var strs:Array<Ex> = [], adopts:Array<() -> Void> = [];
 		if (fi.declKernel && (p.str || p.args.indexOf(AString) >= 0)) spanFail(e, "the C function " + cf.cfName + " takes or returns a String", "Strings cross C calls in GC code: a kernel copies nothing");
 		function push(x:Ex, t:Ty, word = false) {
 			cx.push(x);
@@ -4182,6 +4182,25 @@ class FnLower {
 					push(vs[i], ats[i], CInterop.handleType(s.args[i].type) == CPtr);
 				case ACallback:
 					push(cbs.get(i), TI64, true);
+				case AOut(_):
+					// (a slot for the IFoo *, zeroed; adopted into the Out after the call: Windows, COM)
+					if (Lower.targetOs != 2) cfail("C function " + cf.cfName + " takes an hxmc.com.Out: COM objects exist on Windows only", e);
+					var slot = newLocal("out", TI64);
+					out.push(SSet(slot, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(8), EInt(8)), TI64)));
+					out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(slot), EInt(0), EConv(I2L, EInt(0))), TVoid)));
+					var o = vs[i], oc = switch TFunctions.follow(s.args[i].type) {
+						case TInst(k, _): k;
+						case _: null;
+					};
+					adopts.push(() -> {
+						var w = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(slot), EInt(0)), TI64));
+						var ci = l.classInfo(oc);
+						var v = newLocal("adopted", TRef(RAny));
+						out.push(SSet(v, ENull(TRef(RAny))));
+						out.push(SIf(EBin(LNe, w, EConv(I2L, EInt(0))), vector(SSet(v, ECallHost("rt_com_adopt", vector(w), TRef(RAny)))), vector()));
+						out.push(SSetField(ci, ci.fieldIndex("value"), o, ELocal(v)));
+					});
+					push(ELocal(slot), TI64, true);
 				case AString:
 					// (a copy for the call, freed after it)
 					var cs = temp(TI64, ECall(support("cstring"), vector(vs[i])));
@@ -4224,6 +4243,8 @@ class FnLower {
 		}
 		for (cs in strs)
 			out.push(SExpr(ECall(support("cfree"), vector(cs))));
+		for (adopt in adopts)
+			adopt();
 		for (release in releases)
 			release();
 		if (p.str) {
@@ -4353,7 +4374,23 @@ class FnLower {
 		}
 		var mode = Com.mode(cf);
 		var ats = s.args.map(a -> ty(a.type));
+		// (spans made as arguments: filled once every argument is, and the
+		// conversions; Span.of copied back and Buffers released after the call)
+		var made = [for (a in cargs) if (spanMaker(a)) strip(a)];
+		var outer = boundary;
+		boundary = made.length > 0 ? {direct: made, fills: [], releases: []} : null;
 		var xs = args(VectorTools.cons(obj, cargs), VectorTools.cons(tyOf(obj), ats), null);
+		var fills = boundary != null ? boundary.fills : [];
+		var releases = boundary != null ? boundary.releases : [];
+		boundary = outer;
+		if (!Lower.hasMeta(":hxmc.fast", cf.cfMeta))
+			for (m in made)
+				switch m.eexpr {
+					case TCall({eexpr: TField(_, FStatic(_, {cfName: "ofBytes"}))}, _):
+						spanFail(m, "a span over a Bytes passed to the COM method " + cf.cfName + ", which runs in a safe region (other threads collect meanwhile, and the Bytes may move)",
+							"a Bytes is lent only to a call that enters no region: lend a Buffer's or an IoBuffer's, or declare the method @:hxmc.fast");
+					case _:
+				}
 		var held = [for (i in 0...xs.length) ELocal(asLocal(xs[i], i == 0 ? tyOf(obj) : ats[i - 1]))];
 		var self = asLocal(ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(held[0], tyOf(obj), TRef(RAny))].concat(comIid(recv, e))), TI64), TI64);
 		// (a null receiver: E_POINTER, thrown)
@@ -4398,10 +4435,58 @@ class FnLower {
 		var bool = retT == TBool;
 		var ct:Ty = mode == Com.DIRECT ? (sig.sretFirst ? TI64 : sig.ret == CVoid ? TVoid : bool ? TI32 : retT) : TI32;
 		var r = ct == TVoid ? null : newLocal("cr", ct);
+		var spans:Array<() -> Void> = [], outs:Array<() -> Void> = [];
 		var conv = block(() -> {
 			for (i in 0...s.args.length) {
 				var x = held[i + 1];
 				switch Com.value(s.args[i].type) {
+					case VSpan:
+						// (its address, its length unless @:hxmc.len gives it: read once the spans are filled)
+						var sd = structOf(switch TFunctions.follow(s.args[i].type) {
+							case TAbstract(a, _): a.aThis;
+							case t: t;
+						});
+						var p = newLocal("sp", TI64), n = newLocal("sn", TI32);
+						cxs.push(ELocal(p));
+						var named = Com.lenNamed(cf, s.args[i].name);
+						if (!named) cxs.push(EConv(I2L, ELocal(n)));
+						spans.push(() -> {
+							out.push(SSet(p, ECallHost("hxmc_unsafe_Mem_getI64", vector(x, EInt(CInterop.field(sd, "ptr").off)), TI64)));
+							out.push(SSet(n, ECallHost("hxmc_unsafe_Mem_getI32", vector(x, EInt(CInterop.field(sd, "length").off)), TI32)));
+							if (!named) return;
+							for (m in cf.cfMeta)
+								if (core.Meta.metaEq(Custom(":hxmc.len"), m.meta) && m.exprs.length == 2 && CInterop.identOf(m.exprs[0]) == s.args[i].name) {
+									var at = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(spanWhere(e))), TI64);
+									var bad = vector(SExpr(ECall(spanSupport(sd, "badRange"), vector(EInt(0), EInt(0), ELocal(n), at))), SLoop(vector()));
+									var min = CInterop.intOf(m.exprs[1]);
+									if (min != null) {
+										out.push(SIf(EBin(Lt, ELocal(n), EInt(min)), bad, vector()));
+										continue;
+									}
+									var k = [for (j in 0...s.args.length) if (s.args[j].name == CInterop.identOf(m.exprs[1])) j];
+									if (k.length == 0) cfail("COM method " + cf.cfName + ": @:hxmc.len(" + s.args[i].name + ", n) names a parameter or a constant", e);
+									// (0 <= count <= length: one unsigned comparison)
+									out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, ELocal(n)), coerce(held[k[0] + 1], ats[k[0]], TI64)), TBool), bad, vector()));
+								}
+						});
+					case VOut(ic):
+						// (a slot for the IFoo *, zeroed; its value adopted after the call)
+						var slot = newLocal("out", TI64);
+						out.push(SSet(slot, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(8), EInt(8)), TI64)));
+						out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(slot), EInt(0), EConv(I2L, EInt(0))), TVoid)));
+						cxs.push(ELocal(slot));
+						var oc = switch TFunctions.follow(s.args[i].type) {
+							case TInst(c, _): c;
+							case _: null;
+						};
+						outs.push(() -> {
+							var w = temp(TI64, ECallHost("hxmc_unsafe_Mem_getI64", vector(ELocal(slot), EInt(0)), TI64));
+							var ci = l.classInfo(oc);
+							var v = newLocal("adopted", TRef(RAny));
+							out.push(SSet(v, ENull(TRef(RAny))));
+							out.push(SIf(EBin(LNe, w, EConv(I2L, EInt(0))), vector(SSet(v, ECallHost("rt_com_adopt", vector(w), TRef(RAny)))), vector()));
+							out.push(SSetField(ci, ci.fieldIndex("value"), x, ELocal(v)));
+						});
 					case VIface(ic):
 						cxs.push(temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(x, ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)));
 					case VWStr:
@@ -4417,8 +4502,14 @@ class FnLower {
 				}
 			}
 			if (retval != null) cxs.push(ELocal(retval));
+			for (fill in fills)
+				fill();
+			for (sp in spans)
+				sp();
 			var call = ECallHost(key, Vector.fromArrayCopy(cxs), ct);
 			out.push(r == null ? SExpr(call) : SSet(r, call));
+			for (o in outs)
+				o();
 		});
 		if (frees.length > 0) {
 			// (a throw after a buffer was made: the buffers freed, the exception thrown on)
@@ -4429,6 +4520,8 @@ class FnLower {
 			out.push(st);
 		for (f in frees)
 			out.push(f);
+		for (release in releases)
+			release();
 		if (mode == Com.CHECKED)
 			out.push(SIf(EBin(Lt, ELocal(r), EInt(0)), vector(SExpr(ECallHost("rt_com_fail", vector(ELocal(r)), TVoid))), vector()));
 		if (mode == Com.RAW) return coerce(ELocal(r), TI32, rt);

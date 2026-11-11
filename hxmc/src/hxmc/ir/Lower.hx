@@ -1263,6 +1263,12 @@ class Lower implements LowerQueries {
 					case _: throw new LowerError('COM method ${decl.cfName} is not a function', CInterop.posOf(decl.cfPos));
 				};
 				var cs = Com.csig(decl, s);
+				for (k in 0...s.args.length)
+					switch Com.value(s.args[k].type) {
+						case VSpan | VOut(_):
+							throw new LowerError('$path implements ${decl.cfName}, whose parameter ${s.args[k].name} is a span or an hxmc.com.Out: COM calls Haxe objects with these not yet (calls of COM objects only)', where);
+						case _:
+					}
 				var mode = Com.mode(decl);
 				var name = Com.THUNK + ci.ident + "_" + i + "_" + slot;
 				var w = new FuncInfo(name + "__work", module);
@@ -1815,7 +1821,7 @@ class Lower implements LowerQueries {
 					if (!ct.match(CI32 | CI64 | CF64 | CPtr)) throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} has the type ${CInterop.name(ct)}, which a callback cannot take yet (Int, Int64, Float, Ptr, spans)', where);
 					[ct];
 				case ACallback: throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a function', where);
-				case AString: throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a String, which a callback cannot take yet', where);
+				case AString | AOut(_): throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a String or an hxmc.com.Out, which a callback cannot take yet', where);
 			}
 			ins.push([for (ct in cts) {
 				var lo = new Local(id++, s.args[i].name, ct == CI32 ? TI32 : ct == CF64 ? TF64 : TI64);

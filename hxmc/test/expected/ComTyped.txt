@@ -1,0 +1,6 @@
+exit 0
+ComTyped.hx:72: 0, true
+ComTyped.hx:77: outs, 8, 1.75
+ComTyped.hx:80: sumAll, 5, 0
+ComTyped.hx:83: pair, true, true, 0
+ComTyped.hx:95: pairs released, 0

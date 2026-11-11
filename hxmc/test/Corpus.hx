@@ -70,7 +70,7 @@ class Corpus {
 	public static function uikit(t:String):Bool
 		return t.startsWith("ios") || t.startsWith("macos-catalyst");
 	// the cases of Windows only (COM: ole32 and oleaut32, the system's COM objects)
-	public static final WINDOWS_ONLY = [for (n in ["ComCalls", "ComObjects", "ComDemos", "ComThreads"]) n => "COM: Windows only"];
+	public static final WINDOWS_ONLY = [for (n in ["ComCalls", "ComObjects", "ComDemos", "ComThreads", "ComTyped"]) n => "COM: Windows only"];
 	// the cases wine runs only with a display (DISPLAY: xvfb-run), and wine's fonts (fonts-wine): the file dialog's controls, DirectWrite's layouts
 	static final WINE_DISPLAY = ["ComDemos" => "the file dialog and DirectWrite: wine needs a display (xvfb-run) and its fonts"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
