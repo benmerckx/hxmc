@@ -1,19 +1,16 @@
 package hxmc.simd;
 
 // The bits of float lanes for the scalar implementation (Ref): float32
-// rounding (to nearest even), doubles' halves. On hxmc's interpreter
-// through memory (Mem: the machine's own conversions), elsewhere through
-// haxe.io.FPHelper.
+// rounding (to nearest even), doubles' halves. On hxmc Mem's bit casts (the
+// machine's own conversions), elsewhere through haxe.io.FPHelper.
 #if (target.name == "hxmc")
-@:hxmc.unsafe @:hxmc.kernel
+@:hxmc.kernel
 #end
 @:noCompletion class Bits {
 	// a Float rounded to float32: its bits
 	public static function ofF32(x:Float):Int {
 		#if (target.name == "hxmc")
-		var p = hxmc.unsafe.Mem.stack(8);
-		hxmc.unsafe.Mem.setF32(p, 0, x);
-		return hxmc.unsafe.Mem.getI32(p, 0);
+		return hxmc.unsafe.Mem.f32Bits(x);
 		#else
 		return haxe.io.FPHelper.floatToI32(x);
 		#end
@@ -22,9 +19,7 @@ package hxmc.simd;
 	// float32 bits as a Float (exactly)
 	public static function f32(b:Int):Float {
 		#if (target.name == "hxmc")
-		var p = hxmc.unsafe.Mem.stack(8);
-		hxmc.unsafe.Mem.setI32(p, 0, b);
-		return hxmc.unsafe.Mem.getF32(p, 0);
+		return hxmc.unsafe.Mem.bitsF32(b);
 		#else
 		return haxe.io.FPHelper.i32ToFloat(b);
 		#end
@@ -32,10 +27,7 @@ package hxmc.simd;
 
 	public static function f64(lo:Int, hi:Int):Float {
 		#if (target.name == "hxmc")
-		var p = hxmc.unsafe.Mem.stack(8);
-		hxmc.unsafe.Mem.setI32(p, 0, lo);
-		hxmc.unsafe.Mem.setI32(p, 4, hi);
-		return hxmc.unsafe.Mem.getF64(p, 0);
+		return hxmc.unsafe.Mem.bitsF64(((hi : hxmc.I64) << 32) | (((lo : hxmc.I64) << 32) >>> 32));
 		#else
 		return haxe.io.FPHelper.i64ToDouble(lo, hi);
 		#end
@@ -43,9 +35,7 @@ package hxmc.simd;
 
 	public static function lo(x:Float):Int {
 		#if (target.name == "hxmc")
-		var p = hxmc.unsafe.Mem.stack(8);
-		hxmc.unsafe.Mem.setF64(p, 0, x);
-		return hxmc.unsafe.Mem.getI32(p, 0);
+		return hxmc.unsafe.Mem.f64Bits(x).toInt();
 		#else
 		return haxe.io.FPHelper.doubleToI64(x).low;
 		#end
@@ -53,9 +43,7 @@ package hxmc.simd;
 
 	public static function hi(x:Float):Int {
 		#if (target.name == "hxmc")
-		var p = hxmc.unsafe.Mem.stack(8);
-		hxmc.unsafe.Mem.setF64(p, 0, x);
-		return hxmc.unsafe.Mem.getI32(p, 4);
+		return (hxmc.unsafe.Mem.f64Bits(x) >>> 32).toInt();
 		#else
 		return haxe.io.FPHelper.doubleToI64(x).high;
 		#end

@@ -265,20 +265,20 @@ class Bytes {
 	@:hxmc.host("haxe_io_BytesBuffer_getData") static function getBytes(bb:Dynamic):Dynamic
 		return sub(bbData(bb), 0, bbLen(bb));
 
-	// ---- FPHelper (bit patterns: Repr's)
+	// ---- FPHelper (bit patterns: Repr's, Mem's bit casts)
 
-	@:hxmc.host("haxe_io_FPHelper_i32ToFloat") @:hxmc.unsafe static function i32ToFloat(i:Int):Float
+	@:hxmc.host("haxe_io_FPHelper_i32ToFloat") @:hxmc.kernel static function i32ToFloat(i:Int):Float
 		return Repr.i32ToFloat(i);
 
-	@:hxmc.host("haxe_io_FPHelper_floatToI32") @:hxmc.unsafe static function floatToI32(v:Float):Int
+	@:hxmc.host("haxe_io_FPHelper_floatToI32") @:hxmc.kernel static function floatToI32(v:Float):Int
 		return Repr.floatToI32(v);
 
-	@:hxmc.host("haxe_io_FPHelper_i64ToDouble") @:hxmc.unsafe static function i64ToDouble(low:Int, high:Int):Float
+	@:hxmc.host("haxe_io_FPHelper_i64ToDouble") @:hxmc.kernel static function i64ToDouble(low:Int, high:Int):Float
 		return Repr.i64ToDouble(low, high);
 
-	@:hxmc.host("haxe_io_FPHelper_doubleLow") @:hxmc.unsafe static function doubleLow(v:Float):Int
+	@:hxmc.host("haxe_io_FPHelper_doubleLow") @:hxmc.kernel static function doubleLow(v:Float):Int
 		return Repr.doubleLow(v);
 
-	@:hxmc.host("haxe_io_FPHelper_doubleHigh") @:hxmc.unsafe static function doubleHigh(v:Float):Int
+	@:hxmc.host("haxe_io_FPHelper_doubleHigh") @:hxmc.kernel static function doubleHigh(v:Float):Int
 		return Repr.doubleHigh(v);
 }

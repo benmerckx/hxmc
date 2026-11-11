@@ -560,36 +560,20 @@ class MemRepr {
 
 	// ---- bit patterns (through a frame area)
 
-	public static inline function i32ToFloat(i:Int):Float {
-		var p = Mem.stack(8);
-		Mem.setI32(p, 0, i);
-		return Mem.getF32(p, 0);
-	}
+	public static inline function i32ToFloat(i:Int):Float
+		return Mem.bitsF32(i);
 
-	public static inline function floatToI32(v:Float):Int {
-		var p = Mem.stack(8);
-		Mem.setF32(p, 0, v);
-		return Mem.getI32(p, 0);
-	}
+	public static inline function floatToI32(v:Float):Int
+		return Mem.f32Bits(v);
 
-	public static inline function i64ToDouble(low:Int, high:Int):Float {
-		var p = Mem.stack(8);
-		Mem.setI32(p, 0, low);
-		Mem.setI32(p, 4, high);
-		return Mem.getF64(p, 0);
-	}
+	public static inline function i64ToDouble(low:Int, high:Int):Float
+		return Mem.bitsF64(((high : I64) << 32) | (((low : I64) << 32) >>> 32));
 
-	public static inline function doubleLow(v:Float):Int {
-		var p = Mem.stack(8);
-		Mem.setF64(p, 0, v);
-		return Mem.getI32(p, 0);
-	}
+	public static inline function doubleLow(v:Float):Int
+		return Mem.f64Bits(v).toInt();
 
-	public static inline function doubleHigh(v:Float):Int {
-		var p = Mem.stack(8);
-		Mem.setF64(p, 0, v);
-		return Mem.getI32(p, 4);
-	}
+	public static inline function doubleHigh(v:Float):Int
+		return (Mem.f64Bits(v) >>> 32).toInt();
 }
 
 // a two-byte string's units (UTF-16): the address of the first

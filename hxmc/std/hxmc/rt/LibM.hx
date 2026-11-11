@@ -94,7 +94,7 @@ class LibM {
 		return ofBits((0x7FF : I64) << 52);
 
 	// musl's scalbn
-	@:hxmc.unsafe static function scalbn(x:Float, n:Int):Float {
+	@:hxmc.kernel static function scalbn(x:Float, n:Int):Float {
 		var y = x;
 		if (n > 1023) {
 			y *= ofBits((0x7FE : I64) << 52); // 0x1p1023
@@ -595,7 +595,7 @@ class LibM {
 	static inline var PIO2_HI = 1.57079632679489655800e+00;
 	static inline var PIO2_LO = 6.12323399573676603587e-17;
 
-	@:hxmc.host("Math_asin") @:hxmc.unsafe static function asin(x:Float):Float {
+	@:hxmc.host("Math_asin") @:hxmc.kernel static function asin(x:Float):Float {
 		var hx = hi(x);
 		var ix = hx & 0x7fffffff;
 		// |x| >= 1 or nan
@@ -626,7 +626,7 @@ class LibM {
 		return (hx >>> 31) != 0 ? -res : res;
 	}
 
-	@:hxmc.host("Math_acos") @:hxmc.unsafe static function acos(x:Float):Float {
+	@:hxmc.host("Math_acos") @:hxmc.kernel static function acos(x:Float):Float {
 		var hx = hi(x);
 		var ix = hx & 0x7fffffff;
 		// |x| >= 1 or nan
@@ -658,7 +658,7 @@ class LibM {
 		return 2.0 * (df + w);
 	}
 
-	@:hxmc.host("Math_atan") @:hxmc.unsafe static function atan(x:Float):Float {
+	@:hxmc.host("Math_atan") @:hxmc.kernel static function atan(x:Float):Float {
 		var u = bits(x);
 		var ix = (u >>> 32).toInt() & 0x7fffffff;
 		var sign = !((u >>> 63) == 0);
@@ -716,7 +716,7 @@ class LibM {
 		return sign ? -zr : zr;
 	}
 
-	@:hxmc.host("Math_atan2") @:hxmc.unsafe static function atan2(y:Float, x:Float):Float {
+	@:hxmc.host("Math_atan2") @:hxmc.kernel static function atan2(y:Float, x:Float):Float {
 		var pi = 3.1415926535897931160E+00;
 		var pi_lo = 1.2246467991473531772E-16;
 		if (x != x || y != y) return x + y;
@@ -920,7 +920,7 @@ class LibM {
 		return y;
 	}
 
-	@:hxmc.unsafe static function specialcase(tmp:Float, sbits:I64, ki:I64):Float {
+	@:hxmc.kernel static function specialcase(tmp:Float, sbits:I64, ki:I64):Float {
 		if ((ki & ((1 : I64) << 31)) == 0) {
 			// k > 0, the exponent of scale might have overflowed by <= 460
 			sbits = sbits - ((1009 : I64) << 52);
@@ -955,7 +955,7 @@ class LibM {
 	}
 
 	// exp_inline for tiny x, and for huge x (inf and nan are already handled)
-	@:hxmc.unsafe static function expEdge(x:Float, signBias:Int):Float {
+	@:hxmc.kernel static function expEdge(x:Float, signBias:Int):Float {
 		var abstop = top12(x) & 0x7ff;
 		var small = top12(5.551115123125783e-17); // 0x1p-54
 		if (uge(abstop - small, 0x80000000)) {
@@ -993,7 +993,7 @@ class LibM {
 	}
 
 	// 0 if not int, 1 if odd int, 2 if even int (iy: a non-zero finite double)
-	@:hxmc.unsafe static function checkint(iy:I64):Int {
+	@:hxmc.kernel static function checkint(iy:I64):Int {
 		var e = ((iy >>> 52) & 0x7ff).toInt();
 		if (e < 0x3ff) return 0;
 		if (e > 0x3ff + 52) return 2;
