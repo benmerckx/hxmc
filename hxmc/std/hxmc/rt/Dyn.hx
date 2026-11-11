@@ -1121,20 +1121,18 @@ class Dyn {
 		}
 	}
 
-	@:hxmc.unsafe public static function getClass(v:Dynamic):Dynamic {
-		if (Str.isNull(v)) return null;
-		var t = tindex(v);
+	@:hxmc.kernel public static function getClass(v:Dynamic):Dynamic {
+		var t = TypeView.of(v);
 		// (a Bytes is an instance of its class: upstream's TestSerialize)
-		if (isString(t)) return typeObj(T_STRING);
-		if (t == T_ARRAY || t == T_DATE) return typeObj(t);
-		if (t >= T_FIRST && tk(ty(t)) == TK_CLASS) return typeObj(t);
+		if (isString(t)) return TypeView.typeObj(TypeView.runtime(T_STRING));
+		if (t == T_ARRAY || t == T_DATE) return TypeView.typeObj(t);
+		if (t >= T_FIRST && TypeView.kind(t) == TK_CLASS) return TypeView.typeObj(t);
 		return null;
 	}
 
-	@:hxmc.unsafe public static function getEnum(v:Dynamic):Dynamic {
-		if (Str.isNull(v)) return null;
-		var t = tindex(v);
-		if (t >= T_FIRST && tk(ty(t)) == TK_CTOR) return typeObj(sup(ty(t)));
+	@:hxmc.kernel public static function getEnum(v:Dynamic):Dynamic {
+		var t = TypeView.of(v);
+		if (t >= T_FIRST && TypeView.kind(t) == TK_CTOR) return TypeView.typeObj(TypeView.sup(t));
 		return null;
 	}
 

@@ -6,6 +6,7 @@ import hxmc.rt.Repr;
 import hxmc.rt.Types.*;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
 
 // An index of a row of the type table (rt_types: DataGen writes a row for
 // every index below rt_ntypes, the runtime's 0 to T_FIRST - 1 included), so
@@ -101,6 +102,49 @@ class TypeView {
 		if (t < T_FIRST || tk(ty(t)) != TK_CLOSURE) return null;
 		var g = Types.tag(ty(t));
 		return g == TAG_ADAPTER || g == TAG_DYN_ADAPTER ? Mem.getRef(Mem.addr(f), 8) : null;
+	}
+
+	// one of the runtime's types (below T_FIRST: its row always there), else T_NONE
+	public static function runtime(c:Int):TypeIndex
+		return cast(c >= 0 && c < T_FIRST ? c : T_NONE);
+
+	// the type object of a type (a static object: Class<T>, Enum<T>)
+	public static function typeObj(t:TypeIndex):Dynamic
+		return Types.typeObj(t);
+
+	// an Array's element kind (AK_*), -1 of any other value; its elements of
+	// one kind as a span as long as it (an Array's length is within its
+	// storage), none of another kind or value; an element of references
+	// (AK_PTR), null past the end
+	public static function arrayKind(a:Dynamic):Int
+		return Repr.isNull(a) || tindex(a) != T_ARRAY ? -1 : Repr.arrKind(a);
+
+	static inline function arrayLength(a:Dynamic, k:Int):Int
+		return Repr.isNull(a) || tindex(a) != T_ARRAY || Repr.arrKind(a) != k ? 0 : Repr.arrLen(a);
+
+	public static function ints(a:Dynamic):ReadOnlySpan<Int> {
+		var n = arrayLength(a, AK_I32);
+		return ReadOnlySpan.unsafeOf((cast(n == 0 ? Ptr.nil() : Repr.arrData(a)) : Ptr<Int>), n);
+	}
+
+	public static function bools(a:Dynamic):ReadOnlySpan<UInt8> {
+		var n = arrayLength(a, AK_BOOL);
+		return ReadOnlySpan.unsafeOf((cast(n == 0 ? Ptr.nil() : Repr.arrData(a)) : Ptr<UInt8>), n);
+	}
+
+	public static function floats(a:Dynamic):ReadOnlySpan<Float> {
+		var n = arrayLength(a, AK_F64);
+		return ReadOnlySpan.unsafeOf((cast(n == 0 ? Ptr.nil() : Repr.arrData(a)) : Ptr<Float>), n);
+	}
+
+	public static function longs(a:Dynamic):ReadOnlySpan<I64> {
+		var n = arrayLength(a, AK_I64);
+		return ReadOnlySpan.unsafeOf((cast(n == 0 ? Ptr.nil() : Repr.arrData(a)) : Ptr<I64>), n);
+	}
+
+	public static function element(a:Dynamic, i:Int):Dynamic {
+		var n = arrayLength(a, AK_PTR);
+		return Mem.ult(i, n) ? Mem.getRefAt(Repr.arrData(a), 0, i) : null;
 	}
 
 	// the type indices of the interfaces a class implements

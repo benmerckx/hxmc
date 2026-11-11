@@ -237,43 +237,61 @@ class Boxes {
 		Mem.setRefBarrier(a, 8, nd);
 	}
 
-	@:hxmc.export("hx_aget_i_slow") @:hxmc.unsafe static function agetI(a:Dynamic, i:Int):Int {
-		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
-		var d = arrData(a);
-		return switch arrKind(a) {
-			case AK_I32: Mem.getI32At(d, 0, i);
-			case AK_BOOL: Mem.getU8At(d, 0, i);
-			case AK_F64: f2i(Mem.getF64At(d, 0, i));
-			case AK_I64: Mem.getI64At(d, 0, i).toInt();
-			case _: unboxInt(Mem.getRefAt(d, 0, i));
-		}
-	}
-
-	@:hxmc.export("hx_aget_l_slow") @:hxmc.unsafe static function agetL(a:Dynamic, i:Int):I64 {
-		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
-		var d = arrData(a);
-		return switch arrKind(a) {
-			case AK_I32: Mem.getI32At(d, 0, i);
-			case AK_BOOL: Mem.getU8At(d, 0, i);
-			case AK_F64: f2l(Mem.getF64At(d, 0, i));
-			case AK_I64: Mem.getI64At(d, 0, i);
-			case _: unboxI64(Mem.getRefAt(d, 0, i));
-		}
-	}
-
-	@:hxmc.export("hx_aget_f_slow") @:hxmc.unsafe static function agetF(a:Dynamic, i:Int):Float {
-		if (Mem.addr(a).isNull() || !Mem.ult(i, arrLen(a))) return 0;
-		var d = arrData(a);
-		return switch arrKind(a) {
-			case AK_I32: Mem.getI32At(d, 0, i);
-			case AK_BOOL: Mem.getU8At(d, 0, i);
-			case AK_F64: Mem.getF64At(d, 0, i);
+	// (an Array's element of any kind; null or past the end: 0; TypeView's
+	// spans, each element's check the test before it)
+	@:hxmc.export("hx_aget_i_slow") @:hxmc.kernel static function agetI(a:Dynamic, i:Int):Int
+		return switch TypeView.arrayKind(a) {
+			case AK_I32:
+				var s = TypeView.ints(a);
+				Mem.ult(i, s.length) ? s[i] : 0;
+			case AK_BOOL:
+				var s = TypeView.bools(a);
+				Mem.ult(i, s.length) ? s[i] : 0;
+			case AK_F64:
+				var s = TypeView.floats(a);
+				Mem.ult(i, s.length) ? f2i(s[i]) : 0;
 			case AK_I64:
-				var f:Float = cast Mem.getI64At(d, 0, i);
-				f;
-			case _: unboxFloat(Mem.getRefAt(d, 0, i));
+				var s = TypeView.longs(a);
+				Mem.ult(i, s.length) ? s[i].toInt() : 0;
+			case _: unboxInt(TypeView.element(a, i));
 		}
-	}
+
+	@:hxmc.export("hx_aget_l_slow") @:hxmc.kernel static function agetL(a:Dynamic, i:Int):I64
+		return switch TypeView.arrayKind(a) {
+			case AK_I32:
+				var s = TypeView.ints(a);
+				Mem.ult(i, s.length) ? (s[i] : I64) : 0;
+			case AK_BOOL:
+				var s = TypeView.bools(a);
+				Mem.ult(i, s.length) ? ((s[i] : Int) : I64) : 0;
+			case AK_F64:
+				var s = TypeView.floats(a);
+				Mem.ult(i, s.length) ? f2l(s[i]) : 0;
+			case AK_I64:
+				var s = TypeView.longs(a);
+				Mem.ult(i, s.length) ? s[i] : 0;
+			case _: unboxI64(TypeView.element(a, i));
+		}
+
+	@:hxmc.export("hx_aget_f_slow") @:hxmc.kernel static function agetF(a:Dynamic, i:Int):Float
+		return switch TypeView.arrayKind(a) {
+			case AK_I32:
+				var s = TypeView.ints(a);
+				Mem.ult(i, s.length) ? s[i] : 0;
+			case AK_BOOL:
+				var s = TypeView.bools(a);
+				Mem.ult(i, s.length) ? (s[i] : Int) : 0;
+			case AK_F64:
+				var s = TypeView.floats(a);
+				Mem.ult(i, s.length) ? s[i] : 0;
+			case AK_I64:
+				var s = TypeView.longs(a);
+				if (Mem.ult(i, s.length)) {
+					var f:Float = cast s[i];
+					f;
+				} else 0;
+			case _: unboxFloat(TypeView.element(a, i));
+		}
 
 	// (an Array<T>'s element as a type parameter's word, Tagged: an Int's or
 	// a Float's encoded; a Bool's box static, an Int64's made)
