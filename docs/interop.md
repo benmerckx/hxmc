@@ -277,6 +277,8 @@ converts to a `ReadOnlySpan`, never back.
 | `dst.blit(pos, src, srcpos, len)` | a copy between spans, overlapping too, checked |
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1, checked |
 | `s.load(i)`, `s.store(i, v)`, `s.compareExchange(i, expected, replacement)` | atomic accesses of element i, checked as `s[i]`: of `Int`, `UInt` (`Int32`, `UInt32`) and `Int64` elements; sequentially consistent, so a load acquires and a store releases. `compareExchange` writes replacement if the element holds expected and returns what it held. A `ReadOnlySpan` has `load` only |
+| `s.add(i, v)`, `s.exchange(i, v)` | atomic: v added to element i, v into element i; the value it held (of the same elements as `load`; a `Span` only) |
+| `Span.stack(n)` | n zeroed elements in the kernel's frame (a constant n, up to 65536): scratch while the kernel runs, never its result (`reject/SpanStackResult`); on the other targets a `Bytes` of its own |
 
 A failed check cannot throw in kernels (a throw allocates): the
 program ends with exit code 2 and a message on stderr:
@@ -366,6 +368,7 @@ an `Int` one. A struct parameter is a copy: kernel state that functions
 update in place is a struct element of a span (`st[0].pos += n`).
 
 `Spans` (every target) and `SpanOutOfRange` check the API and the failure,
+`SpanScratch` a kernel's scratch and the atomic add and exchange,
 `SpanInflate` a zlib inflate written on spans, over `Bytes` on the main
 thread and over IoBuffers on a worker inside its region while the main
 thread collects; `SpanAtomics` a worker polling a cancel flag inside its

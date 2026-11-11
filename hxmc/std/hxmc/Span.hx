@@ -77,6 +77,11 @@ abstract Span<T>(SpanData) {
 	// replacement into element i if it holds expected; the value it held
 	extern public function compareExchange(i:Int, expected:T, replacement:T):T;
 
+	// v added to element i, v into element i: the value it held (atomic, as load)
+	extern public function add(i:Int, v:T):T;
+
+	extern public function exchange(i:Int, v:T):T;
+
 	@:to extern function toReadOnly():ReadOnlySpan<T>;
 
 	// a call's argument (GC code: only so): bytes [pos, pos + len) of b, len
@@ -92,6 +97,11 @@ abstract Span<T>(SpanData) {
 	// length elements of T at p, as their owner vouches (@:hxmc.unsafe code,
 	// or a call's argument in GC code: a pool's glue)
 	extern public static function unsafeOf<T>(p:Ptr<T>, length:Int):Span<T>;
+
+	// n (a constant) zeroed elements in the kernel's frame (a kernel's only):
+	// scratch that lives while the kernel runs, never its result
+	// (`var t:Span<Int> = Span.stack(64);`)
+	extern public static function stack<T>(n:Int):Span<T>;
 }
 
 // (a span's two words; its layout is FnLower.spanCall's)

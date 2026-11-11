@@ -3780,6 +3780,22 @@ class FnLower {
 		}
 		inline function loc(x:Ex, t:Ty):Ex
 			return isConst(x) ? x : ELocal(asLocal(x, t));
+		if (name == "stack") {
+			// (a kernel's frame: Mem.stack's slot, zeroed; KernelCheck keeps it from the result)
+			if (!fi.declKernel) spanFail(e, "a span of a frame's scratch in GC code", KernelCheck.SPANS_KERNEL + ": only a @:hxmc.kernel function holds one");
+			var n = switch strip(cargs[0]).eexpr {
+				case TConst(TInt(v)) if (v >= 0 && v <= 1 << 16): v;
+				case _: cfail("hxmc.Span.stack: its length is a constant (0 to 65536)", e);
+			};
+			var sp = KernelCheck.spanOf(e.etype);
+			if (sp == null) cfail("hxmc.Span.stack: give its result a span type", e);
+			var bytes = n * CInterop.sizeOf(ptrElemCt(sp.elem, e));
+			var p = loc(ECallHost("hxmc_unsafe_Mem_stack", vector(EInt(bytes < 16 ? 16 : bytes)), TI64), TI64);
+			if (bytes > 0) out.push(SExpr(ECall(spanSupport(sd, "set"), vector(p, EInt(0), EConv(I2L, EInt(bytes))))));
+			var s = newSlot(sdt, true);
+			make(s, p, EInt(n));
+			return coerce(ELocal(s), sdt, tyOf(e));
+		}
 		if (name == "ofBytes" || name == "ofIoBuffer" || name == "unsafeOf") {
 			var direct = boundary != null && boundary.direct.indexOf(e) >= 0;
 			if (!direct && !fi.declKernel)
@@ -3931,7 +3947,7 @@ class FnLower {
 					out.push(SSet(k, EBin(Add, ELocal(k), EInt(1))));
 				})));
 				EInt(0);
-			case "load" | "store" | "compareExchange":
+			case "load" | "store" | "compareExchange" | "add" | "exchange":
 				// (Atomic's 32- and 64-bit operations: integer elements only)
 				var w = switch ct {
 					case CI32: 32;
@@ -3949,6 +3965,8 @@ class FnLower {
 					case "store":
 						out.push(SExpr(ECallHost("hxmc_unsafe_Atomic_store" + w, vector(p, coerce(rest[1], restTy(1), t)), TVoid)));
 						EInt(0);
+					case "add" | "exchange":
+						coerce(temp(t, ECallHost("hxmc_unsafe_Atomic_" + name + w, vector(p, coerce(rest[1], restTy(1), t)), t)), t, tyOf(e));
 					case _:
 						var expected = loc(coerce(rest[1], restTy(1), t), t), replacement = loc(coerce(rest[2], restTy(2), t), t);
 						coerce(temp(t, ECallHost("hxmc_unsafe_Atomic_cas" + w, vector(p, expected, replacement), t)), t, tyOf(e));

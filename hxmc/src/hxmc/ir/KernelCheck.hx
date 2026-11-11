@@ -53,6 +53,26 @@ class KernelCheck {
 
 	// the function's result type (a returned proof is checked as any flow)
 	var ret:Null<T>;
+	// the locals holding a span of the frame's scratch (Span.stack): never the result
+	var scratch = new Map<Int, Bool>();
+
+	public static inline var SCRATCH = "a span of a kernel's frame lives while the kernel runs";
+
+	// whether e is a span of the frame's scratch, or of one
+	function fromScratch(e:TExpr):Bool
+		return switch e.eexpr {
+			case TLocal(v): scratch.exists(v.vId);
+			case TParenthesis(x) | TMeta(_, x) | TCast(x, _): fromScratch(x);
+			case TIf(_, a, b): fromScratch(a) || b != null && fromScratch(b);
+			case TBlock(el) if (el.length > 0): fromScratch(el[el.length - 1]);
+			case TCall({eexpr: TField(_, FStatic(c, cf))}, args):
+				switch c.clKind {
+					case KAbstractImpl(a) if (isSpanAbstract(a)):
+						cf.cfName == "stack" || args.length > 0 && fromScratch(args[0]);
+					case _: false;
+				}
+			case _: false;
+		}
 
 	function new(l, fi) {
 		this.l = l;
@@ -362,8 +382,10 @@ class KernelCheck {
 			case TVar(v, init):
 				if (!value(v.vType, e.epos, "the local " + v.vName)) return;
 				if (init != null) flow(v.vType, init);
+				if (init != null && fromScratch(init)) scratch.set(v.vId, true);
 			case TReturn(x) if (x != null && ret != null):
 				flow(ret, x);
+				if (fromScratch(x)) fail(e.epos, "a span of the frame's scratch (Span.stack) returned", SCRATCH);
 			case TFunction(_):
 				fail(e.epos, "a closure", "no closures");
 				return;
@@ -451,6 +473,10 @@ class KernelCheck {
 				return;
 			case TBinop(OpAssign | OpAssignOp(_), lhs, rhs):
 				flow(lhs.etype, rhs);
+				switch lhs.eexpr {
+					case TLocal(v) if (fromScratch(rhs)): scratch.set(v.vId, true);
+					case _:
+				}
 				var s = writtenStatic(lhs);
 				if (s != null && !plain(s.cfType)) fail(e.epos, "a write of the static " + s.cfName + " of the type " + typeName(s.cfType), STATICS);
 			case TUnop(Increment | Decrement, _, x):
