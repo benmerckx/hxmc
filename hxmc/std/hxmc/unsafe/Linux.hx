@@ -1,5 +1,7 @@
 package hxmc.unsafe;
 
+import hxmc.Platform;
+
 // (no hxmc.target: typed for every native target at once, as the corpus'
 // archives are; elsewhere the link fails on `syscall`)
 #if (hxmc.target && hxmc.target != "linux-x86_64" && hxmc.target != "linux-arm64" && hxmc.target != "android-x86_64" && hxmc.target != "android-arm64")
@@ -21,7 +23,7 @@ import hxmc.I64;
 class Linux {
 	// the numbers of the system calls added since Linux 5.1, the same on
 	// every architecture (asm-generic/unistd.h); older ones differ per
-	// architecture (Mem.arm())
+	// architecture (Platform.arm())
 	public static inline var SYS_io_uring_setup = 425;
 	public static inline var SYS_io_uring_enter = 426;
 	public static inline var SYS_io_uring_register = 427;
@@ -39,7 +41,7 @@ class Linux {
 
 	// the calling thread's errno (kept across the safe region's end)
 	public static inline function errno():Int
-		return Mem.getI32(Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		return Mem.getI32(Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 }
 
 @:hxmc.c private extern class LinuxC {

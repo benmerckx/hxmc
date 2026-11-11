@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.Types.*;
 import hxmc.unsafe.Atomic;
@@ -47,18 +48,18 @@ class Names {
 	@:hxmc.threadLocal static var icN:Int;
 
 	@:hxmc.unsafe static function multithreaded():Bool {
-		if (Mem.os() == 3) return false;
+		if (Platform.os() == 3) return false;
 		return Mem.getI32(Mem.sym("rt_mt"), 0) != 0;
 	}
 
 	@:hxmc.unsafe static function lock() {
-		if (Mem.os() == 3) return;
+		if (Platform.os() == 3) return;
 		var l = spin.add(32);
 		while (Atomic.cas32(l, 0, 1) != 0) {}
 	}
 
 	@:hxmc.unsafe static function unlock() {
-		if (Mem.os() != 3) Atomic.store32(spin.add(32), 0);
+		if (Platform.os() != 3) Atomic.store32(spin.add(32), 0);
 	}
 
 	static inline function nstatic():Int

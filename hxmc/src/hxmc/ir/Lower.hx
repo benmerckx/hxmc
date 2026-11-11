@@ -1,5 +1,6 @@
 package hxmc.ir;
 
+import hxmc.Platform;
 import hxmc.ir.Ir;
 import hxmc.ir.LowerQueries;
 import hxmc.ir.Com.ComValue;
@@ -229,9 +230,9 @@ class Lower implements LowerQueries {
 	// whether it is of this target (its __init__ runs, findHosts, and
 	// reflection finds it by types and @:keep, ClassInfo.otherTarget)
 	public static function ofTarget(c:TClass):Bool {
-		// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
+		// @:hxmc.android: the Android targets' only (Platform.target() 9 and 10)
 		if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) return false;
-		// @:hxmc.ios: UIKit's targets only (Mem.platform() 1 to 3: iOS, its simulator, Mac Catalyst)
+		// @:hxmc.ios: UIKit's targets only (Platform.apple() 1 to 3: iOS, its simulator, Mac Catalyst)
 		if (hasMeta(":hxmc.ios", c.clMeta) && targetPlatform >= 0 && targetPlatform < 1) return false;
 		// @:hxmc.wasm: the runtime of WebAssembly only (what C provides elsewhere)
 		if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) return false;
@@ -342,7 +343,7 @@ class Lower implements LowerQueries {
 	}
 
 	// replaces the calls of runtime functions implemented in Haxe in fi's
-	// body, and folds the target's constants: `if (Mem.os() == 2) a else b`
+	// body, and folds the target's constants: `if (Platform.os() == 2) a else b`
 	// keeps one branch (its symbols stay out of the other targets' links).
 	// An expression nothing changes in is kept; statement lists are copied
 	// while binding the body's calls and folding target constants.

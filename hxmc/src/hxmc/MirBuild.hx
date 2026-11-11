@@ -2136,7 +2136,7 @@ class MirBuild extends MirWriter {
 
 	// Mem.target: 0 linux-x86_64, 1 linux-arm64, 2 macos-x86_64, 3 macos-arm64, 4 windows-x86_64, 5 windows-arm64, 6 wasm32-wasi,
 	// 7 linux-x86_64 and 8 linux-arm64 with glibc (-D hxmc.libc=glibc: its struct layouts, hxmc.rt.Layouts),
-	// 9 android-x86_64 and 10 android-arm64 (Bionic; `Mem.target() >= 9`: Android)
+	// 9 android-x86_64 and 10 android-arm64 (Bionic; `Platform.target() >= 9`: Android)
 	public static function targetCode(abi:Abi):Int
 		return abi.wasm ? 6 : abi.android ? (abi.arm ? 10 : 9) : abi.libc == "glibc" ? (abi.arm ? 8 : 7) : (abi.os == "linux" ? 0 : abi.os == "macos" ? 2 : 4) + (abi.arm ? 1 : 0);
 

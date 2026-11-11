@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
@@ -78,7 +79,7 @@ class FloatText {
 		var p = Mem.stack(64);
 		for (i in 0...msg.length)
 			Mem.setI8(p, i, StringTools.fastCodeAt(msg, i));
-		if (Mem.os() == 2) {
+		if (Platform.os() == 2) {
 			hxmc.unsafe.Win32._write(2, p, msg.length);
 			hxmc.unsafe.Win32.exit(70);
 		} else {

@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.LibC;
@@ -15,17 +16,17 @@ import hxmc.unsafe.Ptr;
 // runtime's scheduler (rt_wait_fd, safe regions: Threads.hx).
 class PosixSys {
 	static inline function mac():Bool
-		return Mem.os() == 1;
+		return Platform.os() == 1;
 
 	// macOS x86-64: the 64-bit-inode variants of stat and readdir (as its headers name them)
 	static inline function inode64():Bool
-		return Mem.target() == 2;
+		return Platform.target() == 2;
 
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
 	@:hxmc.unsafe static function errno():Int
-		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		return Mem.getI32(mac() ? Posix.__error() : Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 
 	static inline var EINTR = 4;
 
@@ -100,7 +101,7 @@ class PosixSys {
 
 	// the address of the C library's environ
 	@:hxmc.unsafe static function environAddr():Ptr
-		return mac() ? Posix._NSGetEnviron() : Mem.target() >= 9 ? Start.environ : Mem.sym("environ");
+		return mac() ? Posix._NSGetEnviron() : Platform.target() >= 9 ? Start.environ : Mem.sym("environ");
 
 	public static function environ():Array<String> {
 		var env = Mem.getPtr(environAddr(), 0);
@@ -177,7 +178,7 @@ class PosixSys {
 		Posix.fflush(Ptr.nil());
 		// (Android: the process ends without the other libraries' destructors,
 		// which the system's threads, EGL's among them, may still need)
-		if (Mem.target() >= 9) Os.exit(code) else Posix.exit(code);
+		if (Platform.target() >= 9) Os.exit(code) else Posix.exit(code);
 	}
 
 	@:hxmc.unsafe public static function time():Float {
@@ -359,7 +360,7 @@ class PosixSys {
 		return 144;
 
 	static inline function stMode(st:Ptr):Int
-		return mac() ? Mem.getU16(st, 4) : Mem.arm() ? Mem.getI32(st, 16) : Mem.getI32(st, 24);
+		return mac() ? Mem.getU16(st, 4) : Platform.arm() ? Mem.getI32(st, 16) : Mem.getI32(st, 24);
 
 	static inline function stSize(st:Ptr):I64
 		return mac() ? Mem.getI64(st, 96) : Mem.getI64(st, 48);
@@ -511,7 +512,7 @@ class PosixSys {
 				u(Mem.getI32(st, 20)), u(Mem.getI32(st, 16)), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 48)), f(Mem.getI64(st, 64)), u(Mem.getI32(st, 0)),
 				f(Mem.getI64(st, 8)), Mem.getU16(st, 6), u(Mem.getI32(st, 24)), f(Mem.getI64(st, 96)), Mem.getU16(st, 4)
 			];
-		if (Mem.arm())
+		if (Platform.arm())
 			return [
 				u(Mem.getI32(st, 28)), u(Mem.getI32(st, 24)), f(Mem.getI64(st, 72)), f(Mem.getI64(st, 88)), f(Mem.getI64(st, 104)), f(Mem.getI64(st, 0)),
 				f(Mem.getI64(st, 8)), u(Mem.getI32(st, 20)), f(Mem.getI64(st, 32)), f(Mem.getI64(st, 48)), u(Mem.getI32(st, 16))

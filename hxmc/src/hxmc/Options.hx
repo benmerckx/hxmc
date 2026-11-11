@@ -211,7 +211,7 @@ class Options {
 		#if eval
 		return "linux-x86_64";
 		#else
-		return switch hxmc.unsafe.Mem.target() {
+		return switch Platform.target() {
 			case 1 | 8: "linux-arm64";
 			case 2: "macos-x86_64";
 			case 3: "macos-arm64";

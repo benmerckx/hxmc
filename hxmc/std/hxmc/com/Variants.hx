@@ -1,5 +1,6 @@
 package hxmc.com;
 
+import hxmc.Platform;
 import hxmc.unsafe.*;
 import hxmc.com.Variant;
 
@@ -83,5 +84,5 @@ class Variants {
 
 	// the same of a VARIANT in memory, left VT_EMPTY
 	public static function clearAt(p:Ptr<Variant>):Void
-		if (Mem.os() == 2) @:privateAccess hxmc.rt.ComKind.variantClear(p) else @:privateAccess ComException.unavailable();
+		if (Platform.os() == 2) @:privateAccess hxmc.rt.ComKind.variantClear(p) else @:privateAccess ComException.unavailable();
 }

@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import haxe.io.Bytes;
 import hxmc.I64;
 import hxmc.rt.C;
@@ -78,7 +79,7 @@ class Ssl {
 		return Mem.addr(b.getData());
 
 	static inline function os():Int
-		return Mem.os();
+		return Platform.os();
 
 	// a context of `size` bytes, malloc'ed (the caller initializes it)
 	static inline function alloc(size:Int):Ptr
@@ -456,7 +457,7 @@ class Ssl {
 	// the BIO: Unix.send / Unix.recv socket bytes 0 (Bytes.length bytes) []
 	// (called by mbedtls inside the handshake, read or write: in their safe region)
 	@:hxmc.unsafe static function bioFailed(s:Ptr, send:Bool):Int {
-		var e = os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : Mem.getI32(os() == 1 ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		var e = os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : Mem.getI32(os() == 1 ? Posix.__error() : Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 		Mem.setI32(s, SSL_BIO_ERRNO, e);
 		Mem.setI32(s, SSL_BIO_SEND, send ? 1 : 0);
 		return send ? ERR_NET_SEND_FAILED : ERR_NET_RECV_FAILED;

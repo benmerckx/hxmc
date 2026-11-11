@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.Layouts as L;
 import hxmc.rt.Threads.Mutator;
@@ -1301,7 +1302,7 @@ class Gc {
 				n = Os.cpus();
 				if (n > PAR_MAX) n = PAR_MAX;
 			}
-			parThreads = n < 1 || Mem.os() != 0 || Mem.arm() ? 1 : n;
+			parThreads = n < 1 || Platform.os() != 0 || Platform.arm() ? 1 : n;
 		}
 		if (parThreads < 2 || Threads.mt == 0 || gcBfs || youngUsed < (PAR_MIN_YOUNG : I64)) return false;
 		if (parHelpers == 0) {
@@ -2090,7 +2091,7 @@ class Gc {
 	// (an image another linker wrote), the program stops
 	@:hxmc.unsafe static function macWindow() {
 		// (the test here too: an older tool keeps the function, and __dso_handle is Mach-O's)
-		if (Mem.os() == 1) {
+		if (Platform.os() == 1) {
 			var h = Mem.sym("__dso_handle");
 			var n = Mem.getI32(h, 16);
 			var c = h.add(32);
@@ -2119,7 +2120,7 @@ class Gc {
 	@:hxmc.unsafe static function heapReserve(bytes:I64):Ptr {
 		if (!compactWindow()) return Os.reserve(bytes);
 		var at = (compactNext + ((2 << 20) - 1)) & ~(((2 : I64) << 20) - 1);
-		if (Mem.os() == 1) {
+		if (Platform.os() == 1) {
 			// (macOS: the image's segment, the program's own: mapped over)
 			if (compactLimit - at < bytes) return Ptr.nil();
 			var p = Os.mapOver(Ptr.ofI64(at), bytes);
@@ -2159,7 +2160,7 @@ class Gc {
 	@:hxmc.unsafe static function resizeNursery(size:I64) {
 		// (macOS: MADV_DONTNEED may leave the pages as they were, so they stay
 		// dirty: the nursery grows again into them)
-		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size) && Mem.os() != 1) {
+		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size) && Platform.os() != 1) {
 			// zeros again above (pages are released whole: the partial page below
 			// the next 64 KB boundary stays dirty)
 			var z = youngStart.addL((size + 0xFFFF) - ((size + 0xFFFF) & 0xFFFF));
@@ -2269,7 +2270,7 @@ class Gc {
 	@:hxmc.unsafe static function prefaultAhead(promoted:I64) {
 		if (pfState == 0) {
 			if (oldPtr.diff(oldStart) < (PF_START : I64)) return;
-			if (Mem.os() != 0) {
+			if (Platform.os() != 0) {
 				pfState = -1;
 				return;
 			}
@@ -2710,7 +2711,7 @@ class Gc {
 		compactNext = ((Mem.mirHost() == 1 ? 2 : 1) : I64) << 30;
 		compactLimit = (COMPACT_LIMIT : I64) << 30;
 		// (macOS: in the image's __HXHEAP segment, LinkMachO.heapWindow)
-		if (Mem.os() == 1 && compactWindow()) macWindow();
+		if (Platform.os() == 1 && compactWindow()) macWindow();
 		// (the image's static objects, which compressed references reach too:
 		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
 		if (compactWindow() && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
@@ -2770,7 +2771,7 @@ class Gc {
 			if (r.isNull() && regionBytes > ((512 : I64) << 20)) {
 				// (macOS's window stays reserved: no access again, not unmapped)
 				if (i == 1) {
-					if (Mem.os() == 1 && compactWindow()) Os.guard(region0, regionBytes) else Os.release(region0, regionBytes);
+					if (Platform.os() == 1 && compactWindow()) Os.guard(region0, regionBytes) else Os.release(region0, regionBytes);
 				}
 				regionBytes = regionBytes / 2;
 				compactNext = regionsAt;
@@ -2867,7 +2868,7 @@ class Gc {
 	@:hxmc.unsafe static function procRss(out:Ptr) {
 		Mem.setI64(out, 0, 0);
 		Mem.setI64(out, 8, 0);
-		if (Mem.os() != 0) return;
+		if (Platform.os() != 0) return;
 		var fd = Posix.open(Mem.cstr("/proc/self/status"), 0x80000, 0); // O_CLOEXEC
 		if (fd < 0) return;
 		var buf = Mem.stack(8192);

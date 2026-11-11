@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.*;
@@ -57,9 +58,9 @@ class ObjCExceptions {
 		return cls == cxxClass() && Mem.getPtr(ue, -80) == ue.add(40);
 
 	@:hxmc.export("rt_objc_personality") @:hxmc.unsafe static function personality(version:Int, actions:Int, cls:I64, ue:Ptr, ctx:Ptr):Int {
-		// (Apple's systems only: one branch is lowered, Lower folds Mem.os())
+		// (Apple's systems only: one branch is lowered, Lower folds Platform.os())
 		var r = CONTINUE_UNWIND;
-		if (Mem.os() == 1) r = claim(version, actions, cls, ue, ctx) else {}
+		if (Platform.os() == 1) r = claim(version, actions, cls, ue, ctx) else {}
 		return r;
 	}
 
@@ -69,7 +70,7 @@ class ObjCExceptions {
 		var landing = U._Unwind_GetLanguageSpecificData(ctx);
 		if (landing.isNull()) return CONTINUE_UNWIND;
 		// the frame's stack pointer (DWARF: arm64 sp 31, x86-64 rsp 7)
-		var sp = U._Unwind_GetGR(ctx, Mem.arm() ? 31 : 7);
+		var sp = U._Unwind_GetGR(ctx, Platform.arm() ? 31 : 7);
 		var m = Threads.self;
 		if (m.isNull() || Threads.collector == m) return CONTINUE_UNWIND;
 		var h = Gc.hcur;
@@ -78,8 +79,8 @@ class ObjCExceptions {
 		if (actions & HANDLER_FRAME == 0) return CONTINUE_UNWIND;
 		// the stub (ue, the return address): the first two arguments'
 		// registers (DWARF: arm64 x0, x1; x86-64 rdi 5, rsi 4)
-		U._Unwind_SetGR(ctx, Mem.arm() ? 0 : 5, ue);
-		U._Unwind_SetGR(ctx, Mem.arm() ? 1 : 4, U._Unwind_GetIP(ctx));
+		U._Unwind_SetGR(ctx, Platform.arm() ? 0 : 5, ue);
+		U._Unwind_SetGR(ctx, Platform.arm() ? 1 : 4, U._Unwind_GetIP(ctx));
 		U._Unwind_SetIP(ctx, landing);
 		return INSTALL_CONTEXT;
 	}
@@ -135,7 +136,7 @@ class ObjCExceptions {
 
 	@:hxmc.unsafe static function fn(name:Ptr):Ptr {
 		var r = Ptr.nil();
-		if (Mem.os() == 1) r = S.dlsym(Ptr.ofI64(-2), name) else {} // (RTLD_DEFAULT)
+		if (Platform.os() == 1) r = S.dlsym(Ptr.ofI64(-2), name) else {} // (RTLD_DEFAULT)
 		return r;
 	}
 
@@ -150,7 +151,7 @@ class ObjCExceptions {
 	// handle's null
 	static function description(v:Dynamic):Null<String> {
 		var r:Null<String> = null;
-		if (Mem.os() == 1) r = describe(v) else {}
+		if (Platform.os() == 1) r = describe(v) else {}
 		return r;
 	}
 

@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.Layouts as L;
 import hxmc.rt.C;
@@ -108,9 +109,9 @@ class Threads {
 		thrStats = Os.has("RT_STATS");
 		if (thrStats) {
 			#if hxmc.shared
-			if (Mem.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle"));
+			if (Platform.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle"));
 			#else
-			if (Mem.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle")) else C.atexit(Callback.addr(thrReport));
+			if (Platform.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle")) else C.atexit(Callback.addr(thrReport));
 			#end
 		}
 	}

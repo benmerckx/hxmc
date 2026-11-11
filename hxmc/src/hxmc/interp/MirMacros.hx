@@ -1,5 +1,6 @@
 package hxmc.interp;
 
+import hxmc.Platform;
 import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
@@ -255,7 +256,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		// (the compiler's own target: the macro code runs in it, with its layouts and convention)
 		if (!core.Define.rawDefined(com2.defines, "hxmc.target")) {
 			core.Define.rawDefineValue(com2.defines, "hxmc.target", Options.host());
-			var t = Mem.target();
+			var t = Platform.target();
 			if ((t == 7 || t == 8) && !core.Define.rawDefined(com2.defines, "hxmc.libc")) core.Define.rawDefineValue(com2.defines, "hxmc.libc", "glibc");
 		}
 	}

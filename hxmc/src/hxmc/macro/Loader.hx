@@ -1,5 +1,6 @@
 package hxmc.macro;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.Obj;
 import hxmc.unsafe.LibC;
@@ -343,8 +344,8 @@ class Loader {
 	// @:hxmc.lib, else the C library's and the system's DLLs the process has
 	// loaded. (Linux: the executable is static, there is nothing else.)
 	static function systemSymbol(n:String):Ptr {
-		if (Mem.os() == 1) return SysDl.dlsym(Ptr.ofI64(-2), cstr(n));
-		if (Mem.os() == 2) {
+		if (Platform.os() == 1) return SysDl.dlsym(Ptr.ofI64(-2), cstr(n));
+		if (Platform.os() == 2) {
 			var lib = hxmc.ir.CInterop.LIBS.get(n);
 			// (LinkInputs.libFile's names)
 			var dlls = lib != null ? [lib.indexOf(".") < 0 && lib.indexOf("/") < 0 ? lib + ".dll" : lib] : [];
@@ -975,7 +976,7 @@ class Loader {
 
 	// whether this compiler can have the native tier (linux-x86_64: the window, the host table's TLS offsets)
 	public static function nativeTier():Bool
-		return Mem.os() == 0 && !Mem.arm() && Mem.mirHost() == 1;
+		return Platform.os() == 0 && !Platform.arm() && Mem.mirHost() == 1;
 
 	// n bytes of pages in the window, read and write; null once it is full
 	static function lowMap(n:Int):Ptr {
@@ -985,7 +986,7 @@ class Loader {
 			return Ptr.nil();
 		}
 		// (Linux only: Mem.os folds the call away on the others, which have no mmap)
-		if (Mem.os() != 0) throw "the native tier: Linux only";
+		if (Platform.os() != 0) throw "the native tier: Linux only";
 		var p = Vm.mmap(Ptr.ofI64((lowNext : I64)), (size : I64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		var a = p.toI64();
 		if (a != (lowNext : I64)) throw "the native tier: cannot map memory at 0x" + StringTools.hex(lowNext) + " (got " + a + ")";
@@ -1074,7 +1075,7 @@ class Loader {
 	static function protect(p:Ptr, n:Int, prot:Int) {
 		var lo = p.toI64() & ~(4095 : I64);
 		var hi = (p.toI64() + n + 4095) & ~(4095 : I64);
-		if (Mem.os() != 0) throw "the native tier: Linux only";
+		if (Platform.os() != 0) throw "the native tier: Linux only";
 		if (Vm.mprotect(Ptr.ofI64(lo), hi - lo, prot) != 0) throw "the native tier: mprotect failed";
 	}
 

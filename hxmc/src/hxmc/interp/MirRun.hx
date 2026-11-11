@@ -1,5 +1,6 @@
 package hxmc.interp;
 
+import hxmc.Platform;
 import core.TType;
 import hxmc.Obj;
 import hxmc.ir.Ir;
@@ -51,7 +52,7 @@ class MirRun {
 			i++;
 		}
 		// (a compiler linked against glibc: the program's layouts are that mode's)
-		var t = Mem.target();
+		var t = Platform.target();
 		return out.concat(["--custom-target", "hxmc", "-D", "hxmc.interp"]).concat(t == 7 || t == 8 ? ["-D", "hxmc.libc=glibc"] : []);
 	}
 
@@ -62,7 +63,7 @@ class MirRun {
 		var o = Options.read(com);
 		var abi = Abi.get(o.target);
 		// (the program runs in the compiler: its target is the compiler's own)
-		var t = Mem.target();
+		var t = Platform.target();
 		if (o.target != Options.host() || (o.libc != null) != (t == 7 || t == 8)) throw "-D hxmc.run=mir: the program's target is the compiler's own (" + Options.host() + ")";
 		abi.framePointers = abi.arm || o.framePointers; // (as Driver)
 		hxmc.ir.Lower.targetOs = abi.osCode();

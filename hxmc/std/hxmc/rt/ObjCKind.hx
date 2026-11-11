@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.*;
@@ -105,14 +106,14 @@ class ObjCKind {
 	// typed as its Objective-C class, a view a parent's subviews gave) gives
 	// up its id now (Foreign.detach)
 	@:hxmc.unsafe public static function detach(o:Dynamic):Void {
-		if (Mem.os() != 1 || o == null) return;
+		if (Platform.os() != 1 || o == null) return;
 		var k = known();
 		if (k != 0) Foreign.detach(k, o);
 	}
 
 	// ---- pools: one on Apple's systems whatever the heap holds (nil: no libobjc)
 	@:hxmc.unsafe public static function poolPushAny():Ptr {
-		if (Mem.os() != 1) return Ptr.nil();
+		if (Platform.os() != 1) return Ptr.nil();
 		if (poolPush.isNull()) {
 			poolPush = @:privateAccess sym(Mem.cstr("objc_autoreleasePoolPush"));
 			poolPop = @:privateAccess sym(Mem.cstr("objc_autoreleasePoolPop"));

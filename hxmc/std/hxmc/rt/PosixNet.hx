@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.Atomic;
@@ -18,7 +19,7 @@ import hxmc.unsafe.Ptr;
 // (rt_wait_fd, rt_wait_fds).
 class PosixNet {
 	static inline function mac():Bool
-		return Mem.os() == 1;
+		return Platform.os() == 1;
 
 	static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
@@ -64,10 +65,10 @@ class PosixNet {
 	static inline var F_SETFL = 4;
 
 	@:hxmc.unsafe static function errno():Int
-		return Mem.getI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		return Mem.getI32(mac() ? Posix.__error() : Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 
 	@:hxmc.unsafe static function setErrno(e:Int)
-		Mem.setI32(mac() ? Posix.__error() : Mem.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0, e);
+		Mem.setI32(mac() ? Posix.__error() : Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0, e);
 
 	// the last failure's errno, per thread
 	@:hxmc.threadLocal static var netErrno:Int;
@@ -336,7 +337,7 @@ class PosixNet {
 	}
 
 	@:hxmc.unsafe static function doSelect(n:Int, r:Ptr, w:Ptr, o:Ptr, tv:Ptr):Int
-		return Mem.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);
+		return Platform.target() == 2 ? Posix.select1050(n, r, w, o, tv) : Posix.select(n, r, w, o, tv);
 
 	@:hxmc.unsafe static function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int
 		return NetCore.setBool(fd, level, opt, b);

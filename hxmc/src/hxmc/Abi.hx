@@ -157,7 +157,7 @@ class Abi {
 		return interp != null || android || output == SharedLibrary;
 
 	// Android: Linux's kernel and ELF with Bionic as the C library, a shared
-	// library NativeActivity loads (Mem.os() is Linux's; Mem.target() 9 and 10)
+	// library NativeActivity loads (Platform.os() is Linux's; Platform.target() 9 and 10)
 	function setAndroid() {
 		android = true;
 		libc = "bionic";
@@ -170,10 +170,10 @@ class Abi {
 	}
 
 	// iOS (ios-arm64, ios-sim-arm64): Darwin's kernel and libSystem, the
-	// layouts and runtime objects of macos-arm64 (Mem.os() 1, Mem.target()
+	// layouts and runtime objects of macos-arm64 (Platform.os() 1, Platform.target()
 	// 3), Mach-O with the iOS or the simulator's platform in its build
 	// version (LinkMachO; a packager writes the app bundle around it,
-	// docs/using.md); Mem.platform() 1 or 2
+	// docs/using.md); Platform.apple() 1 or 2
 	function setIos(simulator:Bool) {
 		platform = simulator ? "ios-simulator" : "ios";
 		rtName = "macos-arm64";
@@ -186,7 +186,7 @@ class Abi {
 	// apps on macOS, a macOS process in everything but the platform of its
 	// build version (LinkMachO): macOS's layouts and runtime objects, iOS's
 	// versions, the frameworks of iOS that macOS has under /System/iOSSupport
-	// (ObjC.frameworkPath); Mem.platform() 3
+	// (ObjC.frameworkPath); Platform.apple() 3
 	function setCatalyst() {
 		platform = "maccatalyst";
 	}
@@ -196,11 +196,11 @@ class Abi {
 	public function uikit():Bool
 		return ios() || platform == "maccatalyst";
 
-	// Mem.os(): 0 Linux, 1 macOS, 2 Windows, 3 WASI
+	// Platform.os(): 0 Linux, 1 macOS, 2 Windows, 3 WASI
 	public function osCode():Int
 		return os == "linux" ? 0 : os == "macos" ? 1 : os == "windows" ? 2 : 3;
 
-	// Mem.platform(): 0 the system's own (macOS where Mem.os() is 1), 1 iOS, 2 the iOS simulator, 3 Mac Catalyst
+	// Platform.apple(): 0 the system's own (macOS where Platform.os() is 1), 1 iOS, 2 the iOS simulator, 3 Mac Catalyst
 	public function platformCode():Int
 		return platform == "ios" ? 1 : platform == "ios-simulator" ? 2 : platform == "maccatalyst" ? 3 : 0;
 

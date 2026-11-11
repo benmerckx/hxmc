@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.unsafe.*;
@@ -49,7 +50,7 @@ class Faults {
 	static var veh:Ptr;
 
 	@:hxmc.unsafe static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	// struct sigaction: Linux (musl, glibc) 152 bytes, the handler at 0, the
 	// mask at 8, the flags at 136; Bionic (LP64) the flags at 0, the handler
@@ -58,27 +59,27 @@ class Faults {
 	static var SA_BYTES(get, never):Int;
 
 	@:hxmc.unsafe static inline function get_SA_BYTES():Int
-		return Mem.os() == 1 ? 16 : Mem.target() >= 9 ? 32 : 152;
+		return Platform.os() == 1 ? 16 : Platform.target() >= 9 ? 32 : 152;
 
 	static var SA_HANDLER(get, never):Int;
 
 	@:hxmc.unsafe static inline function get_SA_HANDLER():Int
-		return Mem.target() >= 9 ? 8 : 0;
+		return Platform.target() >= 9 ? 8 : 0;
 
 	static var SA_FLAGS(get, never):Int;
 
 	@:hxmc.unsafe static inline function get_SA_FLAGS():Int
-		return Mem.os() == 1 ? 12 : Mem.target() >= 9 ? 0 : 136;
+		return Platform.os() == 1 ? 12 : Platform.target() >= 9 ? 0 : 136;
 
 	static var SA_SIGINFO(get, never):Int;
 
 	@:hxmc.unsafe static inline function get_SA_SIGINFO():Int
-		return Mem.os() == 1 ? 0x40 : 4;
+		return Platform.os() == 1 ? 0x40 : 4;
 
 	static var SIGBUS(get, never):Int;
 
 	@:hxmc.unsafe static inline function get_SIGBUS():Int
-		return Mem.os() == 1 ? 10 : 7;
+		return Platform.os() == 1 ? 10 : 7;
 
 	static inline var SIGSEGV = 11;
 
@@ -86,20 +87,20 @@ class Faults {
 	static var SI_ADDR(get, never):Int;
 
 	@:hxmc.unsafe static inline function get_SI_ADDR():Int
-		return Mem.os() == 1 ? 24 : 16;
+		return Platform.os() == 1 ? 24 : 16;
 
 	// from rt_init (Start), once the collector and the threads are set up
 	@:hxmc.unsafe static function init() {
 		var off = Os.getenv("RT_NULL_ACCESS");
 		if (!off.isNull() && Mem.getU8(off, 0) == "0".code) return;
 		imageCode();
-		// (one target's branch is lowered: Lower folds Mem.os())
+		// (one target's branch is lowered: Lower folds Platform.os())
 		if (windows()) {
 			// first: before the runtime's own handlers (WinRt: commits, crash reports)
 			veh = K.AddVectoredExceptionHandler(1, Callback.addr(onException));
 			installed = !veh.isNull();
 		} else {
-			if (Mem.target() == 7 || Mem.target() == 8) raiseFn = S.dlsym(Ptr.nil(), Mem.cstr("raise")); // (RTLD_DEFAULT)
+			if (Platform.target() == 7 || Platform.target() == 8) raiseFn = S.dlsym(Ptr.nil(), Mem.cstr("raise")); // (RTLD_DEFAULT)
 			var n = SA_BYTES;
 			prev = LibC.malloc(2 * n);
 			LibC.memset(prev, 0, 2 * n);
@@ -130,7 +131,7 @@ class Faults {
 	}
 
 	@:hxmc.unsafe static function imageCode() {
-		if (Mem.os() == 1) {
+		if (Platform.os() == 1) {
 			// the Mach-O image holding this code (an executable or a dylib): its
 			// header starts __TEXT, whose size its load command gives
 			var info = Mem.stack(32); // Dl_info: dli_fbase at 8
@@ -147,7 +148,7 @@ class Faults {
 				}
 				c = c.add(Mem.getI32(c, 4));
 			}
-		} else if (Mem.os() == 2) {
+		} else if (Platform.os() == 2) {
 			// the executable's image: SizeOfImage in its optional header (PE32+)
 			var base = K.GetModuleHandleA(Ptr.nil());
 			var pe = base.add(Mem.getI32(base, 0x3C));
@@ -195,7 +196,7 @@ class Faults {
 	@:hxmc.unsafe static function redirect(ctx:Ptr, pcOff:Int, spOff:Int, lrOff:Int) {
 		var pc = Mem.getPtr(ctx, pcOff);
 		var sp = Mem.getI64(ctx, spOff) & ~(15 : I64);
-		if (Mem.arm()) {
+		if (Platform.arm()) {
 			Mem.setI64(ctx, spOff, sp);
 			Mem.setPtr(ctx, lrOff, pc);
 		} else {
@@ -213,10 +214,10 @@ class Faults {
 	@:hxmc.callback @:hxmc.unsafe static function onSignal(sig:Int, info:Ptr, uc:Ptr):Void {
 		var code = Mem.getI32(info, 8);
 		var a = Mem.getPtr(info, SI_ADDR);
-		var ctx = Mem.os() == 1 ? Mem.getPtr(uc, 48) : uc;
-		var pcOff = Mem.os() == 1 ? (Mem.arm() ? 272 : 144) : (Mem.arm() ? 440 : 168);
-		var spOff = Mem.os() == 1 ? (Mem.arm() ? 264 : 72) : (Mem.arm() ? 432 : 160);
-		var lrOff = Mem.os() == 1 ? 256 : 424;
+		var ctx = Platform.os() == 1 ? Mem.getPtr(uc, 48) : uc;
+		var pcOff = Platform.os() == 1 ? (Platform.arm() ? 272 : 144) : (Platform.arm() ? 440 : 168);
+		var spOff = Platform.os() == 1 ? (Platform.arm() ? 264 : 72) : (Platform.arm() ? 432 : 160);
+		var lrOff = Platform.os() == 1 ? 256 : 424;
 		// (si_code: positive for the kernel's faults; 0 and below when a
 		// process sent it; Linux's SI_KERNEL 0x80, a general protection fault,
 		// has no address)
@@ -238,7 +239,7 @@ class Faults {
 			S.sigaction(sig, p, Ptr.nil());
 			installed = false;
 			if (code <= 0) {
-				if (Mem.target() == 7 || Mem.target() == 8) {
+				if (Platform.target() == 7 || Platform.target() == 8) {
 					if (!raiseFn.isNull()) Ind.call1(raiseFn, sig);
 				} else S.raise(sig);
 			}
@@ -268,7 +269,7 @@ class Faults {
 		var r = Mem.getPtr(e, 0);
 		if (Mem.getI32(r, 0) != 0xC0000005 || Mem.getI32(r, 24) < 2) return 0; // EXCEPTION_ACCESS_VIOLATION; EXCEPTION_CONTINUE_SEARCH
 		var ctx = Mem.getPtr(e, 8);
-		var pcOff = Mem.arm() ? 264 : 248, spOff = Mem.arm() ? 256 : 152;
+		var pcOff = Platform.arm() ? 264 : 248, spOff = Platform.arm() ? 256 : 152;
 		if (!throwable(Mem.getPtr(ctx, pcOff), Mem.getPtr(r, 40), Mem.getPtr(ctx, spOff))) return 0;
 		redirect(ctx, pcOff, spOff, 248);
 		return -1; // EXCEPTION_CONTINUE_EXECUTION

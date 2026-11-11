@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.ReadOnlySpan;
 import hxmc.Span;
@@ -147,7 +148,7 @@ class Stacks {
 	// function's unwind information (0 for the native code's)
 	@:hxmc.unsafe static inline function callerOf(f:Ptr, ret:Ptr):Ptr {
 		var up = Mem.getPtr(f, 0);
-		return Mem.target() == 4 && (flags() & WIN64_LLVM) != 0 && !up.isNull() ? up.add(win64Delta(ret)) : up;
+		return Platform.target() == 4 && (flags() & WIN64_LLVM) != 0 && !up.isNull() ? up.add(win64Delta(ret)) : up;
 	}
 
 	// the deltas by return address, one word each (the address shifted left 16
@@ -175,7 +176,7 @@ class Stacks {
 	// stack pointer where UWOP_SET_FPREG sets it) to the pushed rbp. 0 where
 	// rbp is no frame pointer or not pushed
 	@:hxmc.unsafe static function unwindDelta(pc:Ptr):Int {
-		if (Mem.target() != 4) return 0; // (RtlLookupFunctionEntry: windows-x86_64 only, linked nowhere else)
+		if (Platform.target() != 4) return 0; // (RtlLookupFunctionEntry: windows-x86_64 only, linked nowhere else)
 		var imageBase = Mem.stack(8);
 		var rf = W.RtlLookupFunctionEntry(pc, imageBase, Ptr.nil());
 		if (rf.isNull()) return 0;

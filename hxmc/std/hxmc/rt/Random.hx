@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
@@ -111,14 +112,14 @@ class Random {
 		#if (hxmc.target == "wasm32-wasi")
 		return WasiApi.random_get(Wasi.a32(buf), 32) == 0;
 		#else
-		if (Mem.os() == 2) return Bcrypt.BCryptGenRandom(Ptr.nil(), buf, 32, 2) == 0; // BCRYPT_USE_SYSTEM_PREFERRED_RNG
-		if (Mem.os() == 1) {
+		if (Platform.os() == 2) return Bcrypt.BCryptGenRandom(Ptr.nil(), buf, 32, 2) == 0; // BCRYPT_USE_SYSTEM_PREFERRED_RNG
+		if (Platform.os() == 1) {
 			Apple.arc4random_buf(buf, 32);
 			return true;
 		}
 		// getrandom(buf, 32, GRND_NONBLOCK): 32 bytes come whole once the
 		// kernel's pool is ready; before that (early boot), /dev/urandom
-		if (Sc.syscall(Mem.arm() ? 278 : 318, buf.toI64(), 32, 1, 0, 0, 0) == 32) return true;
+		if (Sc.syscall(Platform.arm() ? 278 : 318, buf.toI64(), 32, 1, 0, 0, 0) == 32) return true;
 		var path = Mem.stack(16);
 		Mem.setI64(path, 0, k(0x6172752F, 0x7665642F)); // "/dev/ura"
 		Mem.setI64(path, 8, k(0, 0x6D6F646E)); // "ndom\0"

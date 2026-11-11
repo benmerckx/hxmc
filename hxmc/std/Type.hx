@@ -1,3 +1,4 @@
+import hxmc.Platform;
 // hxmc: haxe/upstream/std/Type.hx over runtime type information (hxmc.Native)
 
 import hxmc.Native;
@@ -293,7 +294,7 @@ class Type {
 		#if hxmc.checked
 		if (e == null) throw "Null Access";
 		#elseif (hxmc.null_checks != "0")
-		if (hxmc.unsafe.Mem.os() == 3) if (e == null) throw "Null Access";
+		if (Platform.os() == 3) if (e == null) throw "Null Access";
 		#end
 	}
 

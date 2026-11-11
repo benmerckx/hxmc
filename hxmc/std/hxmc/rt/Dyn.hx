@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.rt.TypeView;
@@ -153,7 +154,7 @@ class Dyn {
 			case "c".code:
 				// (native only: WebAssembly's references are 4 bytes already, Lower.compact;
 				// a program without such a field has no storeCompact, GcCore.compactTypes)
-				if (Mem.os() != 3 && GcCore.compactTypes()) Gc.storeCompact(o, slot, v);
+				if (Platform.os() != 3 && GcCore.compactTypes()) Gc.storeCompact(o, slot, v);
 			case _:
 				Mem.setRefBarrier(o, 8 * slot, v);
 		}

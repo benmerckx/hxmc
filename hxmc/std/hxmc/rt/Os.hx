@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.Layouts as L;
 import hxmc.rt.C;
@@ -16,10 +17,10 @@ import hxmc.unsafe.*;
 @:hxmc.native
 class Os {
 	static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	static inline function mac():Bool
-		return Mem.os() == 1;
+		return Platform.os() == 1;
 
 	// ---- the environment
 
@@ -64,7 +65,7 @@ class Os {
 	// ---- errno (kept across the runtime's own calls around blocking natives)
 
 	@:hxmc.unsafe static function errnoPtr():Ptr
-		return windows() ? C._errno() : mac() ? C.__error() : Mem.target() >= 9 ? C.__errno() : C.__errno_location();
+		return windows() ? C._errno() : mac() ? C.__error() : Platform.target() >= 9 ? C.__errno() : C.__errno_location();
 
 	@:hxmc.unsafe public static function errno():Int
 		return Mem.getI32(errnoPtr(), 0);
@@ -104,11 +105,11 @@ class Os {
 
 	// the processors online (Linux; elsewhere 1)
 	@:hxmc.unsafe public static function cpus():Int
-		return Mem.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
+		return Platform.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
 
 	// the physical memory in bytes, 0 when unknown (Linux but Android: _SC_PHYS_PAGES)
 	@:hxmc.unsafe public static function physicalBytes():I64 {
-		if (Mem.os() != 0 || Mem.target() >= 9) return 0;
+		if (Platform.os() != 0 || Platform.target() >= 9) return 0;
 		var pages = C.sysconf(85); // _SC_PHYS_PAGES
 		return pages > 0 ? pages * (pageSize() : I64) : 0;
 	}
@@ -178,7 +179,7 @@ class Os {
 	// apport), so the runtime's reservations are left out but for what it
 	// uses of them (docs/hxmc.md, "Core dumps")
 	@:hxmc.unsafe public static function coreDump(p:Ptr, bytes:I64, on:Bool) {
-		if (Mem.os() == 0) {
+		if (Platform.os() == 0) {
 			var mask:I64 = (pageSize() : I64) - 1;
 			var lo = p.toI64(), hi = lo + bytes;
 			if (on) {
@@ -207,7 +208,7 @@ class Os {
 	// 1 MB, top) is the stack's (the C library's guard is below it, its
 	// thread record and TLS above); its bounds Faults.dumpStacks's
 	@:hxmc.unsafe public static function threadStackCoreDump(bytes:I64) {
-		if (Mem.os() == 0) {
+		if (Platform.os() == 0) {
 			var top = Mem.stack(16);
 			var lo = top.addL(((1 << 20) : I64) - bytes);
 			stackCoreDump(lo, top.diff(lo), true);
@@ -222,10 +223,10 @@ class Os {
 	// pages of one process together wait for each other in the kernel (8
 	// threads: 2.6 GB in 0.93 s, against 0.28 s for one)
 	@:hxmc.unsafe public static function populate(p:Ptr, bytes:I64)
-		if (Mem.os() == 0) C.madvise(p, bytes, 23);
+		if (Platform.os() == 0) C.madvise(p, bytes, 23);
 
 	@:hxmc.unsafe public static function hugePages(p:Ptr, bytes:I64)
-		if (Mem.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
+		if (Platform.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
 
 	// ---- mutexes and conditions, in memory that never moves (malloc'ed or
 	// static): MUTEX_BYTES and COND_BYTES each
@@ -362,7 +363,7 @@ class Os {
 	// (Android: _exit, as PosixSys.exit; a moment first for what was
 	// written to stderr to reach logcat, through hxmc.os's pipe)
 	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int) {
-		if (Mem.target() >= 9) {
+		if (Platform.target() >= 9) {
 			C.fflush(Ptr.nil());
 			var ts = Mem.stack(16);
 			Mem.setI64(ts, 0, 0);

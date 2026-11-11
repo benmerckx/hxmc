@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.rt.Repr;
@@ -15,7 +16,7 @@ import hxmc.unsafe.Ptr;
 @:keep
 class Date {
 	static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	// toString, for Std.string of a value of any type (hxmc.rt.Dyn.stdString):
 	// set by `of`, which makes every date (a copy aside: Reflect.copy), so that
