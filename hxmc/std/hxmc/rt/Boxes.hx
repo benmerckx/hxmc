@@ -60,7 +60,7 @@ class Boxes {
 	@:hxmc.export("hx_box_bool") @:hxmc.unsafe static function boxBool(v:Int):Dynamic
 		return Mem.obj(boolBoxes.add(v != 0 ? 24 : 8));
 
-	@:hxmc.unsafe static function f2l(f:Float):I64 {
+	@:hxmc.kernel static function f2l(f:Float):I64 {
 		if (f != f) return 0;
 		if (f >= 9223372036854775808.0) return ((1 : I64) << 63) - 1;
 		if (f < -9223372036854775808.0) return (1 : I64) << 63;
@@ -69,63 +69,53 @@ class Boxes {
 	}
 
 	// Std.int / Int casts: truncation in range; NaN gives 0, wider values wrap
-	@:hxmc.unsafe static inline function f2i(f:Float):Int
+	static inline function f2i(f:Float):Int
 		return f > -2147483649.0 && f < 2147483648.0 ? (cast f : Int) : f2iSlow(f);
 
-	@:hxmc.export("hx_f2i_slow") @:hxmc.unsafe static function f2iSlow(f:Float):Int {
+	@:hxmc.export("hx_f2i_slow") @:hxmc.kernel static function f2iSlow(f:Float):Int {
 		if (f != f) return 0;
 		if (f >= 2147483648.0 || f <= -2147483649.0) {
-			var l:I64 = cast M.fmod(f, 4294967296.0);
+			var l:I64 = cast(f % 4294967296.0);
 			return l.toInt();
 		}
 		return cast f;
 	}
 
-	@:hxmc.export("hx_unbox_int") @:hxmc.unsafe static function unboxInt(v:Dynamic):Int {
-		var p = Mem.addr(v);
-		if (p.isNull()) return 0;
-		return switch tindex(v) {
-			case T_BOXINT | T_BOXBOOL: Mem.getI32(p, 0);
-			case T_BOXFLOAT: f2i(Mem.getF64(p, 0));
-			case T_BOXI64: Mem.getI64(p, 0).toInt();
+	// (null: T_NONE, 0; a Bool of null false)
+	@:hxmc.export("hx_unbox_int") @:hxmc.kernel static function unboxInt(v:Dynamic):Int
+		return switch (TypeView.of(v) : Int) {
+			case T_BOXINT | T_BOXBOOL: TypeView.int(v);
+			case T_BOXFLOAT: f2i(TypeView.float(v));
+			case T_BOXI64: TypeView.i64(v).toInt();
 			case _: 0;
 		}
-	}
 
-	@:hxmc.export("hx_unbox_float") @:hxmc.unsafe static function unboxFloat(v:Dynamic):Float {
-		var p = Mem.addr(v);
-		if (p.isNull()) return 0;
-		return switch tindex(v) {
-			case T_BOXINT | T_BOXBOOL: Mem.getI32(p, 0);
-			case T_BOXFLOAT: Mem.getF64(p, 0);
+	@:hxmc.export("hx_unbox_float") @:hxmc.kernel static function unboxFloat(v:Dynamic):Float
+		return switch (TypeView.of(v) : Int) {
+			case T_BOXINT | T_BOXBOOL: TypeView.int(v);
+			case T_BOXFLOAT: TypeView.float(v);
 			case T_BOXI64:
-				var f:Float = cast Mem.getI64(p, 0);
+				var f:Float = cast TypeView.i64(v);
 				f;
 			case _: 0;
 		}
-	}
 
-	@:hxmc.export("hx_unbox_i64") @:hxmc.unsafe static function unboxI64(v:Dynamic):I64 {
-		var p = Mem.addr(v);
-		if (p.isNull()) return 0;
-		return switch tindex(v) {
-			case T_BOXINT | T_BOXBOOL: Mem.getI32(p, 0);
-			case T_BOXFLOAT: f2l(Mem.getF64(p, 0));
-			case T_BOXI64: Mem.getI64(p, 0);
+	@:hxmc.export("hx_unbox_i64") @:hxmc.kernel static function unboxI64(v:Dynamic):I64
+		return switch (TypeView.of(v) : Int) {
+			case T_BOXINT | T_BOXBOOL: TypeView.int(v);
+			case T_BOXFLOAT: f2l(TypeView.float(v));
+			case T_BOXI64: TypeView.i64(v);
 			case _: 0;
 		}
-	}
 
-	@:hxmc.export("hx_unbox_bool") @:hxmc.unsafe static function unboxBool(v:Dynamic):Int {
-		var p = Mem.addr(v);
-		if (p.isNull()) return 0;
-		return switch tindex(v) {
-			case T_BOXINT | T_BOXBOOL: Mem.getI32(p, 0) != 0 ? 1 : 0;
-			case T_BOXFLOAT: Mem.getF64(p, 0) != 0 ? 1 : 0;
-			case T_BOXI64: Mem.getI64(p, 0) == 0 ? 0 : 1;
+	@:hxmc.export("hx_unbox_bool") @:hxmc.kernel static function unboxBool(v:Dynamic):Int
+		return switch (TypeView.of(v) : Int) {
+			case T_NONE: 0;
+			case T_BOXINT | T_BOXBOOL: TypeView.int(v) != 0 ? 1 : 0;
+			case T_BOXFLOAT: TypeView.float(v) != 0 ? 1 : 0;
+			case T_BOXI64: TypeView.i64(v) == 0 ? 0 : 1;
 			case _: 1;
 		}
-	}
 
 	// ---- arrays: a record, slot 0 the length and the element kind, slot 1
 	// the storage, a NativeArray of that kind (NArray: its header's length,
@@ -424,8 +414,4 @@ class Boxes {
 		storeConv(slot, n, vk, v);
 		return n;
 	}
-}
-
-@:hxmc.c @:hxmc.fast private extern class M {
-	static function fmod(x:Float, y:Float):Float;
 }

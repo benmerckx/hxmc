@@ -1074,7 +1074,7 @@ class LibM {
 	}
 
 	// musl's fmod (src/math/fmod.c)
-	@:hxmc.host("fmod") @:hxmc.unsafe static function fmod(x:Float, y:Float):Float {
+	@:hxmc.host("fmod") @:hxmc.kernel static function fmod(x:Float, y:Float):Float {
 		var ux = bits(x), uy = bits(y);
 		var ex = ((ux >>> 52) & 0x7ff).toInt();
 		var ey = ((uy >>> 52) & 0x7ff).toInt();

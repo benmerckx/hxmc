@@ -2,6 +2,7 @@ package hxmc.rt;
 
 import hxmc.I64;
 import hxmc.rt.C;
+import hxmc.rt.TypeView;
 import hxmc.rt.Types.*;
 import hxmc.unsafe.Atomic;
 import hxmc.unsafe.LibC;
@@ -527,11 +528,11 @@ class Dyn {
 	// capture), else f: called dynamically, it takes every argument, not
 	// the function type's (a Reflect.makeVarArgs function typed String ->
 	// String and passed on as Dynamic: upstream's Issue12028)
-	@:hxmc.unsafe static function unadapt(f:Dynamic):Dynamic {
-		while (!Str.isNull(f) && tindex(f) >= T_FIRST) {
-			var t = ty(tindex(f));
-			if (tk(t) != TK_CLOSURE || tag(t) != TAG_DYN_ADAPTER) break;
-			f = Mem.getRef(Mem.addr(f), 8);
+	@:hxmc.kernel static function unadapt(f:Dynamic):Dynamic {
+		var t = TypeView.of(f);
+		while (t >= T_FIRST && TypeView.kind(t) == TK_CLOSURE && TypeView.tag(t) == TAG_DYN_ADAPTER) {
+			f = TypeView.adaptee(f);
+			t = TypeView.of(f);
 		}
 		return f;
 	}
@@ -686,73 +687,69 @@ class Dyn {
 
 	// ---- equality, comparison, arithmetic
 
+	// (null: T_NONE, no box's)
 	static inline function isNum(v:Dynamic):Bool {
-		if (Str.isNull(v)) return false;
-		var t = tindex(v);
+		var t = TypeView.of(v);
 		return t == T_BOXINT || t == T_BOXFLOAT;
 	}
 
 	static inline function isI64(v:Dynamic):Bool {
-		if (Str.isNull(v)) return false;
-		var t = tindex(v);
+		var t = TypeView.of(v);
 		return t == T_BOXI64 || t == T_BOXINT;
 	}
 
-	@:hxmc.unsafe public static function isInt64(v:Dynamic):Bool
-		return !Str.isNull(v) && tindex(v) == T_BOXI64;
+	@:hxmc.kernel public static function isInt64(v:Dynamic):Bool
+		return TypeView.of(v) == T_BOXI64;
 
-	@:hxmc.host("hx_dyn_eq") @:hxmc.unsafe static function dynEq(a:Dynamic, b:Dynamic):Bool {
-		if (Mem.addr(a) == Mem.addr(b)) return true;
-		if (Str.isNull(a) || Str.isNull(b)) return false;
-		var ta = tindex(a), tb = tindex(b);
+	@:hxmc.host("hx_dyn_eq") @:hxmc.kernel static function dynEq(a:Dynamic, b:Dynamic):Bool {
+		if (TypeView.same(a, b)) return true;
+		var ta = TypeView.of(a), tb = TypeView.of(b);
+		if (ta == T_NONE || tb == T_NONE) return false;
 		// (the common cases first: two boxes of one kind)
 		if (ta == tb) {
-			if (ta == T_BOXFLOAT) return Mem.getF64(Mem.addr(a), 0) == Mem.getF64(Mem.addr(b), 0);
-			if (ta == T_BOXINT || ta == T_BOXBOOL) return Mem.getI32(Mem.addr(a), 0) == Mem.getI32(Mem.addr(b), 0);
-			if (isString(ta)) return Str.len(a) == Str.len(b) && Str.eqSlow(a, b);
+			if (ta == T_BOXFLOAT) return TypeView.float(a) == TypeView.float(b);
+			if (ta == T_BOXINT || ta == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
+			if (isString(ta)) return Str.eqSlow(a, b);
 		}
 		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) return unboxI64(a) == unboxI64(b);
 		if (isNum(a) && isNum(b)) return unboxFloat(a) == unboxFloat(b);
-		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return Mem.getI32(Mem.addr(a), 0) == Mem.getI32(Mem.addr(b), 0);
-		if (isString(ta) && isString(tb)) return Str.len(a) == Str.len(b) && Str.eqSlow(a, b);
-		if (ta == T_TYPEOBJ && tb == T_TYPEOBJ) return described(a) == described(b);
+		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
+		if (isString(ta) && isString(tb)) return Str.eqSlow(a, b);
+		if (ta == T_TYPEOBJ && tb == T_TYPEOBJ) return TypeView.described(a) == TypeView.described(b);
 		// (two closures of one method and object: equal, as on Eval and hl)
-		if (ta == tb && ta >= T_FIRST && (tk(ty(ta)) == TK_BOUND || isMethodClosure(ta))) return compareMethods(a, b);
+		if (ta == tb && ta >= T_FIRST && (TypeView.kind(ta) == TK_BOUND || isMethodClosure(ta))) return compareMethods(a, b);
 		if (isAdapter(a) || isAdapter(b)) return compareMethods(a, b);
 		return false;
 	}
 
 	// the unboxings (no GC point)
-	@:hxmc.unsafe static function unboxI64(v:Dynamic):I64 {
-		var p = Mem.addr(v);
-		return switch tindex(v) {
-			case T_BOXINT | T_BOXBOOL: (Mem.getI32(p, 0) : I64);
-			case T_BOXFLOAT: f2l(Mem.getF64(p, 0));
-			case T_BOXI64: Mem.getI64(p, 0);
+	@:hxmc.kernel static function unboxI64(v:Dynamic):I64
+		return switch (TypeView.of(v) : Int) {
+			case T_BOXINT | T_BOXBOOL: (TypeView.int(v) : I64);
+			case T_BOXFLOAT: f2l(TypeView.float(v));
+			case T_BOXI64: TypeView.i64(v);
 			case _: 0;
 		}
-	}
 
-	@:hxmc.unsafe static inline function f2l(f:Float):I64 {
+	static inline function f2l(f:Float):I64 {
 		// (the conversion of the language: NaN 0, saturating)
 		var x:I64 = cast f;
 		return x;
 	}
 
-	@:hxmc.unsafe static function unboxFloat(v:Dynamic):Float {
-		var p = Mem.addr(v);
-		return switch tindex(v) {
-			case T_BOXINT | T_BOXBOOL: Mem.getI32(p, 0);
-			case T_BOXFLOAT: Mem.getF64(p, 0);
+	@:hxmc.kernel static function unboxFloat(v:Dynamic):Float
+		return switch (TypeView.of(v) : Int) {
+			case T_BOXINT | T_BOXBOOL: TypeView.int(v);
+			case T_BOXFLOAT: TypeView.float(v);
 			case T_BOXI64:
-				var x:Float = cast Mem.getI64(p, 0);
+				var x:Float = cast TypeView.i64(v);
 				x;
 			case _: 0;
 		}
-	}
 
-	@:hxmc.host("hx_dyn_cmp") @:hxmc.unsafe static function dynCmp(a:Dynamic, b:Dynamic):Int {
-		if (!Str.isNull(a) && !Str.isNull(b) && (tindex(a) == T_BOXI64 || tindex(b) == T_BOXI64) && isI64(a) && isI64(b)) {
+	@:hxmc.host("hx_dyn_cmp") @:hxmc.kernel static function dynCmp(a:Dynamic, b:Dynamic):Int {
+		var ta = TypeView.of(a), tb = TypeView.of(b);
+		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) {
 			var x = unboxI64(a), y = unboxI64(b);
 			return x < y ? -1 : x > y ? 1 : 0;
 		}
@@ -760,15 +757,15 @@ class Dyn {
 			var x = unboxFloat(a), y = unboxFloat(b);
 			return x < y ? -1 : x > y ? 1 : 0;
 		}
-		if (!Str.isNull(a) && !Str.isNull(b) && isString(tindex(a)) && isString(tindex(b))) return Str.cmp(a, b);
-		if (Mem.addr(a) == Mem.addr(b)) return 0;
+		if (isString(ta) && isString(tb)) return Str.cmp(a, b);
+		if (TypeView.same(a, b)) return 0;
 		// two dates: by time, as JavaScript's `a == b ? 0 : a > b ? 1 : -1`
 		// (Eval: -1 but for the same date)
-		if (!Str.isNull(a) && !Str.isNull(b) && tindex(a) == T_DATE && tindex(b) == T_DATE) return Repr.dateMs(a) > Repr.dateMs(b) ? 1 : -1;
-		return Str.isNull(a) ? -1 : 1;
+		if (ta == T_DATE && tb == T_DATE) return TypeView.date(a) > TypeView.date(b) ? 1 : -1;
+		return ta == T_NONE ? -1 : 1;
 	}
 
-	@:hxmc.unsafe public static function compare(a:Dynamic, b:Dynamic):Int
+	@:hxmc.kernel public static function compare(a:Dynamic, b:Dynamic):Int
 		return dynCmp(a, b);
 
 	// a op b on Dynamic values (FnLower.opCode: 0 + 1 - 2 * 3 / 4 % 5 & 6 | 7 ^ 8 << 9 >> 10 >>>)
@@ -807,32 +804,33 @@ class Dyn {
 
 	// ---- type tests
 
-	@:hxmc.unsafe static function classExtends(t:Int, c:Int):Bool {
-		while (t >= 0) {
+	// (T_NONE: no class's super type)
+	@:hxmc.kernel static function classExtends(t:TypeIndex, c:TypeIndex):Bool {
+		while (t != T_NONE) {
 			if (t == c) return true;
-			t = sup(ty(t));
+			t = TypeView.sup(t);
 		}
 		return false;
 	}
 
-	@:hxmc.unsafe static function implementsIface(t:Int, i:Int):Bool {
-		var ty = ty(t);
-		for (k in 0...nifaces(ty))
-			if (iface(ty, k) == i) return true;
+	@:hxmc.kernel static function implementsIface(t:TypeIndex, i:TypeIndex):Bool {
+		var s = TypeView.ifaces(t);
+		for (k in 0...s.length)
+			if (s[k] == i) return true;
 		return false;
 	}
 
-	@:hxmc.host("hx_is") @:hxmc.unsafe static function isOf(v:Dynamic, type:Dynamic):Bool {
-		if (Str.isNull(v) || Str.isNull(type)) return false;
-		var c = described(type);
-		var t = tindex(v);
-		switch c {
+	@:hxmc.host("hx_is") @:hxmc.kernel static function isOf(v:Dynamic, type:Dynamic):Bool {
+		// (the tests first: the views' own then fold, Opt)
+		if (v == null || type == null || TypeView.of(type) != T_TYPEOBJ) return false;
+		var t = TypeView.of(v), c = TypeView.described(type);
+		switch (c : Int) {
 			case T_NONE:
 				return true; // Dynamic
 			case T_BOXINT:
 				if (t == T_BOXINT) return true;
 				if (t != T_BOXFLOAT) return false;
-				var f = Mem.getF64(Mem.addr(v), 0);
+				var f = TypeView.float(v);
 				return f == Math.ffloor(f) && Math.abs(f) < 2147483648.0;
 			case T_BOXFLOAT:
 				return t == T_BOXINT || t == T_BOXFLOAT;
@@ -844,10 +842,10 @@ class Dyn {
 			case _:
 		}
 		if (c >= T_FIRST) {
-			var ct = tk(ty(c));
-			if (ct == TK_CLASS) return t >= T_FIRST && tk(ty(t)) == TK_CLASS && classExtends(t, c);
-			if (ct == TK_INTERFACE) return t >= T_FIRST && tk(ty(t)) == TK_CLASS && implementsIface(t, c);
-			if (ct == TK_ENUM) return t >= T_FIRST && tk(ty(t)) == TK_CTOR && sup(ty(t)) == c;
+			var ct = TypeView.kind(c);
+			if (ct == TK_CLASS) return t >= T_FIRST && TypeView.kind(t) == TK_CLASS && classExtends(t, c);
+			if (ct == TK_INTERFACE) return t >= T_FIRST && TypeView.kind(t) == TK_CLASS && implementsIface(t, c);
+			if (ct == TK_ENUM) return t >= T_FIRST && TypeView.kind(t) == TK_CTOR && TypeView.sup(t) == c;
 		}
 		return false;
 	}
@@ -858,17 +856,18 @@ class Dyn {
 		return null;
 	}
 
-	@:hxmc.host("Std_isOfType") @:hxmc.unsafe static function isOfType(v:Dynamic, t:Dynamic):Bool
+	@:hxmc.host("Std_isOfType") @:hxmc.kernel static function isOfType(v:Dynamic, t:Dynamic):Bool
 		return isOf(v, t);
 
 	// Std.isOfType(v, Class) (kind 0: a type object, not an enum's), (v, Enum) (1)
-	@:hxmc.host("hx_is_typeobj") @:hxmc.unsafe static function isTypeObject(v:Dynamic, kind:Int):Bool {
-		if (Str.isNull(v) || tindex(v) != T_TYPEOBJ) return false;
-		var enum_ = described(v) >= T_FIRST && tk(ty(described(v))) == TK_ENUM;
+	@:hxmc.host("hx_is_typeobj") @:hxmc.kernel static function isTypeObject(v:Dynamic, kind:Int):Bool {
+		if (TypeView.of(v) != T_TYPEOBJ) return false;
+		var d = TypeView.described(v);
+		var enum_ = d >= T_FIRST && TypeView.kind(d) == TK_ENUM;
 		return kind == 1 ? enum_ : !enum_;
 	}
 
-	@:hxmc.host("Std_downcast") @:hxmc.unsafe static function downcast(v:Dynamic, t:Dynamic):Dynamic
+	@:hxmc.host("Std_downcast") @:hxmc.kernel static function downcast(v:Dynamic, t:Dynamic):Dynamic
 		return isOf(v, t) ? v : null;
 
 	// ---- Std.string
@@ -1084,15 +1083,16 @@ class Dyn {
 		return h * (0x9E3779B1 : Int);
 	}
 
-	@:hxmc.unsafe public static function refEq(a:Dynamic, b:Dynamic):Bool
-		return Mem.addr(a) == Mem.addr(b);
+	@:hxmc.kernel public static function refEq(a:Dynamic, b:Dynamic):Bool
+		return TypeView.same(a, b);
 
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 anonymous object, 5 function, 6 class
 	// instance, 7 enum value, 8 String, 9 Array, 10 a type object, 11 other
-	@:hxmc.unsafe public static function typeKind(v:Dynamic):Int {
-		if (Str.isNull(v)) return 0;
-		var t = tindex(v);
-		switch t {
+	@:hxmc.kernel public static function typeKind(v:Dynamic):Int {
+		var t = TypeView.of(v);
+		switch (t : Int) {
+			case T_NONE:
+				return 0;
 			case T_BOXINT:
 				return 1;
 			case T_BOXFLOAT:
@@ -1112,7 +1112,7 @@ class Dyn {
 			case _:
 		}
 		if (t < T_FIRST) return 11;
-		return switch tk(ty(t)) {
+		return switch TypeView.kind(t) {
 			case TK_ANON: 4;
 			case TK_CLOSURE | TK_BOUND: 5;
 			case TK_CLASS: 6;
@@ -1238,8 +1238,8 @@ class Dyn {
 		return o;
 	}
 
-	@:hxmc.unsafe public static function enumIndex(v:Dynamic):Int
-		return tag(ty(tindex(v)));
+	@:hxmc.kernel public static function enumIndex(v:Dynamic):Int
+		return TypeView.enumIndex(v);
 
 	public static function enumCtorName(v:Dynamic):String
 		return Str.ofAscii(name(ty(tindex(v))));
@@ -1383,17 +1383,17 @@ class Dyn {
 	// whether dynEq of x and any value is their identity: x null, or not a
 	// box, a String (of either width), a type object or a closure (each of
 	// which dynEq compares otherwise); Array's searches then compare words
-	@:hxmc.unsafe public static function identityEq(x:Dynamic):Bool {
-		if (Str.isNull(x)) return true;
-		var t = tindex(x);
+	// (null: T_NONE)
+	@:hxmc.kernel public static function identityEq(x:Dynamic):Bool {
+		var t = TypeView.of(x);
 		if (t >= T_FIRST) {
-			var k = tk(ty(t));
+			var k = TypeView.kind(t);
 			return k != TK_CLOSURE && k != TK_BOUND;
 		}
 		return !(t == T_BOXINT || t == T_BOXFLOAT || t == T_BOXBOOL || t == T_BOXI64 || isString(t) || t == T_TYPEOBJ);
 	}
 
-	@:hxmc.unsafe static function isMethodClosure(t:Int):Bool {
+	@:hxmc.unsafe @:hxmc.kernel static function isMethodClosure(t:Int):Bool {
 		if (tk(ty(t)) != TK_CLOSURE) return false;
 		var nm = name(ty(t));
 		return Mem.getU8(nm, 0) == "<".code && Mem.getU8(nm, 1) == "m".code;
@@ -1401,19 +1401,19 @@ class Dyn {
 
 	// what an adapter converts to its function type (Lower.adapter,
 	// dynAdapter: its capture), else f
-	@:hxmc.unsafe static function peel(f:Dynamic):Dynamic {
+	@:hxmc.kernel static function peel(f:Dynamic):Dynamic {
 		while (isAdapter(f))
-			f = Mem.getRef(Mem.addr(f), 8);
+			f = TypeView.adaptee(f);
 		return f;
 	}
 
-	@:hxmc.unsafe static function isAdapter(f:Dynamic):Bool {
-		if (Str.isNull(f) || tindex(f) < T_FIRST) return false;
-		var t = ty(tindex(f));
-		return tk(t) == TK_CLOSURE && (tag(t) == TAG_ADAPTER || tag(t) == TAG_DYN_ADAPTER);
+	@:hxmc.kernel static function isAdapter(f:Dynamic):Bool {
+		var t = TypeView.of(f);
+		if (t < T_FIRST) return false;
+		return TypeView.kind(t) == TK_CLOSURE && (TypeView.tag(t) == TAG_ADAPTER || TypeView.tag(t) == TAG_DYN_ADAPTER);
 	}
 
-	@:hxmc.unsafe public static function compareMethods(a:Dynamic, b:Dynamic):Bool {
+	@:hxmc.unsafe @:hxmc.kernel public static function compareMethods(a:Dynamic, b:Dynamic):Bool {
 		if (Mem.addr(a) == Mem.addr(b)) return true;
 		// (two adapters of one method, `a.push` made where it is used: that
 		// method's; upstream's TestReflect)
