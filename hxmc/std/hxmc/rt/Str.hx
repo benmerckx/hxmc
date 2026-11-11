@@ -315,9 +315,10 @@ class Str {
 
 	// a and b of the same length (MirBuild.strEq)
 	@:hxmc.export("hx_str_eq_slow") @:hxmc.kernel static function eqSlow(a:String, b:String):Bool {
-		var one = StrView.isOne(a);
-		if (one == StrView.isOne(b)) return StrView.sameUnits(a, b);
-		return one ? eqMixed(StrView.units1(a), StrView.units2(b)) : eqMixed(StrView.units1(b), StrView.units2(a));
+		var oa = StrView.isOne(a);
+		if (oa == StrView.isOne(b)) return StrView.sameUnits(a, b);
+		// (one call: eqMixed is inlined, Inline.once)
+		return eqMixed(StrView.units1(oa ? a : b), StrView.units2(oa ? b : a));
 	}
 
 	// the units of a one-byte string and of a two-byte one
@@ -333,8 +334,11 @@ class Str {
 		if (StrView.isNull(a)) return -1;
 		if (StrView.isNull(b)) return 1;
 		var oa = StrView.isOne(a), ob = StrView.isOne(b);
-		var c = if (oa && ob) cmp11(StrView.units1(a), StrView.units1(b)) else if (!oa && !ob) cmp22(StrView.units2(a), StrView.units2(b)) else if (oa)
-			cmp12(StrView.units1(a), StrView.units2(b)) else -cmp12(StrView.units1(b), StrView.units2(a));
+		// (each kernel called once: inlined, Inline.once)
+		var c = if (oa == ob) oa ? cmp11(StrView.units1(a), StrView.units1(b)) : cmp22(StrView.units2(a), StrView.units2(b)) else {
+			var d = cmp12(StrView.units1(oa ? a : b), StrView.units2(oa ? b : a));
+			oa ? d : -d;
+		}
 		if (c != 0) return c;
 		var na = StrView.length(a), nb = StrView.length(b);
 		return na < nb ? -1 : na > nb ? 1 : 0;
