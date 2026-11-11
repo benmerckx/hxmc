@@ -12,16 +12,17 @@
 #   published as the release from pushes to main and hxmc and passed on as an
 #   artifact (the jobs below otherwise download the release: make rt).
 # - build: the committed stage0 module under node builds the tool, which
-#   rebuilds itself (the fixpoint: with the module cache cold, warm and off),
-#   the module cache's store and gate are checked, the dev loop (make
-#   dev-check); then the port's release binaries and lix for the six targets.
+#   rebuilds itself (the fixpoint: with the module cache cold, warm and off);
+#   then the port's release binaries and lix for the six targets.
 #   Next to it, each with its own tool from the stage0 (make hxmc):
-#   - corpus: hxmc's corpus for every target (in three jobs), the native
+#   - build-checks: the module cache's store and gate, the dev loop (make
+#     dev-check); apart from build, so the jobs that need build start sooner;
+#   - corpus: hxmc's corpus for every target (in four jobs), the native
 #     compiler (`haxe` with hxmc built in) for the six targets, the port as
 #     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
-#   - crosshost (two jobs): the tool as a WebAssembly module building the
-#     corpus and itself byte-identical;
+#   - crosshost (five jobs, the cases in shards): the tool as a WebAssembly
+#     module building the corpus and itself byte-identical;
 #   - npm-pack: the npm packages (with the compiler as a WebAssembly module;
 #     built with the module cache off);
 #   - site: the website (site/: plain pages, their scripts, the playground's
@@ -287,22 +288,6 @@ jobs:
         run: make rt && touch bin/hxmc/rt/*/*.o && ls -l bin/hxmc/rt/*
       - name: Bootstrap from the stage0
         run: make bootstrap
-      # the module cache's store (hxmc/src/hxmc/CacheDir.hx): tool
-      # directories, the trim, a cache that cannot be written
-      - name: Module cache store
-        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
-      # a frontend's compiler built from hxmc's sources adds a function after
-      # the lowering (hxmc.Main.beforeCodegen, docs/hxmc.md "Frontends")
-      - name: The frontends' seam
-        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run FrontendCheck
-      # the persistent module cache: the same outputs with and without it
-      # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
-      - name: Module cache
-        run: make test-module-cache PORT=1
-      # `hxmc dev` on a console program, the compilation server's builds
-      # against fresh ones (hxmc/test/dev)
-      - name: The dev loop
-        run: make dev-check
 
       - name: The port's release binaries
         run: |
@@ -360,8 +345,46 @@ jobs:
       - uses: actions/upload-artifact@v7
         with: {name: lix, path: bin/lix-dist/, retention-days: 14}
 
+  # the build's checks, which nothing waits for but publish-npm and release
+  # (in build, they held back every job that needs it)
+  build-checks:
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Runtime objects and the tool
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make hxmc
+      # the module cache's store (hxmc/src/hxmc/CacheDir.hx): tool
+      # directories, the trim, a cache that cannot be written
+      - name: Module cache store
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
+      # a frontend's compiler built from hxmc's sources adds a function after
+      # the lowering (hxmc.Main.beforeCodegen, docs/hxmc.md "Frontends")
+      - name: The frontends' seam
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run FrontendCheck
+      # the persistent module cache: the same outputs with and without it
+      # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
+      - name: Module cache
+        run: make test-module-cache PORT=1
+      # `hxmc dev` on a console program, the compilation server's builds
+      # against fresh ones (hxmc/test/dev)
+      - name: The dev loop
+        run: make dev-check
+
   # hxmc's corpus for every target (make corpus-stage; run by the test and
-  # wasm jobs on the targets' machines), in three groups of about the same
+  # wasm jobs on the targets' machines), in four groups of about the same
   # time; with the WebAssembly ones the port as a WebAssembly module (the wasm
   # job) and the reference's self-compile (the test and wasm jobs compare
   # with it)
@@ -373,7 +396,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {group: unix, targets: linux-x86_64 linux-arm64 linux-x86_64-glibc linux-arm64-glibc macos-x86_64 macos-arm64}
+          - {group: linux, targets: linux-x86_64 linux-arm64 linux-x86_64-glibc linux-arm64-glibc}
+          - {group: macos, targets: macos-x86_64 macos-arm64}
           - {group: windows, targets: windows-x86_64 windows-arm64}
           - {group: wasm, targets: wasm32-wasi wasm32-wasi-legacy}
     steps:
@@ -403,7 +427,7 @@ jobs:
       # reference (-D hxmc.verify-tags, RT_VERIFY=1: docs/hxmc.md), on the
       # runner: x86-64 natively, WebAssembly under node
       - name: Corpus, tagged words verified
-        if: matrix.group != 'windows'
+        if: matrix.group == 'linux' || matrix.group == 'wasm'
         run: make corpus-verify VERIFY_TARGET=${{ matrix.group == 'wasm' && 'wasm32-wasi' || 'linux-x86_64' }}
       # the native compiler (the npm package's: Mir macros and --run) for each
       # target of the group (the test jobs run its Mir lane on the targets' machines)
@@ -535,8 +559,8 @@ jobs:
 
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
-  # itself, byte-identical to the native tool (make crosshost; the targets in
-  # two jobs)
+  # itself, byte-identical to the native tool (make crosshost; the cases in
+  # five shards, every target in each, the tool in the first)
   crosshost:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
@@ -544,9 +568,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {args: '--tool --targets linux-x86_64,linux-arm64,linux-x86_64-glibc,linux-arm64-glibc'}
-          - {args: '--targets windows-x86_64,windows-arm64,macos-x86_64,macos-arm64,wasm32-wasi'}
+        shard: [0, 1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -568,7 +590,7 @@ jobs:
           make rt && touch bin/hxmc/rt/*/*.o
           make hxmc
       - name: hxmc as a WebAssembly module, byte-identical output
-        run: make crosshost CROSSHOST_ARGS="${{ matrix.args }}"
+        run: make crosshost CROSSHOST_ARGS="--tool --shard ${{ matrix.shard }}/5"
 
   # the npm packages (packages/): @hxmc/cli, its six platform packages and
   # @hxmc/source, at one version: the tag's (v*), a nightly prerelease on main,
@@ -863,12 +885,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {target: linux-x86_64, pkg: linux-x86_64, corpus: unix, os: ubuntu-24.04}
-          - {target: linux-arm64, pkg: linux-aarch64, corpus: unix, os: ubuntu-24.04-arm}
+          - {target: linux-x86_64, pkg: linux-x86_64, corpus: linux, os: ubuntu-24.04}
+          - {target: linux-arm64, pkg: linux-aarch64, corpus: linux, os: ubuntu-24.04-arm}
           - {target: windows-x86_64, pkg: windows-x86_64, corpus: windows, os: windows-2025}
           - {target: windows-arm64, pkg: windows-aarch64, corpus: windows, os: windows-11-arm}
-          - {target: macos-x86_64, pkg: macos-x86_64, corpus: unix, os: macos-15-intel}
-          - {target: macos-arm64, pkg: macos-aarch64, corpus: unix, os: macos-15}
+          - {target: macos-x86_64, pkg: macos-x86_64, corpus: macos, os: macos-15-intel}
+          - {target: macos-arm64, pkg: macos-aarch64, corpus: macos, os: macos-15}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -1504,8 +1526,8 @@ jobs:
   # nightly, dist-tag next); never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
-    needs: [changes, build, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, build-checks, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.build-checks.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1562,8 +1584,8 @@ jobs:
 
   # nightly on main, a release on v* tags
   release:
-    needs: [changes, build, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, build-checks, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.build-checks.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

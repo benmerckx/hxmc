@@ -7,13 +7,14 @@ using StringTools;
 // hxmc's output does not depend on the host it runs on: the tool built as a
 // WebAssembly module (wasm32-wasi, run under node) must write the same bytes
 // as the native tool.
-//   <haxe> -cp hxmc/test -cp haxe/test --run Crosshost [--targets T,T,...] [--tool] [--wasm M] [-j N] [case ...]
+//   <haxe> -cp hxmc/test -cp haxe/test --run Crosshost [--targets T,T,...] [--tool] [--shard I/N] [--wasm M] [-j N] [case ...]
 // The native tool (bin/hxmc/hxmc) builds itself from source as a module
 // (bin/hxmc-t/xhost/hxmc.wasm; --wasm reuses one, e.g. the stage0), then both
 // build each corpus case (all when none is named) for each target (default:
 // all seven, and Linux in the dynamic glibc mode: <target>-glibc) and the outputs are compared byte for byte; --tool also builds
-// the tool itself both ways (for the host). Outputs that agree are deleted;
-// differing ones stay in bin/hxmc-t/xhost/<target>/.
+// the tool itself both ways (for the host). --shard I/N keeps every Nth case
+// from the I-th (0-based; CI's jobs), and the tool only in shard 0. Outputs
+// that agree are deleted; differing ones stay in bin/hxmc-t/xhost/<target>/.
 class Crosshost {
 	static final OUT = "bin/hxmc-t/xhost";
 	static final TARGETS = ["linux-x86_64", "linux-arm64", "windows-x86_64", "windows-arm64", "macos-x86_64", "macos-arm64", "wasm32-wasi",
@@ -22,11 +23,19 @@ class Crosshost {
 	public static final TOOL_ARGS = ["-cp", "haxe/src", "-cp", "hxmc/src", "-main", "hxmc.Main", "-D", "disable-parallelism", "-D", "hih_no_generators"];
 
 	static function main() {
-		var a = parseArgs(Sys.args(), ["--targets", "--wasm", "-j"]);
+		var a = parseArgs(Sys.args(), ["--targets", "--wasm", "-j", "--shard"]);
 		var cases = a.rest;
 		if (cases.length == 0) {
 			cases = [for (f in FileSystem.readDirectory("hxmc/test/cases")) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
 			cases.sort(compare);
+		}
+		var shard = 0;
+		if (a.has("--shard")) {
+			var p = a.get("--shard").split("/");
+			var i:Null<Int> = Std.parseInt(p[0]), n:Null<Int> = p.length == 2 ? Std.parseInt(p[1]) : null;
+			if (i == null || n == null || n < 1 || i < 0 || i >= n) fail("--shard I/N, 0 <= I < N: " + a.get("--shard"));
+			shard = i;
+			cases = [for (k in 0...cases.length) if (k % n == i) cases[k]];
 		}
 		mkdirs(OUT);
 		var t0 = now();
@@ -39,7 +48,7 @@ class Crosshost {
 		}
 		wasm = FileSystem.fullPath(wasm);
 		var jobs = [for (t in a.get("--targets", TARGETS.join(",")).split(",")) for (c in cases) {target: t, name: c}];
-		if (a.has("--tool")) jobs.unshift({target: host(), name: "TOOL"});
+		if (a.has("--tool") && shard == 0) jobs.unshift({target: host(), name: "TOOL"});
 		var bad = 0;
 		parallel(jobs, a.int("-j", cpus()), j -> compareOne(wasm, j.target, j.name), (j, r) -> {
 			if (!r.ok) bad++;
