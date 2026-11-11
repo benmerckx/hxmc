@@ -294,8 +294,8 @@ class KernelCheck {
 		}
 	}
 
-	// Mem's functions of values alone: unsigned comparisons and divisions, bit casts
-	static final PURE_MEM = ["ult", "spanUlt", "udiv", "urem", "f64Bits", "bitsF64", "f32Bits", "bitsF32"];
+	// Mem's functions of values alone: unsigned comparisons and divisions, bit casts; the target's constants
+	static final PURE_MEM = ["ult", "spanUlt", "udiv", "urem", "f64Bits", "bitsF64", "f32Bits", "bitsF32", "os", "arm", "target", "platform"];
 
 	// the extern functions a safe kernel may call: Math's, Std.int, Struct's
 	// layout constants, Mem's pure ones

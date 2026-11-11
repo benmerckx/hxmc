@@ -21,12 +21,16 @@ class KernelBits {
 	@:hxmc.kernel static function below(a:Int, b:Int):Bool
 		return Mem.ult(a, b);
 
+	// (the target's constants)
+	@:hxmc.kernel static function known():Bool
+		return Mem.os() >= 0 && Mem.target() >= 0 && (Mem.arm() || !Mem.arm()) && Mem.platform() >= 0;
+
 	@:hxmc.kernel static function halfOf(a:Int):Int
 		return Mem.udiv(((a : I64) << 32) >>> 32, 2).toInt();
 
 	static function main() {
 		trace(StringTools.hex(hi(1.0)), StringTools.hex(hi(-2.0)), ofHalves(0x40090000, 0));
 		trace(StringTools.hex(f32(1.5)), StringTools.hex(f32(0.1)), ofF32(0x3FC00000), ofF32(0xC0000000));
-		trace(below(1, 2), below(-1, 2), below(2, -1), halfOf(-2));
+		trace(below(1, 2), below(-1, 2), below(2, -1), halfOf(-2), known());
 	}
 }

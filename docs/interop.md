@@ -180,7 +180,7 @@ position):
 | | Allowed | Rejected |
 | --- | --- | --- |
 | values | Int, Float, Bool, `I64`, hxmc.unsafe's C scalars (`UInt8` ...), enum abstracts and abstracts over these, `@:hxmc.struct` values; GC values as loans | raw memory: hxmc.unsafe's other types (`Ptr`, `IoBuffer`, `Arena`, `CString`, `Slice`) and abstracts over them |
-| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`) | `Mem`'s other functions, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
+| calls | static `@:hxmc.kernel` and `@:hxmc.blocking` functions, struct constructors (their bodies checked as the caller's), `Math`, `Std.int`, `Struct`'s constants, `Mem`'s functions of values (`ult`, `udiv`, `urem`; the bit casts `f64Bits`, `bitsF64`, `f32Bits`, `bitsF32`; the target's constants `os`, `arm`, `target`, `platform`) | `Mem`'s other functions, `Atomic`, `Callback`, C functions; methods, closures, structural fields |
 | casts | unchecked casts between scalars | any other unchecked cast, and one to a proof (below) |
 | statics | reads; writes of plain values (below), a `@:hxmc.threadLocal` static's too | writes of a static of a GC or raw type |
 | other | locals, loops, `switch` | closures, `throw`, `try`, `untyped` |
