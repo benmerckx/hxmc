@@ -66,6 +66,11 @@ class TypeView {
 	public static function date(v:Dynamic):Float
 		return index(v) == T_DATE ? Repr.dateMs(v) : 0;
 
+	// a Date's time as a typed read of it has it: null faults (Null Access:
+	// Faults; WebAssembly reads 0 there), another value's is 0
+	public static function time(v:Dynamic):Float
+		return tindex(v) == T_DATE ? Repr.dateMs(v) : 0;
+
 	// the type a type object stands for, else T_NONE
 	public static function described(v:Dynamic):TypeIndex
 		return cast(index(v) == T_TYPEOBJ ? Types.described(v) : T_NONE);
