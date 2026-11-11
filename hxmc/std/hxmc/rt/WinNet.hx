@@ -58,7 +58,7 @@ class WinNet {
 	static inline function sock(fd:Int):I64
 		return fd;
 
-	@:hxmc.unsafe public static function getErrno():Int
+	@:hxmc.kernel public static function getErrno():Int
 		return lastErrno();
 
 	public static function strerror(err:Int):String {
@@ -382,12 +382,12 @@ class WinNet {
 		return 0;
 	}
 
-	@:hxmc.unsafe public static function blocked():Bool
+	@:hxmc.kernel public static function blocked():Bool
 		return lastErrno() == EAGAIN || lastErrno() == EWOULDBLOCK;
 
 	// a non-blocking connect in progress: WSAEWOULDBLOCK, WSAEINPROGRESS, or
 	// WSAEALREADY for a second one
-	@:hxmc.unsafe public static function inProgress():Bool
+	@:hxmc.kernel public static function inProgress():Bool
 		return lastErrno() == EWOULDBLOCK || lastErrno() == EINPROGRESS || lastErrno() == EALREADY;
 
 	// whether fd is a socket: getsockopt SO_TYPE succeeds

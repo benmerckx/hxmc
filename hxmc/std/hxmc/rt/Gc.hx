@@ -3077,7 +3077,7 @@ class Gc {
 
 	static var objsizeReached:Bool;
 
-	@:hxmc.unsafe public static function reached():Bool
+	@:hxmc.kernel public static function reached():Bool
 		return objsizeReached;
 
 	static inline function inHeap(p:Ptr):Bool

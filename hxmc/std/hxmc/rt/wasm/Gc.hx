@@ -1587,7 +1587,7 @@ class Gc {
 		return b + minorSize;
 	}
 
-	@:hxmc.unsafe public static function reached():Bool
+	@:hxmc.kernel public static function reached():Bool
 		return false;
 
 	// (no object sizes: 0)

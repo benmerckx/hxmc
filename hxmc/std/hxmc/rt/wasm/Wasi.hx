@@ -138,13 +138,13 @@ class Wasi {
 		return n;
 	}
 
-	@:hxmc.unsafe public static function argCount():Int
+	@:hxmc.kernel public static function argCount():Int
 		return argc;
 
 	@:hxmc.unsafe public static function arg(i:Int):Ptr
 		return Mem.getPtr(argv, 8 * i);
 
-	@:hxmc.unsafe public static function envCount():Int
+	@:hxmc.kernel public static function envCount():Int
 		return nenv;
 
 	@:hxmc.unsafe public static function envAt(i:Int):Ptr

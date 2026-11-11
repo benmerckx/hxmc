@@ -49,7 +49,7 @@ class ThreadApi {
 		return Atomic.load32(Mem.sym("rt_nthreads"));
 
 	// threads run in parallel (1:1 build)
-	@:hxmc.unsafe public static function parallel():Bool
+	@:hxmc.kernel public static function parallel():Bool
 		return true;
 
 	@:hxmc.collects public static function yield():Void

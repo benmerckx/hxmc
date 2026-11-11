@@ -73,7 +73,7 @@ class Heap {
 	}
 
 	// a request of `bytes` that cannot be met (outOfMemory's message)
-	@:hxmc.unsafe public static function refuse(bytes:Int)
+	@:hxmc.kernel public static function refuse(bytes:Int)
 		refused = bytes;
 
 	@:hxmc.unsafe static function ensure(p:Ptr) {
@@ -251,7 +251,7 @@ class Heap {
 	static inline function classHead(c:Int):Ptr
 		return freeTab.add(16 * MAX_FREE + 8 * c);
 
-	@:hxmc.unsafe static function classOf(n:Int):Int {
+	@:hxmc.kernel static function classOf(n:Int):Int {
 		var c = MIN_CLASS;
 		while ((1 << c) < n + 8)
 			c++;

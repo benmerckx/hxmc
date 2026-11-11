@@ -80,7 +80,7 @@ class PosixNet {
 	static inline function lastErrno():Int
 		return netErrno;
 
-	@:hxmc.unsafe public static function getErrno():Int
+	@:hxmc.kernel public static function getErrno():Int
 		return lastErrno();
 
 	// with other threads, a blocking socket's calls wait in the scheduler

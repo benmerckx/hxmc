@@ -44,7 +44,7 @@ class Libc {
 	}
 
 	// days since 1970-01-01 of a civil date (proleptic Gregorian; Howard Hinnant's algorithm)
-	@:hxmc.unsafe static function daysFromCivil(y:Int, m:Int, d:Int):I64 {
+	@:hxmc.kernel static function daysFromCivil(y:Int, m:Int, d:Int):I64 {
 		if (m <= 2) y--;
 		var era = Std.int((y >= 0 ? y : y - 399) / 400);
 		var yoe = y - era * 400;
