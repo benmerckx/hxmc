@@ -279,7 +279,7 @@ class Define {
 	public static final HxcppM64:String = "HXCPP_M64";
 	public static final HxcppArm64:String = "HXCPP_ARM64";
 	public static final HxcppLinuxArm64:String = "HXCPP_LINUX_ARM64";
-	public static final HxcppSmartStings:String = "hxcpp_smart_strings";
+	public static final HxcppSmartStrings:String = "hxcpp_smart_strings";
 	public static final IncludePrefix:String = "include_prefix";
 	public static final Interp:String = "interp";
 	public static final JsClassic:String = "js_classic";

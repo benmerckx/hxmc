@@ -372,7 +372,7 @@ class Genlua {
 			case _:
 				Globals.die("", "genlua.ml");
 		}
-		if (i == 0) return mkLuaCode(com, "{0}", vector(ecall), e.etype, e.epos) else {
+		if (i == 0) return mkLuaCode(com, "({0})", vector(ecall), e.etype, e.epos) else {
 			var code = '_G.select(${i + 1}, {0})';
 			return mkLuaCode(com, code, vector(ecall), e.etype, e.epos);
 		}

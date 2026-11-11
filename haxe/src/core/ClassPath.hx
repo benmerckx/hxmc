@@ -3,7 +3,7 @@ package core;
 enum ClassPathScope {
 	Std;
 	StdTarget;
-	Lib;
+	Lib(name:Null<String>);
 	User;
 }
 
@@ -96,7 +96,8 @@ class DirectoryClassPath implements IClassPath {
 		return switch (classPathScope) {
 			case Std: "Std";
 			case StdTarget: "StdTarget";
-			case Lib: "Lib";
+			case Lib(null): "Lib";
+			case Lib(name): "Lib " + name;
 			case User: "User";
 		};
 	}

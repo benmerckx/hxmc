@@ -57,6 +57,10 @@ Conventions:
 - Program-wide numbers (type indices, field ids, offsets) are absolute
   symbols the linker resolves, so a module's code does not change when the
   numbering does.
+- A module's object has its functions in the order of their symbols, not
+  in the order the lowering reached them (`Driver.build`): an edit elsewhere
+  that makes the program reach them in another order leaves its key and
+  object as they were.
 - A change of the runtime's interface or the IR's conventions needs a tool
   that knows it: build once against the previous runtime first, or
   bootstrap again.
@@ -89,7 +93,9 @@ The hook may push functions on `prog.funcs` (a `FuncInfo` with a
 `module`: hxmc compiles each module's functions into one object), and
 reach them from code it changes or from `prog.roots`. Under a compilation
 server the lowered bodies are reused between builds (`LowerCache`): give a
-function a new `body` vector rather than writing into the one it has.
+function a new `body` vector rather than writing into the one it has (a
+body the hook replaced is scanned anew by Facts: what LowerCache keeps of a
+scan is the lowering's body's).
 `hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.
@@ -1088,6 +1094,29 @@ typed again in the server's next compilation (`ServerCallbacks.hx`,
 `ServerCache.checkModuleHook`), as the module cache types such a module
 every build.
 
+A server has one macro interpreter for all its contexts (one per
+signature: a check's `--no-output` and a build, a display request, another
+program), each with its own modules. Upstream starts a macro class's
+statics again from their initializers whenever the interpreter is handed
+the class from another module than the last one, so builds that alternate
+between two signatures reset its `@:persistent` statics at each switch,
+while each context keeps reusing the modules whose macros set them. The
+port keeps those values by the dropped module's signature and gives them
+back when that same module comes back (`EvalPrototype.addTypes`, a
+divergence from upstream,
+[porting.md](porting.md#divergences-from-the-reference)): each context
+sees what its own modules left (helder's `HostMacro.template`, ViewRuntime's
+fields kept by its build macro: "the runtime's fields are not known" in
+every build once a check and a build had alternated). A signature's values
+go when the server removes its context (stale, `clear`, `softClear`).
+An error in the macro context discards the interpreter, those values
+with it (as upstream); the server then taints every cached module whose
+typing ran macros or loaded the macro context's modules, in every context
+(`CompilationCache.Cache.taintMacroModules`, a divergence from upstream),
+so their macros run again in the next interpreter: else a module whose
+build macro kept state there stays restored without it, and every later
+build that reads the state fails.
+
 **Not cached**: display requests, the server itself, several
 compilations, init macros, deprecated defines, HXB libraries and output,
 WASI. A callback registered outside a module's typing, or a macro setting
@@ -1335,6 +1364,11 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   items, genpy's order by them).
 - An uninitialised static `Int` reads 0 (Eval: null, Issue11096);
   `String.length` counts UTF-16 units (Eval: code points).
+- A class handed over from another context's module (a server's builds of
+  two signatures) starts its `@:persistent` statics again from their
+  initializers, as upstream's Eval does; the port's Eval gives each
+  context's values back ([module cache](#module-cache), the compilation
+  server).
 - Not available: `Context.getMacroStack`, macro arguments that are
   functions, Eval's packages (`eval.*`, `mbedtls`); `Sys` in macros is
   hxmc's.

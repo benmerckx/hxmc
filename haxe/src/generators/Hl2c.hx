@@ -756,10 +756,20 @@ class Hl2c {
 		}
 	}
 
+	static function defineProtoCompat(ctx:FileContext):Void {
+		define(ctx, "#ifndef hl_vobj_proto\n#define hl_vobj_proto(t) ((t)->vobj_proto)\n#define hl_type_proto_slots(nproto) 1\n#endif");
+	}
+
 	static function typeValue(gctx:GlobalContext, ctx:FileContext, t:Ttype):String {
 		var n = typeName(gctx, t);
-		define(ctx, 'extern hl_type $n;');
-		return "&" + n;
+		return switch t {
+			case HObj(_) | HStruct(_):
+				define(ctx, 'extern hl_type $n[];');
+				n;
+			case _:
+				define(ctx, 'extern hl_type $n;');
+				"&" + n;
+		}
 	}
 
 	static function enumConstrType(gctx:GlobalContext, ctx:FileContext, e:EnumProto, i:Int):String {
@@ -1111,7 +1121,8 @@ class Hl2c {
 			var o = l[0], args = l.slice(1);
 			switch rtype(o) {
 				case HObj(_) | HStruct(_):
-					var vfun = castFun('${reg(o)}->$$type->vobj_proto[$fid]', [rtype(o)].concat([for (a in args) rtype(a)]), rtype(r));
+					defineProtoCompat(ctx);
+					var vfun = castFun('hl_vobj_proto(${reg(o)}->$$type)[$fid]', [rtype(o)].concat([for (a in args) rtype(a)]), rtype(r));
 					expr('${rassign(r, rtype(r))}$vfun(${[for (x in l) reg(x)].join(",")})');
 				case HVirtual(vp):
 					var rt = rtype(r);
@@ -1452,7 +1463,8 @@ class Hl2c {
 					switch rtype(o) {
 						case HObj(p):
 							var ft = gctx.ftable[p.pvirtuals[m]];
-							var s = '${reg(o)}->$$type->vobj_proto[$m]';
+							defineProtoCompat(ctx);
+							var s = 'hl_vobj_proto(${reg(o)}->$$type)[$m]';
 							expr('${reg(r)} = hl_alloc_closure_ptr(${typeValue(ctx, HFun(ft.feArgs, ft.feRet))},$s,${reg(o)})');
 						case _:
 							todo();
@@ -2256,14 +2268,20 @@ class Hl2c {
 			var ctx = openFile(gctx, "hl/types.c");
 			function line(s:String) linec(ctx, s);
 			function expr(s:String) exprc(ctx, s);
-			function typeValue(ctx:GlobalContext, t:Ttype) return "&" + typeName(ctx, t); /* no auto import */
+			function typeValue(ctx:GlobalContext, t:Ttype) return (switch t {
+				case HObj(_) | HStruct(_): "";
+				case _: "&";
+			}) + typeName(ctx, t); /* no auto import */
 			define(ctx, "#define HLC_BOOT");
 			define(ctx, "#include <hlc.h>");
+			defineProtoCompat(ctx);
 			line("// Types values");
 			for (t in allTypes) {
 				switch t {
 					case HMethod(_) | HFun(_) | HVirtual(_):
 						expr('hl_type ${typeName(gctx, t)} = { ${typeId(t)} } /* ${tstr(t)} */');
+					case HObj(o) | HStruct(o):
+						expr('hl_type ${typeName(gctx, t)}[hl_type_proto_slots(${o.pvirtuals.length})] = {{ ${typeId(t)} }}');
 					case _:
 						expr('hl_type ${typeName(gctx, t)} = { ${typeId(t)} }');
 				}
@@ -2382,7 +2400,7 @@ class Hl2c {
 			expr("fdump(&ntypes,4)");
 			var fcount = 0;
 			for (t in allTypes) {
-				expr('t = &${typeName(gctx, t)}; fdump(&t, sizeof(void*))');
+				expr('t = ${typeValue(gctx, t)}; fdump(&t, sizeof(void*))');
 				switch t {
 					case HFun(_): fcount++;
 					case _:
@@ -2417,7 +2435,7 @@ class Hl2c {
 								defineGlobal(gctx, ctx, g);
 								expr('obj$name.global_value = (void**)&${gnames[g]}');
 						}
-						expr('$name.obj = &obj$name');
+						expr('$name->obj = &obj$name');
 					case HNull(r) | HRef(r) | HPacked(r):
 						expr('${typeName(gctx, t)}.tparam = ${typeValue(gctx, r)}');
 					case HEnum(e):

@@ -105,7 +105,7 @@ class CppStrings {
 			return if (hexed.length <= 16000) macro_ + "(\"" + hexed + "\"," + gen(s) + ")" else "(" + split(bytes, "") + ")";
 		}
 
-		return if (Gctx.defined(ctx, Define.HxcppSmartStings) && hasUtf8Chars(s)) {
+		return if (Gctx.defined(ctx, Define.HxcppSmartStrings) && hasUtf8Chars(s)) {
 			var b = new StringBuf();
 			function add(ichar:Int):Void {
 				switch ichar {
