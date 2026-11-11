@@ -16,8 +16,9 @@ import hxmc.rt.Tagged;
 // major collection copies into chunks taken as it goes, then the from-space's
 // chunks are kept for reuse: no semispaces that outgrow the holes their
 // predecessors left, which a 4 GB memory cannot afford; or, when the free
-// memory does not hold the copy, compacts the chunks where they are,
-// compactOld, so that memory does not grow for it), large objects
+// memory does not hold the copy and memory past RT_GROW_MB would be needed
+// for it, compacts the chunks where they are, compactOld, so that memory
+// does not grow for it), large objects
 // (over LARGE) have a region each, which a major collection keeps where it
 // is when the object is reached (promoted in place, not copied), memory a
 // collection copies into is taken before it starts (reserveFor: a host may
@@ -73,8 +74,19 @@ class Gc {
 	static inline var G_TO = 2;
 	static inline var G_LARGE = 3;
 	// a major collection compacts the old space where it is (compactOld),
-	// rather than copying what is live into new chunks (RT_COMPACT=0)
+	// rather than copying what is live into new chunks (RT_COMPACT=0), when
+	// the free memory does not hold the copy and memory does not grow for it
+	// (growFloor); RT_COMPACT=2: at every major collection (forceCompact)
 	static var compacting:Bool;
+	static var forceCompact:Bool;
+	// RT_GROW_MB (256): while memory, grown for a major collection's copy,
+	// stays within it (and within RT_MAX_MB's budget), a major collection
+	// grows memory and copies rather than compacting. Speed against
+	// footprint: a compaction costs about 1.7 copies, but memory never
+	// shrinks, so a copying collection's memory is up to twice what is live;
+	// below the floor that is cheap, above it compaction keeps memory near
+	// what is live (and a host that refuses memory.grow gets a compaction)
+	static var growFloor:I64;
 	// RT_MAX_MB: what memory should not grow past (0: no such budget). The old
 	// space's limit after a major collection leaves room in it for the memory
 	// taken until then (startup's, the nursery's) and for a collection (a
@@ -180,7 +192,14 @@ class Gc {
 		var om = Wasi.envInt("RT_OLD_MB", 32);
 		oldLimit = (om : I64) << 20;
 		growth = Wasi.envInt("RT_OLD_GROWTH", 200);
-		compacting = Wasi.envInt("RT_COMPACT", 1) != 0;
+		var rc = Wasi.envInt("RT_COMPACT", 1);
+		compacting = rc != 0;
+		forceCompact = rc == 2;
+		// (at most 2 GB: a copy beside the old space still fits in 4 GB)
+		var gm = Wasi.envInt("RT_GROW_MB", 256);
+		if (gm < 0) gm = 0;
+		if (gm > 2048) gm = 2048;
+		growFloor = (gm : I64) << 20;
 		budget = (Wasi.envInt("RT_MAX_MB", 0) : I64) << 20;
 		Heap.budget = budget;
 		gran = Heap.regionZero(1 << (32 - GRAN_SHIFT));
@@ -704,6 +723,21 @@ class Gc {
 			for (i in 0...nchunks)
 				if (entryLarge(chunks, i)) large++ else copied += Mem.getPtr(chunks, 24 * i + 8).diff(Mem.getPtr(chunks, 24 * i));
 		return reserve(maj, copied, bigRegions, large, grow);
+	}
+
+	// A major collection's reservation with memory grown for it, when memory
+	// so grown stays within RT_GROW_MB and RT_MAX_MB (counting all of the
+	// worst case as growth: the free memory it uses only lowers it). False:
+	// past them, or the host refused memory.grow (the collection compacts)
+	@:hxmc.unsafe static function reserveGrown():Bool {
+		if (growFloor <= 0) return false;
+		syncCur();
+		var copied:I64 = Mem.tlsGet("rt_young_ptr").diff(youngStart);
+		for (i in 0...nchunks)
+			if (!entryLarge(chunks, i)) copied += Mem.getPtr(chunks, 24 * i + 8).diff(Mem.getPtr(chunks, 24 * i));
+		var after = Heap.memoryBytes() + copied + copied / 7 + 2 * CHUNK + bigRegions;
+		if (after > growFloor || (budget > 0 && after > budget)) return false;
+		return reserveFor(true, true);
 	}
 
 	// A reservation for `copied` bytes of objects up to LARGE, `regions` of
@@ -1295,9 +1329,10 @@ class Gc {
 		// (what survives fills chunks to within LARGE of their end: an eighth more)
 		if (!full && oldBytes + used + (used >> 3) + CHUNK > oldLimit) full = true;
 		// (a major collection copies what is live when the free memory holds
-		// it whatever it is, else it compacts: a minor collection, then the old
-		// space compacted, compactOld; memory does not grow for it)
-		var compactNow = full && compacting && !reserveFor(true, false);
+		// it whatever it is, or memory grows for it below RT_GROW_MB, else it
+		// compacts: a minor collection, then the old space compacted,
+		// compactOld; memory does not grow for it. RT_COMPACT=2: it compacts)
+		var compactNow = full && compacting && (forceCompact || !(reserveFor(true, false) || reserveGrown()));
 		var copyReserved = full && !compactNow && compacting;
 		if (compactNow) full = false;
 		// the memory to copy into first, for the worst case (reserveFor), else
