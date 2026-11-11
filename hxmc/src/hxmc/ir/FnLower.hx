@@ -3010,6 +3010,8 @@ class FnLower {
 					var n = Lower.metaArg(core.Meta.getOpt(Native, cf.cfMeta));
 					name = n != null ? n : cf.cfName;
 				}
+				// (hxmc.Platform: the target's constants, Mem's intrinsics under their own names)
+				if (StringTools.startsWith(name, "hxmc_Platform_")) name = "hxmc_unsafe_Mem_" + (cf.cfName == "apple" ? "platform" : cf.cfName);
 				if (StringTools.startsWith(name, SIMD_PREFIX)) return simdCall(name, s, cargs, e);
 				var intrinsic = intrinsicStatic(name, cargs, e);
 				if (intrinsic != null) return intrinsic;
