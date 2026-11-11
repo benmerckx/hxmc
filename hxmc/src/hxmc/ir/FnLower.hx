@@ -3763,10 +3763,11 @@ class FnLower {
 		var name = cf.cfName;
 		// (the failed check of an index or a range: the program ends)
 		var at = ECallHost("hxmc_unsafe_Mem_cstr", vector(EStr(spanWhere(e))), TI64);
-		// (in a loop without an exit: the call does not return, and the path
-		// never joins the access again, so nothing lives across the call)
-		function fatal(f:String, xs:Array<Ex>):Stmt
-			return SLoop(vector(SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at]))))));
+		// (the call does not return; a loop without an exit after it, not around
+		// it: the path never joins the access again, and its arguments are dead
+		// at the call, kept in no register the function must save)
+		function fatal(f:String, xs:Array<Ex>):Vector<Stmt>
+			return vector(SExpr(ECall(spanSupport(sd, f), Vector.fromArrayCopy(xs.concat([at])))), SLoop(vector()));
 		// a new span: p, n (locals or constants) into a fresh slot
 		function make(s:Local, p:Ex, n:Ex) {
 			out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(s), EInt(ptrOff), p), TVoid)));
@@ -3788,7 +3789,7 @@ class FnLower {
 				case "unsafeOf":
 					var p = loc(coerce(xs[0], tyOf(cargs[0]), TI64), TI64), n = arg(1, 0);
 					// (a negative length would pass every unsigned check)
-					out.push(SIf(EBin(Lt, n, EInt(0)), vector(fatal("badRange", [EInt(0), n, EInt(0)])), vector()));
+					out.push(SIf(EBin(Lt, n, EInt(0)), fatal("badRange", [EInt(0), n, EInt(0)]), vector()));
 					fill = () -> make(s, p, n);
 				case "ofBytes":
 					var b = loc(xs[0], tyOf(cargs[0])), pos = arg(1, 0), len = arg(2, -1);
@@ -3828,12 +3829,12 @@ class FnLower {
 		// 0 <= i < n
 		function check(i:Ex, n:Ex)
 			// (Mem.ult, marked: Opt.condProp drops the checks a loop proves)
-			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), vector(fatal("outOfRange", [i, n]))));
+			if (Lower.spanChecks) out.push(SIf(ECallHost("hxmc_unsafe_Mem_spanUlt", vector(i, n), TBool), vector(), fatal("outOfRange", [i, n])));
 		// [pos, pos + cnt) inside n: one comparison of n with pos + cnt, both
 		// zero-extended to 64 bits (no overflow; a negative one is 2^31 or more, past any n)
 		function range(pos:Ex, cnt:Ex, n:Ex) {
 			var end = EBin(LAdd, ECallHost("hxmc_unsafe_Mem_zext", vector(pos), TI64), ECallHost("hxmc_unsafe_Mem_zext", vector(cnt), TI64));
-			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, n), end), TBool), vector(fatal("badRange", [pos, cnt, n])), vector()));
+			out.push(SIf(ECallHost("hxmc_unsafe_Mem_ult", vector(EConv(I2L, n), end), TBool), fatal("badRange", [pos, cnt, n]), vector()));
 		}
 		function int(k:Int):Ex
 			return loc(coerce(rest[k], restTy(k), TI32), TI32);
