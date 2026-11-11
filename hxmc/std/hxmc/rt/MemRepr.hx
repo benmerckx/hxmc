@@ -1,10 +1,12 @@
 package hxmc.rt;
 
 import hxmc.I64;
+import hxmc.ReadOnlySpan;
 import hxmc.rt.C;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt16;
 
 // hxmc.rt.Repr in linear memory, over Mem (rt.h's layouts; addresses of
 // heap objects valid until the next GC point).
@@ -146,19 +148,22 @@ class MemRepr {
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
 
-	// whether the two-byte units src[si, si + n) are each below 0x100 (four at a time)
-	@:hxmc.unsafe public static function fitsOne(src:MemChars, si:Int, n:Int):Bool {
-		var p = src.at(si);
-		var k = 0;
+	// whether the two-byte units src[si, si + n) are each below 0x100 (unitsFitOne)
+	public static inline function fitsOne(src:MemChars, si:Int, n:Int):Bool
+		return unitsFitOne(ReadOnlySpan.unsafeOf((cast src.at(si) : Ptr<UInt16>), n));
+
+	// whether the units are each below 0x100 (four at a time; k + 4 <= n: k < n - 3)
+	@:hxmc.kernel public static function unitsFitOne(u:ReadOnlySpan<UInt16>):Bool {
+		var n = u.length, k = 0;
 		// (0xFF00FF00FF00FF00, of positive halves: an Int literal of 0x80000000 or more is negative)
 		var half = ((0xFF00 : I64) << 16) | (0xFF00 : I64);
 		var hi = (half << 32) | half, none:I64 = 0;
-		while (k + 4 <= n) {
-			if (Mem.getI64(p, 2 * k) & hi != none) return false;
+		while (k < n - 3) {
+			if (u.getI64(k) & hi != none) return false;
 			k += 4;
 		}
 		while (k < n) {
-			if (Mem.getU16(p, 2 * k) > 0xFF) return false;
+			if ((u[k] : Int) > 0xFF) return false;
 			k++;
 		}
 		return true;
@@ -166,17 +171,10 @@ class MemRepr {
 
 	// c[i, i + m) == d[0, m): two-byte units (eqUnits), one-byte ones (eqUnits1)
 	public static inline function eqUnits(c:MemChars, i:Int, d:MemChars, m:Int):Bool
-		return MemOps.compare(c.at(i), d, (2 * m : I64)) == 0;
+		return MemOps.compareAt(c.at(i), d, (2 * m : I64)) == 0;
 
 	public static inline function eqUnits1(c:MemChars1, i:Int, d:MemChars1, m:Int):Bool
-		return MemOps.compare(c.at(i), d, (m : I64)) == 0;
-
-	// the same, m >= 1: the first unit compared first
-	@:hxmc.unsafe public static inline function matchAt(c:MemChars, d:MemChars, i:Int, m:Int):Bool
-		return Mem.getU16At(c, 0, i) == Mem.getU16(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(2 * i + 2), (d : Ptr).add(2), (2 * (m - 1) : I64)) == 0);
-
-	@:hxmc.unsafe public static inline function matchAt1(c:MemChars1, d:MemChars1, i:Int, m:Int):Bool
-		return Mem.getU8At(c, 0, i) == Mem.getU8(d, 0) && (m == 1 || MemOps.compare((c : Ptr).add(i + 1), (d : Ptr).add(1), ((m - 1) : I64)) == 0);
+		return MemOps.compareAt(c.at(i), d, (m : I64)) == 0;
 
 	// ---- StringBuf (T_STRINGBUF): slot 0 the length, slot 1 its units: a
 	// string whose length is the capacity, one-byte until a unit above 0xFF
@@ -461,10 +459,6 @@ class MemRepr {
 
 	public static inline function bytesFill(b:Dynamic, pos:Int, n:Int, v:Int)
 		LibC.memset(octets(b).at(pos), v, n);
-
-	// the difference of the first differing bytes of [0, n), else 0
-	@:hxmc.unsafe public static inline function compareOctets(a:MemOctets, b:MemOctets, n:Int):Int
-		return MemOps.compare(a, b, n);
 
 	// ---- BytesBuffer (T_BYTESBUFFER): slot 0 the length, slot 1 a Bytes
 

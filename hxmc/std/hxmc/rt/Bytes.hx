@@ -60,28 +60,9 @@ class Bytes {
 	// the difference of the first differing bytes, else of the lengths
 	@:hxmc.host("hxmc_NativeBytes_compare") @:hxmc.kernel static function compare(a:BytesData, b:BytesData):Int {
 		var x = BytesView.span(a), y = BytesView.span(b);
-		var c = differ(x, y);
+		var n = x.length < y.length ? x.length : y.length;
+		var c = MemOps.compare(x.sub(0, n), y);
 		return c != 0 ? c : x.length - y.length;
-	}
-
-	// the difference of the first differing bytes of the shorter's length, else 0
-	@:hxmc.kernel static function differ(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt8>):Int {
-		var n = a.length < b.length ? a.length : b.length;
-		// (n tested against both lengths: their checks proved, dropped)
-		if (n > a.length || n > b.length) return 0;
-		// 8 bytes at a time while equal (MemOps.compare)
-		var wa:ReadOnlySpan<I64> = a.reinterpret(), wb:ReadOnlySpan<I64> = b.reinterpret();
-		var w = n >> 3, i = 0;
-		if (w > wa.length || w > wb.length) return 0;
-		while (i < w && wa[i] == wb[i])
-			i++;
-		var k = i << 3;
-		while (k < n) {
-			var x:Int = a[k], y:Int = b[k];
-			if (x != y) return x - y;
-			k++;
-		}
-		return 0;
 	}
 
 	// (haxe.io.Bytes tests pos first: these checks are its, again)

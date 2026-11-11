@@ -366,7 +366,7 @@ class Heap {
 	}
 
 	@:hxmc.export("memcmp") @:hxmc.unsafe public static function memcmp(a:Ptr, b:Ptr, n:I64):Int
-		return hxmc.rt.MemOps.compare(a, b, n);
+		return hxmc.rt.MemOps.compareAt(a, b, n);
 
 	@:hxmc.export("strdup") @:hxmc.unsafe public static function strdup(s:Ptr):Ptr {
 		var n = strlen(s);
