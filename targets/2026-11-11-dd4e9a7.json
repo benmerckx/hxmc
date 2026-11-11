@@ -1,0 +1,813 @@
+{
+ "meta": {
+  "date": "2026-11-11T11:10:10",
+  "commit": "dd4e9a7",
+  "cpu": "AMD EPYC 9V74 80-Core Processor / AMD EPYC 9V45 96-Core Processor / AMD EPYC 7763 64-Core Processor",
+  "cores": 4,
+  "runs": 3,
+  "modes": ["seq","par"],
+  "port": "bin/port/haxe",
+  "reference": "5.0.0-preview.1",
+  "platform": "Linux-7.0.0-1017-azure-x86_64",
+  "runner": "ubuntu24 20261101.360.1",
+  "run_url": "https://github.com/benmerckx/hxmc/actions/runs/43009091128",
+  "machines": [{
+    "shard": 0,
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cores": 4,
+    "runner": "ubuntu24 20261101.360.1",
+    "rows": ["formatter/jvm","formatter/js","self/jvm","self/js"]
+   }, {
+    "shard": 1,
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
+    "cores": 4,
+    "runner": "ubuntu24 20261101.360.1",
+    "rows": ["formatter/hlc","formatter/hxb","formatter/lua","self/hlc","self/hxb","self/lua"]
+   }, {
+    "shard": 2,
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
+    "cores": 4,
+    "runner": "ubuntu24 20261101.360.1",
+    "rows": ["formatter/cpp","formatter/neko","formatter/swf","self/cpp","self/neko","self/swf"]
+   }, {
+    "shard": 3,
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "cores": 4,
+    "runner": "ubuntu24 20261101.360.1",
+    "rows": ["formatter/hl","formatter/python","formatter/php","self/hl","self/python","self/php"]
+   }]
+ },
+ "results": [
+  {
+   "project": "formatter",
+   "target": "hxb",
+   "reference": {
+    "cpu": 0.47,
+    "wall": 0.490152,
+    "rss_mb": 136.109375,
+    "status": "ok",
+    "members": 312,
+    "bytes": 2355596
+   },
+   "port": {
+    "cpu": 0.38,
+    "wall": 0.399222,
+    "rss_mb": 95.71875,
+    "status": "ok",
+    "members": 312,
+    "bytes": 2355596
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.6,
+     "wall": 0.435996,
+     "rss_mb": 155.980469,
+     "status": "ok",
+     "members": 312,
+     "bytes": 2355596
+    },
+    "port": {
+     "cpu": 0.5,
+     "wall": 0.397084,
+     "rss_mb": 142.90625,
+     "status": "ok",
+     "members": 312,
+     "bytes": 2355596
+    },
+    "identical": false,
+    "diff": "24 of 312 differ: eval/BMFormatterNoIOCode.hxb, eval/JsonParser_48.hxb, eval/StringTools.hxb",
+    "reference_stable": false,
+    "port_stable": false,
+    "reference_repeats": false,
+    "port_repeats": false,
+    "varies": true
+   },
+   "shard": 1
+  },
+  {
+   "project": "formatter",
+   "target": "js",
+   "reference": {
+    "cpu": 0.64,
+    "wall": 0.656925,
+    "rss_mb": 159.71875,
+    "status": "ok",
+    "members": 1,
+    "bytes": 622936
+   },
+   "port": {
+    "cpu": 0.56,
+    "wall": 0.56832,
+    "rss_mb": 115.714844,
+    "status": "ok",
+    "members": 1,
+    "bytes": 622936
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.8,
+     "wall": 0.63146,
+     "rss_mb": 170.714844,
+     "status": "ok",
+     "members": 1,
+     "bytes": 622936
+    },
+    "port": {
+     "cpu": 0.71,
+     "wall": 0.585925,
+     "rss_mb": 159.589844,
+     "status": "ok",
+     "members": 1,
+     "bytes": 622936
+    },
+    "identical": true
+   },
+   "shard": 0
+  },
+  {
+   "project": "formatter",
+   "target": "lua",
+   "reference": {
+    "cpu": 0.48,
+    "wall": 0.495854,
+    "rss_mb": 150.09375,
+    "status": "ok",
+    "members": 1,
+    "bytes": 879271
+   },
+   "port": {
+    "cpu": 0.38,
+    "wall": 0.398881,
+    "rss_mb": 107.464844,
+    "status": "ok",
+    "members": 1,
+    "bytes": 879271
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.57,
+     "wall": 0.438105,
+     "rss_mb": 161.058594,
+     "status": "ok",
+     "members": 1,
+     "bytes": 879271
+    },
+    "port": {
+     "cpu": 0.47,
+     "wall": 0.379453,
+     "rss_mb": 145.464844,
+     "status": "ok",
+     "members": 1,
+     "bytes": 879271
+    },
+    "identical": true
+   },
+   "shard": 1
+  },
+  {
+   "project": "formatter",
+   "target": "python",
+   "reference": {
+    "cpu": 0.79,
+    "wall": 0.80363,
+    "rss_mb": 156.84375,
+    "status": "ok",
+    "members": 1,
+    "bytes": 875549
+   },
+   "port": {
+    "cpu": 0.69,
+    "wall": 0.702356,
+    "rss_mb": 113.714844,
+    "status": "ok",
+    "members": 1,
+    "bytes": 875549
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.99,
+     "wall": 0.733554,
+     "rss_mb": 168.511719,
+     "status": "ok",
+     "members": 1,
+     "bytes": 875549
+    },
+    "port": {
+     "cpu": 0.88,
+     "wall": 0.672693,
+     "rss_mb": 161.839844,
+     "status": "ok",
+     "members": 1,
+     "bytes": 875549
+    },
+    "identical": true
+   },
+   "shard": 3
+  },
+  {
+   "project": "formatter",
+   "target": "php",
+   "reference": {
+    "cpu": 0.79,
+    "wall": 0.798668,
+    "rss_mb": 150.40625,
+    "status": "ok",
+    "members": 212,
+    "bytes": 1983883
+   },
+   "port": {
+    "cpu": 0.68,
+    "wall": 0.686623,
+    "rss_mb": 109.089844,
+    "status": "ok",
+    "members": 212,
+    "bytes": 1983883
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.96,
+     "wall": 0.726538,
+     "rss_mb": 162.917969,
+     "status": "ok",
+     "members": 212,
+     "bytes": 1983883
+    },
+    "port": {
+     "cpu": 0.83,
+     "wall": 0.655966,
+     "rss_mb": 157.339844,
+     "status": "ok",
+     "members": 212,
+     "bytes": 1983883
+    },
+    "identical": true
+   },
+   "shard": 3
+  },
+  {
+   "project": "formatter",
+   "target": "neko",
+   "reference": {
+    "cpu": 0.58,
+    "wall": 0.593752,
+    "rss_mb": 153.152344,
+    "status": "ok",
+    "members": 1,
+    "bytes": 421061
+   },
+   "port": {
+    "cpu": 0.47,
+    "wall": 0.484073,
+    "rss_mb": 120.714844,
+    "status": "ok",
+    "members": 1,
+    "bytes": 421061
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.69,
+     "wall": 0.552645,
+     "rss_mb": 163.90625,
+     "status": "ok",
+     "members": 1,
+     "bytes": 421061
+    },
+    "port": {
+     "cpu": 0.59,
+     "wall": 0.484343,
+     "rss_mb": 177.878906,
+     "status": "ok",
+     "members": 1,
+     "bytes": 421061
+    },
+    "identical": true
+   },
+   "shard": 2
+  },
+  {
+   "project": "formatter",
+   "target": "hl",
+   "reference": {
+    "cpu": 0.84,
+    "wall": 0.863735,
+    "rss_mb": 159.085938,
+    "status": "ok",
+    "members": 1,
+    "bytes": 352959
+   },
+   "port": {
+    "cpu": 0.74,
+    "wall": 0.7494,
+    "rss_mb": 121.089844,
+    "status": "ok",
+    "members": 1,
+    "bytes": 352959
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 1.13,
+     "wall": 0.807371,
+     "rss_mb": 180.007813,
+     "status": "ok",
+     "members": 1,
+     "bytes": 352959
+    },
+    "port": {
+     "cpu": 0.98,
+     "wall": 0.74374,
+     "rss_mb": 170.464844,
+     "status": "ok",
+     "members": 1,
+     "bytes": 352959
+    },
+    "identical": true
+   },
+   "shard": 3
+  },
+  {
+   "project": "formatter",
+   "target": "hlc",
+   "reference": {
+    "cpu": 0.65,
+    "wall": 0.708609,
+    "rss_mb": 171.484375,
+    "status": "ok",
+    "members": 465,
+    "bytes": 4501006
+   },
+   "port": {
+    "cpu": 0.53,
+    "wall": 0.539298,
+    "rss_mb": 124.480469,
+    "status": "ok",
+    "members": 465,
+    "bytes": 4501006
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.89,
+     "wall": 0.59082,
+     "rss_mb": 189.964844,
+     "status": "ok",
+     "members": 465,
+     "bytes": 4500975
+    },
+    "port": {
+     "cpu": 0.66,
+     "wall": 0.532436,
+     "rss_mb": 171.226563,
+     "status": "ok",
+     "members": 465,
+     "bytes": 4500975
+    },
+    "identical": true
+   },
+   "shard": 1
+  },
+  {
+   "project": "formatter",
+   "target": "cpp",
+   "reference": {
+    "cpu": 0.67,
+    "wall": 0.685684,
+    "rss_mb": 147.511719,
+    "status": "ok",
+    "members": 399,
+    "bytes": 3965850
+   },
+   "port": {
+    "cpu": 0.62,
+    "wall": 0.636659,
+    "rss_mb": 110.21875,
+    "status": "ok",
+    "members": 399,
+    "bytes": 3965850
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 0.78,
+     "wall": 0.614553,
+     "rss_mb": 166.0625,
+     "status": "ok",
+     "members": 399,
+     "bytes": 3965828
+    },
+    "port": {
+     "cpu": 0.71,
+     "wall": 0.605356,
+     "rss_mb": 156.589844,
+     "status": "ok",
+     "members": 399,
+     "bytes": 3965828
+    },
+    "identical": true
+   },
+   "shard": 2
+  },
+  {
+   "project": "formatter",
+   "target": "jvm",
+   "reference": {
+    "cpu": 1.02,
+    "wall": 1.034055,
+    "rss_mb": 209.226563,
+    "status": "ok",
+    "members": 727,
+    "bytes": 1709594
+   },
+   "port": {
+    "cpu": 0.97,
+    "wall": 0.970548,
+    "rss_mb": 149.078125,
+    "status": "ok",
+    "members": 727,
+    "bytes": 1709594
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 1.34,
+     "wall": 0.911329,
+     "rss_mb": 232.933594,
+     "status": "ok",
+     "members": 727,
+     "bytes": 1709594
+    },
+    "port": {
+     "cpu": 1.27,
+     "wall": 0.904225,
+     "rss_mb": 197.582031,
+     "status": "ok",
+     "members": 727,
+     "bytes": 1709647
+    },
+    "identical": false,
+    "diff": "59 of 728 differ: formatter/Formatter.class, formatter/codedata/ParsedCode.class, formatter/marker/MarkEmptyLines.class",
+    "reference_stable": false,
+    "port_stable": false,
+    "reference_repeats": false,
+    "port_repeats": false,
+    "varies": true
+   },
+   "shard": 0
+  },
+  {
+   "project": "formatter",
+   "target": "swf",
+   "reference": {
+    "status": "exit 1: 3 | import sys.FileSystem; | |        ^^^^^^^^^^^^^^ | | You cannot access the sys package while targeting flash (for sys.FileSystem)"
+   },
+   "port": null,
+   "identical": null,
+   "shard": 2
+  },
+  {
+   "project": "self",
+   "target": "hxb",
+   "reference": {
+    "cpu": 5.63,
+    "wall": 5.680641,
+    "rss_mb": 1559.785156,
+    "status": "ok",
+    "members": 521,
+    "bytes": 16883666
+   },
+   "port": {
+    "cpu": 3.59,
+    "wall": 3.48661,
+    "rss_mb": 598.15625,
+    "status": "ok",
+    "members": 521,
+    "bytes": 16883666
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 7.73,
+     "wall": 4.379345,
+     "rss_mb": 1792.222656,
+     "status": "ok",
+     "members": 521,
+     "bytes": 16883666
+    },
+    "port": {
+     "cpu": 4.55,
+     "wall": 2.735498,
+     "rss_mb": 654.226563,
+     "status": "ok",
+     "members": 521,
+     "bytes": 16883666
+    },
+    "identical": false,
+    "diff": "256 of 521 differ: eval/StringTools.hxb, eval/codegen/Codegen.hxb, eval/codegen/Dump.hxb",
+    "reference_stable": false,
+    "port_stable": false,
+    "reference_repeats": false,
+    "port_repeats": false,
+    "varies": true
+   },
+   "shard": 1
+  },
+  {
+   "project": "self",
+   "target": "js",
+   "reference": {
+    "status": "exit 1: 26 | #error \"This class is not available on this target\" | |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | | This class is not available on this target"
+   },
+   "port": null,
+   "identical": null,
+   "shard": 0
+  },
+  {
+   "project": "self",
+   "target": "lua",
+   "reference": {
+    "status": "exit 1: 26 | #error \"This class is not available on this target\" | |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | | This class is not available on this target"
+   },
+   "port": null,
+   "identical": null,
+   "shard": 1
+  },
+  {
+   "project": "self",
+   "target": "python",
+   "reference": {
+    "cpu": 9.76,
+    "wall": 9.769814,
+    "rss_mb": 2049.148438,
+    "status": "ok",
+    "members": 1,
+    "bytes": 19026957
+   },
+   "port": {
+    "cpu": 7.73,
+    "wall": 7.403768,
+    "rss_mb": 1014.253906,
+    "status": "ok",
+    "members": 1,
+    "bytes": 19026957
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 13.23,
+     "wall": 8.342457,
+     "rss_mb": 91.231196,
+     "status": "ok",
+     "members": 1,
+     "bytes": 19026957
+    },
+    "port": {
+     "cpu": 9.34,
+     "wall": 6.231901,
+     "rss_mb": 1012.074219,
+     "status": "ok",
+     "members": 1,
+     "bytes": 19026957
+    },
+    "identical": true
+   },
+   "shard": 3
+  },
+  {
+   "project": "self",
+   "target": "php",
+   "reference": {
+    "status": "exit 1: 26 | #error \"This class is not available on this target\" | |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | | This class is not available on this target"
+   },
+   "port": null,
+   "identical": null,
+   "shard": 3
+  },
+  {
+   "project": "self",
+   "target": "neko",
+   "reference": {
+    "cpu": 7.15,
+    "wall": 7.184646,
+    "rss_mb": 1807.410156,
+    "status": "ok",
+    "members": 1,
+    "bytes": 7595033
+   },
+   "port": {
+    "cpu": 5.36,
+    "wall": 5.124109,
+    "rss_mb": 1144.566406,
+    "status": "ok",
+    "members": 1,
+    "bytes": 7595033
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 9.34,
+     "wall": 6.079177,
+     "rss_mb": 1953.347656,
+     "status": "ok",
+     "members": 1,
+     "bytes": 7595033
+    },
+    "port": {
+     "cpu": 6.43,
+     "wall": 4.63733,
+     "rss_mb": 1158.527344,
+     "status": "ok",
+     "members": 1,
+     "bytes": 7595033
+    },
+    "identical": true
+   },
+   "shard": 2
+  },
+  {
+   "project": "self",
+   "target": "hl",
+   "reference": {
+    "cpu": 11.14,
+    "wall": 11.188185,
+    "rss_mb": 1932.648438,
+    "status": "ok",
+    "members": 1,
+    "bytes": 6537205
+   },
+   "port": {
+    "cpu": 9.01,
+    "wall": 8.532679,
+    "rss_mb": 1074.21875,
+    "status": "ok",
+    "members": 1,
+    "bytes": 6537205
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 19.58,
+     "wall": 10.70252,
+     "rss_mb": 2057.0625,
+     "status": "ok",
+     "members": 1,
+     "bytes": 6537205
+    },
+    "port": {
+     "cpu": 11.14,
+     "wall": 7.242638,
+     "rss_mb": 1051.214844,
+     "status": "ok",
+     "members": 1,
+     "bytes": 6537205
+    },
+    "identical": true
+   },
+   "shard": 3
+  },
+  {
+   "project": "self",
+   "target": "hlc",
+   "reference": {
+    "cpu": 8.66,
+    "wall": 8.673107,
+    "rss_mb": 1968.449219,
+    "status": "ok",
+    "members": 3091,
+    "bytes": 72013372
+   },
+   "port": {
+    "cpu": 6.55,
+    "wall": 6.23305,
+    "rss_mb": 1074.109375,
+    "status": "ok",
+    "members": 3091,
+    "bytes": 72013372
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 16.34,
+     "wall": 8.34552,
+     "rss_mb": 119.973383,
+     "status": "ok",
+     "members": 3091,
+     "bytes": 72013341
+    },
+    "port": {
+     "cpu": 8.1,
+     "wall": 5.694785,
+     "rss_mb": 1046.136719,
+     "status": "ok",
+     "members": 3091,
+     "bytes": 72013341
+    },
+    "identical": true
+   },
+   "shard": 1
+  },
+  {
+   "project": "self",
+   "target": "cpp",
+   "reference": {
+    "cpu": 8.58,
+    "wall": 8.672563,
+    "rss_mb": 1706.117188,
+    "status": "ok",
+    "members": 3109,
+    "bytes": 64677329
+   },
+   "port": {
+    "cpu": 7.31,
+    "wall": 7.085455,
+    "rss_mb": 1038.246094,
+    "status": "ok",
+    "members": 3109,
+    "bytes": 64677329
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 10.83,
+     "wall": 7.131839,
+     "rss_mb": 1904.433594,
+     "status": "ok",
+     "members": 3109,
+     "bytes": 64677307
+    },
+    "port": {
+     "cpu": 7.57,
+     "wall": 5.735913,
+     "rss_mb": 1039.617188,
+     "status": "ok",
+     "members": 3109,
+     "bytes": 64677307
+    },
+    "identical": true
+   },
+   "shard": 2
+  },
+  {
+   "project": "self",
+   "target": "jvm",
+   "reference": {
+    "cpu": 13.44,
+    "wall": 13.530657,
+    "rss_mb": 1860.785156,
+    "status": "ok",
+    "members": 13805,
+    "bytes": 30453791
+   },
+   "port": {
+    "cpu": 12.54,
+    "wall": 12.207058,
+    "rss_mb": 1049.730469,
+    "status": "ok",
+    "members": 13805,
+    "bytes": 30453791
+   },
+   "identical": true,
+   "parallel": {
+    "reference": {
+     "cpu": 18.47,
+     "wall": 10.46801,
+     "rss_mb": 2044.417969,
+     "status": "ok",
+     "members": 13804,
+     "bytes": 30455049
+    },
+    "port": {
+     "cpu": 16.71,
+     "wall": 10.392239,
+     "rss_mb": 1061.1875,
+     "status": "ok",
+     "members": 13805,
+     "bytes": 30452911
+    },
+    "identical": false,
+    "diff": "1869 of 13832 differ: codegen/Codegen.class, codegen/Converter$Closure_convertField_extractLocalNames_0$Closure_invoke_loop_0.class, codegen/Converter$Closure_convertField_extractLocalNames_0$Closure_invoke_use_0.class",
+    "reference_stable": false,
+    "port_stable": false,
+    "reference_repeats": false,
+    "port_repeats": false,
+    "varies": true
+   },
+   "shard": 0
+  },
+  {
+   "project": "self",
+   "target": "swf",
+   "reference": {
+    "status": "exit 1: 26 | #error \"This class is not available on this target\" | |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ | | This class is not available on this target"
+   },
+   "port": null,
+   "identical": null,
+   "shard": 2
+  }
+ ]
+}
