@@ -453,6 +453,10 @@ write(fd, ReadOnlySpan.ofBytes(b));             // GC code: the span lent for th
 | `h:H`, a `@:hxmc.handle(v)` abstract | its value, checked `!= v` ([Handles](#handles)) |
 | `f:Int->Int` | the address of the static `@:hxmc.callback` function named as the argument, of the same C types |
 | a span result with `@:hxmc.len(n)` | a pointer to `n` elements, which the declaration vouches for (null ends the program); kernels only |
+| `s:String` (`@:hxmc.safe`) | a NUL-terminated UTF-8 copy for the call, NULL for null (below) |
+| a `String` result (`@:hxmc.safe`) | C's string copied, null for NULL; `@:hxmc.free(fn)`: then freed by `fn` |
+| `Span.of(x)`, `ReadOnlySpan.of(v)` as the argument | a slot of the frame holding x (copied back after the call) or v: an out-parameter from GC code (below) |
+| `o:hxmc.com.Out<IFoo>` | the address of a slot C stores an `IFoo *` in, adopted into `o.value` after the call (Windows: [COM](#com)) |
 
 Lengths are elements: a C length in bytes takes a span of `UInt8`
 (`var b:Span<UInt8> = words.reinterpret()`). A failed check ends the
@@ -490,7 +494,7 @@ is called from checked kernels and from GC code (`Fds.write(fd, ReadOnlySpan.ofB
 
 **Where spans come from** is as for kernels ([Spans](#spans)): GC code
 makes one only as a direct argument of the call (`ofBytes`, `ofIoBuffer`,
-`unsafeOf`), whose addresses are taken after the other arguments are
+`ofBuffer`, `of`, `unsafeOf`), whose addresses are taken after the other arguments are
 evaluated. A `Bytes` is lent only to a call that enters no safe region: a
 `@:hxmc.fast` function. A call in a safe region (any other) takes an
 IoBuffer's span, or a kernel's own, as `Span.stack`'s
@@ -515,6 +519,65 @@ IoBuffer's span, or a kernel's own, as `Span.stack`'s
 On wasm32 an import takes a span as two `i32`s (its address in linear
 memory and its length), a span by its address alone as one (`WasmSpans`).
 Calls that keep no typed parameter compile as before.
+
+**Strings.** A `String` parameter of a `@:hxmc.safe` function is C's
+`const char *`: a NUL-terminated UTF-8 copy made for the call and freed
+after it (NULL for null). A `String` result is C's string copied into a
+Haxe one (null for NULL): borrowed (`getenv`, a static string), or freed
+after the copy by the function of the same class that `@:hxmc.free` names.
+Strings cross C calls in GC code only (a kernel copies nothing:
+`reject/CBindingStringKernel`).
+
+```haxe
+@:hxmc.c @:hxmc.fast @:hxmc.safe @:hxmc.header("lib.h") extern class Lib {
+  static function lib_version():String;                         // const char *: copied
+  @:hxmc.free(lib_free) static function lib_upper(s:String):String; // char *, the caller's
+  static function lib_free(p:Ptr):Void;                        // (called by the compiler)
+}
+trace(Lib.lib_upper("abc"));                                   // no Arena, no free
+```
+
+**Out-parameters from GC code.** `Span.of(x)` passes a variable (a local,
+a field, a static) as a span of one: x is copied into a slot of the frame
+for the call and back after it, so an out-struct or an out-scalar needs no
+`Mem.stack`. `ReadOnlySpan.of(v)` passes a value as `const T *`, copied in
+only. Both are a call's arguments (`reject/SpanOfValue`, `SpanOfOutside`);
+structs by value pass and return as any struct does.
+
+```haxe
+var qr = new QR(0, 0);
+if (Lib.cb_divmod(47, 5, Span.of(qr)) == 0) trace(qr.q, qr.r);   // 9 2
+var lo = 0, hi = 0;
+Lib.minmax(3, -7, 12, Span.of(lo), Span.of(hi));                // int *min, int *max
+```
+
+`CBindingsStrings` and `CBindingsOut` check these (and `make header-check`
+their declarations: a `String` is checked to be `char *`).
+
+### Owned buffers
+
+`hxmc.Buffer` is runtime-sized memory outside the GC heap that safe code
+owns: zeroed bytes, lent to one call as a span (`Span.ofBuffer(b, ?pos,
+?len)`, `ReadOnlySpan.ofBuffer`) and freed by `close()`, so `malloc` and
+`free` pairs leave the program. Lending is counted atomically: while a
+call holds a span of the buffer (a callback of that call, another
+thread), `close()` throws instead of freeing the memory under it. A closed
+buffer is empty: its length is 0, its accessors (`get`, `set`, `fill`,
+`getBytes`, `blitFromBytes`, `blitToBytes`) and its spans throw. Nothing
+else frees it (hxmc has no finalizers): `Buffer.scoped(n, b -> ...)` closes
+it on every path, and inlines (no closure).
+
+```haxe
+var buf = new Buffer(4096);
+var n = Fds.read(fd, Span.ofBuffer(buf));    // any call: fast, blocking, a kernel
+var bytes = buf.getBytes(0, n.toInt());
+buf.close();
+```
+
+GC code lends a Buffer, a kernel never makes a span of one
+(`reject/BufferKernel`): it is lent spans, as of any other memory.
+`CBindingsBuffer` checks it (a close refused during the call that holds it).
+
 
 ### Typed callbacks
 
@@ -1566,11 +1629,17 @@ and arm64; `ComElsewhere` the other targets.
 | `String` | `LPCWSTR`: UTF-16 made for the call and freed after it; a result `LPWSTR`, CoTaskMemAlloc's, freed once copied |
 | `hxmc.com.BStr` (a `String`) | `BSTR`: SysAllocStringLen's for the call, freed after it; a result's freed once copied (an embedded NUL kept; a null BSTR reads `""`) |
 | `hxmc.com.Variant` | `VARIANT`, a struct value ([BSTR and VARIANT](#bstr-and-variant)) |
+| `Span<T>`, `ReadOnlySpan<T>` | its address, then its length (a `size_t`) unless `@:hxmc.len(p, n)` names a count or a minimum, checked as for C functions ([Typed bindings](#typed-bindings)): an array, or an out-parameter (`Span.of(x)`) |
+| `hxmc.com.Out<IFoo>` | `IFoo **`, an `[out]` interface: a slot whose pointer is adopted into `out.value` after the call (null for NULL); a C function may take one too |
 
-- **Out parameters** beyond the `[out, retval]` one are pointers to native
-  memory (`Ptr<Int32>`, `Ptr<Float>`: a frame's `Mem.stack`, an `Arena`'s),
-  read after the call; an interface one's pointer is made a value with
-  `Com.adopt(p, IFoo)`.
+- **Out parameters** beyond the `[out, retval]` one are spans: `Span.of(x)`
+  of a variable from GC code, copied back after the call (`@:hxmc.len(a, 1)
+  function Outs(a:Span<Int32>, b:Span<Float>)`); an interface one is an
+  `Out<IFoo>`, as is a C function's (`DWriteCreateFactory`'s `IUnknown **`).
+  `Ptr` parameters, `Mem.stack` and `Com.adopt(p, IFoo)` still work, as raw
+  memory (`@:hxmc.unsafe` code). A Haxe class implementing a method with a
+  span or an `Out` parameter is not supported yet. `ComTyped` is `ComCalls`
+  without raw memory, built with `-D hxmc.strict`.
 - **A struct result of a `@:hxmc.com.direct` method** comes back as MSVC
   returns them from C++ methods on x86-64 and arm64: through a pointer
   after `this` (`D2D1_SIZE_F GetSize()` is `D2D1_SIZE_F *GetSize(this,
