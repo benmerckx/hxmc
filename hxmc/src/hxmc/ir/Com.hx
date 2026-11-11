@@ -170,12 +170,11 @@ class Com {
 		return raw ? RAW : direct ? DIRECT : CHECKED;
 	}
 
-	// the COM interface of an hxmc.com.Out<IFoo>, or null
-	public static function outOf(t:T):Null<TClass>
-		return switch TFunctions.follow(t) {
-			case TInst(c, [p]) if (c.clPath.name == "Out" && c.clPath.pack.join(".") == "hxmc.com"): ifaceOf(p);
-			case _: null;
-		}
+	// the COM interface of an hxmc.Out<IFoo> (hxmc.com.Out), or null
+	public static function outOf(t:T):Null<TClass> {
+		var p = CInterop.outParam(t);
+		return p == null ? null : ifaceOf(p);
+	}
 
 	// whether @:hxmc.len names the parameter `name` of cf (its address alone then)
 	public static function lenNamed(cf:TClassField, name:String):Bool {

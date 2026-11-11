@@ -98,7 +98,9 @@ class HeaderCheck {
 				case ACallback:
 					arg('hxmc_check::pointer<${A()}>()', "a function pointer");
 				case AOut(_):
-					arg('hxmc_check::pointer<${A()}>()', "a pointer (an IFoo **)");
+					arg('hxmc_check::pointer<${A()}>()', "a pointer (a T ** of an hxmc.Out)");
+				case AIface(_):
+					arg('hxmc_check::pointer<${A()}>()', "a pointer (an IFoo *)");
 				case AString:
 					arg('hxmc_check::cstring<${A()}>()', "a C string (char *)");
 				case _ if (CInterop.isSize(s.args[i].type)):

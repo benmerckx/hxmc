@@ -40,7 +40,8 @@ typedef CSig = {args:Array<CTy>, ret:CTy};
 // a span as its address alone (its length another parameter's, or a
 // minimum), a handle (checked against its invalid value), a callback's address,
 // a String as a NUL-terminated UTF-8 copy for the call's duration (NULL for null),
-// an hxmc.com.Out<IFoo> as the address of a slot C stores an IFoo * in (Windows)
+// an hxmc.Out<T> as the address of a slot C stores a T in, a COM interface
+// as its interface pointer (borrowed)
 enum CArg {
 	AValue;
 	ASpan;
@@ -48,15 +49,27 @@ enum CArg {
 	AHandle(invalid:Null<Int>, close:Bool);
 	ACallback;
 	AString;
-	AOut(iface:TClass);
+	AOut(kind:OutKind);
+	AIface(iface:TClass);
+}
+
+// what an hxmc.Out<T> takes: a COM interface (IFoo **, adopted), an
+// Objective-C or Core Foundation object (id *: owned, as the Create rule's,
+// or borrowed, as ARC's __autoreleasing), a handle (H *)
+enum OutKind {
+	OCom(iface:TClass);
+	OObj(owned:Bool);
+	OHandle(t:T);
 }
 
 // a C function's parameters as its calls pass them; ret: the length of a
 // span result (@:hxmc.len(n)), else -1; typed: whether any parameter or
 // the result is passed otherwise than as its C type; str: a String result,
 // C's NUL-terminated UTF-8 copied (null for NULL), free: the function of the
-// same class freeing it after the copy (@:hxmc.free(fn)), or null: borrowed
-typedef CPlan = {args:Array<CArg>, ret:Int, typed:Bool, str:Bool, free:Null<String>};
+// same class freeing it after the copy (@:hxmc.free(fn)), or null: borrowed;
+// nil: the parameters of a Null<...> type, whose null passes NULL (a span,
+// a callback, a handle: then unchecked)
+typedef CPlan = {args:Array<CArg>, ret:Int, typed:Bool, str:Bool, free:Null<String>, nil:Array<Bool>};
 
 class CInterop {
 	// C functions by symbol: their signature (one per symbol: every
@@ -486,7 +499,7 @@ class CInterop {
 					args.push(CPtr);
 					args.push(CPtr);
 					continue;
-				case ASpanPtr(_) | ACallback | AString | AOut(_):
+				case ASpanPtr(_) | ACallback | AString | AOut(_) | AIface(_):
 					args.push(CPtr);
 					continue;
 				case AHandle(_):
@@ -612,11 +625,16 @@ class CInterop {
 			case _: null;
 		}
 
-	// the parameters of C function cf as its calls pass them: spans (their
-	// @:hxmc.len), handles (@:hxmc.close), callbacks; for a @:hxmc.safe one,
-	// the check that no raw memory crosses it
-	public static function plan(c:TClass, cf:TClassField, s:TSignature, shown:String, where:String):CPlan {
+	// the parameters of C function cf (or of an Objective-C method: msg) as
+	// its calls pass them: spans (their @:hxmc.len), handles (@:hxmc.close),
+	// callbacks, Strings, Outs; for a @:hxmc.safe one, the check that no raw
+	// memory crosses it. A message takes a String without @:hxmc.safe (it
+	// takes none otherwise), and its function types are blocks but for the
+	// parameters @:hxmc.callback names: C's function pointers
+	public static function plan(c:TClass, cf:TClassField, s:TSignature, shown:String, where:String, msg = false):CPlan {
+		var what = msg ? "Objective-C method" : "C function";
 		var args = [for (a in s.args) AValue], ret = -1, typed = false;
+		var nil = [for (a in s.args) false];
 		function index(name:String):Int {
 			for (i in 0...s.args.length)
 				if (s.args[i].name == name) return i;
@@ -628,7 +646,7 @@ class CInterop {
 				if (m.exprs.length == 1) {
 					var n = intOf(m.exprs[0]);
 					if (n == null || n < 0 || KernelCheck.spanOf(s.ret) == null)
-						throw new LowerError('C function $shown: @:hxmc.len(n) gives the length of a span result: a constant', where);
+						throw new LowerError('$what $shown: @:hxmc.len(n) gives the length of a span result: a constant', where);
 					ret = n;
 					continue;
 				}
@@ -638,73 +656,141 @@ class CInterop {
 				var name = m.exprs.length == 2 ? identOf(m.exprs[0]) : null;
 				var k = name == null ? -1 : index(name);
 				if (k < 0 || KernelCheck.spanOf(s.args[k].type) == null)
-					throw new LowerError('C function $shown: @:hxmc.len(buf, n) names a span parameter, then a parameter or a constant', where);
+					throw new LowerError('$what $shown: @:hxmc.len(buf, n) names a span parameter, then a parameter or a constant', where);
 				var min = intOf(m.exprs[1]);
 				var count = min == null ? index(identOf(m.exprs[1])) : -1;
 				if (min == null && (count < 0 || count == k || !isCount(s.args[count].type)))
-					throw new LowerError('C function $shown: @:hxmc.len(${name}, n): n is an integer parameter or a constant', where);
+					throw new LowerError('$what $shown: @:hxmc.len(${name}, n): n is an integer parameter or a constant', where);
 				args[k] = ASpanPtr(count, min == null ? 0 : min);
 			}
 		}
-		var closes = [];
+		var closes = [], fnptrs = [];
 		for (m in cf.cfMeta)
 			if (core.Meta.metaEq(Custom(":hxmc.close"), m.meta))
 				for (e in m.exprs) {
 					var k = identOf(e) == null ? -1 : index(identOf(e));
 					var h = k < 0 ? null : handleOf(s.args[k].type);
 					if (h == null || h.invalid == null)
-						throw new LowerError('C function $shown: @:hxmc.close names a parameter of a handle type with an invalid value (@:hxmc.handle(-1))', where);
+						throw new LowerError('$what $shown: @:hxmc.close names a parameter of a handle type with an invalid value (@:hxmc.handle(-1))', where);
 					closes.push(k);
 				}
+			else if (msg && core.Meta.metaEq(Custom(":hxmc.callback"), m.meta))
+				// (a message's function pointer: a block otherwise)
+				for (e in m.exprs) {
+					var k = identOf(e) == null ? -1 : index(identOf(e));
+					if (k < 0 || !TFunctions.follow(s.args[k].type).match(TFun(_)))
+						throw new LowerError('$what $shown: @:hxmc.callback names a parameter of a function type (a C function pointer; a block otherwise)', where);
+					fnptrs.push(k);
+				}
+		var strings = msg || isSafe(c, cf);
 		for (i in 0...s.args.length) {
 			var t = s.args[i].type;
+			var optional = TFunctions.isExplicitNull(t);
 			if (KernelCheck.spanOf(t) != null) {
+				// (a message's length is a parameter of its own, part of the selector)
+				if (msg && args[i].match(AValue))
+					throw new LowerError('$what $shown: the span ${s.args[i].name} needs @:hxmc.len(${s.args[i].name}, n): a message passes its address alone', where);
 				if (args[i].match(AValue)) args[i] = ASpan;
+				nil[i] = optional;
 				typed = true;
 				continue;
 			}
 			var h = handleOf(t);
 			if (h != null) {
 				args[i] = AHandle(h.invalid, closes.indexOf(i) >= 0);
-				if (h.invalid != null) typed = true;
+				nil[i] = optional;
+				if (h.invalid != null || optional) typed = true;
+				if (optional && closes.indexOf(i) >= 0)
+					throw new LowerError('$what $shown: @:hxmc.close names ${s.args[i].name}, which may be null', where);
 				continue;
 			}
-			if (TFunctions.follow(t).match(TFun(_))) {
+			if (TFunctions.follow(t).match(TFun(_)) && (!msg || fnptrs.indexOf(i) >= 0)) {
 				args[i] = ACallback;
-				typed = true;
-			}
-			var oi = Com.outOf(t);
-			if (oi != null) {
-				args[i] = AOut(oi);
+				nil[i] = optional;
 				typed = true;
 				continue;
 			}
-			if (isString(t) && isSafe(c, cf)) {
+			var o = outKind(c, cf, s.args[i].name, t, msg, what + " " + shown, where);
+			if (o != null) {
+				args[i] = AOut(o);
+				typed = true;
+				continue;
+			}
+			// (a COM interface of a @:hxmc.safe function: its interface pointer, borrowed)
+			var ci = !msg && isSafe(c, cf) ? Com.ifaceOf(t) : null;
+			if (ci != null) {
+				args[i] = AIface(ci);
+				typed = true;
+				continue;
+			}
+			if (isString(t) && strings) {
 				args[i] = AString;
 				typed = true;
 			}
 		}
-		var str = isString(s.ret) && isSafe(c, cf), free:Null<String> = null;
+		var str = isString(s.ret) && strings, free:Null<String> = null;
 		var fm = core.Meta.getOpt(Custom(":hxmc.free"), cf.cfMeta);
 		if (fm != null) {
 			free = fm.exprs.length == 1 ? identOf(fm.exprs[0]) : null;
-			if (!str || free == null || !c.clStatics.exists(free))
-				throw new LowerError('C function $shown: @:hxmc.free(fn) names the function of its class that frees its String result', where);
+			if (msg || !str || free == null || !c.clStatics.exists(free))
+				throw new LowerError('$what $shown: @:hxmc.free(fn) names the function of its class that frees its String result', where);
 		}
 		if (ret >= 0 || str) typed = true;
 		if (KernelCheck.spanOf(s.ret) != null && ret < 0)
-			throw new LowerError('C function $shown: a span result needs its length (@:hxmc.len(n))', where);
+			throw new LowerError('$what $shown: a span result needs its length (@:hxmc.len(n))', where);
 		// (a function another of its class names in @:hxmc.free takes C's pointer: the
 		// compiler calls it; a call of it in the program passes raw memory, RawCheck)
-		if (isSafe(c, cf) && !freesResults(c, cf.cfName)) {
+		if (!msg && isSafe(c, cf) && !freesResults(c, cf.cfName)) {
 			if (Lower.hasMeta(":hxmc.indirect", cf.cfMeta)) throw new LowerError('C function $shown: @:hxmc.safe and @:hxmc.indirect (a raw address)', where);
 			for (i in 0...s.args.length)
 				if (args[i].match(AValue) && !safeValue(s.args[i].type))
-					throw new LowerError('C function $shown is @:hxmc.safe but its parameter ${s.args[i].name} is raw memory or a GC value (${core.TPrinting.Printer.sType(s.args[i].type)}: spans, handles, scalars and structs of them)', where);
+					throw new LowerError('C function $shown is @:hxmc.safe but its parameter ${s.args[i].name} is raw memory or a GC value (${core.TPrinting.Printer.sType(s.args[i].type)}: spans, handles, objects, scalars and structs of them)', where);
 			if (ret < 0 && !str && ctype(s.ret) != CVoid && !safeValue(s.ret))
 				throw new LowerError('C function $shown is @:hxmc.safe but its result is raw memory or a GC value (${core.TPrinting.Printer.sType(s.ret)})', where);
 		}
-		return {args: args, ret: ret, typed: typed, str: str, free: free};
+		return {args: args, ret: ret, typed: typed, str: str, free: free, nil: nil};
+	}
+
+	// the T of an hxmc.Out<T> (hxmc.com.Out<T> too), else null
+	public static function outParam(t:T):Null<T>
+		return switch TFunctions.follow(t) {
+			case TInst(c, [p]) if (c.clPath.name == "Out" && c.clPath.pack.length == 1 && c.clPath.pack[0] == "hxmc"): p;
+			case _: null;
+		}
+
+	// what an hxmc.Out<T> parameter takes: a COM interface, an object (owned
+	// by a C function of the Create rule, Create or Copy in its name, or one
+	// naming it in @:hxmc.retained(p); else borrowed, as ARC's
+	// __autoreleasing out-parameters are), a handle
+	static function outKind(c:TClass, cf:TClassField, name:String, t:T, msg:Bool, shown:String, where:String):Null<OutKind> {
+		var p = outParam(t);
+		if (p == null) return null;
+		var i = Com.ifaceOf(p);
+		if (i != null) return OCom(i);
+		if (handleOf(p) != null) return OHandle(p);
+		switch TFunctions.follow(p) {
+			case TInst(k, _) if (ObjC.peerBase(k) != null):
+				throw new LowerError('$shown: hxmc.Out<${k.clPath.name}>: a Haxe class\'s objects are not stored by C (an Out of its Objective-C superclass)', where);
+			case TInst(k, _) if (ObjC.isObjC(k) || ObjC.isCF(k) || ObjC.isObjCParam(k) || ObjC.isId(k)):
+				var named = false;
+				for (m in cf.cfMeta)
+					if (core.Meta.metaEq(Custom(":hxmc.retained"), m.meta))
+						for (e in m.exprs)
+							if (identOf(e) == name) named = true;
+				if (named) return OObj(true);
+				var n = msg ? "" : cName(c, cf);
+				return OObj(n.indexOf("Create") >= 0 || n.indexOf("Copy") >= 0);
+			case _:
+				throw new LowerError('$shown: hxmc.Out<T> holds a COM interface, an Objective-C or Core Foundation object, or a handle', where);
+		}
+	}
+
+	// @:hxmc.retained on cf without a parameter's name: its object result is
+	// the caller's (the Create rule)
+	public static function retainedResult(cf:TClassField):Bool {
+		for (m in cf.cfMeta)
+			if (core.Meta.metaEq(Custom(":hxmc.retained"), m.meta) && m.exprs.length == 0) return true;
+		return false;
 	}
 
 	// whether a function of c names fn in @:hxmc.free
@@ -734,6 +820,9 @@ class CInterop {
 	static function safeValue(t:T, depth = 0):Bool {
 		if (depth > 8) return false;
 		if (handleOf(t) != null) return true;
+		// (an object, borrowed for the call: Objective-C's, Core Foundation's, a
+		// block, a COM interface, which no struct field holds)
+		if (depth == 0 && (ObjC.isObjCType(t) || ObjC.blockOfType(t) != null || Com.ifaceOf(t) != null)) return true;
 		if (KernelCheck.isRaw(t)) return false;
 		return switch ctype(t) {
 			case CStruct(sc):

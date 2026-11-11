@@ -102,6 +102,11 @@ abstract Span<T>(SpanData) {
 	// of one, copied in for the call and back after it: an out-parameter
 	extern public static function of<T>(x:T):Span<T>;
 
+	// a call's argument in GC code: the elements of a (scalars or structs)
+	// copied into C memory for the call and back into a after it: many
+	// out-structs (`Span.ofArray(rects)`)
+	extern public static function ofArray<T>(a:Array<T>):Span<T>;
+
 	// length elements of T at p, as their owner vouches (@:hxmc.unsafe code,
 	// or a call's argument in GC code: a pool's glue)
 	extern public static function unsafeOf<T>(p:Ptr<T>, length:Int):Span<T>;
@@ -185,6 +190,10 @@ abstract Span<T>(SpanData) {
 	// copy, 0 for null; freed after the call (cfree: FnLower.typedCall)
 	@:hxmc.unsafe public static function cstring(s:String):hxmc.I64
 		return s == null ? 0 : hxmc.rt.Str.toUtf8(s).toI64();
+
+	// (Span.ofArray: C memory for the elements, cfree'd after the call)
+	@:hxmc.unsafe public static function alloc(bytes:hxmc.I64):hxmc.I64
+		return hxmc.unsafe.LibC.malloc(bytes == (0 : hxmc.I64) ? (8 : hxmc.I64) : bytes).toI64();
 
 	@:hxmc.unsafe public static function cfree(p:hxmc.I64):Void
 		if (p != (0 : hxmc.I64)) hxmc.unsafe.LibC.free(new Ptr(p));
