@@ -18,7 +18,7 @@ import hxmc.unsafe.Winsock;
 @:access(hxmc.rt.PosixNet) @:access(hxmc.rt.WinNet) @:access(hxmc.rt.Threads)
 extern class NetCore {
 	// a Boolean socket option (an int)
-	public static inline function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
+	@:hxmc.unsafe(gc) public static inline function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
 		var v = Mem.stack(8);
 		Mem.setI32(v, 0, b ? 1 : 0);
 		return Platform.os() == 2 ? WinNet.ret(Winsock.setsockopt(WinNet.sock(fd), level, opt, v, 4)) : PosixNet.ret(Posix.setsockopt(fd, level, opt, v, 4));
@@ -28,7 +28,7 @@ extern class NetCore {
 	// the timeout passes (rt_wait_fds polls them in a safe region), then
 	// select looks without waiting. The entries: struct pollfd (int fd,
 	// short events, short revents) or WSAPOLLFD (SOCKET, short, short).
-	public static inline function waitFds(r:Array<Int>, nr:Int, w:Array<Int>, nw:Int, o:Array<Int>, no:Int, timeout:Float) {
+	@:hxmc.unsafe(gc) public static inline function waitFds(r:Array<Int>, nr:Int, w:Array<Int>, nw:Int, o:Array<Int>, no:Int, timeout:Float) {
 		var p = Platform.os() == 2 ? LibC.malloc(16 * (nr + nw + no + 1)) : LibC.malloc(8 * (nr + nw + no + 1));
 		var k = 0;
 		inline function add(fd:Int, events:Int) {
@@ -62,7 +62,7 @@ extern class NetCore {
 	// POLLRDBAND stands for it). The first n entries; -1 on failure, errno
 	// set. Nothing is allocated: the pollfds and rt_wait_fds' scratch are in
 	// a per-thread malloc'ed buffer (pollBuffer), kept for the next call.
-	public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
+	@:hxmc.unsafe(gc) public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
 		var size = Platform.os() == 2 ? 16 : 8, ev = Platform.os() == 2 ? 8 : 4;
 		var p = Platform.os() == 2 ? WinNet.pollBuffer((size + 4) * n) : PosixNet.pollBuffer((size + 4) * n);
 		// (Windows: a negative entry, a closed socket's -1, is never ready, as
@@ -99,19 +99,19 @@ extern class NetCore {
 	// gethostbyname/gethostbyaddr return static data: one lookup at a time
 	// (a spin lock: Names.spin[0], Windows' Names.spin[4]), in a safe region
 	// (they may block on the network), results copied out under the lock
-	public static inline function lockResolver() {
+	@:hxmc.unsafe(gc) public static inline function lockResolver() {
 		var l = Platform.os() == 2 ? Names.spin.add(16) : Names.spin;
 		while (Atomic.cas32(l, 0, 1) != 0)
 			if (Platform.os() == 2) Win32.Sleep(0) else Posix.sched_yield();
 	}
 
-	public static inline function unlockResolver()
+	@:hxmc.unsafe(gc) public static inline function unlockResolver()
 		Atomic.store32(Platform.os() == 2 ? Names.spin.add(16) : Names.spin, 0);
 
 	// the host-order IPv4 address of n, with 1 << 32 set when found (struct
 	// hostent: h_name, h_aliases, h_addrtype and h_length, ints, Windows'
 	// shorts, h_addr_list)
-	public static inline function lookup(n:Ptr):I64 {
+	@:hxmc.unsafe(gc) public static inline function lookup(n:Ptr):I64 {
 		var r:I64 = 0;
 		var region = Leaf.rt_blocking_enter();
 		if (Platform.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
@@ -130,7 +130,7 @@ extern class NetCore {
 	}
 
 	// a malloc'ed copy of the name of ip (host order), or null
-	public static inline function reverseLookup(ip:Int):Ptr {
+	@:hxmc.unsafe(gc) public static inline function reverseLookup(ip:Int):Ptr {
 		var a = Mem.stack(8);
 		Mem.setI8(a, 0, ip >>> 24);
 		Mem.setI8(a, 1, ip >> 16);

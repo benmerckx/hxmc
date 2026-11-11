@@ -11,10 +11,10 @@ import hxmc.unsafe.*;
 // (its spaces, copies, remembered sets, roots) stays in its own Gc.
 extern class GcCore {
 	// the header's first word: the type index, then a record's slots or an array's words
-	public static inline function hdrW0(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function hdrW0(p:Ptr):Int
 		return Mem.getI32(p, -8);
 
-	public static inline function tindexOf(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function tindexOf(p:Ptr):Int
 		return Mem.getU16(p, -8);
 
 	// forwarded (the header's first word w0): the type index is T_FWD, the
@@ -24,21 +24,21 @@ extern class GcCore {
 		return w0 & 0xFFFF == Types.T_FWD;
 
 	// (p forwarded, read from its type index alone)
-	public static inline function isFwdAt(p:Ptr):Bool
+	@:hxmc.unsafe(gc) public static inline function isFwdAt(p:Ptr):Bool
 		return tindexOf(p) == Types.T_FWD;
 
 	// a forwarded object's copy
-	public static inline function fwdAddr(p:Ptr):Ptr
+	@:hxmc.unsafe(gc) public static inline function fwdAddr(p:Ptr):Ptr
 		return fwdLow() ? getC(p, -1) : Mem.getPtr(p, 0);
 
-	public static inline function setFwd(p:Ptr, n:Ptr) {
+	@:hxmc.unsafe(gc) public static inline function setFwd(p:Ptr, n:Ptr) {
 		Mem.setI16(p, -8, Types.T_FWD);
 		setFwdAddr(p, n);
 	}
 
 	// the copy's address alone (the type index set after it: the parallel
 	// collections' release store)
-	public static inline function setFwdAddr(p:Ptr, n:Ptr)
+	@:hxmc.unsafe(gc) public static inline function setFwdAddr(p:Ptr, n:Ptr)
 		if (fwdLow()) setC(p, -1, n) else Mem.setPtr(p, 0, n);
 
 	// whether forwarding keeps the copy's address compressed in the header's
@@ -55,15 +55,15 @@ extern class GcCore {
 	public static inline function wordsOf(p:Ptr, w0:Int):Int
 		return Types.wordsAt(p, w0);
 
-	public static inline function nslotsOf(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function nslotsOf(p:Ptr):Int
 		return wordsOf(p, hdrW0(p));
 
 	// how p is scanned: K_OBJ by its pointer map, K_PARR every slot, K_RAW not at all
-	public static inline function kindOf(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function kindOf(p:Ptr):Int
 		return Types.kindOfWord(hdrW0(p));
 
 	// p with its header
-	public static inline function objBytes(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function objBytes(p:Ptr):Int
 		return 8 * (nslotsOf(p) + 1);
 
 	// the pointer map (a bit per slot) of type t, or null
@@ -71,15 +71,15 @@ extern class GcCore {
 		return Types.ptrmap(Types.ty(t));
 
 	// p's type's
-	public static inline function ptrmapOf(p:Ptr):Ptr
+	@:hxmc.unsafe(gc) public static inline function ptrmapOf(p:Ptr):Ptr
 		return ptrmapOfType(tindexOf(p));
 
 	// ptrmapOfType with the type record's offset (Types.ty, Types.ptrmap)
 	// folded into the load's: one wasm32 load with a constant offset
-	public static inline function ptrmapAt(t:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function ptrmapAt(t:Int):Ptr
 		return Mem.getPtr(Mem.sym("rt_types"), 112 * t + 24);
 
-	public static inline function isPtrSlot(pm:Ptr, i:Int):Bool
+	@:hxmc.unsafe(gc) public static inline function isPtrSlot(pm:Ptr, i:Int):Bool
 		return ((Mem.getI32At(pm, 0, i >> 5) >>> (i & 31)) & 1) != 0;
 
 	// ---- compressed references (@:hxmc.compact): 4-byte fields holding a
@@ -99,7 +99,7 @@ extern class GcCore {
 
 	// whether type t's objects have compressed references (word 20's bit 0,
 	// Types.hasCompact)
-	public static inline function compactAt(t:Int):Bool
+	@:hxmc.unsafe(gc) public static inline function compactAt(t:Int):Bool
 		return compactTypes() && Mem.getI32(Mem.sym("rt_types"), 112 * t + 20) & 1 != 0;
 
 	// the compact map's entries of an object of n slots: a bit per half; an
@@ -113,27 +113,27 @@ extern class GcCore {
 		return n == 0 ? -1 : j;
 
 	// half h of the compact map pm (a type's pointer map) is a compressed reference
-	public static inline function isCompactHalf(pm:Ptr, h:Int):Bool
+	@:hxmc.unsafe(gc) public static inline function isCompactHalf(pm:Ptr, h:Int):Bool
 		return ((Mem.getI32At(pm, 8, h >> 5) >>> (h & 31)) & 1) != 0;
 
 	// the compact map's halves 0 to 31 and 32 to 63
-	public static inline function cmapLo(pm:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function cmapLo(pm:Ptr):Int
 		return Mem.getI32(pm, 8);
 
-	public static inline function cmapHi(pm:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function cmapHi(pm:Ptr):Int
 		return Mem.getI32(pm, 12);
 
 	// the reference in 4-byte half h of p
-	public static inline function getC(p:Ptr, h:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function getC(p:Ptr, h:Int):Ptr
 		return Ptr.ofI64(((Mem.getI32At(p, 0, h) : I64) << 32) >>> 29);
 
-	public static inline function setC(p:Ptr, h:Int, v:Ptr)
+	@:hxmc.unsafe(gc) public static inline function setC(p:Ptr, h:Int, v:Ptr)
 		Mem.setI32At(p, 0, h, (v.toI64() >>> 3).toInt());
 
 	// a reference field of p: 8-byte slot i, or compressed (c) 4-byte half i
-	public static inline function getRefAt(p:Ptr, i:Int, c:Bool):Ptr
+	@:hxmc.unsafe(gc) public static inline function getRefAt(p:Ptr, i:Int, c:Bool):Ptr
 		return c ? getC(p, i) : Ptr.ofI64(Mem.getI64At(p, 0, i));
 
-	public static inline function setRefAt(p:Ptr, i:Int, c:Bool, v:Ptr)
+	@:hxmc.unsafe(gc) public static inline function setRefAt(p:Ptr, i:Int, c:Bool, v:Ptr)
 		if (c) setC(p, i, v) else Mem.setI64At(p, 0, i, v.toI64());
 }
