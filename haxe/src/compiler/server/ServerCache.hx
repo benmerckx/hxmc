@@ -43,6 +43,9 @@ class ServerCache {
 	// ... cached by an earlier process needs beyond the checks below (its file's content, the file its
 	// ... path resolves to, dependencies it did not keep); always null in the compiler itself.
 	public static var checkModuleHook:Null<(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra) -> Null<ModuleSkipReason>> = null;
+	// port: hxmc keeps what the server keeps under a cap (hxmc/src/hxmc/ServerMemory.hx), checked
+	// ... after each request's cleanup; always null in the compiler itself.
+	public static var cleanupHook:Null<ServerCompilationContext->Void> = null;
 	// port: and gives back there, once a reader has read them, what HXB does not keep of a module's
 	// ... monomorphs (their modifiers); always null in the compiler itself.
 	public static var readerCreatedHook:Null<(com:CommonContext, path:GlobalTypePath, reader:HxbReader) -> Void> = null;
@@ -682,6 +685,8 @@ class ServerCache {
 			if (removed > 0)
 				ServerMessage.message("Removed " + removed + " stale context cache(s)");
 		}
+		// port: (cleanupHook)
+		if (cleanupHook != null) cleanupHook(sctx);
 	}
 
 	public static function beforeAnything(sctx:ServerCompilationContext, ctx:CommonContext):Void {
