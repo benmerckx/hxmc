@@ -165,17 +165,10 @@ class Tagged {
 
 	// -D hxmc.verify-tags: a scalar's word reached code that reads it as a
 	// reference (MemLower's operations on objects, Mem.addr in the runtime)
-	@:hxmc.export("rt_tagged_access") @:hxmc.unsafe static function access():Void {
-		#if (hxmc.target == "wasm32-wasi")
-		hxmc.rt.wasm.Wasi.writeLit(2, MSG);
-		hxmc.rt.wasm.Wasi.exit(2);
-		#else
-		var r = new Os.Report(Mem.stack(Os.Report.BYTES));
-		r.str(MSG);
-		r.flush();
-		Os.exit(2);
-		#end
+	@:hxmc.export("rt_tagged_access") @:hxmc.kernel static function access():Void {
+		var b:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(128);
+		Text.fatal(b, Text.lit(b, 0, MSG), 2);
 	}
 
-	static inline var MSG = "hxmc: a tagged word (the value of a type parameter) was read as a reference (-D hxmc.verify-tags)\n";
+	static inline var MSG = "hxmc: a tagged word (the value of a type parameter) was read as a reference (-D hxmc.verify-tags)";
 }

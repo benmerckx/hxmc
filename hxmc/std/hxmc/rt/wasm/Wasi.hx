@@ -158,7 +158,7 @@ class Wasi {
 
 	// ---- output (fd 1 buffered)
 
-	@:hxmc.unsafe public static function writeRaw(fd:Int, p:Ptr, n:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public static function writeRaw(fd:Int, p:Ptr, n:Int) {
 		var io = Mem.stack(16);
 		while (n > 0) {
 			Mem.setI32(io, 0, a32(p));
@@ -175,13 +175,13 @@ class Wasi {
 	// site's browser glue) and its exception crosses the try blocks of the
 	// frames below: with no current handler, none of their pads takes it for
 	// a Haxe exception (WasmGen: a pad handles its own handler only)
-	@:hxmc.unsafe public static function exit(code:Int):Void {
+	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int):Void {
 		flush();
 		Mem.tlsSet("rt_hcur", Ptr.nil());
 		WasiApi.proc_exit(code);
 	}
 
-	@:hxmc.unsafe public static function flush() {
+	@:hxmc.unsafe @:hxmc.kernel public static function flush() {
 		if (outLen > 0) {
 			var n = outLen;
 			outLen = 0;
