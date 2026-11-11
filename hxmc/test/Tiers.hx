@@ -10,7 +10,9 @@ using StringTools;
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Tiers quick|check|full [--port] [case ...]
 //   quick  the x64 corpus (64 KB nursery), again with RT_VERIFY=1 and
 //          -D hxmc.verify-tags (Corpus --verify-tags), and the wasm corpus
-//          under node, the module cache's store (CacheCheck), the lowering's
+//          under node, again with a 64 KB nursery, an old space of 1 MB at
+//          first, a budget of 64 MB (RT_MAX_MB) and RT_VERIFY=1 (its major
+//          collections, compactions), the module cache's store (CacheCheck), the lowering's
 //          queries (LowerQueriesCheck), where the tool finds the
 //          runtime objects in npm's layout (RtSearchCheck), a frontend's
 //          compiler adding a function after the lowering (FrontendCheck):
@@ -189,6 +191,9 @@ class Tiers {
 			lane("x64", corpus(cases));
 			lane("x64 RT_VERIFY verify-tags", corpus(null, ["RT_VERIFY" => "1"], cases, VERIFY_TAGS));
 			lane("wasm node", corpus("wasm32-wasi", null, cases));
+			// (the old space's major collections, compactions mostly, at every 16 MB
+			// promoted, and under a budget of linear memory, checked)
+			lane("wasm node compacting RT_VERIFY", corpus("wasm32-wasi", ["RT_MINOR_KB" => "64", "RT_OLD_MB" => "1", "RT_MAX_MB" => "64", "RT_VERIFY" => "1"], cases));
 			lane("module cache store", script(["CacheCheck"]));
 			lane("lower queries", script(["LowerQueriesCheck"]));
 			if (Sys.systemName() != "Windows") lane("runtime-object search", script(["RtSearchCheck"]));

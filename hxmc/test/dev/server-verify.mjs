@@ -10,7 +10,9 @@
 // defines while modules are reused, and a macro's persistent state while
 // the builds alternate between two signatures (a step's '-D': a define of
 // its build and the fresh one's, not a file), also after an error in a macro
-// (a step's '!': a build that fails, as the fresh one does).
+// (a step's '!': a build that fails, as the fresh one does), and two
+// programs built in turn under a cap (hxmc.server-mb) that drops the other
+// one's each time.
 //   node hxmc/test/dev/server-verify.mjs <compiler> [native|web|frontend]
 // (frontend: the compiler is hxmc/test/frontend/Hook.hx's, its own cases)
 import { spawn, spawnSync } from 'node:child_process';
@@ -501,6 +503,51 @@ for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
 		});
 		fs.rmSync(work, { recursive: true, force: true });
 	}
+// a server under a cap (hxmc.server-mb, hxmc/src/hxmc/ServerMemory.hx) of
+// 1 MB: two programs (two signatures) built in turn, so that each build of
+// one drops the other's contexts, objects and lowered bodies before it types
+// anything, and after it; each build, then cold again, is the fresh one
+if (!frontend) {
+	const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hxmc-server-verify-'));
+	const programs = {
+		a: { 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(1));\n\t}\n}\n', 'Lib.hx': 'class Lib {\n\tpublic static function f(x:Int):Int\n\t\treturn x + 1;\n}\n' },
+		b: { 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace([for (i in 0...3) i * 2].join(","));\n\t}\n}\n' },
+	};
+	const edits = { a: { 'Lib.hx': 'class Lib {\n\tpublic static function f(x:Int):Int\n\t\treturn x * 3;\n}\n' }, b: {} };
+	for (const [p, files] of Object.entries(programs)) {
+		fs.mkdirSync(path.join(work, p, 'src'), { recursive: true });
+		for (const [f, text] of Object.entries(files)) fs.writeFileSync(path.join(work, p, 'src', f), text);
+	}
+	// (the cap a define of each request: each compilation reads its own)
+	const cap = ['-D', 'hxmc.server-mb=1'];
+	await serve(false, { ...env, HXMC_STATS: '1' }, async (request, serverOutput, mark, since) => {
+		const steps = ['a', 'b', 'a', 'a', 'b', 'a'];
+		const drops = () => since(0).split('server memory:').length - 1;
+		for (let i = 0; i < steps.length; i++) {
+			const p = steps[i], dir = path.join(work, p);
+			// (the second build of a in a row: after an edit of Lib)
+			if (i === 3)
+				for (const [f, text] of Object.entries(edits.a)) {
+					fs.writeFileSync(path.join(dir, 'src', f), text);
+					await request(dir, ['--display', JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/invalidate', params: { file: path.join(dir, 'src', f) } })]);
+				}
+			const before = drops();
+			const answer = await request(dir, [...args(out, cap), '-D', 'disable-hxb-cache', '-D', 'program=' + p]);
+			const fresh = spawnSync(compiler, [...args(ref, cap), '-D', 'program=' + p], { cwd: dir, env, encoding: 'utf8' });
+			const same = !answer.includes('\x02') && fresh.status === 0 && Buffer.compare(fs.readFileSync(path.join(dir, out)), fs.readFileSync(path.join(dir, ref))) === 0;
+			// (the other program's dropped: before each build of the other one; a's
+			// second build in a row drops nothing)
+			const dropped = i === 0 || i === 3 || drops() > before;
+			const what = `two programs under a cap of 1 MB (${mode}): ${p}, build ${i + 1}`;
+			console.log((same && dropped ? 'ok   ' : 'FAIL ') + what);
+			if (!same || !dropped) {
+				failures++;
+				console.log(!dropped ? 'nothing dropped\n' + answer : answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : 'the outputs differ');
+			}
+		}
+	});
+	fs.rmSync(work, { recursive: true, force: true });
+}
 // (the connected server answers at once: its length and text in one write, Server.mkLengthPrefixedCommunication)
 const prompt = split === 0;
 console.log((prompt ? 'ok   ' : 'FAIL ') + `the connected server's answers come in one write: ${split} of ${answers} came in more than one read`);

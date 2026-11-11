@@ -15,7 +15,9 @@ import hxmc.rt.Tagged;
 // the old space is a list of chunks rather than a contiguous semispace (a
 // major collection copies into chunks taken as it goes, then the from-space's
 // chunks are kept for reuse: no semispaces that outgrow the holes their
-// predecessors left, which a 4 GB memory cannot afford), large objects
+// predecessors left, which a 4 GB memory cannot afford; or, when the free
+// memory does not hold the copy, compacts the chunks where they are,
+// compactOld, so that memory does not grow for it), large objects
 // (over LARGE) have a region each, which a major collection keeps where it
 // is when the object is reached (promoted in place, not copied), memory a
 // collection copies into is taken before it starts (reserveFor: a host may
@@ -70,6 +72,17 @@ class Gc {
 	static inline var G_OLD = 1;
 	static inline var G_TO = 2;
 	static inline var G_LARGE = 3;
+	// a major collection compacts the old space where it is (compactOld),
+	// rather than copying what is live into new chunks (RT_COMPACT=0)
+	static var compacting:Bool;
+	// RT_MAX_MB: what memory should not grow past (0: no such budget). The old
+	// space's limit after a major collection leaves room in it for the memory
+	// taken until then (startup's, the nursery's) and for a collection (a
+	// nursery promoted whole, the marks and the compaction's table), so
+	// collections come sooner as what is live nears it; past it memory still
+	// grows as a collection or an allocation needs (a soft budget)
+	static var budget:I64;
+	static var fixedBytes:I64; // memory taken at startup but the nursery's (the stacks, the tables)
 	// the memory the running collection copies into, taken before it started
 	// (reserveFor), and what it has left of it
 	static var resPtr:Ptr;
@@ -167,6 +180,9 @@ class Gc {
 		var om = Wasi.envInt("RT_OLD_MB", 32);
 		oldLimit = (om : I64) << 20;
 		growth = Wasi.envInt("RT_OLD_GROWTH", 200);
+		compacting = Wasi.envInt("RT_COMPACT", 1) != 0;
+		budget = (Wasi.envInt("RT_MAX_MB", 0) : I64) << 20;
+		Heap.budget = budget;
 		gran = Heap.regionZero(1 << (32 - GRAN_SHIFT));
 		chunksCap = 256;
 		chunks = Heap.malloc(24 * chunksCap);
@@ -204,6 +220,7 @@ class Gc {
 		gcCap = verifying ? 16 : 4096;
 		gcStack = Heap.malloc(16 * gcCap);
 		hxmc.rt.Boxes.init();
+		fixedBytes = Heap.memoryBytes() - nurseryCap;
 		// the type objects (rt_type_objs: two words each, DataGen)
 		var nt = Mem.getI32(Mem.sym("rt_ntypes"), 0);
 		var to = Mem.sym("rt_type_objs");
@@ -395,6 +412,19 @@ class Gc {
 	@:hxmc.unsafe static function take(size:Int):Ptr {
 		var f = Heap.freeAligned(size, GRAN);
 		if (!f.isNull()) return f;
+		// (a large object's region: the free chunks given back first, merged
+		// where they are neighbours, rather than memory grown for it; the
+		// chunks taken after come from the freed regions as well)
+		if (size > CHUNK && !pool.isNull()) {
+			while (!pool.isNull()) {
+				var c = pool;
+				pool = Mem.getPtr(c, 0);
+				Heap.release(c, CHUNK);
+			}
+			poolBytes = 0;
+			f = Heap.freeAligned(size, GRAN);
+			if (!f.isNull()) return f;
+		}
 		if (resEnd.diff(resPtr) >= (size : I64)) {
 			var r = resPtr;
 			resPtr = r.add(size);
@@ -666,14 +696,14 @@ class Gc {
 	// space's chunks hold (its large objects stay in place: promote); the
 	// nursery's objects over LARGE get a region each, rounded up to GRAN
 	// (bigRegions). False: memory cannot grow so far (nothing taken)
-	@:hxmc.unsafe static function reserveFor(maj:Bool):Bool {
+	@:hxmc.unsafe static function reserveFor(maj:Bool, grow = true):Bool {
 		syncCur();
 		var copied:I64 = Mem.tlsGet("rt_young_ptr").diff(youngStart);
 		var large = 0;
 		if (maj)
 			for (i in 0...nchunks)
 				if (entryLarge(chunks, i)) large++ else copied += Mem.getPtr(chunks, 24 * i + 8).diff(Mem.getPtr(chunks, 24 * i));
-		return reserve(maj, copied, bigRegions, large);
+		return reserve(maj, copied, bigRegions, large, grow);
 	}
 
 	// A reservation for `copied` bytes of objects up to LARGE, `regions` of
@@ -684,7 +714,7 @@ class Gc {
 	// room for its entries too. What the collection does not use goes back
 	// after it (unreserve). The copy's stack needs none: when it cannot grow,
 	// the copy rescans (push)
-	@:hxmc.unsafe static function reserve(maj:Bool, copied:I64, regions:I64, large:Int):Bool {
+	@:hxmc.unsafe static function reserve(maj:Bool, copied:I64, regions:I64, large:Int, grow = true):Bool {
 		var nch = (copied + copied / 7 + 2 * CHUNK - 1) >> 20;
 		var chunkBytes = nch << 20;
 		var bytes = regions + (chunkBytes > poolBytes ? chunkBytes - poolBytes : 0);
@@ -708,7 +738,7 @@ class Gc {
 			Heap.refuse(MAX_LARGE);
 			return false;
 		}
-		var r = Heap.tryRegionAligned(bytes.toInt(), GRAN);
+		var r = grow ? Heap.tryRegionAligned(bytes.toInt(), GRAN) : Heap.freeAligned(bytes.toInt(), GRAN);
 		if (r.isNull()) return false;
 		resPtr = r;
 		resEnd = r.add(bytes.toInt());
@@ -734,10 +764,29 @@ class Gc {
 	static var markedBytes:I64; // of the objects up to LARGE the collection copies
 	static var markedRegions:I64; // the regions of the larger ones it copies
 	static var markMajor:Bool;
+	static var markedObjs:Int; // the objects of the old space's chunks marked (compactOld)
 
 	// what the collection about to run copies, measured, reserved (false:
 	// memory cannot grow so far, for the marks or for the reservation)
 	@:hxmc.unsafe static function reserveExact(maj:Bool):Bool {
+		if (!markLive(maj)) return false;
+		releaseMarks();
+		var large = 0;
+		if (maj)
+			for (i in 0...nchunks)
+				if (entryLarge(chunks, i)) large++;
+		return reserve(maj, markedBytes, markedRegions, large);
+	}
+
+	@:hxmc.unsafe static function releaseMarks() {
+		Heap.release(marks, marksBytes);
+		marks = Ptr.nil();
+	}
+
+	// what the collection about to run would copy, marked: a bit per 8 bytes
+	// of memory, at each live object's address (false: memory cannot grow
+	// for the marks, nothing marked)
+	@:hxmc.unsafe static function markLive(maj:Bool):Bool {
 		var n = ((Heap.memoryBytes() >> 6) + 16).toInt();
 		var before = Heap.freshFrom();
 		marks = Heap.tryRegion(n);
@@ -768,13 +817,7 @@ class Gc {
 			gcOverflow = false;
 			markRescan();
 		}
-		Heap.release(marks, marksBytes);
-		marks = Ptr.nil();
-		var large = 0;
-		if (maj)
-			for (i in 0...nchunks)
-				if (entryLarge(chunks, i)) large++;
-		return reserve(maj, markedBytes, markedRegions, large);
+		return true;
 	}
 
 	// v marked when the collection copies it (young; a major one: in the old
@@ -792,6 +835,7 @@ class Gc {
 		Mem.setI8(marks, at, m | bit);
 		var bytes = objBytes(v);
 		if (g == G_OLD || (young && bytes <= LARGE)) markedBytes += bytes else if (young) markedRegions += (bytes + (GRAN - 1)) & ~(GRAN - 1);
+		if (g == G_OLD) markedObjs++;
 		push(v);
 	}
 
@@ -894,13 +938,21 @@ class Gc {
 		}
 		for (i in 0...nchunks)
 			mark(Mem.getPtr(chunks, 24 * i), entrySize(chunks, i), entryLarge(chunks, i) ? G_LARGE : G_OLD);
+		setLimit(need, true);
+	}
+
+	// after a major collection (of `need` bytes: an allocation's), the old
+	// space's next limit; copying: the next major collection copies what is
+	// live (else it compacts it in place)
+	@:hxmc.unsafe static function setLimit(need:Int, copying:Bool) {
 		// the next limit: `growth` percent of what is live (twice: room for as
 		// much again; half as much once memory could not grow for a
 		// collection's worst case, tight), room for what collectFor's test
 		// asks of a minor collection (a nursery promoted whole) and for three
 		// nurseries' promotions, but no more than what is live, and at most
 		// half of what the rest of a wasm32 memory (4 GB) leaves: the next
-		// collection's from-space and to-space must both fit. (The growth
+		// collection's from-space and to-space must both fit (a compaction's
+		// old space, all of it). (The growth
 		// bounds a major collection's cost per byte promoted; the nurseries'
 		// room spares a small old space major collections at nearly every
 		// minor one. Four nurseries more whatever was live, as it was, gave 43
@@ -914,8 +966,15 @@ class Gc {
 		var limit = live + room + more + (minorSize : I64) + (minorSize >> 3) + CHUNK + need;
 		if (limit < (MIN_OLD : I64)) limit = MIN_OLD;
 		var other = Heap.memoryBytes() - oldBytes - poolBytes;
-		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
+		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> (copying ? 1 : 0);
 		if (limit > cap) limit = cap;
+		// (RT_MAX_MB: what memory has room for, a collection's needs left out:
+		// a nursery's promotion, the marks and the compaction's table, a 32nd
+		// of memory)
+		if (budget > 0) {
+			var fits = budget - fixedBytes - nurseryCap - (minorSize : I64) - (Heap.memoryBytes() >> 5) - 4 * CHUNK;
+			if (limit > fits) limit = fits;
+		}
 		var least = live + need + (minorSize : I64) + 2 * CHUNK;
 		if (limit < least) limit = least;
 		oldLimit = limit;
@@ -929,6 +988,247 @@ class Gc {
 				Wasi.writeLit(2, " MB of large objects kept in place\n");
 			}
 		}
+	}
+
+	// ---- a major collection that compacts the old space where it is
+	// (Lisp 2's sliding compaction over the chunks' list): the nursery
+	// evacuated first by a minor collection, what is live in the old space
+	// marked (markLive), each live object's new address planned in the
+	// list's order (the chunks' objects slide towards the list's start, each
+	// chunk filled up to where the next object does not fit), every
+	// reference updated, the objects moved, the chunks left empty freed.
+	// Large objects stay where they are (their regions freed when dead). So a
+	// major collection needs the old space, the marks (a 64th of memory) and
+	// 4 bytes per live object, not room for a copy of what is live: its peak
+	// is what the old space holds, not that and what is live.
+	//
+	// The plan writes each live object's new address over the upper half of
+	// its header (an identity hash, a string's hash, an array's length: the
+	// size of an object of a chunk is in the lower half), what was there
+	// kept in `saved`, in the plan's order (4 bytes each, in 1 MB pieces:
+	// free chunks first); the move puts it back.
+
+	static var saved:Ptr; // the pieces
+	static var npieces:Int;
+	static inline var PIECE_SHIFT = 18; // (a piece's entries: a chunk's bytes / 4)
+
+	@:hxmc.unsafe static inline function savedAt(k:Int):Ptr
+		return Mem.getPtr(saved, 8 * (k >>> PIECE_SHIFT)).add(4 * (k & ((1 << PIECE_SHIFT) - 1)));
+
+	// the pieces for n entries (false: memory cannot grow for them, none taken)
+	@:hxmc.unsafe static function takeSaved(n:Int):Bool {
+		npieces = (n >>> PIECE_SHIFT) + 1;
+		saved = Heap.tryMalloc(8 * npieces);
+		if (saved.isNull()) return false;
+		for (i in 0...npieces) {
+			var c = pool;
+			if (!c.isNull()) {
+				pool = Mem.getPtr(c, 0);
+				poolBytes -= CHUNK;
+			} else
+				c = take(CHUNK);
+			if (c.isNull()) {
+				npieces = i;
+				releaseSaved();
+				return false;
+			}
+			Mem.setPtr(saved, 8 * i, c);
+		}
+		return true;
+	}
+
+	// the pieces back to the free chunks
+	@:hxmc.unsafe static function releaseSaved() {
+		for (i in 0...npieces) {
+			var c = Mem.getPtr(saved, 8 * i);
+			Mem.setPtr(c, 0, pool);
+			pool = c;
+			poolBytes += CHUNK;
+		}
+		Heap.free(saved);
+		saved = Ptr.nil();
+	}
+
+	@:hxmc.unsafe static inline function fwdSlot(slot:Ptr) {
+		var v = Mem.getPtr(slot, 0);
+		if (!v.isNull() && granOf(v) == G_OLD) Mem.setPtr(slot, 0, newAddr(v));
+	}
+
+	// a live object of the old space's chunks: its new address (the plan's)
+	@:hxmc.unsafe static inline function newAddr(v:Ptr):Ptr
+		return new Ptr(((Mem.getI32(v, -4) : I64) << 32) >>> 32);
+
+	// the references of the live object o updated
+	@:hxmc.unsafe static function fwdSlots(o:Ptr) {
+		var n = nslotsOf(o);
+		switch kindOf(o) {
+			case K_OBJ:
+				var pm = ptrmapAt(tindexOf(o));
+				if (pm.isNull()) return;
+				for (i in 0...n)
+					if (((Mem.getI32(pm, 4 * (i >> 5)) >>> (i & 31)) & 1) != 0) fwdSlot(o.add(8 * i));
+			case K_PARR:
+				for (i in 0...n)
+					fwdSlot(o.add(8 * i));
+			case _:
+		}
+	}
+
+	// the next chunk (not a large object's region) of the list from i on (nchunks: none)
+	@:hxmc.unsafe static inline function nextChunkEntry(i:Int):Int {
+		while (i < nchunks && entryLarge(chunks, i))
+			i++;
+		return i;
+	}
+
+	// the old space compacted (the nursery empty: right after a minor
+	// collection); false: memory cannot grow for the marks or what the plan
+	// saves (nothing changed)
+	@:hxmc.unsafe static function compactOld(need:Int):Bool {
+		syncCur();
+		markedObjs = 0;
+		if (!markLive(true)) return false;
+		var ends = Heap.tryMalloc(8 * nchunks + 8);
+		if (ends.isNull() || !takeSaved(markedObjs)) {
+			if (!ends.isNull()) Heap.free(ends);
+			releaseMarks();
+			return false;
+		}
+		majors++;
+		// (the minor collection before was this one's part: one collection)
+		minors--;
+		// plan: each chunk's live objects, in the list's order, given their new
+		// addresses from the list's first chunk on (the next chunk when one
+		// does not fit: that chunk then ends where it would start)
+		var d = nextChunkEntry(0);
+		var dp = d < nchunks ? Mem.getPtr(chunks, 24 * d) : Ptr.nil();
+		var de = d < nchunks ? dp.add(entrySize(chunks, d)) : Ptr.nil();
+		for (i in 0...nchunks)
+			Mem.setPtr(ends, 8 * i, Ptr.nil());
+		var nsaved = 0;
+		var s = d;
+		while (s < nchunks) {
+			var p = Mem.getPtr(chunks, 24 * s), end = Mem.getPtr(chunks, 24 * s + 8);
+			while (p.ult(end)) {
+				var o = p.add(8);
+				var b = objBytes(o);
+				if (marked(o)) {
+					if (de.diff(dp) < (b : I64)) {
+						Mem.setPtr(ends, 8 * d, dp);
+						d = nextChunkEntry(d + 1);
+						dp = Mem.getPtr(chunks, 24 * d);
+						de = dp.add(entrySize(chunks, d));
+					}
+					Mem.setI32(savedAt(nsaved), 0, Mem.getI32(o, -4));
+					nsaved++;
+					Mem.setI32(o, -4, dp.add(8).toI64().toInt());
+					dp = dp.add(b);
+				}
+				p = p.add(b);
+			}
+			s = nextChunkEntry(s + 1);
+		}
+		if (d < nchunks) Mem.setPtr(ends, 8 * d, dp);
+		// every reference to the chunks' objects updated: the roots', and the
+		// live objects' (theirs, and the large objects')
+		var sp = Mem.tlsGet("rt_sp");
+		var r = stackBase;
+		while (r.ult(sp)) {
+			fwdSlot(r);
+			r = r.add(8);
+		}
+		var g = Mem.getPtr(Mem.sym("rt_globals"), 0);
+		for (i in 0...nglobals)
+			fwdSlot(g.add(8 * i));
+		var exn = Mem.tlsGet("rt_exn");
+		if (!exn.isNull() && granOf(exn) == G_OLD) Mem.tlsSet("rt_exn", newAddr(exn));
+		for (i in 0...nchunks) {
+			var p = Mem.getPtr(chunks, 24 * i), end = Mem.getPtr(chunks, 24 * i + 8);
+			if (entryLarge(chunks, i)) {
+				if (marked(p.add(8))) fwdSlots(p.add(8));
+				continue;
+			}
+			while (p.ult(end)) {
+				var o = p.add(8);
+				if (marked(o)) fwdSlots(o);
+				p = p.add(objBytes(o));
+			}
+		}
+		// the objects moved, in the plan's order, their headers restored (each
+		// to where it is or before: a move never overwrites an object not
+		// moved yet, nor the header of one the walk has not passed)
+		var s = nextChunkEntry(0);
+		var k = 0;
+		var moved:I64 = 0;
+		while (s < nchunks) {
+			var p = Mem.getPtr(chunks, 24 * s), end = Mem.getPtr(chunks, 24 * s + 8);
+			while (p.ult(end)) {
+				var o = p.add(8);
+				var b = objBytes(o);
+				p = p.add(b);
+				if (!marked(o)) continue;
+				var to = newAddr(o);
+				Mem.setI32(o, -4, Mem.getI32(savedAt(k), 0));
+				k++;
+				if (to != o) {
+					var src = o.add(-8), dst = to.add(-8);
+					// (towards the start: a forward copy, word by word for a small object)
+					if (b <= 64) {
+						var i = 0;
+						while (i < b) {
+							Mem.setI64(dst, i, Mem.getI64(src, i));
+							i += 8;
+						}
+					} else
+						Wasm.memmove(dst, src, b);
+					moved += b;
+				}
+			}
+			s = nextChunkEntry(s + 1);
+		}
+		copiedBytes += moved;
+		// the list: the chunks filled, the live large objects; the other
+		// chunks to the pool, the dead large objects' regions back to Heap
+		var k = 0;
+		oldBytes = 0;
+		inPlace = 0;
+		for (i in 0...nchunks) {
+			var start = Mem.getPtr(chunks, 24 * i);
+			var size = entrySize(chunks, i);
+			var large = entryLarge(chunks, i);
+			var keep = large ? marked(start.add(8)) : !Mem.getPtr(ends, 8 * i).isNull();
+			if (!keep) {
+				mark(start, size, 0);
+				if (large) Heap.release(start, size) else {
+					Mem.setPtr(start, 0, pool);
+					pool = start;
+					poolBytes += CHUNK;
+				}
+				continue;
+			}
+			Mem.setPtr(chunks, 24 * k, start);
+			Mem.setPtr(chunks, 24 * k + 8, large ? Mem.getPtr(chunks, 24 * i + 8) : Mem.getPtr(ends, 8 * i));
+			Mem.setI64(chunks, 24 * k + 16, Mem.getI64(chunks, 24 * i + 16));
+			if (large) inPlace += size;
+			oldBytes += size;
+			k++;
+		}
+		nchunks = k;
+		cur = -1;
+		oldPtr = Ptr.nil();
+		oldEnd = Ptr.nil();
+		Heap.free(ends);
+		releaseSaved();
+		releaseMarks();
+		setLimit(need, false);
+		if (stats) {
+			Wasi.writeLit(2, "gc: major ");
+			Wasi.writeInt(2, majors);
+			Wasi.writeLit(2, ": compacted, ");
+			Wasi.writeInt(2, (moved >> 20).toInt());
+			Wasi.writeLit(2, " MB moved\n");
+		}
+		return true;
 	}
 
 	// after a minor collection that promoted `promoted` of the `used` bytes
@@ -994,6 +1294,12 @@ class Gc {
 		if (verifying) checkRemembered();
 		// (what survives fills chunks to within LARGE of their end: an eighth more)
 		if (!full && oldBytes + used + (used >> 3) + CHUNK > oldLimit) full = true;
+		// (a major collection copies what is live when the free memory holds
+		// it whatever it is, else it compacts: a minor collection, then the old
+		// space compacted, compactOld; memory does not grow for it)
+		var compactNow = full && compacting && !reserveFor(true, false);
+		var copyReserved = full && !compactNow && compacting;
+		if (compactNow) full = false;
 		// the memory to copy into first, for the worst case (reserveFor), else
 		// for what the collection copies, measured (reserveExact; from then on
 		// the nursery shrinks to its floor and stops growing, what it holds
@@ -1003,7 +1309,7 @@ class Gc {
 		// collection tries a major one again: the memory freed meanwhile may
 		// hold it); when neither can, what is live does not fit: the program
 		// ends here, outside a collection
-		var reserved = reserveFor(full);
+		var reserved = copyReserved || reserveFor(full);
 		var pressed = !reserved;
 		if (!reserved) {
 			tight = true;
@@ -1030,6 +1336,7 @@ class Gc {
 			if (minorSize > MINOR_MIN) resizeNursery(MINOR_MIN);
 		}
 		emptyChunk();
+		if (compactNow && !compactOld(need) && stats) Wasi.writeLit(2, "gc: no compaction (memory cannot grow for its marks)\n");
 		if (verifying) Wasm.memset(youngStart, POISON, minorSize);
 		if (verifying) verify(true);
 		// the slots the frames left above the stack top (rt_sp_hw)
@@ -1172,15 +1479,24 @@ class Gc {
 	// MB by default, which wins over this), as the native Gc.setOldLimit
 	// (hxmc.NativeGc.setOldLimit works on both): a program that keeps most of
 	// what it allocates until it exits (a compiler's syntax trees and types)
-	// raises it, so that its first major collections do not copy what it is
-	// still building (tsc-haxe). It only raises it, and at most to what a
-	// copying major collection of it still fits in a 4 GB memory: as majorGc
-	// caps the limits it sets, half of what the rest leaves (about 2 GB)
+	// raises it, so that its first major collections do not move what it is
+	// still building (tsc-haxe). It only raises it, and at most to 3 GB, where
+	// a compaction of the old space still fits in a 4 GB memory (its marks,
+	// its table, the nursery: a quarter of it), within what the rest of
+	// memory leaves, and within RT_MAX_MB's room when set, as setLimit caps
+	// the limits a compacting major collection sets. With RT_COMPACT=0 a
+	// major collection copies: half of what the rest leaves (about 2 GB)
 	@:hxmc.unsafe public static function setOldLimit(mb:Int):Void {
 		if (majors > 0 || mb <= 0 || Wasi.envInt("RT_OLD_MB", -1) >= 0) return;
 		var l:I64 = (mb : I64) << 20;
 		var other = Heap.memoryBytes() - oldBytes - poolBytes;
-		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> 1;
+		var cap = (((1 : I64) << 32) - (64 << 20) - other) >> (compacting ? 0 : 1);
+		var most:I64 = (3 : I64) << 30;
+		if (cap > most) cap = most;
+		if (budget > 0) {
+			var fits = budget - fixedBytes - nurseryCap - (minorSize : I64) - (Heap.memoryBytes() >> 5) - 4 * CHUNK;
+			if (cap > fits) cap = fits;
+		}
 		if (l > cap) l = cap;
 		if (oldLimit < l) oldLimit = l;
 	}

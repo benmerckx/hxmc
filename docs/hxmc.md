@@ -412,7 +412,8 @@ most.
 
 A precise, generational, copying collector (`Gc.hx`; `wasm/Gc.hx` for
 wasm32). The nursery is collected by copying into the old space; the old
-space by copying into a new region.
+space by copying into a new region (on wasm32, compacted where it is
+unless free memory holds the copy: [WebAssembly](#memory)).
 
 - **Nursery size** adapts: it starts at 4 MB, doubles after a minor
   collection that promoted more than 1/16 of what was allocated, and halves
@@ -454,8 +455,8 @@ space by copying into a new region.
   A program raises the first limit itself with
   `hxmc.NativeGc.setOldLimit(mb)` (`hxmc.rt.Gc`, or `hxmc.rt.wasm.Gc` on
   wasm32): before the first major collection only, it only raises it, and
-  `RT_OLD_MB` wins. Natively it is capped by the region, on wasm32 at about
-  2 GB (a copying major collection of it must still fit in 4 GB).
+  `RT_OLD_MB` wins. Natively it is capped by the region, on wasm32 at 3 GB
+  (a compaction of the old space must still fit in 4 GB; less under `RT_MAX_MB`).
 - **Prefault** (`-D hxmc.gc-prefault`, Linux): once the old space passes
   64 MB, a helper thread faults in its pages ahead of minor collections:
   twice what the last one promoted (`RT_PF_AHEAD`: in quarters of it).
@@ -1132,6 +1133,42 @@ a define, makes the build write nothing. A module whose types share a path
 without the cache; `make fixpoint` builds the tool cold, warm and off.
 Open items: [plans/compiler.md](plans/compiler.md#cached-modules).
 
+### What a compilation server keeps
+
+Between requests a compilation server keeps a context per signature (the
+typed modules of each program it built, and their macros' contexts),
+hxmc the objects of each output it wrote (`Driver.memObjs`: wasm32's are
+not kept on disk), the lowered bodies of the last program
+(`LowerCache`), and the macro interpreter. Measured with helder's
+compiler as wasm32 (helder's todo, then its ts-todo, each built and then
+edited): 285 MB live after todo, 494 MB after both; of those, the
+contexts 271 MB (both programs'), the lowered bodies 86 MB (ts-todo's),
+the objects 21 MB, the program the last build lowered 21 MB, the macro
+interpreter and the rest 75 MB.
+
+- What one build sets for its code generation is released after it
+  (`Driver.release`: the functions that may be inlined, the reference
+  slots of the types), and the lowered bodies are dropped when a program
+  of another signature is lowered (`Main.lowerSign`: a body is found by
+  its field object, or by its module read back from that signature's
+  context, so none of them would be reused).
+- `-D hxmc.server-mb=<n>` (else `HXMC_SERVER_MB`, each compilation's own)
+  caps what it keeps (`ServerMemory.hx`). A compilation's group is its signature at the start of its typing and the
+  contexts it touched (and their children). When a compilation is of
+  another group than the last request's, a major collection runs first,
+  and if what is live, and as much again for its group when that is not
+  kept, is more than n MB, the least recently used other groups are
+  dropped, one by one, before it types anything. After a request, when the
+  heap holds more than n MB and other groups are kept, a major collection,
+  and the least recently used other groups are dropped while what is live
+  is more. A group dropped is its contexts (not those a kept group uses),
+  the objects of its outputs, its lowered bodies, the macro interpreter
+  (made again by the next compilation's first macro) and the filters of
+  the last macro context; its next build is a cold one. What one group
+  keeps is never dropped: the cap is no limit on one program. `hxmc.stats`
+  prints what is dropped; `make dev-check` builds two programs in turn
+  under a cap of 1 MB, each build against a fresh one.
+
 ## Macros on the Mir interpreter
 
 `-D hxmc.macros=mir`, in the native compiler (`haxe` with hxmc built in,
@@ -1675,8 +1712,9 @@ Linear memory only grows, and browsers refuse it early, so the runtime
   (32) is when the first major collection comes, not a reservation. A
   program that keeps most of what it allocates raises it before then with
   `Gc.setOldLimit` (`hxmc.NativeGc`, as natively; `RT_OLD_MB` wins), up to
-  half of what the rest of the 4 GB leaves, where a copying major
-  collection of the old space still fits.
+  3 GB, where a compaction of the old space still fits in 4 GB, and within
+  what `RT_MAX_MB` leaves (with `RT_COMPACT=0`, half of what the rest of
+  the 4 GB leaves, where a copying major collection still fits).
 - The shadow stack is `RT_STACK_MB` (4 MB; `wasi.mjs` sets it from node's
   `--stack-size`). The first time a frame goes deeper than since the last
   collection, it is checked against the end; an overflow exits with a
@@ -1687,6 +1725,33 @@ Linear memory only grows, and browsers refuse it early, so the runtime
   because node collects its own heap after each `memory.grow`.
 - Only memory handed out before and freed is zeroed: fresh memory from
   `memory.grow` is zero already.
+- `RT_MAX_MB` is a budget: memory grows ahead (the eighth) only up to it,
+  and a major collection's next limit leaves room in it for the memory
+  taken at startup, the nursery, a nursery's promotion and a collection's
+  tables (a 32nd of memory), so collections come sooner as what is live
+  nears it. It is soft: memory still grows past it when what is live
+  needs it.
+
+A major collection compacts the old space where it is (`compactOld`)
+unless the memory already free (free chunks and regions) holds a copy of
+the old space's chunks whatever they hold, when it copies as before. A
+copy needs memory for all that is live beside the old space, so a copying
+collection's peak is the old space and what is live (a resident compiler
+keeping 500 MB live reached 1.8 GB); a compaction's is the old space and
+a 64th of memory for the marks, and 4 bytes per live object (taken from
+free chunks first). It runs a minor collection (the nursery into the old
+space), marks what is live (the bits `reserveExact` uses), then, in the
+order of the chunks' list: the plan gives each live object of a chunk its
+new address, written over the upper half of its header (an identity
+hash, a string's hash, an array's length: a chunk's object's size is in
+the lower half; what was there kept aside, in the plan's order), each
+chunk filled up to where the next object does not fit; every reference
+of the roots and of the live objects is updated from those headers; the
+objects slide towards the list's start (a move never overwrites an object
+not moved yet), their headers restored; the chunks left empty go to the
+free chunks. Large objects stay where they are. It costs about 1.7 times
+a copying collection's time for as much live (two traces and three walks
+of the chunks, against one trace). `RT_COMPACT=0` copies always.
 
 Objects over 128 KB get a region of their own in the old space (aligned to
 64 KB, the granule of the table that says which space an address is in).
@@ -1694,6 +1759,10 @@ A major collection promotes a reached one in place: its region joins the
 to-space as it is, unmoved and uncopied, and the regions of those not
 reached go back to the heap. So a 48 MB `Bytes` costs 48 MB, not 96 MB at
 each major collection.
+
+A large object's region comes from the freed regions; when none is large
+enough, the free chunks are given back to them first (neighbours merge)
+rather than memory grown for it.
 
 A host may refuse `memory.grow` well below 4 GB (Chrome on Android), and a
 copying collection cannot stop halfway, so each collection takes the
@@ -1864,6 +1933,7 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.module-cache=0` | `HXMC_MODULE_CACHE` | no | no module cache (or `-D hxmc.no-module-cache`; [using.md](using.md#fast-rebuilds)) |
 | `hxmc.module-cache-log` | `HXMC_MODULE_CACHE_LOG` | no | why each module was typed again |
 | `hxmc.lower-cache=0`, `hxmc.lower-check`, `hxmc.lower-only` | `HXMC_LOWER_CACHE`, `..._CHECK`, `..._ONLY` | no | a server: no reused lowering, or checked against a fresh one; stop after the lowering |
+| `hxmc.server-mb=<n>` | `HXMC_SERVER_MB` | no | a server keeps what it keeps between requests under n MB of live heap, dropping the least recently used other programs' ([above](#what-a-compilation-server-keeps)) |
 | `hxmc.lower-why`, `hxmc.lower-noskip` | `HXMC_LOWER_WHY`, `HXMC_LOWER_NOSKIP` | no | the lowering cache: why a body was lowered again; every type bound again |
 | `hxmc.macro-stats`, `hxmc.macro-debug` | `HXMC_MACRO_STATS`, `HXMC_MACRO_DEBUG` | no | Mir macros ([above](#macros-on-the-mir-interpreter)): counts and times; the loader's log |
 | `hxmc.mir-cache=0\|1`, `hxmc.mir-host=0` | `HXMC_MIR_CACHE`, `HXMC_MIR_HOST` | no | their compiled functions kept or not; all interpreted |
@@ -1890,6 +1960,8 @@ For compiled programs (run time):
 | `RT_VERIFY=1` | fill the free nursery with a pattern; an allocation in a safe region is fatal |
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
+| `RT_MAX_MB` | wasm32: a budget for linear memory: collections come sooner as what is live nears it (soft: [WebAssembly](#memory)) |
+| `RT_COMPACT=0` | wasm32: a major collection copies what is live always, rather than compacting the old space when free memory does not hold the copy |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default); with compact types at most 15 GB ([compressed references](#compressed-references)) |
 | `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |

@@ -46,6 +46,19 @@ package hxmc;
 class Main {
 	static var start = haxe.Timer.stamp();
 	static var lowerCache = new LowerCache();
+	// the signature of the program whose bodies lowerCache holds: a body is
+	// reused for the same field object, or for its module read back from that
+	// signature's context, so another signature's program finds none, and
+	// the bodies kept of the last one only add to the build's peak
+	static var lowerSign:Null<String> = null;
+
+	// the lowered bodies dropped when they are one of signs' (ServerMemory)
+	public static function forgetLowered(signs:Array<String>) {
+		if (lowerSign != null && signs.indexOf(lowerSign) >= 0) {
+			lowerCache = new LowerCache();
+			lowerSign = null;
+		}
+	}
 
 	static function main() {
 		Defines.install();
@@ -225,6 +238,13 @@ class Main {
 		var t0 = haxe.Timer.stamp();
 		// resident: bodies of the fields the server kept are reused (LowerCache)
 		var useCache = Driver.resident && Options.on("hxmc.lower-cache", true, com.defines);
+		if (useCache) {
+			var sign = core.Define.getSignature(com.defines);
+			if (sign != lowerSign) {
+				if (lowerSign != null) lowerCache = new LowerCache();
+				lowerSign = sign;
+			}
+		}
 		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
