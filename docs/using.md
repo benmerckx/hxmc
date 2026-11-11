@@ -399,7 +399,9 @@ cache watches what macros depend on:
   `readDirectory`, `stat`) or an environment variable (`Sys.getEnv`) is
   recorded. The module is typed again when the content or value changes.
 - Static variables of macro classes are tracked, so an `@:autoBuild`
-  registry keeps working.
+  registry keeps working. Those of the std's classes (hxmc's std among
+  them) are not, nor what a class's static initialisation does with its
+  own.
 
 Where that is not enough (a macro writes a file, or keeps state elsewhere):
 

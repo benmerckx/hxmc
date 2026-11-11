@@ -82,8 +82,10 @@ using core.ds.VectorTools;
 // a callback defines, or adds as a dependency, outside the typing of a
 // module is not kept (onDefined, onDependency).
 //
-// Macro state: the static variables of macro classes (not the std's) the
-// macros run in a module's typing use are kept with its variant
+// Macro state: the static variables of macro classes (not the std's, nor
+// hxmc's std's: ModuleCacheState.isStdFile; nor a class's own, read or
+// written by its static initialisation: EvalJit.hookStatic) the macros run
+// in a module's typing use are kept with its variant
 // (EvalJit.staticVarHook: state such as a registry an @:autoBuild fills
 // for another macro, or a counter naming generated types). The module is
 // restored while no macro of the build uses that state; one that does

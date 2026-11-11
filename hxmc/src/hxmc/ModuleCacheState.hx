@@ -173,13 +173,21 @@ class ModuleCacheState {
 	public var stdClass = new haxe.ds.ObjectMap<TClass, Bool>();
 	var stdDirs:Null<Array<String>> = null;
 
-	// whether the file is one of the std's (its class paths)
+	// whether the file is one of the std's: its class paths, and hxmc's std,
+	// a user class path (`-cp bin/hxmc/std`, HXMC_STD) holding
+	// `hxmc/rt/Runtime.hx`, as for StdDce and macro.BundleFacts (its
+	// overrides, sys.thread.Thread's statics, are the std's as upstream's
+	// modules they replace: a macro using them kept no state of its own
+	// there, and must not type the build again)
 	public function isStdFile(file:String):Bool {
 		if (stdDirs == null) {
 			stdDirs = [];
+			function add(path:String)
+				stdDirs.push(haxe.io.Path.addTrailingSlash(haxe.io.Path.normalize(try FileSystem.absolutePath(path) catch (_:Dynamic) path)));
 			for (cp in com.classPaths.getStdPaths())
-				if (cp.path != "")
-					stdDirs.push(haxe.io.Path.addTrailingSlash(haxe.io.Path.normalize(try FileSystem.absolutePath(cp.path) catch (_:Dynamic) cp.path)));
+				if (cp.path != "") add(cp.path);
+			for (cp in com.classPaths.asList())
+				if (cp.path != "" && FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx")) add(cp.path);
 		}
 		var f = haxe.io.Path.normalize(try FileSystem.absolutePath(file) catch (_:Dynamic) file);
 		for (d in stdDirs)
