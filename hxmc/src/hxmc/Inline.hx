@@ -75,12 +75,14 @@ class Inline {
 	// collector's own no-GC code, during which its callers' shadow-stack
 	// slots would be taken to keep their values (MIns.keepsFrame); not one
 	// without its body (FuncInfo.hostCode). A view's function (StrView's:
-	// the representation's inline calls it replaces) and a kernel called once
-	// are judged on their Mir alone: a span made or read is many IR nodes,
-	// few instructions
+	// the representation's inline calls it replaces), a kernel called once
+	// and a safe kernel calling no other but views (hxmc.rt.Bytes' accessors;
+	// not an unsafe one, a check's failure, nor one whose kernels are inlined
+	// into it in its own module, Str.indexOf's) are judged on their Mir
+	// alone: a span made or read is many IR nodes, few instructions
 	public static function candidate(f:FuncInfo, once:Bool):Bool {
 		if (f.hasTry || f.collects || f.hostCode) return false;
-		if (once || f.view) return true;
+		if (once || f.view || f.declKernel && !f.declUnsafe && leaf(f)) return true;
 		var n = 0;
 		function ex(e:Ex) {
 			if (++n > MAX_IR) return;
@@ -98,6 +100,22 @@ class Inline {
 			if (n > MAX_IR) return false;
 		}
 		return true;
+	}
+
+	static function leaf(f:FuncInfo):Bool {
+		var only = true;
+		function ex(e:Ex) {
+			switch e {
+				case ECall(g, _) if (g.declKernel && !g.declUnsafe && !g.view): only = false;
+				case _:
+			}
+			if (only) hxmc.ir.Facts.iterEx(ex, e);
+		}
+		function st(s:Stmt)
+			if (only) hxmc.ir.Facts.iterStmt(st, ex, s);
+		for (s in f.body)
+			st(s);
+		return only;
 	}
 
 	// the kernels called at one place of their module, each with the
@@ -132,9 +150,9 @@ class Inline {
 	// of it outside slow paths (opSize), the others one each but constants
 	// and addresses, which fold into their users (-1: never inlined)
 	public static function size(f:MFunc):Int {
-		var n = 0;
+		var n = 0, ends = ending(f);
 		for (b in f.blocks)
-			if (!b.cold)
+			if (!b.cold && !ends.exists(b.id))
 				for (i in b.ins) {
 					if (i.op == Call && i.returnsTwice) return -1;
 					// (a float32 conversion: one instruction beside its load or store)
@@ -143,6 +161,28 @@ class Inline {
 						n += !i.isObj() ? 1 : opSize(i);
 				}
 		return n;
+	}
+
+	// the blocks (by id) that reach no return nor throw: they end the
+	// program (a kernel's failed check: its call, then a loop without exit),
+	// slow paths
+	static function ending(f:MFunc):Map<Int, Bool> {
+		var exits = new Map<Int, Bool>();
+		var work = [];
+		for (b in f.blocks) {
+			var t = b.term();
+			if (t != null && (t.op == Ret || t.op == Unreachable)) {
+				exits.set(b.id, true);
+				work.push(b);
+			}
+		}
+		while (work.length > 0)
+			for (p in work.pop().preds)
+				if (!exits.exists(p.id)) {
+					exits.set(p.id, true);
+					work.push(p);
+				}
+		return [for (b in f.blocks) if (!exits.exists(b.id)) b.id => true];
 	}
 
 	// what MemLower makes of an object-level operation outside its slow paths
@@ -195,8 +235,19 @@ class Inline {
 	// the callee's object-level Mir (mb's) when it can be inlined, judged on
 	// the size of its lowering (size; built once per caller module; a callee
 	// with a shadow-stack frame keeps it: its copy pushes and pops it)
+	// (a safe kernel judged on a copy optimized: its spans' words copied
+	// through frame slots, a reinterpreted length's division by a constant,
+	// which the optimizer takes away once it is inlined)
 	public static function template(mb:MirBuild, mf:MFunc, once:Bool):Null<Template> {
-		var n = size(mf), max = maxSize(false, true, false);
+		var fn = @:privateAccess mb.fn, sized = mf;
+		if (fn.declKernel && !fn.declUnsafe) {
+			var kb = @:privateAccess new MirBuild(mb.p, mb.abi, fn);
+			kb.icSym = mb.icSym;
+			sized = kb.objects();
+			new Sroa(sized).run();
+			new Opt(sized).run();
+		}
+		var n = size(sized), max = maxSize(false, true, false);
 		return n >= 0 && n <= (once && max < MAX_ONCE ? MAX_ONCE : max) ? {mf: mf, sites: mb.inlineSites, size: n} : null;
 	}
 

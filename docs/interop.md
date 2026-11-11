@@ -274,7 +274,9 @@ recognizes these patterns:
   one tested `<= c.length - m` while `i >= 0` (`SpanWindows`).
 
 A test of two lengths at once counts as two (`if (n > a.length || n >
-b.length) return ...`).
+b.length) return ...`). A range (`sub`, `fill`, `blit`) is proved after
+`if (p < 0 || p > s.length - k) return ...` for a constant k, or `... ||
+k < 0 || p > s.length - k` for any (`SpanRanges`).
 
 Other accesses keep their check, as do counters that may start below 0 or
 step by more than 1. `SpanLoops` names the checks left in each of its

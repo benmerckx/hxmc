@@ -457,6 +457,8 @@ class Opt {
 						// (a span's element check a loop proves: Mem.spanUlt)
 						if (known == 0 && c.op == Cmp && c.imm2 == MIns.SPAN_CHECK && inRange(c, cfg, fc, fa, fb, fv))
 							known = c.imm == (CULt : Int) ? 1 : 2;
+						// (a range check FnLower made, of a sub, blit or fill)
+						if (known == 0 && c.op == Cmp && fits(c, cfg, fc, fa, fb, fv)) known = 2;
 						if (known != 0) {
 							var keep = known == 1 ? t.targets[0] : t.targets[1];
 							var drop = known == 1 ? t.targets[1] : t.targets[0];
@@ -613,26 +615,8 @@ class Opt {
 		if (c.imm != (CULt : Int) && c.imm != (CUGe : Int)) return false;
 		var i = c.a, n = c.b;
 		if (f.vals[i].ty != I32) return false;
-		// (the facts as x < y (lt) or x <= y)
-		var lx:Array<Int> = [], ly:Array<Int> = [], strict:Array<Bool> = [];
-		inline function rel(x:Int, y:Int, lt:Bool) {
-			lx.push(x);
-			ly.push(y);
-			strict.push(lt);
-		}
-		for (k in 0...fc.length) {
-			var a = fa[k], b = fb[k], v = fv[k];
-			switch fc[k] {
-				case CLt: if (v) rel(a, b, true) else rel(b, a, false);
-				case CLe: if (v) rel(a, b, false) else rel(b, a, true);
-				case CGt: if (v) rel(b, a, true) else rel(a, b, false);
-				case CGe: if (v) rel(b, a, false) else rel(a, b, true);
-				case CEq | CNe if (v == (fc[k] == (CEq : Int))):
-					rel(a, b, false);
-					rel(b, a, false);
-				case _:
-			}
-		}
+		var r = relations(fc, fa, fb, fv);
+		var lx = r.lx, ly = r.ly, strict = r.strict;
 		var lt = false;
 		for (k in 0...lx.length) {
 			if (lx[k] != i) continue;
@@ -663,6 +647,97 @@ class Opt {
 		if (constOf(n) > m) return true;
 		for (k in 0...lx.length)
 			if (ly[k] == n && constOf(lx[k]) >= 0 && (strict[k] ? constOf(lx[k]) >= m : constOf(lx[k]) > m)) return true;
+		return false;
+	}
+
+	// the signed facts in force as x < y (strict) or x <= y
+	static function relations(fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):{lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>} {
+		var lx:Array<Int> = [], ly:Array<Int> = [], strict:Array<Bool> = [];
+		inline function rel(x:Int, y:Int, lt:Bool) {
+			lx.push(x);
+			ly.push(y);
+			strict.push(lt);
+		}
+		for (k in 0...fc.length) {
+			var a = fa[k], b = fb[k], v = fv[k];
+			switch fc[k] {
+				case CLt: if (v) rel(a, b, true) else rel(b, a, false);
+				case CLe: if (v) rel(a, b, false) else rel(b, a, true);
+				case CGt: if (v) rel(b, a, true) else rel(a, b, false);
+				case CGe: if (v) rel(b, a, false) else rel(a, b, true);
+				case CEq | CNe if (v == (fc[k] == (CEq : Int))):
+					rel(a, b, false);
+					rel(b, a, false);
+				case _:
+			}
+		}
+		return {lx: lx, ly: ly, strict: strict};
+	}
+
+	// Whether c is a range check FnLower made, ult(sext(n), zext(p) +
+	// zext(q)) (p + q > n: a span's sub, blit, fill), that cannot fail where
+	// it is: for a constant q = k, p <u n - j with n >= j and j >= k - 1
+	// (haxe.io.Bytes' test of a k-byte access, then a view's sub(p, k)), or
+	// p < n - j (signed) with p never negative; for any q, p <= n - q with p
+	// and q never negative (`pos > length - len` tested); p + q a constant
+	// at most n's least value (`if (b.length < 16) return`). A negative n
+	// passes it too (sext(n) is at least 2^63), so n - j may wrap there.
+	function fits(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Bool {
+		if (c.imm != (CULt : Int)) return false;
+		var sn = f.vals[c.a], e = f.vals[c.b];
+		if (sn.op != SExt || sn.ty != I64 || f.vals[sn.a].ty != I32) return false;
+		var n = sn.a;
+		var r = relations(fc, fa, fb, fv);
+		// (p + q a constant: n at least that)
+		if (e.op == Const && e.ty == I64 && e.sym == null) return e.imm2 == 0 && e.imm >= 0 && lowerBound(n, r.lx, r.ly, r.strict) >= e.imm;
+		if (e.op != Add || e.ty != I64) return false;
+		function zextOf(v:Int):Int {
+			var x = f.vals[v];
+			return x.op == ZExt && f.vals[x.a].ty == I32 ? x.a : -1;
+		}
+		function konst(v:Int):Int {
+			var x = f.vals[v];
+			if (x.op == Const && x.ty == I64 && x.sym == null) return x.imm2 == 0 && x.imm >= 0 ? x.imm : -1;
+			var z = zextOf(v);
+			return z >= 0 ? constOf(z) : -1;
+		}
+		var p = zextOf(e.a), qv = e.b;
+		if (p < 0) {
+			p = zextOf(e.b);
+			qv = e.a;
+		}
+		if (p < 0) return false;
+		var k = konst(qv), q = zextOf(qv);
+		if (k < 0 && q < 0) return false;
+		function atLeast0(v:Int):Bool
+			return nonNeg(v, cfg, 0) || lowerBound(v, r.lx, r.ly, r.strict) >= 0;
+		// (s = n - j, or n: j)
+		function less(s:Int):Int {
+			if (s == n) return 0;
+			var x = f.vals[s];
+			return x.op == Sub && x.ty == I32 && x.a == n ? constOf(x.b) : -1;
+		}
+		if (k >= 0)
+			for (i in 0...fc.length) {
+				var lt = switch [fc[i], fv[i]] {
+					case [CULt, true] | [CUGe, false]: true;
+					case [CULe, true] | [CUGt, false]: false;
+					case _: continue;
+				}
+				var j = less(fb[i]);
+				if (sameVal(fa[i], p) && j >= (lt ? k - 1 : k) && (j == 0 || lowerBound(n, r.lx, r.ly, r.strict) >= j)) return true;
+			}
+		for (i in 0...r.lx.length) {
+			if (!sameVal(r.lx[i], p)) continue;
+			var s = r.ly[i];
+			if (k >= 0) {
+				var j = less(s);
+				if (j >= (r.strict[i] ? k - 1 : k) && atLeast0(p)) return true;
+			} else {
+				var x = f.vals[s];
+				if (x.op == Sub && x.ty == I32 && x.a == n && x.b == q && atLeast0(p) && atLeast0(q)) return true;
+			}
+		}
 		return false;
 	}
 
@@ -1799,7 +1874,25 @@ class Opt {
 					any = true;
 				}
 		if (any) o.rewrite();
+		o.indexed();
 		o.dce();
+	}
+
+	// an access at x + y, of no index: at base x, index y (as Mem's raw
+	// accesses make it, which the back ends encode in the access; a span's
+	// element at a sub's start, hxmc.rt.Bytes' accessors)
+	function indexed() {
+		for (b in f.blocks)
+			for (i in b.ins)
+				if ((i.op == Load || i.op == Store) && !i.dead && i.b < 0 && i.sym == null) {
+					var x = f.vals[i.a];
+					if (x.op != Add || x.ty != I64 || x.dead) continue;
+					var l = f.vals[x.a], r = f.vals[x.b];
+					if (l.op == Const || r.op == Const || l.ty != I64 || r.ty != I64) continue;
+					i.a = x.a;
+					i.b = x.b;
+					i.imm2 = 1;
+				}
 	}
 
 	// ---- if-conversion
@@ -2127,6 +2220,8 @@ class Opt {
 						if (fold(i)) cmpFolded = true;
 						continue;
 					}
+					// (a division may trap: not pure, but of constants folded)
+					if ((op == UDiv || op == URem) && fold(i)) continue;
 					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0)) continue;
 					// (a vector constant folded is still numbered: one for its copies)
 					if (fold(i) && i.op != VConst) continue;
@@ -2227,6 +2322,14 @@ class Opt {
 					case _: a >>> n;
 				};
 				return set(r.low, r.high);
+			// (a span reinterpreted: its length times one size over the other;
+			// of words below 2^31 or 2^63, where unsigned is signed)
+			case UDiv | URem if (plain(x) && plain(y) && x.ty == i.ty && y.ty == i.ty):
+				var a = i.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);
+				var b = i.ty == I64 ? haxe.Int64.make(y.imm2, y.imm) : haxe.Int64.ofInt(y.imm);
+				if (a < 0 || b <= 0) return false;
+				var r = i.op == UDiv ? a / b : a % b;
+				return set(r.low, i.ty == I64 ? r.high : 0);
 			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
 				// (signed and unsigned order of two words, 32 or 64 bits)
 				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);

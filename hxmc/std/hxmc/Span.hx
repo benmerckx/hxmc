@@ -167,4 +167,7 @@ abstract Span<T>(SpanData) {
 
 	@:hxmc.unsafe @:hxmc.kernel public static function move(dst:Ptr, src:Ptr, bytes:hxmc.I64):Void
 		hxmc.unsafe.LibC.memmove(dst, src, bytes);
+
+	@:hxmc.unsafe @:hxmc.kernel public static function set(dst:Ptr, v:Int, bytes:hxmc.I64):Void
+		hxmc.unsafe.LibC.memset(dst, v, bytes);
 }

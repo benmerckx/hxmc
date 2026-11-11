@@ -268,9 +268,9 @@ class Corpus {
 			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
 			if (live != null) return {name: c.name, status: "live", detail: live};
 		}
-		for (kind in ["span-checks", "bytes-checks"]) {
+		for (kind in ["span-checks", "range-checks", "bytes-checks"]) {
 			var checks = caseLine(src, kind);
-			// (Bytes' tests: of the default build; -D hxmc.verify-tags tests the
+			// (Bytes' tests and ranges: of the default build; -D hxmc.verify-tags tests the
 			// references read between two accesses, which reloads the length)
 			if (checks != null && target == null && libc == null && (kind == "span-checks" || !verifyTags)) {
 				var bad = spanChecks(d, cmd.concat(defines), checks, kind);
@@ -349,11 +349,17 @@ class Corpus {
 	// those its loop proves), counted in the Mir HXMC_DUMP prints (the calls
 	// of SpanSupport.outOfRange), from a build that compiles every function
 	// (a cache of its own): null when each count is the one named, else why
-	// not. A `// bytes-checks:` line: the same of haxe.io.Bytes' accesses
+	// not. A `// range-checks:` line: the same of the range checks (sub,
+	// fill, blit: the calls of SpanSupport.badRange). A `// bytes-checks:`
+	// line: the same of haxe.io.Bytes' accesses
 	// (the loads of haxe.io.Error.OutsideBounds they throw: one per access
 	// whose test is left). (cmd: the case's build)
 	static function spanChecks(d:String, cmd:Array<String>, spec:String, kind:String):Null<String> {
-		var mark = kind == "span-checks" ? "call F_hxmc_SpanSupport_outOfRange" : "<haxe.io.Error.OutsideBounds> = load";
+		var mark = switch kind {
+			case "span-checks": "call F_hxmc_SpanSupport_outOfRange";
+			case "range-checks": "call F_hxmc_SpanSupport_badRange";
+			case _: "<haxe.io.Error.OutsideBounds> = load";
+		}
 		var want = new Map<String, Int>();
 		for (w in spec.split(" "))
 			if (w != "") {

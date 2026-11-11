@@ -3905,6 +3905,11 @@ class FnLower {
 				var pos = int(0), cnt = int(1);
 				var v = ELocal(asLocal(rest[2], restTy(2)));
 				range(pos, cnt, len);
+				// (bytes: the C library's memset, as haxe.io.Bytes.fill)
+				if (ct.match(CI8 | CU8 | CBool)) {
+					out.push(SExpr(ECall(spanSupport(sd, "set"), vector(elem(ptr, pos), coerce(v, restTy(2), TI32), EConv(I2L, cnt)))));
+					return EInt(0);
+				}
 				var k = newLocal("k", TI32);
 				out.push(SSet(k, EInt(0)));
 				var p = elem(ptr, pos);
