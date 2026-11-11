@@ -3791,7 +3791,11 @@ class FnLower {
 			if (sp == null) cfail("hxmc.Span.stack: give its result a span type", e);
 			var bytes = n * CInterop.sizeOf(ptrElemCt(sp.elem, e));
 			var p = loc(ECallHost("hxmc_unsafe_Mem_stack", vector(EInt(bytes < 16 ? 16 : bytes)), TI64), TI64);
-			if (bytes > 0) out.push(SExpr(ECall(spanSupport(sd, "set"), vector(p, EInt(0), EConv(I2L, EInt(bytes))))));
+			// (a small one zeroed by words in place: no call; the slot is 16-byte rounded)
+			if (bytes > 0 && bytes <= 128)
+				for (k in 0...(bytes + 7) >> 3)
+					out.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(p, EInt(8 * k), EConv(I2L, EInt(0))), TVoid)));
+			else if (bytes > 0) out.push(SExpr(ECall(spanSupport(sd, "set"), vector(p, EInt(0), EConv(I2L, EInt(bytes))))));
 			var s = newSlot(sdt, true);
 			make(s, p, EInt(n));
 			return coerce(ELocal(s), sdt, tyOf(e));
