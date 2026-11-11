@@ -47,6 +47,7 @@ class Corpus {
 	static final STD = "bin/hxmc/std";
 	static final CASES = "hxmc/test/cases";
 	static final REJECT = "hxmc/test/reject";
+	static final WARN = "hxmc/test/warn";
 	static final EXPECTED = "hxmc/test/expected";
 	static final FUZZ_ZIP = "hxmc/test/fuzz-1000.zip";
 	static final FUZZ = "bin/hxmc-fuzz";
@@ -182,6 +183,10 @@ class Corpus {
 		var rejects = [for (f in FileSystem.readDirectory(REJECT)) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
 		rejects.sort(compare);
 		for (f in rejects) cases.push({name: "reject-" + f, cps: [REJECT], main: f});
+		// programs the compiler must build with warnings (raw memory outside @:hxmc.unsafe): warn-<Name>
+		var warns = [for (f in FileSystem.readDirectory(WARN)) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
+		warns.sort(compare);
+		for (f in warns) cases.push({name: "warn-" + f, cps: [WARN], main: f});
 		for (d in fuzzPrograms()) cases.push({name: "fuzz-" + d, cps: [FUZZ + "/" + d], main: "Main"});
 		if (names.length == 0) return cases;
 		var known = [for (c in cases) c.name => c];
@@ -195,6 +200,7 @@ class Corpus {
 		mkdirs(d);
 		var wasm = target != null && target.startsWith("wasm");
 		if (c.name.startsWith("reject-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "a compile error"} : rejectCase(c);
+		if (c.name.startsWith("warn-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "compile warnings"} : rejectCase(c);
 		var t = target != null ? target : hostTarget();
 		if (!t.startsWith("windows") && WINDOWS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: WINDOWS_ONLY[c.name]};
 		var native = nativeInputs(c, t, d);
@@ -461,11 +467,13 @@ class Corpus {
 	}
 
 	// A case the compiler must reject: every `// expect: <text>` line of its
-	// source names a part of the error.
+	// source names a part of the error; or one it must build with warnings:
+	// every `// warns: <text>` line a part of them.
 	static function rejectCase(c:CorpusCase):CorpusResult {
 		var src = File.getContent(c.cps[0] + "/" + c.main + ".hx");
 		var want = [for (l in src.split("\n")) if (l.trim().startsWith("// expect: ")) l.trim().substr(11)];
-		if (want.length == 0) return {name: c.name, status: "no-golden", detail: "no `// expect: ` line"};
+		var warns = [for (l in src.split("\n")) if (l.trim().startsWith("// warns: ")) l.trim().substr(10)];
+		if (want.length == 0 && warns.length == 0) return {name: c.name, status: "no-golden", detail: "no `// expect: ` line"};
 		var d = OUT + "/" + c.name;
 		mkdirs(d);
 		var cmd = [tool, d + "/m", "-cp", FileSystem.fullPath(c.cps[0]), "-cp", FileSystem.fullPath(STD), "-main", c.main, "--custom-target", "hxmc", "-D", "disable-parallelism"];
@@ -474,6 +482,12 @@ class Corpus {
 		if (own.length > 0) cmd = cmd.concat(["-D", "hxmc.target=" + own[0]]) else if (target != null) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
 		var r = exec(cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")));
 		var out = r.out + r.err;
+		if (warns.length > 0) {
+			if (r.code != 0) return {name: c.name, status: "differs", detail: "rejected, but must compile:\n" + tail(out, 1500)};
+			for (w in warns)
+				if (out.indexOf(w) < 0) return {name: c.name, status: "differs", detail: 'the warnings lack "$w":\n' + tail(out, 1500)};
+			return {name: c.name, status: "ok", detail: "warned"};
+		}
 		if (r.code == 0) return {name: c.name, status: "differs", detail: "compiled, but must be rejected"};
 		for (w in want)
 			if (out.indexOf(w) < 0) return {name: c.name, status: "differs", detail: 'the error lacks "$w":\n' + tail(out, 1500)};

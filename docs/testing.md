@@ -86,7 +86,7 @@ each lane on the kept cases and 400 random programs.
 
 | Check | Make target | What |
 | --- | --- | --- |
-| `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files |
+| `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files; `hxmc/test/reject`'s programs the compiler must reject (each `// expect: ` line part of the error) and `hxmc/test/warn`'s it must build with warnings (each `// warns: ` line part of them) |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
 | `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |

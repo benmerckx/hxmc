@@ -112,7 +112,9 @@ and libuv, prebuilt per target by zig from `hxmc/deps`.
 
 It is written with an internal API, `hxmc.unsafe` (`Ptr`, `Mem` loads,
 stores and allocation, `Atomic`) and metadata: `@:hxmc.c` and `@:hxmc.rt`
-externs, `@:hxmc.unsafe` functions (no GC point, checked),
+externs, `@:hxmc.unsafe` functions (no GC point, checked) and
+`@:hxmc.unsafe(gc)` ones (trusted GC code): raw memory only there, an error
+in the std ([Unsafe code](interop.md#unsafe-code)),
 `@:hxmc.export`/`@:hxmc.host` implementations of runtime functions,
 `@:hxmc.callback`, `@:hxmc.threadLocal` statics. The user-facing part is in
 [interop.md](interop.md).

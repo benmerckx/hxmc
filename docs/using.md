@@ -51,6 +51,7 @@ lists the ones marked with *.
 | `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
 | `-D hxmc.no-frame-pointers` | x86-64: no frame pointers (arm64 always keeps them; also `HXMC_FRAME_POINTERS=0`) |
 | `-D hxmc.checked` * | diagnostic build: enable NativeArray bounds, null, span and tagged-reference checks and disable Mir optimizations, including check elimination. Overrides the individual check switches. Raw operations in unsafe code remain unsafe. |
+| `-D hxmc.strict` | raw memory outside `@:hxmc.unsafe` code is an error in the program's own code, not a warning (hxmc's std: always) ([Unsafe code](interop.md#unsafe-code)) |
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
 | `-D hxmc.native-array-outofbounds=throws\|silent` * | `haxe.ds.Vector` and `hxmc.NativeArray` accesses out of bounds: `throws` an `ArgumentException`, or `silent` (reads give the default value, writes do nothing). Default: not tested, the result is unspecified. `haxe.io.Bytes` tests every access whatever it says (docs/hxmc.md, "Bytes") |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling (Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |
