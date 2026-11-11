@@ -308,7 +308,13 @@ which a kernel before 4.17 takes as a hint, so the address is checked;
 steps, the regions at most 15 GB each (`RT_REGION_MB` is capped there: the
 old space holds at most 15 GB, 16 GB without compact types). Startup dies
 with a message when the image is above 32 GB or no such range is free. A
-program without compact types reserves its heap as before.
+Mir host first reserves the room for the data of the code it loads, which
+compressed references reach too (1 GB, `RT_LOADED_MB`; `Gc.reserveLow`):
+past the heap nothing below 32 GB stays free, on Windows, whose
+reservations anywhere take the lowest free address (the runtime's own are
+made from the top down, `MEM_TOP_DOWN`, but the C heap's are not), and on
+macOS, whose window the heap takes. A program without compact types
+reserves its heap as before.
 
 **macOS.** The executable is position-independent and slid, but stays
 low: above `__PAGEZERO`'s 4 GB, at 4 GB and a few MB. Nothing below 4 GB
@@ -1963,6 +1969,7 @@ For compiled programs (run time):
 | `RT_MAX_MB` | wasm32: a budget for linear memory: collections come sooner as what is live nears it (soft: [WebAssembly](#memory)) |
 | `RT_COMPACT=0` | wasm32: a major collection copies what is live always, rather than compacting the old space when free memory does not hold the copy |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default); with compact types at most 15 GB ([compressed references](#compressed-references)) |
+| `RT_LOADED_MB` | a Mir host with compact types: the room below 32 GB for the data of the code it loads (1024) ([compressed references](#compressed-references)) |
 | `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |
 | `RT_CENSUS=1\|2` | with `-D hxmc.census`: the live heap by type at exit (2: after every major collection too), and allocations by type (`RT_CENSUS_TOP`: rows shown) |
 | `RT_CENSUS_WHY=<type>` | also a path from a global to the first `RT_CENSUS_WHY_MAX` (8) objects of that type; global `i` is the symbol of value `8 * i` in `<exe>.syms` |

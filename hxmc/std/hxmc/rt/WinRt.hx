@@ -28,6 +28,7 @@ class WinRt {
 	static inline var MEM_RESERVE = 0x2000;
 	static inline var MEM_DECOMMIT = 0x4000;
 	static inline var MEM_RELEASE = 0x8000;
+	static inline var MEM_TOP_DOWN = 0x100000;
 	static inline var PAGE_READWRITE = 4;
 	static inline var EXCEPTION_ACCESS_VIOLATION = 0xC0000005;
 	static inline var EXCEPTION_CONTINUE_EXECUTION = -1;
@@ -100,9 +101,11 @@ class WinRt {
 	@:hxmc.host("rt_win_reserve") @:hxmc.unsafe static function reserve(bytes:I64):Ptr
 		return reserveAt(Ptr.nil(), bytes);
 
-	// reserve's at address `at` (a multiple of 64 KB), else null; anywhere for null
+	// reserve's at address `at` (a multiple of 64 KB), else null; anywhere for
+	// null, from the top down (Windows takes the lowest free address
+	// otherwise: below 32 GB, what compressed references need, Gc.heapReserve)
 	@:hxmc.unsafe static function reserveAt(at:Ptr, bytes:I64):Ptr {
-		var p = K.VirtualAlloc(at, bytes, MEM_RESERVE, PAGE_READWRITE);
+		var p = K.VirtualAlloc(at, bytes, at.isNull() ? MEM_RESERVE | MEM_TOP_DOWN : MEM_RESERVE, PAGE_READWRITE);
 		if (p.isNull()) return p;
 		if (!at.isNull() && p != at) {
 			K.VirtualFree(p, 0, MEM_RELEASE);
