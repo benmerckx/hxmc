@@ -940,11 +940,14 @@ class Opt {
 			if (nonNeg(v, cfg, 0) || tested(v)) return true;
 			var x = f.vals[v];
 			if (x.op != Phi || x.ty != I32) return false;
-			for (a in x.args) {
+			// (an operand as its edge brings it: tested where it leaves its block,
+			// not here, which tests this iteration's values)
+			for (j in 0...x.args.length) {
+				var a = x.args[j];
 				if (a == v) continue;
 				var y = f.vals[a];
 				var up = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
-				if (up ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, 0) && !tested(a)) return false;
+				if (up ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, 0) && !nonNegAt(a, x.block.preds[j], cfg)) return false;
 			}
 			return true;
 		}
@@ -957,11 +960,22 @@ class Opt {
 			}
 			var x = f.vals[v];
 			if (x.op != Phi || x.ty != I32) return false;
-			for (a in x.args) {
+			// (s = n - m the same in every iteration: n and m defined before the
+			// phi's block, which a loop's header dominates; each operand at most s
+			// where its edge leaves, not where this iteration tests its own; 0
+			// is, as m <= n)
+			var pb = cfg.index(x.block), sv = f.vals[s];
+			inline function before(w:Int):Bool {
+				var wb = cfg.index(f.vals[w].block);
+				return wb != pb && cfg.dominates(wb, pb);
+			}
+			if (!before(sv.a) || !before(sv.b)) return false;
+			for (j in 0...x.args.length) {
+				var a = x.args[j];
 				if (a == v) continue;
 				var y = f.vals[a];
 				var down = y.op == Sub && y.a == v && isOne(y.b) || y.op == Add && (y.a == v && isConst(y.b, -1) || y.b == v && isConst(y.a, -1));
-				if (down ? !aboveSome(v, y.block, cfg) : !holds(a, s, false)) return false;
+				if (down ? !aboveSome(v, y.block, cfg) : !isConst(a, 0) && !atMostAt(a, s, x.block.preds[j], cfg)) return false;
 			}
 			return true;
 		}
@@ -1110,6 +1124,58 @@ class Opt {
 							case CGe if (!taken && c.a == v): return true;
 							case CGt if (taken && c.b == v): return true;
 							case CLe if (!taken && c.b == v): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	// whether a branch dominating block b found v <= s or v < s
+	function atMostAt(v:Int, s:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CLe | CLt if (taken && c.a == v && c.b == s): return true;
+							case CGt | CGe if (!taken && c.a == v && c.b == s): return true;
+							case CGe | CGt if (taken && c.a == s && c.b == v): return true;
+							case CLt | CLe if (!taken && c.a == s && c.b == v): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	// whether a branch dominating block b found k <= v for a constant k >= 0
+	function nonNegAt(v:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CGe | CGt if (taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLt | CLe if (!taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLe | CLt if (taken && c.b == v && constOf(c.a) >= 0): return true;
+							case CGt | CGe if (!taken && c.b == v && constOf(c.a) >= 0): return true;
 							case _:
 						}
 				}
