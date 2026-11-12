@@ -76,6 +76,10 @@ class Filters {
 		case _:
 	}
 
+	// port: (hxmc) told of each field removed here (a body typed when DCE reaches it may refer to
+	// ... one: hxmc.LazyStd); always null in the compiler itself
+	public static var removedHook:Null<(c:TClass, cf:TClassField, isStatic:Bool) -> Void> = null;
+
 	// Removes extern and macro fields, also checks for Void fields
 	public static function removeExternFields(scom:SafeContext, t:ModuleType):Void switch t {
 		case TClassDecl(c):
@@ -83,11 +87,15 @@ class Filters {
 				c.clOrderedFields = c.clOrderedFields.filter(function(f) {
 					var b = FilterContext.isRemovableField(scom.isMacroContext, f);
 					if (b) c.clFields.remove(f.cfName);
+					// port: (removedHook)
+					if (b && removedHook != null) removedHook(c, f, false);
 					return !b;
 				});
 				c.clOrderedStatics = c.clOrderedStatics.filter(function(f) {
 					var b = FilterContext.isRemovableField(scom.isMacroContext, f);
 					if (b) c.clStatics.remove(f.cfName);
+					// port: (removedHook)
+					if (b && removedHook != null) removedHook(c, f, true);
 					return !b;
 				});
 			}
@@ -532,6 +540,9 @@ class Filters {
 		});
 	}
 
+	// port: (hxmc) the context of the latest run's filters (Dce.lazyHook); always null in the compiler itself
+	public static var late:Null<{ectx:Null<ExceptionContext>, scom:SafeContext, rename:RenameVars.RenameInit}> = null;
+
 	public static function run(com:CommonContext, ectx:Null<ExceptionContext>, beforeDestruction:Void->Void):Void {
 		var scom = SafeCom.ofCom(com);
 		var detailTimes = Timer.levelFromDefine(com.defines, Define.FilterTimes);
@@ -570,6 +581,8 @@ class Filters {
 		DeprecationCheck.run(com, newTypes);
 		NullSafety.run(com, newTypes);
 		var rename = RenameVars.init(scom.platformConfig, com.types);
+		// port: (hxmc) what the filters of the bodies typed when DCE reaches them run with (Dce.lazyHook)
+		late = {ectx: ectx, scom: scom, rename: rename};
 		SafeCom.runWithScom(com, scom, function() {
 			runSafeFilters(ectx, com, scom, allTypesArray, newTypesArray, rename);
 		});

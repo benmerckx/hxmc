@@ -272,6 +272,8 @@ class Dce {
 			dce.usedMutex.release();
 			checkFeature(dce, Globals.sTypePath(c.clPath) + ".*");
 			updateMarkedClassFields(dce, c);
+			// port: (lazyHook)
+			if (lazyHook != null && lazyHook.active()) anonClass(dce, c);
 		} else dce.usedMutex.release();
 	}
 
@@ -550,6 +552,8 @@ class Dce {
 		var n = fieldName(fa);
 		switch fa {
 			case FAnon(cf):
+				// port: (lazyHook)
+				if (lazyHook != null && lazyHook.active()) anonRead(dce, n);
 				if (Meta.has(Optional, cf.cfMeta)) {
 					checkAndAddFeature(dce, "anon_optional_read");
 					checkAndAddFeature(dce, "anon_optional_read." + n);
@@ -872,6 +876,22 @@ class Dce {
 		for (k in dce.checkedFeatures.keys()) dce.features.remove(k);
 		dce.checkedFeatures.clear();
 		dce.addFeatureManager.handleLater();
+		// port: (hxmc) the bodies of the fields reached that were not typed yet, typed (and the types
+		// ... their typing loaded, whose entry points are collected)
+		// ... and the fields their typing made :?used (unified with a structure) in the classes kept already
+		if (lazyHook != null) {
+			var typed = lazyHook.mark(cfl);
+			if (typed != null) {
+				if (typed.fresh.length > 0) collectEntryPoints(dce, typed.fresh);
+				for (t in typed.all) switch t {
+					case TClassDecl(c) if (hasClassFlag(c, CUsed)):
+						var local = pushClass(dce, c);
+						for (cf in c.clOrderedStatics) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(local, c, cf, CfrStatic);
+						for (cf in c.clOrderedFields) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(local, c, cf, CfrMember);
+					case _:
+				}
+			}
+		}
 		// extend to dependent (= overriding/implementing) class fields
 		context.Parallel.ParallelArray.iter(pool, function(item) {
 			var c:TClass = item.cls;
@@ -887,6 +907,50 @@ class Dce {
 				for (overloadedField in cf.cfOverloads) if (overloadedField.cfExpr != null) opt(expr.bind(local), overloadedField.cfExpr);
 			}
 		}, cfl);
+	}
+
+	// port: (hxmc) the program's bodies typed when DCE reaches them (TypeBinding.lazyBodies): `mark`
+	// ... types those of the fields reached, giving the types their typing loaded and all the
+	// ... program's (null: none typed); `types`, the program's types with those, before the sweep;
+	// ... always null in the compiler itself (`active`: for this compilation)
+	public static var lazyHook:Null<{
+		mark:Array<{cls:TClass, field:TClassField, kind:ClassFieldRefKind}>->Null<{fresh:Array<ModuleType>, all:Array<ModuleType>}>,
+		types:Array<ModuleType>->Array<ModuleType>,
+		active:Void->Bool
+	}> = null;
+
+	// port: (hxmc, lazyHook) a body not typed is not unified with the structures it would be:
+	// ... the fields that unification makes :?used (StringMap.keys's iterator, which its
+	// ... `iterator` gives as a cast) are those a structure's field read names, in the classes kept
+	static var anonNames = new haxe.ds.StringMap<Bool>();
+	static var anonClasses:Array<TClass> = [];
+	static final anonMutex = new sys.thread.Mutex();
+
+	static function anonRead(dce:DceData, name:String):Void {
+		anonMutex.acquire();
+		if (anonNames.exists(name)) {
+			anonMutex.release();
+			return;
+		}
+		anonNames.set(name, true);
+		var cs = anonClasses.copy();
+		anonMutex.release();
+		for (c in cs) {
+			var cf = c.clFields.get(name);
+			if (cf != null) markField(pushClass(dce, c), c, cf, CfrMember);
+		}
+	}
+
+	static function anonClass(dce:DceData, c:TClass):Void {
+		if (!(isStdFile(dce, core.Path.UniqueKey.lazyPath(c.clModule.mExtra.mFile)) || Meta.has(Dce, c.clMeta))) return;
+		anonMutex.acquire();
+		anonClasses.push(c);
+		var names = [for (n in anonNames.keys()) n];
+		anonMutex.release();
+		for (n in names) {
+			var cf = c.clFields.get(n);
+			if (cf != null) markField(pushClass(dce, c), c, cf, CfrMember);
+		}
 	}
 
 	public static function sweep(dce:DceData, types:Array<ModuleType>):Array<ModuleType> {
@@ -980,10 +1044,15 @@ class Dce {
 			featureMutex: new sys.thread.Mutex(),
 			addFeatureManager: new core.ds.NowOrLater()
 		};
+		// port: (lazyHook)
+		anonNames = new haxe.ds.StringMap();
+		anonClasses = [];
 		// first step: get all entry points, which is the main method and all class methods which are marked with @:keep
 		core.Timer.time(scom.timerCtx, ["filters", "dce", "collect"], function(_:Null<Bool>) collectEntryPoints(dce, types), null);
 		// second step: initiate DCE passes and keep going until no new fields were added
 		core.Timer.time(scom.timerCtx, ["filters", "dce", "mark"], function(_:Null<Bool>) mark(pool, dce), null);
+		// port: (lazyHook)
+		if (lazyHook != null) types = lazyHook.types(types);
 		// third step: filter types
 		if (mode != DceNo) types = core.Timer.time(scom.timerCtx, ["filters", "dce", "sweep"],
 			function(_:Null<Bool>) return sweep(dce, types), null);

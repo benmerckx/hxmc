@@ -146,9 +146,12 @@ class HaxeMain {
 		hxmc.macro.MirHost.runtime();
 		// (-D hxmc.macros=mir: macros on the Mir interpreter, the macro context typed for hxmc)
 		if (macroEngine == "mir") hxmc.interp.MirMacros.install(hxmcStd);
+		// (after MirMacros: its hooks of the macro context kept)
+		LazyStd.install();
 		var code = haxe.Main.run(args);
 		if (macroEngine == "mir") @:privateAccess hxmc.interp.MirMacros.self.report();
 		#else
+		LazyStd.install();
 		var code = haxe.Main.run(args);
 		#end
 		ModuleCache.finish(failed == null ? code : 1);

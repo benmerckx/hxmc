@@ -585,6 +585,49 @@ library or DataGen defines, and the std's extern implementations
 (`String_toUpperCase`), which fail the build of a program that calls a
 missing one.
 
+### The std typed when it is reached
+
+Every program loads all of the runtime (`Std` imports `hxmc.rt.Runtime`)
+and much of Haxe's std, and a full typing types every method of every
+class loaded; a program reaches a few hundred of them. So the program's
+build types the std's bodies when DCE reaches them (`LazyStd.hx`), as the
+macro context does for Mir macros ([below](#macros-on-the-mir-interpreter)):
+
+- DCE's roots in the runtime are the statics generated code reaches by
+  symbol, `@:hxmc.export`, `@:hxmc.host` and `@:hxmc.threadLocal`, of the
+  target's runtime classes (`StdDce.hx`; no class of the runtime is
+  `@:keep`). Every class of hxmc's std has `@:dce`.
+- A file of the std (hxmc's, Haxe's; never the program's, whose errors
+  stay where they are) is parsed without its methods' bodies, and a method
+  whose callers need only its signature (written in full; not inline,
+  macro, generic, overloaded, a coroutine, a constructor or an `__init__`,
+  nor of an interface or an extern class) is not typed with its module.
+  The filters pass over it.
+- DCE types the bodies of the fields it reaches (`Dce.lazyHook`), runs the
+  filters the others had on them and goes on marking from them. The
+  modules their typing loads are finalized (the after-typing callbacks
+  with the new types only), filtered as the program's were and are DCE's
+  entry points too; the program's types are sorted again, over the static
+  initializers as the first sort saw them, so they run in a full typing's
+  order. While DCE types, the extern, macro and generic fields the
+  filters removed are in their classes again.
+- A class whose variables' types are still to be inferred from its
+  methods (`static var codes = null`) has its bodies typed with the
+  program.
+- A body not typed is not unified with the structures it would be, which
+  made fields `:?used`: DCE keeps, in the std's classes it keeps, the
+  instance fields a structure's field read names (`StringMap.keys`, never
+  called, made the iterator `iterator` gives as a cast keep `hasNext`).
+- A macro function of the std is typed in the macro context when it is
+  called, not when its class is loaded (`TypeBinding.skipMacroHook`).
+
+So the program does not have what only an unreached body of the std
+loaded (an extern class, `haxe.io.BytesBuffer`), and can keep a method
+another structure's read names. Off for display, the compilation server
+(which keeps every module typed), `--hxb`, `-dce no`, the module cache, and
+with `HXMC_LAZY_STD=0`. `-D hxmc.stats` prints the bodies typed. A cold
+Hello types 1,844 bodies instead of 2,359.
+
 ## Reachability
 
 Haxe's default DCE keeps every field of a user class.

@@ -55,14 +55,18 @@ class MacroRuntime {
 	static function lazyBody(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx, t:T):Bool {
 		if (!ctx.com.isMacroContext) return false;
 		globals = ctx.g;
+		if (!lazyField(ctx, c, cf, fctx, t)) return false;
+		lazyCount++;
+		return true;
+	}
+
+	public static function lazyField(ctx:context.Typecore.Typer, c:TClass, cf:TClassField, fctx:typing.TypeloadFields.FieldInitCtx, t:T):Bool {
 		if (fctx.isMacro || fctx.isExtern || fctx.isAbstract || fctx.isGeneric) return false;
 		if (fctx.fieldKind != CfrStatic && fctx.fieldKind != CfrMember) return false;
 		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || !c.clKind.match(KNormal | KAbstractImpl(_))) return false;
 		if (!cf.cfKind.match(Method(MethNormal | MethInline)) || cf.cfOverloads.length > 0) return false;
 		if (cf.cfMeta.length > 0 && (core.Meta.has(Overload, cf.cfMeta) || core.Meta.has(Generic, cf.cfMeta) || typing.TypeloadFields.getCoroConfig(ctx, cf.cfMeta) != null)) return false;
-		if (!full(t, null) || !stdFile(ctx.com, cf.cfPos.pfile)) return false;
-		lazyCount++;
-		return true;
+		return full(t, null) && stdFile(ctx.com, cf.cfPos.pfile);
 	}
 
 	// (HXMC_MACRO_STATS) the bodies left untyped, those typed since
@@ -73,18 +77,19 @@ class MacroRuntime {
 	static var globals:Null<context.Typecore.TyperGlobals> = null;
 
 	// the class paths of the std of a context: Haxe's, hxmc's (MirMacros.setupPlatform)
-	static var roots:Null<{com:context.Common.CommonContext, paths:Array<String>}> = null;
+	static var roots = new haxe.ds.ObjectMap<context.Common.CommonContext, Array<String>>();
 
-	static function stdFile(com:context.Common.CommonContext, file:String):Bool {
-		if (roots == null || roots.com != com)
-			roots = {
-				com: com,
-				paths: [
-					for (cp in com.classPaths.asList())
-						if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx"))) cp.path
-				]
-			};
-		for (r in roots.paths)
+	public static function stdFile(com:context.Common.CommonContext, file:String):Bool {
+		var paths = roots.get(com);
+		if (paths == null) {
+			// (the program's and the macros' context; a server makes new ones)
+			if ([for (_ in roots.keys()) 1].length > 4) roots.clear();
+			roots.set(com, paths = [
+				for (cp in com.classPaths.asList())
+					if (cp.path != "" && (cp.scope == Std || sys.FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx"))) cp.path
+			]);
+		}
+		for (r in paths)
 			if (StringTools.startsWith(file, r)) return true;
 		return false;
 	}

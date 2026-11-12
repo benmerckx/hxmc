@@ -6,7 +6,7 @@ using StringTools;
 
 // The hxmc test corpus (docs/testing.md): every program compiled by
 // hxmc, run, and its output compared with its golden file.
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus [-j N] [-v] [--target T] [--wasm-eh legacy] [--libc glibc] [--interp] [--mir-run] [--verify-tags] [--known <case,...>] [--stage DIR] [--bless] [case ...]
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Corpus [-j N] [-v] [--target T] [--wasm-eh legacy] [--libc glibc] [--interp] [--mir-run] [--verify-tags] [--source] [--known <case,...>] [--stage DIR] [--bless] [case ...]
 // The cases are the programs of hxmc/test/cases (<Name>.hx with class <Name>)
 // and the fuzzer programs frozen in hxmc/test/fuzz-1000.zip (extracted to
 // bin/hxmc-fuzz, cases fuzz-<seed>). Each case's HXB archive is written once
@@ -36,6 +36,8 @@ using StringTools;
 // mir-run-check) with -D hxmc.run=mir --run
 // (hxmc.interp.MirRun: no executable), in bin/hxmc-t-mir; the cases known to
 // fail there are MIR_RUN_KNOWN's.
+// --source builds every case from its source, as programs are (the std
+// typed when DCE reaches it: hxmc.LazyStd), not from its HXB archive.
 // --verify-tags builds every case with -D hxmc.verify-tags (references tested
 // not to be the tagged word of a scalar before they are read as references:
 // docs/hxmc.md, "Values of type parameters"; the verify lanes, with RT_VERIFY=1).
@@ -105,6 +107,7 @@ class Corpus {
 	static var interp = false; // --interp: -D hxmc.interp
 	static var mirRun = false; // --mir-run: in the native compiler (HXMC_HAXE), -D hxmc.run=mir
 	static var verifyTags = false; // --verify-tags: -D hxmc.verify-tags
+	static var source = false; // --source: built from the source, not an HXB archive (LazyStd)
 
 	static function main() {
 		var a = parseArgs(Sys.args(), ["-j", "--target", "--stage", "--wasm-eh", "--libc", "--known"]);
@@ -125,6 +128,7 @@ class Corpus {
 		if (interp) OUT = "bin/hxmc-t-interp";
 		mirRun = a.has("--mir-run");
 		verifyTags = a.has("--verify-tags");
+		source = a.has("--source");
 		if (mirRun) OUT = "bin/hxmc-t-mir";
 		var verbose = a.has("-v");
 		if (!FileSystem.exists(STD + "/.stamp")) fail("Corpus: bin/hxmc/std is missing (make std)");
@@ -222,7 +226,7 @@ class Corpus {
 		if (interp) defines = defines.concat(["-D", "hxmc.interp"]);
 		var t0 = now();
 		// (WebAssembly: the program is typed for it, with its runtime)
-		if (!FileSystem.exists(hxb) || mtime(hxb) < Math.max(newest(c.cps), mtime(STD + "/.stamp"))) {
+		if (!source && (!FileSystem.exists(hxb) || mtime(hxb) < Math.max(newest(c.cps), mtime(STD + "/.stamp")))) {
 			var cmd = [tool];
 			// (absolute class paths: positions name the files relative to them)
 			for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
@@ -245,7 +249,8 @@ class Corpus {
 		if (libc != null) exe += "-" + libc;
 		if (target != null && target.startsWith("windows")) exe += ".exe";
 		if (wasm) exe += (wasmEh != null ? "-" + wasmEh : "") + ".wasm";
-		var cmd = [tool, exe, "--hxb-lib", hxb, "-main", c.main, "--custom-target", "hxmc", "-D", "disable-parallelism"];
+		// (--source: from the source, as programs are built: the std typed when it is reached, LazyStd)
+		var cmd = source ? [tool, exe].concat([for (cp in c.cps) for (a in ["-cp", FileSystem.fullPath(cp)]) a]).concat(["-cp", FileSystem.fullPath(STD), "-main", c.main, "--custom-target", "hxmc", "-D", "disable-parallelism"]) : [tool, exe, "--hxb-lib", hxb, "-main", c.main, "--custom-target", "hxmc", "-D", "disable-parallelism"];
 		if (target != null) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
 		if (libc != null) cmd = cmd.concat(["-D", "hxmc.libc=" + libc]);
 		if (native.links.length > 0) cmd = cmd.concat(["-D", "hxmc.link=" + native.links.join(",")]);
@@ -257,14 +262,14 @@ class Corpus {
 		// (a `// build-seconds: <n>` line: hxmc must build the case in less time,
 		// and is stopped there, so a build that never ends fails too)
 		var limit = caseLine(src, "build-seconds");
-		var r = exec(cmd.concat(defines), {env: ["HXMC_STATS" => "1"], timeout: limit != null ? Std.parseFloat(limit) : null});
+		var r = exec(cmd.concat(defines), {env: source ? ["HXMC_STATS" => "1", "HXMC_MODULE_CACHE" => "0"] : ["HXMC_STATS" => "1"], timeout: limit != null ? Std.parseFloat(limit) : null});
 		File.saveContent(d + "/hxmc.log", r.out + r.err);
 		if (r.timedOut) return {name: c.name, status: "slow-build", detail: 'stopped after $limit s: ' + tail(r.out, 1500)};
 		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};
 		if (limit != null && r.seconds > Std.parseFloat(limit))
 			return {name: c.name, status: "slow-build", detail: 'built in ${Std.int(r.seconds)} s, more than $limit s: ' + tail(r.out, 1500)};
 		var notLive = caseLine(src, "not-live");
-		if (notLive != null) {
+		if (notLive != null && !source) {
 			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
 			if (live != null) return {name: c.name, status: "live", detail: live};
 		}

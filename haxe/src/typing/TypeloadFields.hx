@@ -1780,6 +1780,11 @@ class TypeloadFields {
 
 // port: module TypeBinding of typeloadFields.ml
 class TypeBinding {
+	// port: (hxmc) a macro function whose typing in the macro context waits until it is called (a full
+	// ... typing types every macro function of a class loaded: the std's, hxmc.LazyStd); always null in
+	// ... the compiler itself
+	public static var skipMacroHook:Null<(ctx:Typer, c:TClass, cf:TClassField) -> Bool> = null;
+
 	public static function bindType(ctx:Typer, cctx:ClassInitCtx, fctx:FieldInitCtx, cf:TClassField, r:TLazy, p:Pos):Void {
 		var c = cctx.tclass;
 		var deferred:TLazy = r;
@@ -1805,7 +1810,10 @@ class TypeBinding {
 			}
 		}
 		if (ctx.com.display.dmsFullTyping) {
-			if (fctx.isMacro && !ctx.com.isMacroContext) forceMacro(false);
+			if (fctx.isMacro && !ctx.com.isMacroContext) {
+				// port: (skipMacroHook)
+				if (skipMacroHook == null || !skipMacroHook(ctx, c, cf)) forceMacro(false);
+			}
 			else {
 				cf.cfType = TLazy(deferred);
 				cctx.delayedExpr.unshift({ctx: ctx, lazy: deferred});
@@ -1989,6 +1997,8 @@ class TypeBinding {
 	// modules are encoded (CommonCache.cacheContext, hxmc's module cache):
 	// an encoded module has its bodies
 	public static var typeLazyBodies:Null<CommonContext->Void> = null;
+	// port: (hxmc) told of each body of lazyBodies as its typing starts
+	public static var lazyTypedHook:Null<(c:TClass, cf:TClassField) -> Void> = null;
 
 	public static function bindMethod(ctxField:Typer, cctx:ClassInitCtx, fctx:FieldInitCtx, fmode:CurrentFun, cf:TClassField, t:T,
 			args:FunctionArguments, ret:T, e:Null<Expr>, functionMode:FunctionMode, p:Pos):Void {
@@ -2056,6 +2066,7 @@ class TypeBinding {
 		if (lazyBodyHook != null && e != null && ctx.com.display.dmsFullTyping && !fctx.isDisplayField && lazyBodyHook(ctx, c, cf, fctx, t)) {
 			var lb = {ctx: ctx, c: c, r: null, late: false};
 			lb.r = makeUnforcedLazy(t, function() {
+				if (lazyTypedHook != null) lazyTypedHook(c, cf);
 				lb.late = c.clModule.mExtra.mProcessed != 0;
 				return maybeBind();
 			}, "type_fun");

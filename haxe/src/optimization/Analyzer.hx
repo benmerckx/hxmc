@@ -1015,6 +1015,8 @@ class Run {
 			|| AnalyzerConfig.isIgnored(cf.cfMeta)
 			|| filters.FilterContext.isRemovableField(com.isMacroContext, cf)
 			|| hasClassFieldFlag(cf, CfPostProcessed)) return;
+		// port: (hxmc) a body not typed yet (TypeBinding.lazyBodies) of the program: analyzed once typed
+		if (!com.isMacroContext && typing.TypeloadFields.TypeBinding.lazyBodies.exists(cf)) return;
 		var e = cf.cfExpr;
 		config = AnalyzerConfig.updateConfigFromMeta(com, config, cf.cfMeta);
 		var actx = createAnalyzerContext(com, config, Globals.sTypePath(c.clPath) + "." + cf.cfName, e);

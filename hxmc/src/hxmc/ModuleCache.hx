@@ -146,6 +146,10 @@ class ModuleCache {
 	public static function current():Null<ModuleCacheState>
 		return state;
 
+	// whether this build has the cache (LazyStd)
+	public static function active():Bool
+		return state != null;
+
 	public static function install() {
 		compiler.Compiler.beforeTypingHook = hook;
 		if (Sys.systemName() == "Wasi") return;

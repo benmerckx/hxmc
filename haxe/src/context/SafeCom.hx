@@ -218,6 +218,8 @@ class SafeCom {
 				var local:SafeContext = core.ds.Record.copy(scom);
 				local.curclass = c;
 				function processField(cf:TClassField):Void {
+					// port: (hxmc) a body not typed yet (TypeBinding.lazyBodies) of the program: filtered once typed
+					if (!local.isMacroContext && typing.TypeloadFields.TypeBinding.lazyBodies.exists(cf)) return;
 					if (ignoreProcessedStatus || !TypeOps.hasClassFieldFlag(cf, CfPostProcessed)) {
 						var fieldContext:SafeContext = core.ds.Record.copy(local);
 						fieldContext.curfield = cf;

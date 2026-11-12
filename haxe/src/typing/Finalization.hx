@@ -243,9 +243,15 @@ class Finalization {
 		return {types: types, modules: sortedModules};
 	}
 
+	// port: (hxmc) the modules the sort loaded (typing a body it walked) finalized and the types sorted
+	// ... again (hxmc.LazyStd); always null in the compiler itself
+	public static var sortedHook:Null<(ctx:Typer, sorted:{types:Array<ModuleType>, modules:Array<ModuleDef>}) -> {types:Array<ModuleType>, modules:Array<ModuleDef>}> = null;
+
 	public static function generate(ctx:Typer,
 			mainPath:Null<ModuleDef>):{main:{expr:Null<TExpr>, path:Null<String>}, types:Array<ModuleType>, modules:Array<ModuleDef>} {
 		var sorted = sortTypes(ctx.com, ctx.com.moduleLut);
+		// port: (hxmc) the bodies the sort typed (TypeBinding.lazyBodies) may have loaded modules
+		if (sortedHook != null) sorted = sortedHook(ctx, sorted);
 		return {main: getMain(ctx, mainPath, sorted.types), types: sorted.types, modules: sorted.modules};
 	}
 }

@@ -148,6 +148,7 @@ class Main {
 		ModuleCache.install();
 		hxmc.ir.CInterop.install();
 		hxmc.TargetFlags.install();
+		LazyStd.install();
 		hxmc.StdDce.install();
 		var code = haxe.Main.run(args.concat(["--no-output"]));
 		ModuleCache.finish(failed == null ? code : 1);
@@ -246,6 +247,7 @@ class Main {
 			}
 		}
 		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+		if (opts.stats) Sys.println("hxmc: bodies typed " + com.requestScope.stats.sMethodsTyped + " (" + LazyStd.lazy + " left to DCE, " + LazyStd.typed + " of them typed; " + LazyStd.macros + " std macros not typed)");
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
 			if (useCache)
