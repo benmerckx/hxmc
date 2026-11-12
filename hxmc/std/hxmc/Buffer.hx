@@ -60,28 +60,55 @@ final class Buffer {
 		size = 0;
 	}
 
-	function open():IoBuffer {
-		if (lends.load() < 0) throw "Buffer: closed";
+	// io lent for an access of [pos, pos + len) (release() after it), as a
+	// span is: close() on another thread throws meanwhile instead of freeing
+	// it. Every range is checked first: nothing throws while it is lent
+	function lend(pos:Int, len:Int):IoBuffer {
+		if (pos < 0 || len < 0 || pos > size - len) {
+			// (closed meanwhile: close() empties it once no span is lent)
+			if (lends.load() < 0) throw "Buffer: closed";
+			throw Error.OutsideBounds;
+		}
+		if (take(0) < 0) throw "Buffer: closed";
 		return io;
 	}
 
-	public function get(pos:Int):Int
-		return open().get(pos);
+	static inline function inside(b:Bytes, pos:Int, len:Int)
+		if (pos < 0 || len < 0 || pos > b.length - len) throw Error.OutsideBounds;
 
-	public function set(pos:Int, v:Int):Void
-		open().set(pos, v);
+	public function get(pos:Int):Int {
+		var r = lend(pos, 1).get(pos);
+		release();
+		return r;
+	}
 
-	public function fill(pos:Int, len:Int, v:Int):Void
-		open().fill(pos, len, v);
+	public function set(pos:Int, v:Int):Void {
+		lend(pos, 1).set(pos, v);
+		release();
+	}
 
-	public function getBytes(pos:Int, len:Int):Bytes
-		return open().getBytes(pos, len);
+	public function fill(pos:Int, len:Int, v:Int):Void {
+		lend(pos, len).fill(pos, len, v);
+		release();
+	}
 
-	public function blitFromBytes(pos:Int, src:Bytes, srcpos:Int, len:Int):Void
-		open().blitFromBytes(pos, src, srcpos, len);
+	public function getBytes(pos:Int, len:Int):Bytes {
+		var b = Bytes.alloc(len < 0 ? 0 : len);
+		blitToBytes(pos, b, 0, len);
+		return b;
+	}
 
-	public function blitToBytes(pos:Int, dst:Bytes, dstpos:Int, len:Int):Void
-		open().blitToBytes(pos, dst, dstpos, len);
+	public function blitFromBytes(pos:Int, src:Bytes, srcpos:Int, len:Int):Void {
+		inside(src, srcpos, len);
+		lend(pos, len).blitFromBytes(pos, src, srcpos, len);
+		release();
+	}
+
+	public function blitToBytes(pos:Int, dst:Bytes, dstpos:Int, len:Int):Void {
+		inside(dst, dstpos, len);
+		lend(pos, len).blitToBytes(pos, dst, dstpos, len);
+		release();
+	}
 
 	// (Span.ofBuffer, FnLower.spanCall: the range checked as the arguments
 	// are evaluated, the span lent once they are, released after the call)
