@@ -16,8 +16,10 @@
 #   then the port's release binaries and lix for the six targets.
 #   Next to it, each with its own tool from the stage0 (make hxmc):
 #   - build-checks: the module cache's store and gate, the dev loop (make
-#     dev-check); apart from build, so the jobs that need build start sooner;
-#   - corpus: hxmc's corpus for every target (in four jobs), the native
+#     dev-check), the corpus with its tagged words verified (x86-64 and
+#     wasm32-wasi); apart from build and corpus, so the jobs that need those
+#     start sooner;
+#   - corpus: hxmc's corpus for every target (in five jobs), the native
 #     compiler (`haxe` with hxmc built in) for the six targets, the port as
 #     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
@@ -70,11 +72,10 @@
 # - release: a rolling `nightly` pre-release on pushes to main, a release on
 #   v* tags; pages: the website on pushes to main (with the benchmark history
 #   of the bench-data branch, which bench.yml writes).
-# Each job names in `needs` only what it uses, except that build-checks,
-# crosshost, fuzz-exec, upstream-suites and native-output also wait for build
-# (~3 min): the account runs 20 jobs at a time, and otherwise they took the
-# runners corpus and build need first (the test jobs wait for those);
-# publish-npm, release and pages wait for every check. The jobs' `if` test each direct need by name (a job
+# Each job names in `needs` only what it uses (the account runs 20 jobs at
+# a time: the jobs that need only rt fill the runners build and corpus leave
+# free in the first minutes); publish-npm, release and pages wait for every
+# check. The jobs' `if` test each direct need by name (a job
 # skipped by `changes`, or rt when the release exists, would otherwise skip
 # everything after it; and at job level needs.*.result also holds such a
 # skipped job further up).
@@ -349,11 +350,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with: {name: lix, path: bin/lix-dist/, retention-days: 14}
 
-  # the build's checks, which nothing waits for but publish-npm and release
-  # (in build, they held back every job that needs it)
+  # the build's and the corpus's checks, which nothing waits for but
+  # publish-npm and release (in build and corpus, they held back every job
+  # that needs those)
   build-checks:
-    needs: [changes, rt, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -362,6 +364,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # (zig: the C companions of corpus cases, Corpus.nativeInputs)
+      - id: zig
+        run: echo "version=$(cat hxmc/deps/zig-version)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
       - uses: actions/download-artifact@v8
         if: needs.changes.outputs.rt_hit != 'true'
         with: {name: rt, path: bin/hxmc/rt}
@@ -370,6 +378,14 @@ jobs:
           set -ex
           make rt && touch bin/hxmc/rt/*/*.o
           make hxmc
+      # the type parameters' tagged words tested before every read as a
+      # reference (-D hxmc.verify-tags, RT_VERIFY=1: docs/hxmc.md), on the
+      # runner: x86-64 natively, WebAssembly under node
+      - name: Corpus, tagged words verified (x86-64)
+        run: make corpus-verify VERIFY_TARGET=linux-x86_64
+      - name: Corpus, tagged words verified (wasm32-wasi)
+        if: always()
+        run: make corpus-verify VERIFY_TARGET=wasm32-wasi
       # the module cache's store (hxmc/src/hxmc/CacheDir.hx): tool
       # directories, the trim, a cache that cannot be written
       - name: Module cache store
@@ -388,8 +404,8 @@ jobs:
         run: make dev-check
 
   # hxmc's corpus for every target (make corpus-stage; run by the test and
-  # wasm jobs on the targets' machines), in four groups of about the same
-  # time; with the WebAssembly ones the port as a WebAssembly module (the wasm
+  # wasm jobs on the targets' machines), in five groups of about the same
+  # time (Windows' targets take twice as long, a job each); with the WebAssembly ones the port as a WebAssembly module (the wasm
   # job) and the reference's self-compile (the test and wasm jobs compare
   # with it)
   corpus:
@@ -402,7 +418,8 @@ jobs:
         include:
           - {group: linux, targets: linux-x86_64 linux-arm64 linux-x86_64-glibc linux-arm64-glibc}
           - {group: macos, targets: macos-x86_64 macos-arm64}
-          - {group: windows, targets: windows-x86_64 windows-arm64}
+          - {group: windows-x86_64, targets: windows-x86_64}
+          - {group: windows-arm64, targets: windows-arm64}
           - {group: wasm, targets: wasm32-wasi wasm32-wasi-legacy}
     steps:
       - uses: actions/checkout@v7
@@ -427,12 +444,6 @@ jobs:
           make hxmc
       - name: Cross-build hxmc's corpus
         run: make corpus-stage CORPUS_TARGETS="${{ matrix.targets }}"
-      # the type parameters' tagged words tested before every read as a
-      # reference (-D hxmc.verify-tags, RT_VERIFY=1: docs/hxmc.md), on the
-      # runner: x86-64 natively, WebAssembly under node
-      - name: Corpus, tagged words verified
-        if: matrix.group == 'linux' || matrix.group == 'wasm'
-        run: make corpus-verify VERIFY_TARGET=${{ matrix.group == 'wasm' && 'wasm32-wasi' || 'linux-x86_64' }}
       # the native compiler (the npm package's: Mir macros and --run) for each
       # target of the group (the test jobs run its Mir lane on the targets' machines)
       - name: Cross-build the native compiler
@@ -566,8 +577,8 @@ jobs:
   # itself, byte-identical to the native tool (make crosshost; the cases in
   # four shards, every target in each, the tool in the first)
   crosshost:
-    needs: [changes, rt, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -689,8 +700,8 @@ jobs:
   # hxmc.codesign-*'s files)
   native-output:
     name: native-output smoke
-    needs: [changes, rt, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -795,8 +806,8 @@ jobs:
   # a wasm32-wasi module under node), what they print compared; one job per
   # lane, each with its own tool from the stage0
   fuzz-exec:
-    needs: [changes, rt, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -851,8 +862,8 @@ jobs:
   # hxmc/test/UpstreamSuites.hx): unit, sys and threads natively, unit as a
   # wasm32-wasi module under node; the counts in the job summary
   upstream-suites:
-    needs: [changes, rt, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -891,8 +902,8 @@ jobs:
         include:
           - {target: linux-x86_64, pkg: linux-x86_64, corpus: linux, os: ubuntu-24.04}
           - {target: linux-arm64, pkg: linux-aarch64, corpus: linux, os: ubuntu-24.04-arm}
-          - {target: windows-x86_64, pkg: windows-x86_64, corpus: windows, os: windows-2025}
-          - {target: windows-arm64, pkg: windows-aarch64, corpus: windows, os: windows-11-arm}
+          - {target: windows-x86_64, pkg: windows-x86_64, corpus: windows-x86_64, os: windows-2025}
+          - {target: windows-arm64, pkg: windows-aarch64, corpus: windows-arm64, os: windows-11-arm}
           - {target: macos-x86_64, pkg: macos-x86_64, corpus: macos, os: macos-15-intel}
           - {target: macos-arm64, pkg: macos-aarch64, corpus: macos, os: macos-15}
     runs-on: ${{ matrix.os }}
