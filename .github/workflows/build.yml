@@ -74,8 +74,10 @@
 #   of the bench-data branch, which bench.yml writes).
 # Each job names in `needs` only what it uses (the account runs 20 jobs at
 # a time: the jobs that need only rt fill the runners build and corpus leave
-# free in the first minutes); publish-npm, release and pages wait for every
-# check. The jobs' `if` test each direct need by name (a job
+# free in the first minutes), except native-output, which also waits for
+# build (~3 min): with it the first minute asked for 21 runners, and the one
+# left waiting was a corpus job the test jobs wait for; publish-npm, release
+# and pages wait for every check. The jobs' `if` test each direct need by name (a job
 # skipped by `changes`, or rt when the release exists, would otherwise skip
 # everything after it; and at job level needs.*.result also holds such a
 # skipped job further up).
@@ -700,8 +702,8 @@ jobs:
   # hxmc.codesign-*'s files)
   native-output:
     name: native-output smoke
-    needs: [changes, rt]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
