@@ -199,11 +199,28 @@ class RawCheck {
 			case TField(_, FStatic(_, {cfKind: Method(_)})):
 				var why = rawCall(e, "the function ");
 				if (why != null) return fail(e.epos, why + " as a value");
-			case TTypeExpr(_):
+			case TTypeExpr(m):
+				// (a class of the raw API as a value: Dynamic reaches its
+				// functions, `var p:Dynamic = BytesPtr; p.copyIn(...)`)
+				var path = unsafeType(m);
+				if (path != null) fail(e.epos, "the type " + path + " as a value");
 				return;
 			case _:
 		}
 		if (KernelCheck.isRaw(e.etype)) return fail(e.epos, "a value of the raw type " + typeName(e.etype));
+		switch e.eexpr {
+			case TField({eexpr: TTypeExpr(_)}, _):
+				return; // (a static's owner, no value)
+			case _:
+		}
 		core.Texpr.iter(expr, e);
+	}
+
+	static function unsafeType(m:ModuleType):Null<String> {
+		var path = switch m {
+			case TClassDecl({clKind: KAbstractImpl(a)}): a.aPath;
+			case _: m.tPath();
+		};
+		return unsafePack(path.pack) ? core.Globals.sTypePath(path) : null;
 	}
 }
