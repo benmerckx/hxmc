@@ -1,9 +1,10 @@
-// @:hxmc.available lists string literals of a platform (macos, ios,
-// maccatalyst, ...) and a version.
+// @:hxmc.available lists conditions as #if writes them: a platform (macos,
+// ios, maccatalyst, ...), >= and a version (a number, or version("x.y.z")).
+// The strings of before are none.
 // target: macos-arm64
-// expect: @:hxmc.available: a platform and a version ("macos 14.0") as a string literal
+// expect: @:hxmc.available: platforms and versions (macos >= 14.0, ios >= 17.0)
 @:hxmc.c @:hxmc.lib("/usr/lib/libSystem.B.dylib") extern class Lib {
-	@:hxmc.available("macOS 14") static function newer():Int;
+	@:hxmc.available("macos 14.0") static function newer():Int;
 }
 
 class AvailBadMeta {

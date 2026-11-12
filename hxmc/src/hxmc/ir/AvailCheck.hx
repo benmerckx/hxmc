@@ -19,10 +19,13 @@ using core.TFunctions;
 //   - where the deployment target has the version;
 //   - in a function or class that @:hxmc.available gives it (its callers
 //     are checked instead);
-//   - guarded: in the then-branch of `if (Platform.available(...))` (and
-//     the right of `&&`), the else-branch of `if (!Platform.available(...))`
-//     (the right of `||`), and after `if (!Platform.available(...)) return;`
-//     (or throw, break, continue) in its block.
+//   - guarded: in the then-branch of `if (Platform.supports(x))` (and the
+//     right of `&&`; `supports(a) && supports(b)`, both), the
+//     else-branch of `if (!Platform.supports(x))` (the right of `||`),
+//     and after `if (!Platform.supports(x)) return;` (or throw, break,
+//     continue) in its block: what needs no more than x. It is
+//     Platform.atLeast once typed (AvailGuard), whose argument for the
+//     platform is the guard's version.
 // Else it is a warning (-D hxmc.strict: an error). A class extending a newer
 // class is checked as a use of it.
 class AvailCheck {
@@ -53,7 +56,7 @@ class AvailCheck {
 
 	// the target's platform and deployment target, from the defines (null:
 	// not one of Apple's; a bad version is Options.read's error)
-	static function target(d:core.Define.DefineContext):Null<{platform:String, min:Int}> {
+	public static function target(d:core.Define.DefineContext):Null<{platform:String, min:Int}> {
 		inline function def(k:String):Null<String>
 			return core.Define.rawDefined(d, k) ? core.Define.rawDefinedValue(d, k) : null;
 		var t = def("hxmc.target");
@@ -93,13 +96,14 @@ class AvailCheck {
 			}
 	}
 
-	// an @:hxmc.available's entries: string literals of a platform and a version
+	// an @:hxmc.available's entries: platforms and versions, macos >= 14.0
 	function declared(ml:core.Ast.Metadata) {
 		if (ml.length == 0) return;
 		for (m in ml)
 			if (Available.isMeta(m)) {
-				if (m.exprs.length == 0) com.error("@:hxmc.available: list a platform and a version (\"macos 14.0\")", m.pos);
-				Available.of(m.exprs, platform, e -> com.error("@:hxmc.available: a platform and a version (\"macos 14.0\") as a string literal", e.pos));
+				var msg = "@:hxmc.available: platforms and versions (macos >= 14.0, ios >= 17.0)";
+				if (m.exprs.length == 0) com.error(msg, m.pos);
+				Available.entries(m.exprs, e -> com.error(msg, e.pos));
 			}
 	}
 
@@ -107,7 +111,7 @@ class AvailCheck {
 		var v = Available.version(need);
 		var msg = what + ": " + Available.shown(platform) + " " + v + " and later, "
 			+ (floor > min ? "this code is for " + Available.version(floor) + " and later" : "the deployment target is " + Available.version(min))
-			+ ' (guard it with Platform.available("$platform $v"))';
+			+ " (guard it with Platform.supports(...))";
 		var key = p.pfile + ":" + p.pmin + ":" + msg;
 		if (seen.exists(key)) return;
 		seen.set(key, true);
@@ -134,7 +138,7 @@ class AvailCheck {
 
 	static function isTest(f:TExpr):Bool
 		return switch f.eexpr {
-			case TField(_, FStatic(c, cf)): cf.cfName == "available" && c.clPath.name == "Platform" && c.clPath.pack.length == 1 && c.clPath.pack[0] == "hxmc";
+			case TField(_, FStatic(c, cf)): cf.cfName == "atLeast" && c.clPath.name == "Platform" && c.clPath.pack.length == 1 && c.clPath.pack[0] == "hxmc";
 			case _: false;
 		}
 

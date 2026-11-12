@@ -1,9 +1,14 @@
-// hxmc.Platform.available takes string literals: the check and the
-// lowering read them.
-// expect: hxmc.Platform.available: string literals of a platform and a version ("macos 14.0")
+// hxmc.Platform.supports names a declaration, not a value: a local holding
+// a function has no @:hxmc.available to read. (Platform.available, a test of
+// versions, is not in hxmc.Platform: #if (macos >= 14.0) decides on versions.)
+// expect: Platform.supports: a declaration (view.method, a class, a static, an enum constant)
+@:hxmc.c @:hxmc.lib("/usr/lib/libSystem.B.dylib") extern class Lib {
+	@:hxmc.available(macos >= 14.0) static function newer():Int;
+}
+
 class AvailBadTest {
 	static function main() {
-		var v = "macos " + Std.random(20) + ".0";
-		trace(hxmc.Platform.available(v));
+		var f = Lib.newer;
+		trace(hxmc.Platform.supports(f));
 	}
 }

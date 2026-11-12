@@ -515,7 +515,7 @@ class Driver {
 	public static function outputKey(kind:CacheKind, out:String):CacheKey
 		return CacheKey.of(kind, "hxmc-out|" + (try sys.FileSystem.absolutePath(out) catch (_:Dynamic) out));
 
-	// (+min=: the deployment target, which hxmc.Platform.available folds against)
+	// (+min=: the deployment target, which hxmc.Platform.supports folds against)
 	// (+strhash=fnv: the program's std hashes strings with FNV-1a, FnLower.wordHash;
 	// a string switch lowered for one hash is wrong with the other)
 	// (+pgo=: the LLVM profile's path, time and size: codeKey has only the flag)

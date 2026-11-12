@@ -2,21 +2,27 @@ package hxmc.ir;
 
 import core.TType;
 import core.Ast.Binop;
+import core.Ast.Expr;
 
 // The versions of Apple's systems a declaration needs (docs/interop.md,
-// "Availability"): `@:hxmc.available("macos 14.0", "ios 17.0",
-// "maccatalyst 17.0")` on a class, a protocol, a field or an enum
-// abstract's constant; a platform it does not list, every version of it.
-// hxmc.Platform.available takes the same list and tests it at run time.
-// Versions are numbers as LC_BUILD_VERSION writes them: major << 16 |
-// minor << 8 | patch (0: any version). Mac Catalyst's are iOS's.
-// AvailCheck checks the uses; Lower binds the imports of the newer ones
-// weakly (CInterop.WEAK) and lowers the tests (FnLower).
+// "Availability"): `@:hxmc.available(macos >= 14.0, ios >= 17.0,
+// maccatalyst >= 17.0)` on a class, a protocol, a field or an enum
+// abstract's constant, conditions as `#if` and `@:require` write them; a
+// platform it does not list, every version of it. hxmc.Platform.supports
+// tests a declaration's (AvailGuard: Platform.atLeast's three versions,
+// PLATFORMS' first); `#if (macos >= 14.0)` the deployment target. Versions
+// are numbers as LC_BUILD_VERSION writes them: major << 16 | minor << 8 |
+// patch (0: any version), read from the literal's text (10.15 is newer than
+// 10.9) or version("10.15.4"). Mac Catalyst's are iOS's. AvailCheck checks
+// the uses; Lower binds the imports of the newer ones weakly (CInterop.WEAK)
+// and lowers the tests (FnLower).
 class Available {
 	public static inline var META = ":hxmc.available";
 
-	// the platforms the list may name; hxmc's targets are the first three
-	static final PLATFORMS = ["macos", "ios", "maccatalyst", "tvos", "watchos", "visionos", "driverkit"];
+	// the platforms an entry may name; hxmc's targets are the first three, in
+	// the order of Platform.atLeast's arguments (another system's, android or
+	// windows, would be one more name here and argument there)
+	public static final PLATFORMS = ["macos", "ios", "maccatalyst", "tvos", "watchos", "visionos", "driverkit"];
 
 	// the name of an Abi.platform's in the list (null: none of Apple's)
 	public static function platformOf(platform:String):Null<String>
@@ -42,31 +48,57 @@ class Available {
 	public static function version(v:Int):String
 		return (v >> 16) + "." + ((v >> 8) & 0xff) + (v & 0xff != 0 ? "." + (v & 0xff) : "");
 
-	// "macos 14.0": the version if it is platform's, 0 if another's, -1 if
-	// it is no platform and version
-	public static function entry(s:String, platform:String):Int {
-		var r = ~/^([a-z]+) ([0-9]+)(\.[0-9]+)?(\.[0-9]+)?$/;
-		if (!r.match(s) || PLATFORMS.indexOf(r.matched(1)) < 0) return -1;
+	// "14.0", "10.15", "17", "10.15.4" (-1: no version)
+	public static function parse(s:String):Int {
+		var r = ~/^([0-9]+)(\.[0-9]+)?(\.[0-9]+)?$/;
+		if (!r.match(s)) return -1;
 		inline function part(i:Int):Int
 			return r.matched(i) == null ? 0 : Std.parseInt(r.matched(i).substr(1));
-		var major = Std.parseInt(r.matched(2)), minor = part(3), patch = part(4);
+		var major = Std.parseInt(r.matched(1)), minor = part(2), patch = part(3);
 		if (major > 0xff || minor > 0xff || patch > 0xff) return -1;
-		return r.matched(1) == platform ? (major << 16) | (minor << 8) | patch : 0;
+		return (major << 16) | (minor << 8) | patch;
 	}
 
-	// the version of platform an @:hxmc.available's (or
-	// Platform.available's) list asks for (0: any); bad: an entry that is
-	// no string literal of a platform and version
-	public static function of(exprs:haxe.ds.Vector<core.Ast.Expr>, platform:String, ?bad:core.Ast.Expr->Void):Int {
-		var v = 0;
-		for (e in exprs) {
-			var n = switch e.expr {
-				case EConst(core.Ast.Constant.String(s, _)): entry(s, platform);
-				case _: -1;
-			}
-			if (n < 0 && bad != null) bad(e);
-			if (n > v) v = n;
+	// a version as an entry writes it: a number's literal (its text, not
+	// its value) or version("10.15.4"), as #if's (-1: none)
+	static function number(e:Expr):Int
+		return switch e.expr {
+			case EConst(Int(s, null)) | EConst(Float(s, null)): parse(s);
+			case ECall({expr: EConst(Ident("version"))}, args) if (args.length == 1):
+				switch args[0].expr {
+					case EConst(String(s, _)): parse(s);
+					case _: -1;
+				}
+			case EParenthesis(x): number(x);
+			case _: -1;
 		}
+
+	// a list's entries, `platform >= version` (`||` of them too, as
+	// @:require writes them); bad: one that is not
+	public static function entries(exprs:haxe.ds.Vector<Expr>, ?bad:Expr->Void):Array<{platform:String, version:Int}> {
+		var out = [];
+		function add(e:Expr)
+			switch e.expr {
+				case EParenthesis(x):
+					add(x);
+				case EBinop(OpBoolOr, a, b):
+					add(a);
+					add(b);
+				case EBinop(OpGte, {expr: EConst(Ident(p))}, v) if (PLATFORMS.indexOf(p) >= 0 && number(v) >= 0):
+					out.push({platform: p, version: number(v)});
+				case _:
+					if (bad != null) bad(e);
+			}
+		for (e in exprs)
+			add(e);
+		return out;
+	}
+
+	// the version of platform an @:hxmc.available's list asks for (0: any)
+	public static function of(exprs:haxe.ds.Vector<Expr>, platform:String):Int {
+		var v = 0;
+		for (e in entries(exprs))
+			if (e.platform == platform && e.version > v) v = e.version;
 		return v;
 	}
 
@@ -76,42 +108,15 @@ class Available {
 			case _: false;
 		}
 
-	// hxmc.Platform.available's arguments (its rest: an array of them, or, as
-	// typed, a block of a variable of the array or filling one, then the
-	// variable cast) the version of platform they ask for (0:
-	// any), or -1 if one is no string literal of a platform and version. On
-	// Mac Catalyst, a list without its entry asks for iOS's, as Swift's
-	// #available does (dyld answers a Catalyst process's iOS version)
+	// Platform.atLeast's arguments (AvailGuard) the version of platform they
+	// ask for (0: any), or -1 if they are not its constants
 	public static function test(args:haxe.ds.Vector<TExpr>, platform:String):Int {
-		var v = 0, ios = 0, own = false;
-		function arg(e:TExpr)
-			switch e.eexpr {
-				case TArrayDecl(xs):
-					for (x in xs)
-						arg(x);
-				case TBlock(xs):
-					for (x in xs)
-						switch x.eexpr {
-							case TBinop(OpAssign, _, i): arg(i);
-							case TVar(_, i) if (i != null && i.eexpr.getIndex() == TArrayDecl(null).getIndex()): arg(i);
-							case _:
-						}
-				case TParenthesis(x) | TCast(x, null) | TMeta(_, x):
-					arg(x);
-				case TConst(TString(s)):
-					var n = entry(s, platform);
-					if (n < 0 || v < 0) v = -1 else if (n > v) v = n;
-					if (platform == "maccatalyst") {
-						var i = entry(s, "ios");
-						if (i > ios) ios = i;
-						if (StringTools.startsWith(s, "maccatalyst ")) own = true;
-					}
-				case _:
-					v = -1;
-			}
-		for (a in args)
-			arg(a);
-		return v >= 0 && platform == "maccatalyst" && !own ? ios : v;
+		var i = PLATFORMS.indexOf(platform);
+		if (i < 0 || i >= args.length) return 0;
+		return switch args[i].eexpr {
+			case TConst(TInt(v)): v;
+			case _: -1;
+		}
 	}
 
 	// the version of platform metadata ml asks for (0: any)

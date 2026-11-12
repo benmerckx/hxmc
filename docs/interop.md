@@ -1553,55 +1553,78 @@ haxelib, used as `-lib <name>`:
 ### Availability
 
 The SDKs' declarations say which version introduced them, on the
-platforms where that is newer than hxmc's oldest:
+platforms where that is newer than hxmc's oldest, as conditions written
+the way `#if` and `@:require` write them:
 
 ```haxe
-@:hxmc.available("macos 14.0", "ios 17.0", "maccatalyst 17.0")
+@:hxmc.available(macos >= 14.0, ios >= 17.0, maccatalyst >= 17.0)
 function setPreferredFrameRateRange(range:CAFrameRateRange):Void;
 ```
 
-A platform it does not list has it in every version. A program runs on
-systems from its deployment target on: `-D hxmc.macos-min-version` (11.0
-on arm64, 10.15 on x86-64) or `-D hxmc.ios-min-version` (15.0, also Mac
-Catalyst's). Using something newer is a warning, an error with `-D
-hxmc.strict`:
+A platform it does not list has it in every version. A version is read
+from the literal as written, so `10.15` is newer than `10.9`; one with a
+patch level is `version("10.15.4")`. The platforms are `macos`, `ios`,
+`maccatalyst`, `tvos`, `watchos`, `visionos` and `driverkit`. A program
+runs on systems from its deployment target on: `-D
+hxmc.macos-min-version` (11.0 on arm64, 10.15 on x86-64) or `-D
+hxmc.ios-min-version` (15.0, also Mac Catalyst's). Using something newer
+is a warning, an error with `-D hxmc.strict`:
 
 ```
-NSView.setPreferredFrameRateRange: macOS 14.0 and later, the deployment target is 11.0 (guard it with Platform.available("macos 14.0"))
+NSView.setPreferredFrameRateRange: macOS 14.0 and later, the deployment target is 11.0 (guard it with Platform.supports(...))
 ```
 
-A test at run time guards it:
+`Platform.supports` asks at run time whether the system has the
+declaration:
 
 ```haxe
 import hxmc.Platform;
 
-if (Platform.available("macos 14.0", "ios 17.0", "maccatalyst 17.0"))
+if (Platform.supports(view.setPreferredFrameRateRange))
   view.setPreferredFrameRateRange(range);
+else
+  trace('Update your OS');
+
+// several APIs at once
+if (Platform.supports(NSFoo) && Platform.supports(view.setPreferredFrameRateRange))
+  view.setPreferredFrameRateRange(NSFoo.range());
 
 function start(view:NSView) {
-  if (!Platform.available("macos 14.0")) return;
-  view.setPreferredFrameRateRange(range);      // after the early return
+  if (!Platform.supports(view.setPreferredFrameRateRange)) return;
+  view.setPreferredFrameRateRange(range);     // after the early return
 }
 
-@:hxmc.available("macos 14.0")                // its callers are checked instead
+@:hxmc.available(macos >= 14.0)               // its callers are checked instead
 function animate(view:NSView)
   view.setPreferredFrameRateRange(range);
 ```
 
-- **The test** takes string literals. It is `true` where the deployment
-  target has the version or the list leaves the platform out (and on
-  other systems), a constant that drops the other branch. Else it asks
-  dyld once, as clang's `@available` does, and keeps the answer. On Mac
-  Catalyst a list without `maccatalyst` tests its `ios` entry, as
-  Swift's `#available` does.
+- **`Platform.supports(x)`** names a declaration without calling it: a
+  method (`view.setPreferredFrameRateRange`, `NSView.someStatic`), a
+  property, a class (`NSFoo`), a static or an enum constant. Its
+  versions are those x's uses need, its own and its class's. It is
+  `true` where the deployment target has them or the declaration leaves
+  the platform out (and on other systems), a constant that drops the
+  other branch. Else it asks dyld once, as clang's `@available` does,
+  and keeps the answer. The compiler expands it while typing: no
+  closure, and no macro run. A declaration without `@:hxmc.available` is
+  in every version: `true`, with a warning.
 - **Uses** are calls, property reads and writes, a class as a value,
   `new`, enum constants and a class extending a newer one. Each needs
   its declaration's version and its class's (on an enum abstract, put it
-  on each constant: Haxe inlines them). A use is guarded in the
-  then-branch of `if (Platform.available(...))`, on the right of `&&`,
-  in the else-branch of `if (!Platform.available(...))`, and after `if
-  (!Platform.available(...)) return;` (or `throw`, `break`,
-  `continue`). Inlined code is checked where it lands.
+  on each constant: Haxe inlines them). A use is guarded by what needs
+  no more than the guard's declaration: in the then-branch of `if
+  (Platform.supports(x))`, on the right of `&&` (so `supports(a) &&
+  supports(b)` allows both), in the else-branch of `if (!...)`, on the
+  right of `||` after `!`, and after `if (!...) return;` (or `throw`,
+  `break`, `continue`). Inlined code is checked where it lands.
+- **Versions at compile time**: the target's platform is defined with
+  its deployment target, `macos`, `ios` or `maccatalyst` (only the one
+  being built for), so `#if (macos >= 14.0)` decides on a version alone,
+  for a build that requires 14.0 anyway. Haxe's `#if` compares the value
+  as a float, so within 10.x `10.15` counts as older than `10.9`; macOS
+  11 and later, and iOS, compare right. The macro context does not see
+  them.
 - **Weak imports**: a C function, C variable or Objective-C class newer
   than the deployment target is imported weakly, so the program still
   launches on an older system, where its address is null. Calling it

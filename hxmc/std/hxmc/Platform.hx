@@ -28,12 +28,22 @@ extern class Platform {
 	// simulator, 3 Mac Catalyst (target() is macOS's)
 	static function apple():Int;
 
-	// whether the system has a version of the target's platform:
-	// `Platform.available("macos 14.0", "ios 17.0", "maccatalyst 17.0")`, string
-	// literals. True for a platform the list leaves out (and every system but
-	// Apple's) and for a version the deployment target has (a constant: the
-	// test folds); else asked of the system. In its then-branch, the
-	// declarations @:hxmc.available gives those versions may be used
+	#if !macro
+	// whether the system has what a declaration needs, named, not called:
+	// `if (Platform.supports(view.setPreferredFrameRateRange))`, a method, a
+	// property, a class, a static, an enum constant. Its @:hxmc.available
+	// (and its class's) give the versions: true where the deployment target
+	// has them or the platform is not listed (and on every system but
+	// Apple's), a constant the test folds; else asked of the system. In its
+	// then-branch (and `&&`, `!`, `||`, an early return) what needs no
+	// more may be used. True, with a warning, for a declaration without
+	// @:hxmc.available. For a decision on versions alone, `#if (macos >=
+	// 14.0)` tests the deployment target at compile time. The compiler
+	// expands it (hxmc.ir.AvailGuard), not the macro context
 	// (docs/interop.md, "Availability")
-	static function available(...versions:String):Bool;
+	static macro function supports(declaration:haxe.macro.Expr):haxe.macro.Expr.ExprOf<Bool>;
+	#end
+
+	// (supports: the versions of macOS, iOS and Mac Catalyst it needs)
+	private static function atLeast(macos:Int, ios:Int, maccatalyst:Int):Bool;
 }

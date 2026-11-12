@@ -39,7 +39,7 @@ lists the ones marked with *.
 | `-D hxmc.target=<target>` | the target (above) |
 | `-D hxmc.libc=glibc` | Linux: link dynamically against glibc, so the program can import shared libraries (`@:hxmc.lib("libGL.so.1")`) and `dlopen` them |
 | `-D hxmc.shared` | a shared library: Linux in the glibc mode, a dylib on macOS, iOS and Mac Catalyst, a DLL on Windows; Android's output always is one |
-| `-D hxmc.macos-min-version=<x.y>` | macOS: the oldest version the output runs on (11.0 on arm64, 10.15 on x86-64, the floors), its `LC_BUILD_VERSION`'s minimum; `-D hxmc.ios-min-version` is iOS's and Mac Catalyst's (15.0). Newer APIs need a guard ([Availability](interop.md#availability)) |
+| `-D hxmc.macos-min-version=<x.y>` | macOS: the oldest version the output runs on (11.0 on arm64, 10.15 on x86-64, the floors), its `LC_BUILD_VERSION`'s minimum; `-D hxmc.ios-min-version` is iOS's and Mac Catalyst's (15.0). Newer APIs need a guard, `Platform.supports(view.method)`, and `#if (macos >= 14.0)` (or `ios`, `maccatalyst`: the target's) tests the deployment target ([Availability](interop.md#availability)) |
 | `-D hxmc.exports=<names>` | the `@:hxmc.export` functions a shared library exports |
 | `-D hxmc.dll-base=<hex>` | Windows: a DLL's preferred base address |
 | `-D hxmc.output=<path>` | the output path, instead of `--custom-target`'s |

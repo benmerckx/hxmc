@@ -2,7 +2,7 @@ package hxmc.rt;
 
 import hxmc.unsafe.*;
 
-// hxmc.Platform.available's test at run time (FnLower.available): the
+// hxmc.Platform.supports' test at run time (FnLower.available): the
 // system's version against a version of the target's platform, asked of
 // dyld as clang's __isPlatformVersionAtLeast asks it
 // (_availability_version_check, in libSystem since macOS 10.15 and iOS 13,

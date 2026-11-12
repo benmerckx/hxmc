@@ -116,7 +116,7 @@ class RuntimeSymbols {
 		{sym: "rt_objc_weak_cell", kind: FUNC, families: NATIVE, by: "FnLower.assign: a weak id field's first store"},
 		{sym: "rt_objc_box", kind: FUNC, families: NATIVE, by: "FnLower.coerce: an id where a reference goes"},
 		{sym: "rt_objc_unbox", kind: FUNC, families: NATIVE, by: "FnLower.coerce: a boxed id"},
-		{sym: "rt_os_at_least", kind: IMPL, families: NATIVE, by: "FnLower.available: hxmc.Platform.available's test at run time", when: apple},
+		{sym: "rt_os_at_least", kind: IMPL, families: NATIVE, by: "FnLower.available: hxmc.Platform.supports' test at run time", when: apple},
 		{sym: "rt_objc_is", kind: FUNC, families: NATIVE, by: "FnLower.objcTestDyn: a caught value's or a Dynamic's test of an Objective-C class"},
 		{sym: "rt_objc_block_new", kind: FUNC, families: NATIVE, by: "FnLower.blockOf: a function made a block"},
 		{sym: "rt_objc_block_get", kind: FUNC, families: NATIVE, by: "ObjC.invoke: a block's invoke finds its closure"},

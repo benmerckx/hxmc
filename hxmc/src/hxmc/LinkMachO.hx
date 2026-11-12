@@ -690,7 +690,7 @@ class LinkMachO extends LinkCore {
 		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64) or
 		// -D hxmc.macos-min-version's, built against the same SDK, 11.0 at
 		// least (to a program of an older SDK, macOS says it is 10.16, also
-		// dyld's _availability_version_check: hxmc.Platform.available); iOS, its simulator and Mac
+		// dyld's _availability_version_check: hxmc.Platform.supports); iOS, its simulator and Mac
 		// Catalyst (abi.platform), minimum IOS_MIN or -D hxmc.ios-min-version's,
 		// built against IOS_SDK (what UIKit's linked-on-or-after behaviours
 		// go by; Catalyst's versions are iOS's, as clang's -target

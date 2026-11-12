@@ -26,7 +26,7 @@ class Options {
 
 	// the oldest version of its platform an Apple output runs on, as
 	// LC_BUILD_VERSION writes it (major << 16 | minor << 8): what
-	// hxmc.Platform.available and @:hxmc.available are checked against
+	// hxmc.Platform.supports and @:hxmc.available are checked against
 	public function minos(abi:Abi):Int
 		return abi.uikit() ? iosMinos : macosMinos != 0 ? macosMinos : LinkMachO.macosMin(abi.arm);
 	// a Mach-O output's code signature (CodeSign), for a packager that writes
