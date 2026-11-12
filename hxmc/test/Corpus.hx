@@ -262,7 +262,7 @@ class Corpus {
 		// (a `// build-seconds: <n>` line: hxmc must build the case in less time,
 		// and is stopped there, so a build that never ends fails too)
 		var limit = caseLine(src, "build-seconds");
-		var r = exec(cmd.concat(defines), {env: source ? ["HXMC_STATS" => "1", "HXMC_MODULE_CACHE" => "0"] : ["HXMC_STATS" => "1"], timeout: limit != null ? Std.parseFloat(limit) : null});
+		var r = exec(cmd.concat(defines), {env: source ? ["HXMC_STATS" => "1", "HXMC_MODULE_CACHE" => "0", "HXMC_LAZY_STD" => "1"] : ["HXMC_STATS" => "1"], timeout: limit != null ? Std.parseFloat(limit) : null});
 		File.saveContent(d + "/hxmc.log", r.out + r.err);
 		if (r.timedOut) return {name: c.name, status: "slow-build", detail: 'stopped after $limit s: ' + tail(r.out, 1500)};
 		if (r.code != 0) return {name: c.name, status: "hxmc-fail", detail: tail(r.out + r.err, 2000)};

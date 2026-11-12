@@ -93,7 +93,7 @@ class Options {
 		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
 		"hxmc.fold", "hxmc.frames-live", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
 		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc",
-		"hxmc.checked", "hxmc.compact",
+		"hxmc.checked", "hxmc.compact", "hxmc.lazy-std",
 		// (experimental) the LLVM back end's (Options.llvm)
 		"hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-tbaa", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-flags", "hxmc.llvm-clang", "hxmc.llvm-pgo", "hxmc.llvm-inline"
 	];

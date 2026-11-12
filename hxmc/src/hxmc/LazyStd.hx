@@ -35,10 +35,14 @@ using core.TFunctions;
 // fields a structure read names stand for the unifications of the bodies not
 // typed (Dce.anonRead).
 //
-// Off for display, the compilation server (which keeps every module typed for
+// Opt-in (-D hxmc.lazy-std, HXMC_LAZY_STD=1): its output differs from a full
+// typing's where the std's unreached bodies changed what DCE keeps (an extern
+// class only they load, the fields their unifications made :?used). Off for
+// display, the compilation server (which keeps every module typed for
 // the next build), a build writing HXB, -dce no (every field kept, so every
 // body typed: no gain), with hxmc's module cache (its encoded modules have
-// every body) and with HXMC_LAZY_STD=0.
+// every body); HXMC_LAZY_MACROS=0 types the std's macro functions with
+// their classes.
 class LazyStd {
 	// (-D hxmc.stats) the bodies left untyped as their modules were typed, those DCE typed
 	public static var lazy = 0;
@@ -47,7 +51,7 @@ class LazyStd {
 
 	static var com:Null<context.Common.CommonContext> = null;
 	static var on = false;
-	static final off = Sys.getEnv("HXMC_LAZY_STD") == "0";
+	static final macrosOff = Sys.getEnv("HXMC_LAZY_MACROS") == "0";
 	// the fields typed since `mark` or the sort last looked (TypeBinding.lazyTypedHook)
 	static var forced:Array<{c:TClass, cf:TClassField}> = [];
 	// the modules whose types went through the filters (or will, with the program's)
@@ -74,7 +78,7 @@ class LazyStd {
 		typing.TypeloadParse.skipBodiesHook = (com, file) -> com.isMacroContext ? skipBodies != null && skipBodies(com,
 			file) : enabled(com) && hxmc.interp.MacroRuntime.stdFile(com, file);
 		TypeBinding.skipMacroHook = (ctx, c, cf) -> {
-			if (!enabled(ctx.com) || !hxmc.interp.MacroRuntime.stdFile(ctx.com, cf.cfPos.pfile)) return false;
+			if (macrosOff || !enabled(ctx.com) || !hxmc.interp.MacroRuntime.stdFile(ctx.com, cf.cfPos.pfile)) return false;
 			macros++;
 			true;
 		}
@@ -118,11 +122,11 @@ class LazyStd {
 		if (c == com) return on;
 		var dce = core.Define.rawDefined(c.defines, "dce") ? core.Define.rawDefinedValue(c.defines, "dce") : "std";
 		// (not the context checking @:coreApi classes against Haxe's: Typeload.loadCoreClass)
-		if (off || c.isMacroContext || !c.platform.match(CustomTarget("hxmc")) || c.display.dmsKind != DMNone || Driver.resident
-			|| c.sctx.isServer || c.hxbWriterConfig != null || dce == "no" || core.Define.defined(c.defines, core.Define.CoreApi)
-			|| ModuleCache.active()) return false;
+		if (c.isMacroContext || !c.platform.match(CustomTarget("hxmc")) || core.Define.defined(c.defines, core.Define.CoreApi)) return false;
 		com = c;
-		on = true;
+		on = c.display.dmsKind == DMNone && !Driver.resident && !c.sctx.isServer && c.hxbWriterConfig == null && dce != "no" && !ModuleCache.active()
+			&& Options.on("hxmc.lazy-std", false, c.defines);
+		if (!on) return false;
 		forced = [];
 		seen = new ObjectMap();
 		walked = new ObjectMap();

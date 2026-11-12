@@ -622,11 +622,16 @@ macro context does for Mir macros ([below](#macros-on-the-mir-interpreter)):
   called, not when its class is loaded (`TypeBinding.skipMacroHook`).
 
 So the program does not have what only an unreached body of the std
-loaded (an extern class, `haxe.io.BytesBuffer`), and can keep a method
-another structure's read names. Off for display, the compilation server
-(which keeps every module typed), `--hxb`, `-dce no`, the module cache, and
-with `HXMC_LAZY_STD=0`. `-D hxmc.stats` prints the bodies typed. A cold
-Hello types 1,844 bodies instead of 2,359.
+loaded (an extern class, `haxe.io.BytesBuffer`; on wasm32, the native
+runtime's types the native-only code loads), and can keep a method another
+structure's read names: its output is not a full typing's, which is why it
+is opt-in (`-D hxmc.lazy-std`, `HXMC_LAZY_STD=1`; `Corpus --source` runs the
+corpus built so). Off for display, the compilation server (which keeps
+every module typed), `--hxb`, `-dce no` and the module cache.
+`HXMC_LAZY_MACROS=0` types the std's macro functions with their classes.
+`-D hxmc.stats` prints the bodies typed. A cold Hello types 1,844 bodies
+instead of 2,359 (and its CPU time goes from 0.66 s to 0.56 s); a program
+loading `hxmc.simd.Ops` without calling its macros has no macro context.
 
 ## Reachability
 
@@ -1961,6 +1966,7 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.escape-hash=<lo>-<hi>` | `HXMC_ESCAPE_HASH` | yes | it on the functions whose names hash to lo...hi of 1024 only (bisecting) |
 | `hxmc.fold=0` | `HXMC_FOLD` | yes | no allocation folding |
 | `hxmc.reach=0` | `HXMC_REACH` | yes | every function kept |
+| `hxmc.lazy-std` | `HXMC_LAZY_STD` | yes | the std typed when DCE reaches it, its macros when called ([the std typed when it is reached](#the-std-typed-when-it-is-reached)); `HXMC_LAZY_MACROS=0` (the variable only) types its macros with their classes |
 | `hxmc.dup-dispatch=0` | `HXMC_DUP_DISPATCH` | yes | jump tables not copied into their predecessors |
 | `hxmc.dup-min=<n>` | `HXMC_DUP_MIN` | yes | the smallest jump table copied (64) |
 | `hxmc.frames-live=0` | `HXMC_FRAMES_LIVE` | yes | frame stores kept that no load sees |
