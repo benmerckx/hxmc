@@ -24,7 +24,7 @@ using core.TFunctions;
 //     else-branch of `if (!Platform.supports(x))` (the right of `||`),
 //     and after `if (!Platform.supports(x)) return;` (or throw, break,
 //     continue) in its block: what needs no more than x. It is
-//     Platform.atLeast once typed (AvailGuard), whose argument for the
+//     Platform.atLeast once expanded (hxmc.Supports), whose argument for the
 //     platform is the guard's version.
 // Else it is a warning (-D hxmc.strict: an error). A class extending a newer
 // class is checked as a use of it.

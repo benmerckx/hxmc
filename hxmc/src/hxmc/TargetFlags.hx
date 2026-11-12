@@ -33,7 +33,6 @@ class TargetFlags {
 			if (keep != null) com.callbacks.addAfterTyping(types -> hxmc.ir.RawCheck.run(com, types));
 			// Apple's APIs newer than the deployment target only where guarded (the same)
 			hxmc.ir.AvailCheck.seconds = 0;
-			typing.MacroContext.typeMacroHook = keep != null ? hxmc.ir.AvailGuard.expand : null;
 			if (keep != null) com.callbacks.addAfterTyping(types -> hxmc.ir.AvailCheck.run(com, types));
 			if (com.platform.match(CustomTarget("hxmc"))) {
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))

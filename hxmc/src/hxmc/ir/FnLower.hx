@@ -4061,7 +4061,7 @@ class FnLower {
 		}
 	}
 
-	// hxmc.Platform.supports (AvailGuard: Platform.atLeast): true
+	// hxmc.Platform.supports (hxmc.Supports: Platform.atLeast): true
 	// where the target's platform is not listed or the deployment target has
 	// the version (a constant: the test folds), else the system's answer
 	// (hxmc.rt.OsVersion)

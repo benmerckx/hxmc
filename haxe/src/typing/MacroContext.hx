@@ -115,10 +115,6 @@ class MacroContext {
 	// registrant again in its next compilation, so that its macros register
 	// the callback again and it defines the module again (hxmc.ServerCallbacks)
 	public static var callbackDefinedHook:Null<ModuleDef->Void> = null;
-	// port: hook (not upstream): a target's macro function it expands itself, as
-	// the typer would the expression the macro returns, without the macro
-	// context (null: not one of its; hxmc.ir.AvailGuard)
-	public static var typeMacroHook:Null<(ctx:TyperContext, cpath:GlobalTypePath, f:String, el:Vector<Expr>, p:Pos) -> Null<Expr>> = null;
 
 	// port: (not upstream) the API of the macro call running (doCallMacro), null outside one
 	static var callApi:Null<CompilerApi> = null;
@@ -1181,11 +1177,6 @@ class MacroContext {
 	}
 
 	public static function typeMacro(ctx:TyperContext, mode:MacroMode, cpath:GlobalTypePath, f:String, el:Vector<Expr>, p:Pos):MacroResult {
-		// port: (typeMacroHook)
-		if (mode == MExpr && typeMacroHook != null) {
-			var e = typeMacroHook(ctx, cpath, f, el, p);
-			if (e != null) return MSuccess(e);
-		}
 		var mctx = getMacroContext(ctx);
 		var api = makeMacroApi(ctx, mctx, p);
 		var loaded = loadMacro(ctx, ctx.com, mctx, api, mode == MDisplay, cpath, f, p);

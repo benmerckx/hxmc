@@ -9,7 +9,7 @@ import core.Ast.Expr;
 // maccatalyst >= 17.0)` on a class, a protocol, a field or an enum
 // abstract's constant, conditions as `#if` and `@:require` write them; a
 // platform it does not list, every version of it. hxmc.Platform.supports
-// tests a declaration's (AvailGuard: Platform.atLeast's three versions,
+// tests a declaration's (hxmc.Supports: Platform.atLeast's three versions,
 // PLATFORMS' first); `#if (macos >= 14.0)` the deployment target. Versions
 // are numbers as LC_BUILD_VERSION writes them: major << 16 | minor << 8 |
 // patch (0: any version), read from the literal's text (10.15 is newer than
@@ -108,7 +108,7 @@ class Available {
 			case _: false;
 		}
 
-	// Platform.atLeast's arguments (AvailGuard) the version of platform they
+	// Platform.atLeast's arguments (hxmc.Supports) the version of platform they
 	// ask for (0: any), or -1 if they are not its constants
 	public static function test(args:haxe.ds.Vector<TExpr>, platform:String):Int {
 		var i = PLATFORMS.indexOf(platform);

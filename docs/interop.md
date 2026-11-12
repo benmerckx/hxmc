@@ -1606,9 +1606,11 @@ function animate(view:NSView)
   `true` where the deployment target has them or the declaration leaves
   the platform out (and on other systems), a constant that drops the
   other branch. Else it asks dyld once, as clang's `@available` does,
-  and keeps the answer. The compiler expands it while typing: no
-  closure, and no macro run. A declaration without `@:hxmc.available` is
-  in every version: `true`, with a warning.
+  and keeps the answer. It is a macro (`hxmc.Supports`): it types x
+  with `Context.typeExpr` only to find the declaration and reads its
+  metadata; the typed expression is dropped, so no closure of an extern
+  method reaches the program. A declaration without `@:hxmc.available`
+  is in every version: `true`, with a warning.
 - **Uses** are calls, property reads and writes, a class as a value,
   `new`, enum constants and a class extending a newer one. Each needs
   its declaration's version and its class's (on an enum abstract, put it
