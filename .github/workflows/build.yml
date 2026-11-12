@@ -16,9 +16,10 @@
 #   then the port's release binaries and lix for the six targets.
 #   Next to it, each with its own tool from the stage0 (make hxmc):
 #   - build-checks: the module cache's store and gate, the dev loop (make
-#     dev-check), the corpus with its tagged words verified (x86-64 and
-#     wasm32-wasi); apart from build and corpus, so the jobs that need those
-#     start sooner;
+#     dev-check); apart from build, so the jobs that need it start sooner;
+#   - corpus-verify (after build): the corpus with its tagged words verified
+#     (x86-64 and wasm32-wasi); apart from corpus, which the test jobs wait
+#     for;
 #   - corpus: hxmc's corpus for every target (in five jobs), the native
 #     compiler (`haxe` with hxmc built in) for the six targets, the port as
 #     a WebAssembly module, the reference's self-compile (lix downloads the
@@ -74,8 +75,8 @@
 #   of the bench-data branch, which bench.yml writes).
 # Each job names in `needs` only what it uses (the account runs 20 jobs at
 # a time: the jobs that need only rt fill the runners build and corpus leave
-# free in the first minutes), except native-output, which also waits for
-# build (~3 min): with it the first minute asked for 21 runners, and the one
+# free in the first minutes), except native-output and corpus-verify, which
+# also wait for build (~3 min): with native-output the first minute asked for 21 runners, and the one
 # left waiting was a corpus job the test jobs wait for; publish-npm, release
 # and pages wait for every check. The jobs' `if` test each direct need by name (a job
 # skipped by `changes`, or rt when the release exists, would otherwise skip
@@ -352,12 +353,50 @@ jobs:
       - uses: actions/upload-artifact@v7
         with: {name: lix, path: bin/lix-dist/, retention-days: 14}
 
-  # the build's and the corpus's checks, which nothing waits for but
-  # publish-npm and release (in build and corpus, they held back every job
-  # that needs those)
+  # the build's checks, which nothing waits for but publish-npm and release
+  # (in build, they held back every job that needs it)
   build-checks:
     needs: [changes, rt]
     if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Runtime objects and the tool
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make hxmc
+      # the module cache's store (hxmc/src/hxmc/CacheDir.hx): tool
+      # directories, the trim, a cache that cannot be written
+      - name: Module cache store
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
+      # a frontend's compiler built from hxmc's sources adds a function after
+      # the lowering (hxmc.Main.beforeCodegen, docs/hxmc.md "Frontends")
+      - name: The frontends' seam
+        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run FrontendCheck
+      # the persistent module cache: the same outputs with and without it
+      # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
+      - name: Module cache
+        run: make test-module-cache PORT=1
+      # `hxmc dev` on a console program, the compilation server's builds
+      # against fresh ones (hxmc/test/dev)
+      - name: The dev loop
+        run: make dev-check
+
+  # the corpus with its tagged words verified, which nothing waits for but
+  # publish-npm and release (in the corpus jobs, they held back the test
+  # jobs; after build, as the first minute has no runner left for it)
+  corpus-verify:
+    needs: [changes, rt, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -388,22 +427,6 @@ jobs:
       - name: Corpus, tagged words verified (wasm32-wasi)
         if: always()
         run: make corpus-verify VERIFY_TARGET=wasm32-wasi
-      # the module cache's store (hxmc/src/hxmc/CacheDir.hx): tool
-      # directories, the trim, a cache that cannot be written
-      - name: Module cache store
-        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run CacheCheck
-      # a frontend's compiler built from hxmc's sources adds a function after
-      # the lowering (hxmc.Main.beforeCodegen, docs/hxmc.md "Frontends")
-      - name: The frontends' seam
-        run: bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run FrontendCheck
-      # the persistent module cache: the same outputs with and without it
-      # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
-      - name: Module cache
-        run: make test-module-cache PORT=1
-      # `hxmc dev` on a console program, the compilation server's builds
-      # against fresh ones (hxmc/test/dev)
-      - name: The dev loop
-        run: make dev-check
 
   # hxmc's corpus for every target (make corpus-stage; run by the test and
   # wasm jobs on the targets' machines), in five groups of about the same
@@ -1549,8 +1572,8 @@ jobs:
   # nightly, dist-tag next); never from other branches.
   # After every check (the full npm set on all six machines: npm_full).
   publish-npm:
-    needs: [changes, build, build-checks, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.build-checks.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, build-checks, corpus-verify, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.build-checks.result == 'success' && needs.corpus-verify.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1607,8 +1630,8 @@ jobs:
 
   # nightly on main, a release on v* tags
   release:
-    needs: [changes, build, build-checks, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.build-checks.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, build-checks, corpus-verify, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.build-checks.result == 'success' && needs.corpus-verify.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
