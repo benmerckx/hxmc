@@ -4,10 +4,10 @@ import compiler.server.ServerCompilationContext;
 import context.Common;
 
 // What a compilation server keeps between requests, kept under a cap
-// (-D hxmc.server-mb=<n>, else HXMC_SERVER_MB=<n>: n MB of live heap; unset
-// or 0: no cap; each compilation's own, read at its start). The server
-// keeps a context per signature (the typed modules of every program it built,
-// with their macros' contexts), hxmc keeps the objects of each output it wrote
+// (-D hxmc.server-mb=<n>: n MB of live heap; unset or 0: no cap; each
+// compilation's own, read at its start). The server keeps a context per
+// signature (the typed modules of every program it built, with their
+// macros' contexts), hxmc keeps the objects of each output it wrote
 // (Driver.memObjs) and the macro interpreter: a second project built in the
 // same server keeps the first's as well, which a server with little memory
 // (a browser's worker, wasm32: its memory never shrinks) cannot afford.
@@ -32,7 +32,7 @@ import context.Common;
 // dropped: the cap is not a limit on one project. hxmc.stats (HXMC_STATS=1)
 // prints what is dropped.
 class ServerMemory {
-	// (the running or last compilation's: -D hxmc.server-mb, else HXMC_SERVER_MB, read in begin)
+	// (the running or last compilation's: -D hxmc.server-mb, read in begin)
 	static var cap:Float = -1;
 	static var stats = false; // (-D hxmc.stats, else HXMC_STATS)
 

@@ -29,7 +29,7 @@ class Options {
 
 	public function codesigned():Bool
 		return codesignId != null || codesignInfoPlist != null || codesignResources != null || codesignEntitlements != null;
-	public var opt = true; // MIR optimizations (HXMC_OPT=0: off)
+	public var opt = true; // MIR optimizations (-D hxmc.opt=0: off)
 	// the flags of FLAGS this build sets, +name=value each (Driver.toolKey)
 	public var codeKey = "";
 	// -D hxmc.compact=0: @:hxmc.compact changes nothing, its reference fields 8 bytes (Main.compactRefs)
@@ -61,16 +61,25 @@ class Options {
 	public var llvmPgo:Null<String> = null;
 	public var llvmInline = false;
 
-	// the variable a flag falls back to: HXMC_STATS for hxmc.stats
-	public static function flagVar(name:String):String
+	// the flags a variable sets too, for what sets no define: the tests and
+	// CI (HXMC_STATS=1, HXMC_DUMP, HXMC_REACH_WHY, HXMC_SYMBOLS,
+	// HXMC_MODULE_CACHE_LOG), the Mir tier's and LLVM's switches
+	static final VARS = ["hxmc.stats", "hxmc.dump", "hxmc.reach-why", "hxmc.symbols", "hxmc.module-cache-log"];
+
+	// the variable of a flag (HXMC_STATS for hxmc.stats), or null
+	public static function flagVar(name:String):Null<String> {
+		inline function has(p:String)
+			return StringTools.startsWith(name, p);
+		if (!VARS.contains(name) && !has("hxmc.mir-") && !has("hxmc.macro-") && !has("hxmc.llvm")) return null;
 		return name.toUpperCase().split(".").join("_").split("-").join("_");
+	}
 
 	// a flag: its define (-D turns the dashes into underscores), else its
 	// variable (flagVar); null: neither, or empty. Without defines (read before
 	// any build: the up-to-date check, the Mir interpreter's setup): the variable
 	public static function flag(name:String, ?defines:core.Define.DefineContext):Null<String> {
-		var u = name.split("-").join("_");
-		var v = defines != null && core.Define.rawDefined(defines, u) ? core.Define.rawDefinedValue(defines, u) : Sys.getEnv(flagVar(name));
+		var u = name.split("-").join("_"), e = flagVar(name);
+		var v = defines != null && core.Define.rawDefined(defines, u) ? core.Define.rawDefinedValue(defines, u) : e != null ? Sys.getEnv(e) : null;
 		return v == null || v == "" ? null : v;
 	}
 
@@ -109,7 +118,7 @@ class Options {
 		#end
 	}
 
-	public var jobs = 0; // parallel module compilations (HXMC_JOBS, -D hxmc.jobs; 0: the cores)
+	public var jobs = 0; // parallel module compilations (-D hxmc.jobs; 0: the cores)
 	public var dump:Null<String> = null; // function names whose machine code is printed (HXMC_DUMP)
 	// -D hxmc.link=<path>[,<path>...]: objects and archives linked with the program (LinkInputs)
 	public var links:Array<String> = [];

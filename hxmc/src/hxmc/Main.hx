@@ -22,8 +22,8 @@ package hxmc;
 //                                   a Mach-O output signed ad hoc as `codesign -s -` signs, binding a
 //                                   bundle's files a packager wrote (default: linker-signed; CodeSign)
 //   -D hxmc.output=<path>           the output, instead of --custom-target's
-//   -D hxmc.no-frame-pointers       x86-64: no frame record in functions (the default keeps one, for
-//                                   perf -g and debuggers; HXMC_FRAME_POINTERS=0 off; arm64 always)
+//   -D hxmc.frame-pointers=0        x86-64: no frame record in functions (the default keeps one, for
+//                                   perf -g and debuggers; arm64 always)
 //   -debug                          source lines for debuggers (DWARF on ELF and Mach-O), symbols
 //   -D hxmc.no-stacks               no call stacks (haxe.CallStack, exception stacks: empty); by
 //                                   default a program that reads them gets its table of functions and
@@ -39,7 +39,7 @@ package hxmc;
 //   -D hxmc.gc-prefault             Linux: the collector faults in the old space's pages on a helper
 //                                   thread: less wall time for more CPU time (the compilers' builds)
 //   -D hxmc.compact=0               @:hxmc.compact changes nothing: reference fields 8 bytes everywhere
-//                                   (HXMC_COMPACT=0 too; docs/hxmc.md, "Compressed references")
+//                                   (docs/hxmc.md, "Compressed references")
 //   HXMC_RT_OBJ                     the runtime object (default: <target>/rt.o where Options.rtSearch finds it)
 //   HXMC_RT_DIR                     directories of runtime objects, searched first (added to the search)
 //   HXMC_STATS=1                    print what the build did and how long it took
@@ -70,7 +70,7 @@ class Main {
 			// every six builds, peak 6.7 GB; 4 GB and 150%, three, peak 5.8 GB
 			// (the first major collection's, at the first limit); 2 GB and 150%,
 			// five, peak 4.8 GB)
-			if ((Sys.getEnv("RT_OLD_MB") == null || Sys.getEnv("RT_OLD_GROWTH") == null) && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
+			if ((Sys.getEnv("RT_OLD_MB") == null || Sys.getEnv("RT_OLD_GROWTH") == null) && Sys.systemName() != "Wasi") {
 				if (Sys.getEnv("RT_OLD_MB") == null) Sys.putEnv("RT_OLD_MB", "2048");
 				if (Sys.getEnv("RT_OLD_GROWTH") == null) Sys.putEnv("RT_OLD_GROWTH", "150");
 				Sys.exit(Sys.command(Sys.programPath(), ["--server"].concat(args)));
@@ -119,7 +119,7 @@ class Main {
 		// fixed 256 MB would triple a small build's peak memory). The runtime
 		// reads the limit at startup, so the tool runs itself again with it set
 		// (not under WASI: no processes).
-		if (Sys.getEnv("RT_OLD_MB") == null && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
+		if (Sys.getEnv("RT_OLD_MB") == null && Sys.systemName() != "Wasi") {
 			Sys.putEnv("RT_OLD_MB", "768");
 			Sys.exit(Sys.command(Sys.programPath(), [out].concat(args)));
 		}
