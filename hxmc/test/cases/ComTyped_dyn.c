@@ -232,6 +232,9 @@ EXPORT HRESULT counter_new(Counter **out) {
 EXPORT int32_t counter_live(void) { return live; }
 EXPORT int32_t counter_released_on(void) { return released_on; }
 
+// a span and a counter: its length and the count
+EXPORT int32_t counter_peek(const uint8_t *p, size_t n, Counter *c) { return (int32_t)n + c->n; }
+
 // a COM interface a Haxe class implements, called from C: on this thread,
 // and from a thread of C's own (one the runtime did not start)
 EXPORT int32_t callback_run(ICallback *cb, int32_t x) {

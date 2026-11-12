@@ -4298,6 +4298,17 @@ class FnLower {
 			for (i in 0...xs.length)
 				isConst(xs[i]) || xs[i].match(ELocal(_)) || ats[i].match(TStruct(_)) ? xs[i] : ELocal(asLocal(xs[i], ats[i]))
 		];
+		// (a COM interface's pointer before any span is lent or string copied:
+		// rt_com_ptr throws and collects, as the COM methods' conversions)
+		var ifaces = new Map<Int, Ex>();
+		for (i in 0...vs.length)
+			switch p.args[i] {
+				case AIface(ic) if (!nulls.exists(i)):
+					// (its interface pointer, borrowed for the call; null: NULL)
+					if (Lower.targetOs != 2) cfail(what + " " + cf.cfName + " takes a COM interface: COM objects exist on Windows only", e);
+					ifaces.set(i, temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(vs[i], ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)));
+				case _:
+			}
 		if (fills != null)
 			for (fill in fills)
 				fill();
@@ -4392,10 +4403,8 @@ class FnLower {
 						out.push(SIf(EBin(RefEq, o, ENull(ats[i])), vector(), vector(SSetField(ci, ci.fieldIndex("value"), o, ELocal(v)))));
 					});
 					push(ELocal(slot), TI64, true);
-				case AIface(ic):
-					// (its interface pointer, borrowed for the call; null: NULL)
-					if (Lower.targetOs != 2) cfail(what + " " + cf.cfName + " takes a COM interface: COM objects exist on Windows only", e);
-					push(temp(TI64, ECallHost("rt_com_ptr", Vector.fromArrayCopy([coerce(vs[i], ats[i], TRef(RAny))].concat(comIid(ic, e))), TI64)), TI64, true);
+				case AIface(_):
+					push(ifaces.get(i), TI64, true);
 				case AString:
 					// (a copy for the call, freed after it)
 					var cs = temp(TI64, ECall(support("cstring"), vector(vs[i])));
