@@ -21,11 +21,11 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | --- | --- |
 | `Main.hx`, `Options.hx`, `Driver.hx` | the tool: runs the port's compiler with a generate hook, compiles modules in parallel (cached) and links; `--server` keeps a compilation server resident |
 | `HaxeMain.hx` | `haxe` with hxmc built in (the npm package) |
-| `ir/Ir.hx`, `Lower.hx`, `FnLower.hx`, `LowerQueries.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the typed AST. A body asks the program's lowering only what `LowerQueries` lists |
+| `ir/Ir.hx`, `Lower.hx`, `FnLower.hx` | the IR (structured statements in A-normal form, explicit GC points) and the lowering of the typed AST |
 | `ir/Reach.hx` | the functions the program can run ([Reachability](#reachability)) |
 | `ir/RuntimeSymbols.hx` | the runtime symbols generated code calls by name ([below](#the-symbols-generated-code-calls)) |
 | `ir/Facts.hx`, `Prep.hx` | program-wide facts: names, layouts, type indices, field ids, no-GC functions, GC points |
-| `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint, lowered bodies reused by the server |
+| `UpToDate.hx`, `Fingerprint.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint |
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
 | `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM, dead code, barriers and frame slots nothing needs |
 | `LoopVersion.hx` | counted loops over Arrays they cannot change: a copy whose Array reads have no tests, entered when one test before the loop finds the arrays of the kind and long enough (`-D hxmc.loop-version=0`: off) |
@@ -91,11 +91,7 @@ generate hook (`compiler.Compiler.generateHook`) calls `generate`.
 
 The hook may push functions on `prog.funcs` (a `FuncInfo` with a
 `module`: hxmc compiles each module's functions into one object), and
-reach them from code it changes or from `prog.roots`. Under a compilation
-server the lowered bodies are reused between builds (`LowerCache`): give a
-function a new `body` vector rather than writing into the one it has (a
-body the hook replaced is scanned anew by Facts: what LowerCache keeps of a
-scan is the lowering's body's).
+reach them from code it changes or from `prog.roots`.
 `hxmc/test/frontend/Frontend.hx` is an example (`FrontendCheck`). The IR is
 hxmc's internal format: it can change in any version, so a frontend builds
 against the sources of the `@hxmc/cli` it runs with.
@@ -347,9 +343,8 @@ away and reachability drops them (the corpus' `CompactFree`, `not-live`).
 A `#if` cannot say it, the metadata being known only after typing. Being
 in the bodies' IR, the fact keys the object cache with them (`Fingerprint`:
 the collector's object compiled for one program is not linked into the
-other, `CacheCheck`'s "compact and back"); the compilation server's
-lowered bodies are dropped when it changes (`LowerCache`). A tool that
-knows `Mem.compact` defines `hxmc.memcompact` (`TargetFlags`); without it
+other, `CacheCheck`'s "compact and back"). A tool that knows
+`Mem.compact` defines `hxmc.memcompact` (`TargetFlags`); without it
 (the committed stage0) `compactTypes()` is true and each type is tested
 at run time.
 
@@ -1146,20 +1141,16 @@ Open items: [plans/compiler.md](plans/compiler.md#cached-modules).
 Between requests a compilation server keeps a context per signature (the
 typed modules of each program it built, and their macros' contexts),
 hxmc the objects of each output it wrote (`Driver.memObjs`: wasm32's are
-not kept on disk), the lowered bodies of the last program
-(`LowerCache`), and the macro interpreter. Measured with helder's
+not kept on disk) and the macro interpreter. Measured with helder's
 compiler as wasm32 (helder's todo, then its ts-todo, each built and then
 edited): 285 MB live after todo, 494 MB after both; of those, the
-contexts 271 MB (both programs'), the lowered bodies 86 MB (ts-todo's),
-the objects 21 MB, the program the last build lowered 21 MB, the macro
+contexts 271 MB (both programs'), the lowered bodies (since
+no longer kept) 86 MB, the objects 21 MB, the program the last build lowered 21 MB, the macro
 interpreter and the rest 75 MB.
 
 - What one build sets for its code generation is released after it
   (`Driver.release`: the functions that may be inlined, the reference
-  slots of the types), and the lowered bodies are dropped when a program
-  of another signature is lowered (`Main.lowerSign`: a body is found by
-  its field object, or by its module read back from that signature's
-  context, so none of them would be reused).
+  slots of the types).
 - `-D hxmc.server-mb=<n>` (else `HXMC_SERVER_MB`, each compilation's own)
   caps what it keeps (`ServerMemory.hx`). A compilation's group is its signature at the start of its typing and the
   contexts it touched (and their children). When a compilation is of
@@ -1170,7 +1161,7 @@ interpreter and the rest 75 MB.
   heap holds more than n MB and other groups are kept, a major collection,
   and the least recently used other groups are dropped while what is live
   is more. A group dropped is its contexts (not those a kept group uses),
-  the objects of its outputs, its lowered bodies, the macro interpreter
+  the objects of its outputs, the macro interpreter
   (made again by the next compilation's first macro) and the filters of
   the last macro context; its next build is a cold one. What one group
   keeps is never dropped: the cap is no limit on one program. `hxmc.stats`
@@ -1954,9 +1945,8 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.map=<file>`, `hxmc.pe-diag=<parts>` | `HXMC_MAP`, `HXMC_PE_DIAG` | no | Windows: a link map; variants for a loader's refusal |
 | `hxmc.module-cache=0` | `HXMC_MODULE_CACHE` | no | no module cache (or `-D hxmc.no-module-cache`; [using.md](using.md#fast-rebuilds)) |
 | `hxmc.module-cache-log` | `HXMC_MODULE_CACHE_LOG` | no | why each module was typed again |
-| `hxmc.lower-cache=0`, `hxmc.lower-check`, `hxmc.lower-only` | `HXMC_LOWER_CACHE`, `..._CHECK`, `..._ONLY` | no | a server: no reused lowering, or checked against a fresh one; stop after the lowering |
+| `hxmc.lower-only` | `HXMC_LOWER_ONLY` | no | stop after the lowering (HeaderCheck) |
 | `hxmc.server-mb=<n>` | `HXMC_SERVER_MB` | no | a server keeps what it keeps between requests under n MB of live heap, dropping the least recently used other programs' ([above](#what-a-compilation-server-keeps)) |
-| `hxmc.lower-why`, `hxmc.lower-noskip` | `HXMC_LOWER_WHY`, `HXMC_LOWER_NOSKIP` | no | the lowering cache: why a body was lowered again; every type bound again |
 | `hxmc.macro-stats`, `hxmc.macro-debug` | `HXMC_MACRO_STATS`, `HXMC_MACRO_DEBUG` | no | Mir macros ([above](#macros-on-the-mir-interpreter)): counts and times; the loader's log |
 | `hxmc.mir-cache=0\|1`, `hxmc.mir-host=0` | `HXMC_MIR_CACHE`, `HXMC_MIR_HOST` | no | their compiled functions kept or not; all interpreted |
 | `hxmc.mir-lazy=0`, `hxmc.mir-cold=<words>` | `HXMC_MIR_LAZY`, `HXMC_MIR_COLD` | no | every function compiled with its bundle; above this size without the optimizer |

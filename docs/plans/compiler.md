@@ -65,14 +65,14 @@ The plan (the `lean-plan` branch's lean.md, step 4): one per-module
 store, keyed by the module's source and the interface hashes of what it
 depends on, holding the typed module, the IR per function and the object
 code, with one invalidation rule, in place of `ModuleCache`,
-`ModuleCacheState`, `ModuleStore`, `ModuleInterface`, `LowerCache`,
+`ModuleCacheState`, `ModuleStore`, `ModuleInterface`,
 `ObjectStore` and `interp/BundleCache`, with `Fingerprint` and `CacheDir`
 folded in (with `WatchedCallbacks`, `CheckingHxbWriter`, `Skeletons` and
 `UpToDate`: 6,500 lines; 41 files of `hxmc/src` and `haxe/src` refer to
 them). What it must keep: the gate (`make test-module-cache`, with the
 macro-defined cases), the fixpoint cold, warm and off, the variants per
-define, nondeterministic macros, the cap and trim, the off switch, the
-server's reuse of lowered bodies, Mir's compiled functions.
+define, nondeterministic macros, the cap and trim, the off switch, Mir's
+compiled functions.
 
 **Current state** (after stage 1 and 2a; lines of `hxmc/src/hxmc`):
 
@@ -81,7 +81,6 @@ server's reuse of lowered bodies, Mir's compiled functions.
 | typed modules: `ModuleCache` (1,694), `ModuleCacheState` (663), `WatchedCallbacks` (125), `CheckingHxbWriter` (69), `Skeletons` (207) | per module, up to four variants: HXB chunks, monomorphs' modifiers, skeletons, `ModuleDefExtra`, defines read, file record, dependencies with the hash each had, what its dependents expected of it (`shape`), macro state, marks | the index: `CacheKey` `ModuleIndex` of working directory, std, class paths; a variant: its reads match the build's defines; a module: `CacheKey` `TypedModule` (file content, reads, dependencies' `expect`) | `i/m<hash>` (header + `ModuleStore` index), `p/<nonce>.pk` | lazy, per module the build loads (`ServerCache.checkModuleHook`): file by content hash, path resolution, defines, each dependency's interface or whole-content hash (`Closure`), macro state (retype and rerun), volatile, file and environment reads; early cutoff; definer rule for macro-defined modules; one verdict per module (`ModuleCacheState.verdicts`), final at the capture | the port's server hooks (`ServerCache`, `TFunctions.dependencyHook`, `MacroContext.definedHook`, `EvalStdLib` hooks), `finish` writes | `ModuleCacheCheck` (the gate), fixpoint, `CacheCheck` |
 | encoding: `ModuleStore` (589) | the index and blob formats | | inside the index and packs | `MAGIC` | `ModuleCache`, `ModuleCacheState` | as above |
 | interfaces: `ModuleInterface` (577) | nothing: hashes of a module's declarations without the bodies of functions with written types | | | | `ModuleCache` (as files are parsed) | as above |
-| lowered bodies: `LowerCache` (1,253) | in memory, server only: per field, the lowered body and the queries it asked with their answers (a type only when its replay can do something: not one whose objects a type before it bound), what Facts found in it | the field object, or module/class/field while the module's `m_processed` is the same | none | a query answered differently, or an object the binding does not know: the whole lowering again; target, flags and resources change: all | `Main.generate` under `Driver.resident` | `LowerQueriesCheck`, `make dev-check` (server-verify) |
 | module objects: `Driver` (was `ObjectStore`, 83) | per module, its object (ELF); in a server also in memory (`memObjs`) | `CacheKey` `ModuleObject` of the `Fingerprint` (tool key, IR, what `MirBuild` reads, inlined callees' digests) | `o/o<hash>-<module>.o`; per output `i/l<hash>` naming them; `<out>.hxmc/` without a store | content-addressed: a new key misses | `Driver.build` | fixpoint, corpus, `CacheCheck` |
 | Mir macro functions: `interp/BundleCache` (123) | per function, its object, its key and symbol, which calls are interpreted | `CacheKey` `MacroFunction` of the `Fingerprint` with the tool key and Mir options | `o/f<hash>-mir.o`; per command line `i/l<hash>` | content-addressed, plus its dependencies checked when read | `interp/MirMacros` | `MirCacheCheck` |
 | up to date: `UpToDate` (131) | per output, the build's key and the stamps of linked files | archive's ZIP directory, arguments, tool, runtime objects | `i/u<hash>` (else `<out>.hxmc/build.key`) | any change of the key or a stamp | `Main` (`--hxb-lib` builds only) | corpus (archive builds) |
@@ -146,19 +145,17 @@ server's reuse of lowered bodies, Mir's compiled functions.
        linking. 2b is the large win; 2c saves at most the keys.
    - **2b, bodies**: a `CacheKind` `LoweredBodies` entry per module
      (`i/b<hash>`, keyed by `TypedModule` and the lowering's switches
-     `LowerCache.lower` compares: target, platform, Mir host, lines,
+     the lowering reads: target, platform, Mir host, lines,
      bounds, null and span checks, resources), holding its fields' lowered
      bodies and recorded calls. A one-shot build replays it for a module
-     whose final verdict is `Valid` through the `byKey` path (`translating`:
-     each class and field the current build's of the same path), which
-     exists already. What it needs: a codec for `Stmt`/`Ex` and for
+     whose final verdict is `Valid`, each class and field
+     bound to the current build's of the same path. What it needs: a codec for `Stmt`/`Ex` and for
      `LCall`'s arguments and results, whose objects (`T`, `TClass`,
      `FuncInfo`, `ClassInfo`, `Ty`) are written by path and name (types
      structurally: anonymous structures, functions, monomorphs bound or
      not) and read back through the binding; `Entry.gen`'s numbers bound
-     anew, as a replay does. Keep the in-memory replay for the server. A
-     mismatch still abandons the whole lowering, so the gate and
-     `LowerQueriesCheck` must cover a stale entry. Risks: `@:logged`
+     anew, as a replay does. A mismatch
+     abandons the whole lowering, so the gate must cover a stale entry. Risks: `@:logged`
      queries that return objects by identity (each needs a name), entries
      of DCE-removed fields (written only for what the build lowered),
      store size (bodies are larger than HXB: measure on the self-build).
@@ -187,8 +184,7 @@ server's reuse of lowered bodies, Mir's compiled functions.
 4. **Removal**: `ModuleStore`'s index format folds into the entries
    (`CacheStore` holds per-module entries, not one index per class path),
    `UpToDate` becomes an entry over the module entries (no ZIP directory),
-   `ObjectList` indexes go once objects belong to module entries,
-   `LowerCache`'s in-memory replay goes behind the stored bodies.
+   `ObjectList` indexes go once objects belong to module entries.
    Expected size: 3,500 to 4,500 lines in place of the 6,500, over three
    to five more PRs.
 

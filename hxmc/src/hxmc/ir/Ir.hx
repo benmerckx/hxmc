@@ -311,10 +311,6 @@ class LambdaInfo {
 	// (Facts: what a scan of its body found, made once: a program lowered in
 	// steps, interp.MirMacros, makes its facts again at each step)
 	public var gcScan:Null<GcScan> = null;
-	// (the scan of the same body in an earlier build of the compilation
-	// server, its callees this build's: LowerCache, taken by findNoGc when
-	// that build's p.stacks is this one's, Reach dropping the same calls)
-	public var gcScanned:Null<{stacks:Bool, scan:GcScan}> = null;
 	// the native code of the compiler lowering it runs it, and its body was
 	// not typed (@:hxmc.hostCode, Lower.hostCode): no body here, never
 	// compiled nor inlined; its gcScan says what that code does

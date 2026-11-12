@@ -2,7 +2,6 @@ package hxmc.ir;
 
 import hxmc.ir.Ir;
 import hxmc.ir.Lower;
-import hxmc.ir.LowerQueries;
 import hxmc.ir.CInterop;
 import hxmc.ir.Com;
 import hxmc.ir.Com.ComValue;
@@ -26,7 +25,7 @@ using core.ds.VectorTools;
 // has the representation of its typed-AST type, `ty(e.etype)`; consumers
 // convert with `coerce`.
 class FnLower {
-	var l:LowerQueries; // (not Lower: what a body asks is what the compilation server's reuse covers)
+	var l:Lower;
 	var fi:FuncInfo;
 	var self:Null<ClassInfo>;
 	var lambda:Null<LambdaInfo>;
@@ -119,7 +118,7 @@ class FnLower {
 	function stored(t:Ty):Ty
 		return Ir.isWord(t) ? TRef(RAny) : l.boxed(t);
 
-	// the default values of a function's arguments, and their variables (LowerQueries.argDefaults)
+	// the default values of a function's arguments, and their variables (Lower.argDefaults)
 	function defaultValues(f:FuncInfo):Null<Array<Null<TExpr>>> {
 		var d = l.argDefaults(f);
 		return d == null ? null : d.values;
@@ -2318,7 +2317,7 @@ class FnLower {
 	// each implementation, each after its superclass's; a reference is null.
 	function receiverDefault(c:TClass, name:String, o:Ex, i:Int, base:Null<TExpr>, t:Ty, x:Ex, given:Array<Null<Ex>>, givenTys:Array<Null<Ty>>):Null<Ex> {
 		var impls = l.implementors(c, name);
-		// (the implementations' own: LowerQueries.fieldDefaults)
+		// (the implementations' own: Lower.fieldDefaults)
 		var dfs = [for (k in impls) l.fieldDefaults(k.cls, k.field)];
 		inline function defaultOf(j:Int):Null<TExpr> {
 			var d = dfs[j];

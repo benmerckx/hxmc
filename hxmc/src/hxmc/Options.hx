@@ -136,8 +136,6 @@ class Options {
 		LinkPE.mapFile = flag("hxmc.map", d);
 		hxmc.ir.Lower.surveyFile = flag("hxmc.survey", d);
 		hxmc.ir.Lower.survey = hxmc.ir.Lower.surveyFile != null;
-		LowerCache.CachedLower.skipTy = !on("hxmc.lower-noskip", false, d);
-		LowerCache.CachedLower.whyOn = on("hxmc.lower-why", false, d);
 		ModuleCache.stats = on("hxmc.stats", false, d);
 		#if (hxmc.target != "wasm32-wasi")
 		var ms = on("hxmc.macro-stats", false, d);
