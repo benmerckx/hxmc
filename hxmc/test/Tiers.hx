@@ -191,9 +191,10 @@ class Tiers {
 			lane("x64", corpus(cases));
 			lane("x64 RT_VERIFY verify-tags", corpus(null, ["RT_VERIFY" => "1"], cases, VERIFY_TAGS));
 			lane("wasm node", corpus("wasm32-wasi", null, cases));
-			// (the old space's major collections, compactions mostly, at every 16 MB
-			// promoted, and under a budget of linear memory, checked)
-			lane("wasm node compacting RT_VERIFY", corpus("wasm32-wasi", ["RT_MINOR_KB" => "64", "RT_OLD_MB" => "1", "RT_MAX_MB" => "64", "RT_VERIFY" => "1"], cases));
+			// (the old space's major collections at every 16 MB promoted, all
+			// compactions (RT_COMPACT=2: a small program would grow memory and
+			// copy, RT_GROW_MB), and under a budget of linear memory, checked)
+			lane("wasm node compacting RT_VERIFY", corpus("wasm32-wasi", ["RT_MINOR_KB" => "64", "RT_OLD_MB" => "1", "RT_MAX_MB" => "64", "RT_COMPACT" => "2", "RT_VERIFY" => "1"], cases));
 			lane("module cache store", script(["CacheCheck"]));
 			lane("lower queries", script(["LowerQueriesCheck"]));
 			if (Sys.systemName() != "Windows") lane("runtime-object search", script(["RtSearchCheck"]));
