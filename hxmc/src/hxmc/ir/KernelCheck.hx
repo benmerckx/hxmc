@@ -65,12 +65,14 @@ class KernelCheck {
 			case TParenthesis(x) | TMeta(_, x) | TCast(x, _): fromScratch(x);
 			case TIf(_, a, b): fromScratch(a) || b != null && fromScratch(b);
 			case TBlock(el) if (el.length > 0): fromScratch(el[el.length - 1]);
-			case TCall({eexpr: TField(_, FStatic(c, cf))}, args):
-				switch c.clKind {
-					case KAbstractImpl(a) if (isSpanAbstract(a)):
-						cf.cfName == "stack" || args.length > 0 && fromScratch(args[0]);
-					case _: false;
-				}
+			case TCall({eexpr: TField(_, FStatic({clKind: KAbstractImpl(a)}, {cfName: "stack"}))}, _) if (isSpanAbstract(a)):
+				true;
+			// (a call's span may be any span argument's: an identity kernel, a sub)
+			case TCall(_, args):
+				var any = false;
+				for (a in args)
+					if (fromScratch(a)) any = true;
+				any;
 			case _: false;
 		}
 

@@ -282,7 +282,7 @@ converts to a `ReadOnlySpan`, never back.
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1, checked |
 | `s.load(i)`, `s.store(i, v)`, `s.compareExchange(i, expected, replacement)` | atomic accesses of element i, checked as `s[i]`: of `Int`, `UInt` (`Int32`, `UInt32`) and `Int64` elements; sequentially consistent, so a load acquires and a store releases. `compareExchange` writes replacement if the element holds expected and returns what it held. A `ReadOnlySpan` has `load` only |
 | `s.add(i, v)`, `s.exchange(i, v)` | atomic: v added to element i, v into element i; the value it held (of the same elements as `load`; a `Span` only) |
-| `Span.stack(n)` | n zeroed elements in the kernel's frame (a constant n, up to 65536): scratch while the kernel runs, never its result (`reject/SpanStackResult`); on the other targets a `Bytes` of its own |
+| `Span.stack(n)` | n zeroed elements in the kernel's frame (a constant n, up to 65536): scratch while the kernel runs, never its result, also through a call given it (`reject/SpanStackResult`, `SpanStackCall`); on the other targets a `Bytes` of its own |
 
 A failed check cannot throw in kernels (a throw allocates): the
 program ends with exit code 2 and a message on stderr:
