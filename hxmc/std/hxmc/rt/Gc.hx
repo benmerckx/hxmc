@@ -166,6 +166,13 @@ class Gc {
 	// where the compressed references' heap ends: 32 GB, on macOS the end of
 	// the image's __HXHEAP segment (macWindow)
 	static var compactLimit:I64;
+	// a Mir host's room for the data of the code it loads, [loadedNext,
+	// loadedEnd) (reserveLow), reserved before the heap: past it nothing
+	// below 32 GB is left (Windows reserves anywhere at the lowest free
+	// address, and its shadow stack and C heap took what the regions left;
+	// macOS's window is the heap's)
+	static var loadedNext:Ptr;
+	static var loadedEnd:Ptr;
 	static var region0:Ptr;
 	static var region1:Ptr;
 	static var curRegion:Int;
@@ -2078,11 +2085,18 @@ class Gc {
 	public static function compactRefs():Bool
 		return compactWindow();
 
-	// bytes of zeroed pages below 32 GB, past the heap (compressed references
-	// on: the data of code a Mir host loads, hxmc.macro.Loader.alloc); null
-	// when none is left, or without compressed references. Never released.
-	@:hxmc.unsafe public static function reserveLow(bytes:I64):Ptr
-		return compactWindow() ? heapReserve(bytes) : Ptr.nil();
+	// bytes of zeroed pages below 32 GB, of the room init reserved for them
+	// (compressed references on: the data of code a Mir host loads,
+	// hxmc.macro.Loader.alloc); null when none is left (RT_LOADED_MB), or
+	// without compressed references. Never released.
+	@:hxmc.unsafe public static function reserveLow(bytes:I64):Ptr {
+		bytes = (bytes + 4095) & ~(4095 : I64);
+		if (loadedNext.isNull() || loadedEnd.diff(loadedNext) < bytes) return Ptr.nil();
+		var p = loadedNext;
+		loadedNext = p.addL(bytes);
+		Os.coreDump(p, bytes, true);
+		return p;
+	}
 
 	// macOS: the heap's window, the image's __HXHEAP segment (LinkMachO.heapWindow),
 	// found in the image's load commands: its address there plus the image's
@@ -2707,7 +2721,8 @@ class Gc {
 			for (t in 0...Mem.getI32(Mem.sym("rt_ntypes"), 0))
 				if (Types.hasCompact(Types.ty(t))) compactHeap = true;
 		// (a Mir host, Mem.mirHost: from 2 GB, above the native tier's window,
-		// where the code it loads goes: hxmc.macro.Loader.WINDOW_LO to WINDOW_HI)
+		// where the code it loads goes: hxmc.macro.Loader.WINDOW_LO to WINDOW_HI;
+		// its data's room first, loadedNext)
 		compactNext = ((Mem.mirHost() == 1 ? 2 : 1) : I64) << 30;
 		compactLimit = (COMPACT_LIMIT : I64) << 30;
 		// (macOS: in the image's __HXHEAP segment, LinkMachO.heapWindow)
@@ -2715,6 +2730,16 @@ class Gc {
 		// (the image's static objects, which compressed references reach too:
 		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
 		if (compactWindow() && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
+		// (a Mir host: the room for the data of the code it loads, reserveLow,
+		// first; left out of a core dump but for what is handed out)
+		if (compactWindow() && Mem.mirHost() == 1) {
+			var lb = (Os.envInt("RT_LOADED_MB", 1024) : I64) << 20;
+			var p = heapReserve(lb);
+			if (p.isNull()) die("cannot reserve the loaded code's data below 32 GB (@:hxmc.compact)\n");
+			Os.coreDump(p, lb, false);
+			loadedNext = p;
+			loadedEnd = p.addL(lb);
+		}
 		var m = Os.getenv("RT_MINOR_KB");
 		minorFixed = !m.isNull();
 		minorSize = minorFixed ? (Os.atoi(m) : I64) << 10 : (MINOR_MIN : I64);

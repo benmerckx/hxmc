@@ -401,8 +401,10 @@ class Corpus {
 		var expected = EXPECTED + "/" + c.name + ".txt";
 		if (!FileSystem.exists(expected)) return {name: c.name, status: "no-golden", detail: expected + " is missing"};
 		var haxe = FileSystem.fullPath(Sys.getEnv("HXMC_HAXE") ?? "bin/npm/native/" + hostTarget() + "/haxe");
+		var slot = takeSlot();
 		var cmd = [haxe];
-		for (cp in c.cps) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
+		var fuzz = c.name.startsWith("fuzz-");
+		for (cp in (fuzz ? [slot.fuzz(c.cps[0])] : c.cps)) cmd = cmd.concat(["-cp", FileSystem.fullPath(cp)]);
 		cmd = cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")).concat(["-D", "hxmc.run=mir"]);
 		var src = c.cps[0] + "/" + c.main + ".hx";
 		if (FileSystem.exists(src))
@@ -416,7 +418,7 @@ class Corpus {
 		// (a small nursery, as the executables get: the compiler's collector is the program's)
 		// (HXMC_MACRO_STATS=1: the bundle's sizes on stderr, its code 0 bytes: interp.InterpAbi)
 		var r = exec(cmd, {
-			cwd: d,
+			cwd: slot.dir,
 			timeout: 120,
 			env: [
 				"RT_MINOR_KB" => Sys.getEnv("RT_MINOR_KB") ?? "64",
@@ -425,6 +427,7 @@ class Corpus {
 				"HXMC_MACRO_STATS" => "1"
 			]
 		});
+		freeSlots.push(slot);
 		if (r.timedOut) return {name: c.name, status: "timeout", detail: ""};
 		if (r.err.indexOf("hxmc mir-run: ") < 0 || r.err.indexOf(" 0 bytes of code,") < 0)
 			return {name: c.name, status: "differs", detail: "no bundle without native code (HXMC_MACRO_STATS): " + tail(r.err, 400)};
@@ -434,6 +437,34 @@ class Corpus {
 			return {name: c.name, status: "differs", detail: 'diff $expected $d/got.txt\n' + lineDiff(File.getContent(expected), got, 12).join("\n") + "\n" + tail(r.err, 800)};
 		}
 		return {name: c.name, status: "ok", detail: '${fixed(now() - t0)}s'};
+	}
+
+	// --mir-run's working directories, one per thread at most (Harness.parallel
+	// has no thread index: a slot is taken from those free): the module cache
+	// keys a build's typed modules by its working directory and class paths,
+	// so a case in a directory of its own typed hxmc's std again (~0.9 s of a
+	// case's ~1 s); the slot is emptied before each case. A fuzz program (a
+	// class path of its own) is copied into one of the slot's FUZZ_DIRS,
+	// taken in turn, each only in a later second than its last copy: the
+	// cache trusts a file whose time (POSIX: whole seconds) and size are
+	// those it typed, and a program copied over another in the same second
+	// would find its files' modules.
+	static final FUZZ_DIRS = 4;
+	static final freeSlots = new sys.thread.Deque<MirSlot>();
+	static var slotCount = 0;
+	static final slotMutex = new sys.thread.Mutex();
+
+	static function takeSlot():MirSlot {
+		var s = freeSlots.pop(false);
+		if (s == null) {
+			slotMutex.acquire();
+			var k = slotCount++;
+			slotMutex.release();
+			s = new MirSlot(OUT + "/slot" + k);
+		}
+		rmrf(s.dir);
+		mkdirs(s.dir);
+		return s;
 	}
 
 	// Per-case defines must apply to typing as well as code generation.
@@ -654,4 +685,26 @@ class Corpus {
 }
 
 typedef CorpusCase = {name:String, cps:Array<String>, main:String}
+
+class MirSlot {
+	public final dir:String;
+
+	var next = 0;
+	final copied:Array<Float> = [];
+
+	public function new(dir:String)
+		this.dir = dir;
+
+	// the program's files in the next of the slot's fuzz directories
+	public function fuzz(src:String):String {
+		var k = next;
+		next = (next + 1) % @:privateAccess Corpus.FUZZ_DIRS;
+		var to = dir + "-fuzz" + k;
+		if (copied[k] != null) while (Math.ffloor(Sys.time()) <= copied[k]) Sys.sleep(0.05);
+		rmrf(to);
+		copyTree(src, to);
+		copied[k] = Math.ffloor(Sys.time());
+		return to;
+	}
+}
 typedef CorpusResult = {name:String, status:String, detail:String}

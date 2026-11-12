@@ -9,6 +9,8 @@ import hxmc.unsafe.*;
 // - **Embedded** (create): libjvm opened at run time (dlopen; libjvm), its
 //   JNI_CreateJavaVM given the options (-Djava.class.path=..., -Xcheck:jni);
 //   a JVM the process has already (JNI_GetCreatedJavaVMs) is used instead.
+//   The program then ends through Java's System.exit (main returned,
+//   Sys.exit: Os.exitHook).
 // - **Loaded into a JVM** (onLoad): the program is a shared library
 //   (-D hxmc.shared, -D hxmc.exports=JNI_OnLoad) that Java loads
 //   (System.loadLibrary); its JNI_OnLoad calls onLoad, which keeps the JVM

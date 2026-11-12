@@ -74,7 +74,7 @@ WHICH ?= arrays maps
 ARRAY_BENCH_ARGS ?=
 # `make bench-micro WHICH=maps`: keys, rounds
 MAP_BENCH_ARGS ?=
-# `make crosshost`: the arguments of hxmc/test/Crosshost.hx (CI splits the targets: "--targets a,b")
+# `make crosshost`: the arguments of hxmc/test/Crosshost.hx (CI splits the cases: "--shard i/n")
 CROSSHOST_ARGS ?= --tool
 
 # --- Sources ---
