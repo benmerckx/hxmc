@@ -362,8 +362,9 @@ a library (`haxelib run hxcpp`) still needs haxelib or lix.
 
 **The module cache.** Every build keeps its typed modules and compiled
 objects in the user's cache directory. The next build types and compiles
-only what changed, and outputs share objects. It is on by default, for
-every target.
+only what changed, and outputs share objects. The std's typed modules are
+shared by every program: a program's first build restores them from
+another program's build. It is on by default, for every target.
 
 | Variable | |
 | --- | --- |

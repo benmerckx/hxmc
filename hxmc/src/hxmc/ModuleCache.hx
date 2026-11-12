@@ -117,6 +117,10 @@ using core.ds.VectorTools;
 // HXMC_STATS=1 prints what the cache did, HXMC_MODULE_CACHE_LOG=1 each
 // module checked, each one not kept and why one is typed every build.
 //
+// The index is per class path (open); a build without one starts from the
+// index of the std's modules (stdIndex), which every index written
+// rewrites, so that programs share the typed std.
+//
 // A build rewrites its key's index when it typed modules or restored other
 // variants: its modules first, then the variants it did not use, at most
 // MAX_VARIANTS per module. Module and variable ids continue from the
@@ -1092,6 +1096,7 @@ class ModuleCache {
 		if (store == null) return null;
 		var key = CacheKey.of(ModuleIndex, [Sys.getCwd(), Sys.getEnv("HAXE_STD_PATH"), com.classPaths.asStringList().join("\n")].join("\x00"));
 		var s = new ModuleCacheState(store, key, com);
+		s.stdKey = stdIndexKey(com);
 		s.signs[0] = context.CommonCache.getCacheSign(com);
 		s.defs[0] = com.defines.values;
 		var mcom = com.getMacros();
@@ -1103,6 +1108,13 @@ class ModuleCache {
 					s.global.set(role + "\x00" + k, true);
 		}
 		var stored = store.readIndex(key);
+		// (a build without an index of its own: the std's modules another
+		// build kept, not after a build again from nothing)
+		var from = key;
+		if (stored == null && Sys.getEnv(FRESH) != "1") {
+			from = s.stdKey;
+			stored = store.readIndex(from);
+		}
 		var ix = stored == null ? null : try ModuleStore.readIndex(stored.data) catch (e:Dynamic) {
 			if (stats) Sys.println('hxmc: module cache: ${store.indexPath(key)} unreadable ($e)');
 			null;
@@ -1114,13 +1126,39 @@ class ModuleCache {
 		}
 		if (ix == null) ix = new StoreIndex();
 		s.index = ix;
-		if (ix.variants.length > 0) store.used(key);
+		if (ix.variants.length > 0) store.used(from);
 		@:privateAccess {
 			if (core.TFunctions.moduleUid.load() < ix.moduleHigh) core.TFunctions.moduleUid.store(ix.moduleHigh);
 			if (core.TFunctions.varUid.load() < ix.varHigh) core.TFunctions.varUid.store(ix.varHigh);
 		}
 		s.openTime = haxe.Timer.stamp() - t0;
 		return s;
+	}
+
+	// the index of the std's modules (stdIndex): by the std's class paths as
+	// the build gives them (the positions its modules keep), the working
+	// directory only when one of them is relative
+	static function stdIndexKey(com:CommonContext):CacheKey {
+		var dirs = [for (cp in com.classPaths.getStdPaths()) if (cp.path != "") cp.path];
+		for (cp in com.classPaths.asList())
+			if (cp.path != "" && !cp.isStdPath() && FileSystem.exists(haxe.io.Path.addTrailingSlash(cp.path) + "hxmc/rt/Runtime.hx")) dirs.push(cp.path);
+		var relative = Lambda.exists(dirs, d -> !haxe.io.Path.isAbsolute(d));
+		return CacheKey.of(ModuleIndex, ["std", relative ? Sys.getCwd() : "", Sys.getEnv("HAXE_STD_PATH"), dirs.join("\n")].join("\x00"));
+	}
+
+	// the std's variants of an index written, as the index of the std's
+	// modules: where a program's first build starts (open), so that programs
+	// share the typed std as builds of one program do. Its modules are
+	// checked as any (their files, where their paths resolve in this build,
+	// the defines they read, their dependencies), and its ids are those of
+	// the build that wrote it, as a build's own index's are
+	static function stdIndex(s:ModuleCacheState, ix:StoreIndex) {
+		var sx = new StoreIndex();
+		sx.moduleHigh = ix.moduleHigh;
+		sx.varHigh = ix.varHigh;
+		sx.variants = [for (v in ix.variants) if (v.file != null && s.isStdFile(v.file)) v];
+		if (sx.variants.length > 0)
+			try s.store.writeIndex(s.stdKey, ModuleStore.packsOf(sx), ModuleStore.writeIndex(sx)) catch (_:Dynamic) {}
 	}
 
 	public static function key(p:GlobalTypePath):String
@@ -1847,6 +1885,7 @@ class ModuleCache {
 				ix.variants = list;
 				if (ok)
 					wrote = try s.store.writeIndex(s.indexKey, ModuleStore.packsOf(ix), ModuleStore.writeIndex(ix)) catch (_:Dynamic) false;
+				if (wrote) stdIndex(s, ix);
 			}
 		}
 		if (stats) {

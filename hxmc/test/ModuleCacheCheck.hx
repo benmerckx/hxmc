@@ -44,7 +44,8 @@ using StringTools;
 // --nondet runs only the cases of macros whose results change from run to run,
 // --late those of modules macros define outside the typing of a module,
 // --defined that of a module defined in its definer's typing, edited and back,
-// --state that of a registry a macro class keeps, two programs filling it;
+// --state that of a registry a macro class keeps, two programs filling it,
+// --shared that of programs in other directories sharing the std's modules;
 // --haxe names `haxe` with hxmc built in (default: bin/npm/native/<host>/haxe).
 class ModuleCacheCheck {
 	static var dir:String;
@@ -763,6 +764,27 @@ class ModuleCacheCheck {
 		gate('no state: B back', target, pdir, args);
 	}
 
+	// programs sharing the std's modules (ModuleCache.stdIndex): the first
+	// build of a program in another directory restores them from another
+	// program's build, typing its own module only; one whose class path
+	// shadows a std module (haxe.io.Path, which hxmc's std, given last,
+	// does not override) types that module and its users
+	static function sharedStd(target:String) {
+		rmrf(dir + "/cache");
+		var main = "class Main {\n\tstatic function main() {\n\t\ttrace(haxe.io.Path.withoutExtension(\"a.b\") + [1, 2].map(x -> x + 1));\n\t}\n}\n";
+		var args = ["-cp", "src", "-main", "Main"];
+		var a = dir + "/" + target + "-shared-a", b = dir + "/" + target + "-shared-b", c = dir + "/" + target + "-shared-c";
+		write(a + "/src/Main.hx", main);
+		write(b + "/src/Main.hx", main.replace("x + 1", "x + 2"));
+		write(c + "/src/Main.hx", main);
+		write(c + "/src/haxe/io/Path.hx", File.getContent(dir + "/upstream-std/haxe/io/Path.hx").replace("s.ext = null;", "s.ext = \"shadowed\";"));
+		var first = gate('shared std, a program', target, a, args);
+		var other = gate('shared std, another program', target, b, args);
+		check('$target: shared std, another program: the std restored, its Main typed', other.read > 0 && other.typed == 1 && first.typed > 1);
+		var shadow = gate('shared std, a program shadowing haxe.io.Path', target, c, args);
+		check('$target: shared std, haxe.io.Path shadowed: typed with its users', shadow.typed > 1 && shadow.typed < first.typed);
+	}
+
 	static function main() {
 		var withPort = Sys.args().contains("--port");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/module-cache";
@@ -791,6 +813,9 @@ class ModuleCacheCheck {
 		// (--state: only the case of a registry a macro class keeps)
 		var state = Sys.args().contains("--state");
 		if (state) only = true;
+		// (--shared: only the case of programs sharing the std's modules)
+		var shared = Sys.args().contains("--shared");
+		if (shared) only = true;
 		for (target in ["hxmc", "js", "interp", "haxe-hxmc"]) {
 			for (p in programs()) {
 				if (only) continue;
@@ -928,15 +953,17 @@ class ModuleCacheCheck {
 			}
 		}
 		for (target in ["hxmc", "js", "interp"])
-			if (!late && !defined && !state) nondeterministic(target);
+			if (!late && !defined && !state && !shared) nondeterministic(target);
 		for (target in ["hxmc", "js", "interp"])
-			if (!defined && !state) lateDefined(target);
+			if (!defined && !state && !shared) lateDefined(target);
 		for (target in ["hxmc", "js", "interp"])
-			if (!late && !state && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
+			if (!late && !state && !shared && !Sys.args().contains("--nondet")) macroDefinedRevert(target);
 		for (target in ["hxmc", "js", "interp"])
-			if (!late && !defined && !Sys.args().contains("--nondet")) macroState(target);
+			if (!late && !defined && !shared && !Sys.args().contains("--nondet")) macroState(target);
 		for (target in ["hxmc", "js", "interp"])
 			if (!only) noState(target);
+		for (target in ["hxmc", "js", "interp"])
+			if (!only || shared) sharedStd(target);
 		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";

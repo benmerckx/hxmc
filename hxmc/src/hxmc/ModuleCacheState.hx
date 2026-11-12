@@ -41,6 +41,8 @@ enum abstract Verdict(Int) {
 class ModuleCacheState {
 	public var store:CacheStore;
 	public var indexKey:CacheKey;
+	// the index of the std's modules (ModuleCache.stdIndex)
+	public var stdKey:CacheKey;
 	public var com:CommonContext;
 	public var index:StoreIndex;
 	// per role (0: the program's context, 1: the macros'), its signature and

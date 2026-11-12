@@ -143,14 +143,18 @@ class CacheCheck {
 		check("the other tool writes its store again", build(b, std, cache) && tools(cache).length == 2);
 
 		// a cap of 1.6 hello programs' stores (HXMC_CACHE_SIZE; a trim leaves
-		// 0.8 of it: one program's store and not two, whatever the runtime's
-		// size) held as builds write past it: the other tool's directory goes
-		// first, then the least recently used indexes with their packs; the
-		// builds still work, and a warm one finds its store
+		// 0.8 of it) held as builds write past it: the other tool's directory
+		// goes first, then the least recently used indexes with their packs;
+		// the builds still work, and a warm one finds its store. (The programs
+		// share the std's modules, ModuleCache.stdIndex: each has a module of
+		// its own of about half a hello program's store, so that four do not
+		// fit.)
 		var capped = dir + "/capped";
 		for (i in 0...4) {
 			mkdirs(dir + "/p" + i);
-			File.saveContent(dir + "/p" + i + "/Main.hx", 'class Main { static function main() { var a = [$i]; Sys.println("hi"); } }\n');
+			var fs = [for (j in 0...1000) '\tstatic function f$j(s:String):String return s + "$i.$j" + s.length;\n'].join("");
+			var calls = [for (j in 0...1000) 's = f$j(s);'].join(" ");
+			File.saveContent(dir + "/p" + i + "/Main.hx", 'class Main {\n$fs\tstatic function main() {\n\t\tvar s = "";\n\t\t$calls\n\t\tif (s.length > 0) Sys.println("hi");\n\t}\n}\n');
 		}
 		check("capped: a build by another tool", build(b, std, capped, "hello", "1G"));
 		var cap = Math.round(du(capped + "/modules") * 1.6), size = Std.string(cap);

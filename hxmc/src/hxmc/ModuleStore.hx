@@ -12,7 +12,8 @@ import core.Message.WarningMode;
 
 // The module cache's entries in the store (CacheStore.hx; ModuleCache.hx): an
 // index per class path (CacheKey ModuleIndex: the working directory, the
-// class paths and the std) and the modules' HXB in blobs (the HXB chunks,
+// class paths and the std; a build without one starts from the index of
+// the std's modules, ModuleCache.stdIndex) and the modules' HXB in blobs (the HXB chunks,
 // the monomorphs' modifiers, the skeletons; read only for the modules a
 // build restores), in the packs of the builds that wrote them, never
 // rewritten (offset and size in the index), removed once no index names
