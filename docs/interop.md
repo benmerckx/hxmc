@@ -629,7 +629,8 @@ thread), `close()` throws instead of freeing the memory under it. A closed
 buffer is empty: its length is 0, its accessors (`get`, `set`, `fill`,
 `getBytes`, `blitFromBytes`, `blitToBytes`) and its spans throw. Each
 accessor lends it for the access as a span is lent (`BufferClose`: closed
-by another thread meanwhile). Nothing
+by another thread meanwhile): two atomic operations an access, so many
+bytes are read and written through a span or a blit. Nothing
 else frees it (hxmc has no finalizers): `Buffer.scoped(n, b -> ...)` closes
 it on every path, and inlines (no closure).
 

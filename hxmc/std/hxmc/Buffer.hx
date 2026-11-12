@@ -64,14 +64,17 @@ final class Buffer {
 	// span is: close() on another thread throws meanwhile instead of freeing
 	// it. Every range is checked first: nothing throws while it is lent
 	function lend(pos:Int, len:Int):IoBuffer {
+		check(pos, len);
+		if (take(0) < 0) throw "Buffer: closed";
+		return io;
+	}
+
+	function check(pos:Int, len:Int)
 		if (pos < 0 || len < 0 || pos > size - len) {
 			// (closed meanwhile: close() empties it once no span is lent)
 			if (lends.load() < 0) throw "Buffer: closed";
 			throw Error.OutsideBounds;
 		}
-		if (take(0) < 0) throw "Buffer: closed";
-		return io;
-	}
 
 	static inline function inside(b:Bytes, pos:Int, len:Int)
 		if (pos < 0 || len < 0 || pos > b.length - len) throw Error.OutsideBounds;
@@ -93,7 +96,8 @@ final class Buffer {
 	}
 
 	public function getBytes(pos:Int, len:Int):Bytes {
-		var b = Bytes.alloc(len < 0 ? 0 : len);
+		check(pos, len);
+		var b = Bytes.alloc(len);
 		blitToBytes(pos, b, 0, len);
 		return b;
 	}
