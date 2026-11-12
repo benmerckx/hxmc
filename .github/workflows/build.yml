@@ -47,9 +47,10 @@
 #   node, a job each (with its own tool from the stage0; make upstream-suites).
 # - test: on each target's machine, the release binary's smoke test (with a
 #   TLS handshake and libuv), lix, hxmc's corpus and the port's self-compile;
-#   then the Mir lane: the compiler with Mir macros and --run running the
-#   corpus in itself, the macro cases against the reference, and a benchmark
-#   macro and the formatter's build timed against Eval.
+#   then (but on Intel Macs) the Mir lane: the compiler with Mir macros and
+#   --run running the corpus in itself, the macro cases against the
+#   reference, and a benchmark macro and the formatter's build timed against
+#   Eval.
 # - llvm (experimental, continue-on-error): hxmc's corpus with the LLVM back
 #   end (-D hxmc.llvm, the runner's clang) on linux-x86_64, linux-arm64 and
 #   macos-arm64 machines.
@@ -1084,16 +1085,21 @@ jobs:
       # compilation server (as make mir-server-check), and a macro
       # of the benchmarks and the formatter's build against Eval (the release
       # binary; MirBench). Windows: the harnesses run one process at a time
-      # (Harness.exec changes the process's working directory there).
+      # (Harness.exec changes the process's working directory there). Not on
+      # Intel Macs (legacy, the slowest runners: the lane took ~15 of the job's
+      # 19 min; x86-64's Mir code runs in the Linux and Windows jobs).
       - name: Reference compiler revision
+        if: matrix.target != 'macos-x86_64'
         id: ref
         run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
       - name: Cache the reference compiler
+        if: matrix.target != 'macos-x86_64'
         uses: actions/cache@v6
         with:
           path: ref
           key: reference-nightly-${{ matrix.target }}-${{ steps.ref.outputs.rev }}
       - name: Mir lane, setup
+        if: matrix.target != 'macos-x86_64'
         id: mir
         run: |
           set -ex
