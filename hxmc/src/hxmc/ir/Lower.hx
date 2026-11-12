@@ -1822,7 +1822,7 @@ class Lower implements LowerQueries {
 					if (!ct.match(CI32 | CI64 | CF64 | CPtr)) throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} has the type ${CInterop.name(ct)}, which a callback cannot take yet (Int, Int64, Float, Ptr, spans)', where);
 					[ct];
 				case ACallback: throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a function', where);
-				case AString | AOut(_): throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a String or an hxmc.com.Out, which a callback cannot take yet', where);
+				case AString | AOut(_) | AIface(_): throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a String, an hxmc.Out or a COM interface, which a callback cannot take yet', where);
 			}
 			ins.push([for (ct in cts) {
 				var lo = new Local(id++, s.args[i].name, ct == CI32 ? TI32 : ct == CF64 ? TF64 : TI64);

@@ -1,0 +1,5 @@
+exit 0
+WasmTyped.hx:32: 44, -1
+WasmTyped.hx:34: 2:1 4:3 5:6
+WasmTyped.hx:36: 0, 7, -1
+WasmTyped.hx:37: -1, true

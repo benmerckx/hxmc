@@ -46,5 +46,9 @@ abstract ReadOnlySpan<T>(SpanData) {
 	// a call's argument: a value as a span of one, copied for the call (`const T *`)
 	extern public static function of<T>(x:T):ReadOnlySpan<T>;
 
+	// a call's argument in GC code: the elements of a (scalars or structs)
+	// copied into C memory for the call: many structs from GC code
+	extern public static function ofArray<T>(a:Array<T>):ReadOnlySpan<T>;
+
 	extern public static function unsafeOf<T>(p:Ptr<T>, length:Int):ReadOnlySpan<T>;
 }

@@ -1027,8 +1027,24 @@ class CachedLower extends Lower {
 		if (o == n || cf == null) return cf;
 		var r = if (o.clConstructor == cf) n.clConstructor else if (o.clStatics.get(cf.cfName) == cf) n.clStatics.get(cf.cfName) else if (o.clFields.get(cf.cfName) == cf)
 			n.clFields.get(cf.cfName) else if (o.clInit == cf) n.clInit else null;
+		if (r == null) r = sameNamed(o.clOrderedStatics, n.clOrderedStatics, cf);
+		if (r == null) r = sameNamed(o.clOrderedFields, n.clOrderedFields, cf);
 		if (r == null) mismatch("field " + cf.cfName + " is gone");
 		return r;
+	}
+
+	// (two fields of an extern with one @:native name: Native.applyNativePaths
+	// keys both by it, and the map keeps one; the other is found by its place
+	// among the fields of that name)
+	static function sameNamed(os:Array<TClassField>, ns:Array<TClassField>, cf:TClassField):Null<TClassField> {
+		var i = os.indexOf(cf);
+		if (i < 0) return null;
+		var k = 0;
+		for (j in 0...i)
+			if (os[j].cfName == cf.cfName) k++;
+		for (f in ns)
+			if (f.cfName == cf.cfName && k-- == 0) return f;
+		return null;
 	}
 
 	function tef(o:TEnum, n:TEnum, ef:TEnumField):TEnumField {

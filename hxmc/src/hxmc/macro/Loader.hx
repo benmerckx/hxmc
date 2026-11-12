@@ -1012,7 +1012,8 @@ class Loader {
 
 	// n zeroed bytes for a bundle: in the window with the native tier, else
 	// malloc's (never freed); with compressed references (compactHost) pages
-	// below 32 GB past the heap when not in the window (Gc.reserveLow)
+	// below 32 GB, of the room the collector reserved before the heap
+	// (RT_LOADED_MB), when not in the window (Gc.reserveLow)
 	@:hxmc.unsafe(gc) static function alloc(n:Int):Ptr {
 		if (n < 8) n = 8;
 		if (!low && !compactHost()) {

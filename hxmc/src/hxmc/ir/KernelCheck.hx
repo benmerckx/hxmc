@@ -458,7 +458,8 @@ class KernelCheck {
 				// (the callee is no value: its arguments only)
 				var named = simdIntrinsic(f);
 				for (a in args)
-					if (!(named && a.eexpr.match(TConst(TString(_)))) && !callbackRef(a))
+					// (null for a typed C call's Null<F> callback: NULL)
+					if (!(named && a.eexpr.match(TConst(TString(_)))) && !callbackRef(a) && !(isNullConst(a) && a.etype.follow().match(TFun(_))))
 						expr(a);
 				switch f.eexpr {
 					case TField(o, _): expr(o);

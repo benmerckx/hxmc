@@ -456,7 +456,10 @@ write(fd, ReadOnlySpan.ofBytes(b));             // GC code: the span lent for th
 | `s:String` (`@:hxmc.safe`) | a NUL-terminated UTF-8 copy for the call, NULL for null (below) |
 | a `String` result (`@:hxmc.safe`) | C's string copied, null for NULL; `@:hxmc.free(fn)`: then freed by `fn` |
 | `Span.of(x)`, `ReadOnlySpan.of(v)` as the argument | a slot of the frame holding x (copied back after the call) or v: an out-parameter from GC code (below) |
-| `o:hxmc.com.Out<IFoo>` | the address of a slot C stores an `IFoo *` in, adopted into `o.value` after the call (Windows: [COM](#com)) |
+| `Span.ofArray(a)`, `ReadOnlySpan.ofArray(a)` as the argument | an `Array`'s elements copied into C memory for the call (back into `a` after it): many structs from GC code (below) |
+| `p:Null<ReadOnlySpan<T>>`, `f:Null<F>`, `h:Null<H>` | as above, and NULL for `null` (`const T * _Nullable`, an optional function pointer or handle; a handle passed so is not checked) |
+| `o:hxmc.Out<T>` | the address of a slot, NULL at first, that C stores a `T` in: an object or a handle, stored into `o.value` after the call (below) |
+| an object (`@:hxmc.safe`) | an Objective-C or Core Foundation object, a block, a COM interface: borrowed for the call, as without `@:hxmc.safe` |
 
 Lengths are elements: a C length in bytes takes a span of `UInt8`
 (`var b:Span<UInt8> = words.reinterpret()`). A failed check ends the
@@ -467,7 +470,7 @@ program as a span's does (`hxmc: span range 0 + 9 out of range [0, 8)`,
 memory-safe given its typed parameters: it reads and writes only the spans
 it is given, within their lengths, keeps none of them past the call, and
 frees nothing it did not make. The compiler checks that nothing raw crosses
-it (no `Ptr`, `CString`, `IoBuffer` or GC value, no `@:hxmc.indirect`), and
+it (no `Ptr`, `CString`, `IoBuffer` or GC value but an object, no `@:hxmc.indirect`), and
 safe kernels may call it; that the C function keeps its side is the
 declaration's claim, as Rust's `safe fn` is. A function whose arguments a
 declaration cannot constrain (`fcntl`, whose third argument is an int or a
@@ -553,6 +556,60 @@ Lib.minmax(3, -7, 12, Span.of(lo), Span.of(hi));                // int *min, int
 
 `CBindingsStrings` and `CBindingsOut` check these (and `make header-check`
 their declarations: a `String` is checked to be `char *`).
+
+**Arrays from GC code.** `ReadOnlySpan.ofArray(a)` passes an `Array` of
+structs or scalars as `const T *`: its elements are copied into C memory for
+the call. `Span.ofArray(a)` copies them back into `a` after it (a struct
+element is a new box then). Any call takes one, a blocking one too: nothing
+moves the copy. Both are a call's arguments (`reject/SpanOfArrayOutside`).
+
+```haxe
+@:hxmc.len(rects, count) static function CGContextFillRects(c:CGContext, rects:ReadOnlySpan<CGRect>, count:USize):Void;
+
+var rects = [new CGRect(0, 0, 10, 10), new CGRect(20, 0, 10, 10)];
+CG.CGContextFillRects(ctx, ReadOnlySpan.ofArray(rects), rects.length);
+```
+
+**NULL.** A parameter of a `Null<...>` span, callback or handle type takes
+`null` as C's NULL: an optional input (`const T * _Nullable`), an optional
+function pointer, an optional handle. In a kernel too, where `null` is a
+literal there.
+
+```haxe
+@:hxmc.len(p, n) static function cn_sum(p:Null<ReadOnlySpan<Int>>, n:Int):Int;   // NULL: -1
+static function cn_apply(f:Null<Int->Int>, v:Int):Int;
+static function cn_value(n:Null<Node>):Int;
+
+N.cn_sum(null, 0);
+N.cn_apply(null, 4);
+```
+
+**Out-parameters of objects and handles.** `hxmc.Out<T>` is C's `T *` for
+a `T` that C stores: a COM interface (`IFoo **`, adopted), an Objective-C
+or Core Foundation object (`NSError **`, `CFErrorRef *`, `id *`), a
+`@:hxmc.handle` (`AUGraph *`). The call passes the address of a slot that
+starts NULL, and stores what C left there into `out.value` (null for NULL,
+or a handle's invalid value). `hxmc.com.Out` is the same type.
+
+An object out-parameter is borrowed, as ARC's `__autoreleasing` ones are
+(`NSError **` of messages, the Get rule's `const void **`), and `out.value`
+holds a reference to it. A C function of the Create rule (`Create` or
+`Copy` in its name) gives it owned, as its result; `@:hxmc.retained(p)`
+says so of the parameter `p` of any other function or message. Either way
+it is released for you. A null `Out` passes NULL.
+
+```haxe
+@:hxmc.retained @:hxmc.len(format, 1)
+static function CFPropertyListCreateWithData(alloc:Null<CFAllocator>, data:CFData, options:Int64,
+  format:Null<Span<Int64>>, error:Out<CFError>):Null<CFDictionary>;   // the error: the Create rule's
+static function CFDictionaryGetValueIfPresent(d:CFDictionary, key:Id, value:Out<Id>):Bool;
+
+var error = new Out<CFError>();
+if (CF.CFPropertyListCreateWithData(null, data, 0, null, error) == null) trace(CF.CFErrorGetCode(error.value));
+```
+
+`CBindingsArrays`, `CBindingsNull` (a handle's `Out`) and `ObjCCFTyped`
+check these.
 
 ### Owned buffers
 
@@ -1064,7 +1121,8 @@ if (command == Selector.of("moveDown:")) ...
 - **Types** in messages are those of C calls: scalars, `Ptr`, `@:hxmc.struct`
   values (by value, both ways), Objective-C classes (`id`), Haxe classes
   extending them (their `id`), `Selector`. `Null<NSView>` is an `id` whose
-  nil is `null`, never a box.
+  nil is `null`, never a box. Strings, spans, out-parameters and C function
+  pointers are those of typed bindings ([Typed messages](#typed-messages)).
 - **`Selector.of("name:")`**: a selector as a value, from a string literal.
 
 ### Calls
@@ -1095,6 +1153,43 @@ a variadic function's (on Apple's arm64, on the stack), objects only for
 now, and `nil` after them when the method is `@:hxmc.nilTerminated`
 (`NS_REQUIRES_NIL_TERMINATION`). A spread array (`...xs`) is an error: its
 length is not the call's.
+
+### Typed messages
+
+Messages take the forms of [typed bindings](#typed-bindings), so the SDKs'
+pointers need no raw memory:
+
+| Declared | Passed |
+| --- | --- |
+| `s:String`, a `String` result or property | `const char *`: a UTF-8 copy for the message; a result copied (borrowed, as `UTF8String`'s). No `@:hxmc.safe` needed |
+| `p:Span<T>` with `@:hxmc.len(p, n)` | its address; `n`, a parameter of its own (a piece of the selector) or a constant, checked against its length. A span without `@:hxmc.len` is an error (`reject/ObjCSpanLength`) |
+| `Span.of(x)`, `ReadOnlySpan.of(v)`, `ofArray`, `ofBuffer` | as for C functions; a Bytes only to a `@:hxmc.fast` message |
+| `e:hxmc.Out<NSError>`, `v:Out<Id>` | `NSError **`, `id *`: borrowed, as ARC's `__autoreleasing` (`@:hxmc.retained(e)`: owned) |
+| `f:F` named by `@:hxmc.callback(f)` | a C function pointer, a static `@:hxmc.callback` by name (a function type is a block otherwise) |
+| `Null<...>` of these | NULL for `null` |
+
+```haxe
+@:hxmc.framework("Foundation") @:hxmc.objc extern class NSString extends NSObject {
+  static function stringWithUTF8String(s:String):Null<NSString>;
+  function UTF8String():String;
+  static function stringWithContentsOfFile(path:NSString, encoding:Int64, error:Out<NSError>):Null<NSString>;
+  @:hxmc.len(startPtr, 1) @:hxmc.len(end, 1) @:hxmc.len(contentsEnd, 1)
+  function getLineStart(startPtr:Span<Int64>, end:Span<Int64>, contentsEnd:Span<Int64>, forRange:NSRange):Void;
+}
+@:hxmc.framework("Foundation") @:hxmc.objc extern class NSArray extends NSObject {
+  @:hxmc.callback(comparator)
+  function sortedArrayUsingFunction(comparator:(a:Id, b:Id, context:I64) -> Int64, context:I64):NSArray;
+}
+
+var error = new Out<NSError>();
+if (NSString.stringWithContentsOfFile(path, 4, error) == null) trace(error.value.code());
+s.getLineStart(Span.of(start), Span.of(end), Span.of(contents), new NSRange(15, 1));
+```
+
+A Haxe method Objective-C calls takes none of these yet: an override of a
+method with a span, an `Out` or a C function pointer is an error
+(`reject/ObjCTypedOverride`). `ObjCTyped` checks them, built with
+`-D hxmc.strict`.
 
 ### Haxe classes extending Objective-C classes
 
@@ -1432,7 +1527,10 @@ subclassed); extern classes may extend it.
   owns, as the Create rule's (`CGColorCreate`, `CTFontCopyFullName`),
   autoreleased at once as `new`'s and `copy`'s are. Releasing them by hand
   (`CFRelease`, `CGColorRelease`) unbalances the count: hxmc releases what
-  it holds.
+  it holds. An object out-parameter (`CFErrorRef *`) is an `hxmc.Out<T>`,
+  owned by the Create rule's functions ([Typed bindings](#typed-bindings)).
+- **Typed calls**: a `@:hxmc.safe` function takes and returns objects beside
+  Strings and spans (`CFStringCreateWithCString(alloc, s:String, enc)`).
 
 ### Memory
 
@@ -1712,7 +1810,7 @@ and arm64; `ComElsewhere` the other targets.
 | `hxmc.com.BStr` (a `String`) | `BSTR`: SysAllocStringLen's for the call, freed after it; a result's freed once copied (an embedded NUL kept; a null BSTR reads `""`) |
 | `hxmc.com.Variant` | `VARIANT`, a struct value ([BSTR and VARIANT](#bstr-and-variant)) |
 | `Span<T>`, `ReadOnlySpan<T>` | its address, then its length (a `size_t`) unless `@:hxmc.len(p, n)` names a count or a minimum, checked as for C functions ([Typed bindings](#typed-bindings)): an array, or an out-parameter (`Span.of(x)`) |
-| `hxmc.com.Out<IFoo>` | `IFoo **`, an `[out]` interface: a slot whose pointer is adopted into `out.value` after the call (null for NULL); a C function may take one too |
+| `hxmc.Out<IFoo>` (`hxmc.com.Out`) | `IFoo **`, an `[out]` interface: a slot whose pointer is adopted into `out.value` after the call (null for NULL); a C function may take one too |
 
 - **Out parameters** beyond the `[out, retval]` one are spans: `Span.of(x)`
   of a variable from GC code, copied back after the call (`@:hxmc.len(a, 1)
@@ -2018,7 +2116,7 @@ their Java from it ([plans/jni.md](plans/jni.md#the-glue);
 
 | | |
 | --- | --- |
-| `Jvm.create(options)` | embeds a JVM: libjvm opened at run time (`dlopen`; `Jvm.libjvm()`: `HXMC_LIBJVM`, else `JAVA_HOME`'s `lib/server/libjvm.so`, `jre/lib/<arch>/server` for Java 8, `libjvm.dylib` on macOS, else `/usr/lib/jvm/default-java`, else the loader's search), `JNI_CreateJavaVM` with the options (`-Djava.class.path=` is `CLASSPATH`'s when none is given); a JVM the process has already is used instead |
+| `Jvm.create(options)` | embeds a JVM: libjvm opened at run time (`dlopen`; `Jvm.libjvm()`: `HXMC_LIBJVM`, else `JAVA_HOME`'s `lib/server/libjvm.so`, `jre/lib/<arch>/server` for Java 8, `libjvm.dylib` on macOS, else `/usr/lib/jvm/default-java`, else the loader's search), `JNI_CreateJavaVM` with the options (`-Djava.class.path=` is `CLASSPATH`'s when none is given); a JVM the process has already is used instead. A program that made its JVM ends through Java's `System.exit` (when `main` returns, and `Sys.exit`): the JVM's shutdown hooks run and its threads stop before the C library's `exit`, nothing waits for its other threads |
 | `Jvm.onLoad(vm)` | the program is a library Java loads (`System.loadLibrary`; `-D hxmc.shared` in the glibc mode, Android's `.so`, with `-D hxmc.exports=JNI_OnLoad`): its `JNI_OnLoad` calls this, which keeps the JVM and the loader of the loading code's classes, runs `main` on a thread of its own and waits for it |
 | `Jvm.useActivity(activity)` | an Android activity's JVM (`ANativeActivity`'s `vm`) and class loader (the app's, which knows `classes.dex`'s) |
 | `Jvm.exists` | whether there is a JVM |
