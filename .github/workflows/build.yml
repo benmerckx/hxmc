@@ -1084,10 +1084,11 @@ jobs:
       # functions kept across builds (as make mir-cache-check), statics in the
       # compilation server (as make mir-server-check), and a macro
       # of the benchmarks and the formatter's build against Eval (the release
-      # binary; MirBench). Windows: the harnesses run one process at a time
-      # (Harness.exec changes the process's working directory there). Not on
-      # Intel Macs (legacy, the slowest runners: the lane took ~15 of the job's
-      # 19 min; x86-64's Mir code runs in the Linux and Windows jobs).
+      # binary; MirBench); four processes at a time (Windows too: Harness.exec
+      # starts them through libuv there, each with its own working directory
+      # and environment). Not on Intel Macs (legacy, the slowest runners: the
+      # lane took ~15 of the job's 19 min; x86-64's Mir code runs in the Linux
+      # and Windows jobs).
       - name: Reference compiler revision
         if: matrix.target != 'macos-x86_64'
         id: ref
@@ -1138,7 +1139,7 @@ jobs:
             echo "MIR_EVAL=$(native "${{ steps.unpack.outputs.bin }}")"
             echo "HXMC_STD=$(native "$PWD/mir/bin/hxmc/std")"
             echo "HAXE_STD_PATH=$(native "$PWD/mir/haxe/upstream/std")"
-            echo "MIR_JOBS=$([ "$RUNNER_OS" = Windows ] && echo 1 || echo 4)"
+            echo "MIR_JOBS=4"
           } >> "$GITHUB_ENV"
           "$PWD/mir/bin/haxe/haxe$exe" -version
       - name: Mir lane, the corpus run in the compiler
