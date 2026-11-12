@@ -64,6 +64,7 @@ class LowerCache {
 
 	var target = -1; // the target the bodies were lowered for (they fold its tests)
 	var platform = -1; // (and its Apple platform: Mem.platform)
+	var targetMin = 0; // (and its deployment target: Lower.targetMin)
 	var mirHost = 0; // (and whether the program loads code for the Mir interpreter: Mem.mirHost)
 	var compactTypes = 0; // (and whether it may have compressed references: Mem.compact)
 	var lines = false; // and whether they have their positions (Lower.lines)
@@ -102,13 +103,14 @@ class LowerCache {
 		last = null;
 		lowered = new haxe.ds.ObjectMap();
 		rewritten = new haxe.ds.ObjectMap();
-		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.mirHost != mirHost || Lower.compactTypes != compactTypes || Lower.lines != lines
+		if (Lower.targetCode != target || Lower.targetPlatform != platform || Lower.targetMin != targetMin || Lower.mirHost != mirHost || Lower.compactTypes != compactTypes || Lower.lines != lines
 			|| Lower.bounds != bounds || Lower.nullChecks != nullChecks || Lower.spanChecks != spanChecks || !sameNames(Lower.resources, resources)) {
 			entries = new haxe.ds.ObjectMap();
 			lambdas = new haxe.ds.ObjectMap();
 			byKey = new Map();
 			target = Lower.targetCode;
 			platform = Lower.targetPlatform;
+			targetMin = Lower.targetMin;
 			mirHost = Lower.mirHost;
 			compactTypes = Lower.compactTypes;
 			lines = Lower.lines;

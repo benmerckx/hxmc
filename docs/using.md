@@ -39,6 +39,7 @@ lists the ones marked with *.
 | `-D hxmc.target=<target>` | the target (above) |
 | `-D hxmc.libc=glibc` | Linux: link dynamically against glibc, so the program can import shared libraries (`@:hxmc.lib("libGL.so.1")`) and `dlopen` them |
 | `-D hxmc.shared` | a shared library: Linux in the glibc mode, a dylib on macOS, iOS and Mac Catalyst, a DLL on Windows; Android's output always is one |
+| `-D hxmc.macos-min-version=<x.y>` | macOS: the oldest version the output runs on (11.0 on arm64, 10.15 on x86-64, the floors), its `LC_BUILD_VERSION`'s minimum; `-D hxmc.ios-min-version` is iOS's and Mac Catalyst's (15.0). Newer APIs need a guard, `Platform.supports(view.method)`([Availability](interop.md#availability)) |
 | `-D hxmc.exports=<names>` | the `@:hxmc.export` functions a shared library exports |
 | `-D hxmc.dll-base=<hex>` | Windows: a DLL's preferred base address |
 | `-D hxmc.output=<path>` | the output path, instead of `--custom-target`'s |
@@ -51,7 +52,7 @@ lists the ones marked with *.
 | `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
 | `-D hxmc.no-frame-pointers` | x86-64: no frame pointers (arm64 always keeps them; also `HXMC_FRAME_POINTERS=0`) |
 | `-D hxmc.checked` * | diagnostic build: enable NativeArray bounds, null, span and tagged-reference checks and disable Mir optimizations, including check elimination. Overrides the individual check switches. Raw operations in unsafe code remain unsafe. |
-| `-D hxmc.strict` | raw memory outside `@:hxmc.unsafe` code is an error in the program's own code, not a warning (hxmc's std: always) ([Unsafe code](interop.md#unsafe-code)) |
+| `-D hxmc.strict` | raw memory outside `@:hxmc.unsafe` code is an error in the program's own code, not a warning (hxmc's std: always) ([Unsafe code](interop.md#unsafe-code)); so is an unguarded API newer than the deployment target ([Availability](interop.md#availability)) |
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
 | `-D hxmc.native-array-outofbounds=throws\|silent` * | `haxe.ds.Vector` and `hxmc.NativeArray` accesses out of bounds: `throws` an `ArgumentException`, or `silent` (reads give the default value, writes do nothing). Default: not tested, the result is unspecified. `haxe.io.Bytes` tests every access whatever it says (docs/hxmc.md, "Bytes") |
 | `-D hxmc.wasm-eh=legacy` | wasm: legacy exception handling (Chrome 95+, Firefox 100+, Safari 15.2+) instead of `exnref` (Chrome 137+, Firefox 131+, Safari 18.4+) |

@@ -171,6 +171,9 @@ class ExprToPattern {
 			case TMeta(meta = {meta: MetaTag.Deprecated}, e1):
 				DeprecationCheck.checkMeta(createDeprecationContext(ctx), vector(meta), "field", e1.epos);
 				checkExpr(e1);
+			// port: an inlined constant's metadata a target keeps (Inline.keepMetaHook: hxmc's @:hxmc.available)
+			case TMeta(meta, e1) if (optimization.Inline.keepMetaHook != null && optimization.Inline.keepMetaHook(meta)):
+				checkExpr(e1);
 			case _: throw Exit.raise();
 		};
 		inline function displayMode():DisplayKind return pctx.isPostfixMatch ? DKMarked : DKPattern(toplevel);

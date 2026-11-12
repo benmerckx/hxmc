@@ -28,6 +28,11 @@ using StringTools;
 //   /System/Library/Frameworks, Mac Catalyst's /System/iOSSupport, a
 //   framework both share macOS's there;
 // - the defines' errors: a minimum below 15.0, codesign-* on an ELF output;
+// - macOS (hxmc/test/macos/AvailWeak.hx, -D hxmc.strict, arm64 and x86-64):
+//   the build version's minimum (11.0 or 10.15, -D hxmc.macos-min-version's)
+//   and SDK (the minimum, 11.0 at least), the imports newer than the minimum
+//   weak (N_WEAK_REF, the bind's weak-import flag), the others not; a
+//   minimum below the floor an error;
 // - llvm-objdump's view of the load commands, when there.
 // Exits non-zero on a failure; a missing tool is skipped.
 class MachOCheck {
@@ -100,6 +105,7 @@ class MachOCheck {
 			check('$t ObjCUIKit: UIKit is $uikit', libs.indexOf(uikit) >= 0, libs.join(" "));
 			check('$t ObjCUIKit: CoreFoundation is /System/Library/Frameworks\'s', libs.indexOf("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation") >= 0, libs.join(" "));
 		}
+		macos();
 		// the defines' errors
 		var r = build('$OUT/bad', ["-D", "hxmc.target=ios-arm64", "-D", "hxmc.ios-min-version=14.0"]);
 		check("hxmc.ios-min-version=14.0: an error (15.0 is the floor)", !r.ok && r.out.contains("hxmc.ios-min-version"), r.ok ? "built" : "");
@@ -110,6 +116,66 @@ class MachOCheck {
 			Sys.exit(1);
 		}
 		Sys.println("MachOCheck: all passed");
+	}
+
+	// docs/interop.md, "Availability"
+	static function macos() {
+		for (t in ["macos-arm64", "macos-x86_64"]) {
+			var dir = '$OUT/$t';
+			mkdirs(dir);
+			var floor = t == "macos-arm64" ? 0x000B0000 : 0x000A0F00;
+			for (c in [{name: "AvailWeak", args: [], minos: floor}, {name: "AvailWeak12", args: ["-D", "hxmc.macos-min-version=12.0"], minos: 0x000C0000}]) {
+				var out = '$dir/${c.name}';
+				var r = exec([tool, out, "-cp", "hxmc/test/macos", "-cp", "bin/hxmc/std", "-main", "AvailWeak", "--custom-target", "hxmc", "-D", "disable-parallelism",
+					"-D", 'hxmc.target=$t', "-D", "hxmc.strict"].concat(c.args), {merge: true});
+				var what = '$t ${c.name}';
+				// (getppid unguarded: an error below 12.0)
+				if (c.minos < 0x000C0000) {
+					check('$what: getppid unguarded is an error below 12.0', r.code != 0 && r.out.contains("Lib.getppid: macOS 12.0 and later"), tail(r.out, 300));
+					continue;
+				}
+				check('$what: builds', r.code == 0, r.code == 0 ? "" : tail(r.out, 600));
+				if (r.code != 0) continue;
+				var b = File.getBytes(out);
+				var minos = -1, sdk = -1;
+				var syms = new Map<String, Int>();
+				for (lc in MachOReader.commands(b))
+					switch lc.cmd {
+						case 0x32:
+							minos = b.getInt32(lc.at + 12);
+							sdk = b.getInt32(lc.at + 16);
+						case 0x2:
+							var symoff = b.getInt32(lc.at + 8), nsyms = b.getInt32(lc.at + 12), stroff = b.getInt32(lc.at + 16);
+							for (k in 0...nsyms) {
+								var at = symoff + 16 * k;
+								syms.set(cstr(b, stroff + b.getInt32(at), 256), b.getUInt16(at + 6));
+							}
+						case _:
+					}
+				check('$what: the build version\'s minimum and SDK ' + (c.minos >> 16) + "." + ((c.minos >> 8) & 0xff), minos == c.minos && sdk == c.minos,
+					StringTools.hex(minos) + " " + StringTools.hex(sdk));
+				for (s in ["_hxmc_future_call", "_hxmc_future_var", "_OBJC_CLASS_$_HxmcFuture"])
+					check('$what: $s is a weak import', syms.exists(s) && syms.get(s) & 0x40 != 0, syms.exists(s) ? StringTools.hex(syms.get(s)) : "missing");
+				check('$what: _getppid is not', syms.exists("_getppid") && syms.get("_getppid") & 0x40 == 0);
+				if (has("dyld_info")) {
+					var d = exec(["dyld_info", "-fixups", out], {merge: true});
+					check('$what: dyld_info: the weak imports\' binds', d.code == 0 && d.out.contains("libSystem/_hxmc_future_call [weak-import]") && d.out.contains("Foundation/_OBJC_CLASS_$_HxmcFuture [weak-import]") && !d.out.contains("_getppid [weak-import]"), tail(d.out, 300));
+				}
+			}
+			// (the default's SDK: 11.0 on x86-64 too)
+			var out = '$dir/AvailWeakSdk';
+			var r = exec([tool, out, "-cp", "hxmc/test/ios", "-cp", "bin/hxmc/std", "-main", "IosHello", "--custom-target", "hxmc", "-D", "disable-parallelism",
+				"-D", 'hxmc.target=$t'], {merge: true});
+			if (r.code == 0)
+				for (lc in MachOReader.commands(File.getBytes(out)))
+					if (lc.cmd == 0x32) {
+						var b = File.getBytes(out);
+						check('$t: the default minimum ' + (floor >> 16) + "." + ((floor >> 8) & 0xff) + ", SDK 11.0", b.getInt32(lc.at + 12) == floor && b.getInt32(lc.at + 16) == 0x000B0000);
+					}
+			var r = exec([tool, '$OUT/bad', "-cp", "hxmc/test/macos", "-cp", "bin/hxmc/std", "-main", "AvailWeak", "--custom-target", "hxmc", "-D", 'hxmc.target=$t',
+				"-D", "hxmc.macos-min-version=" + (t == "macos-arm64" ? "10.15" : "10.14")], {merge: true});
+			check('$t: a minimum below the floor is an error', r.code != 0 && r.out.contains("hxmc.macos-min-version"), r.code == 0 ? "built" : "");
+		}
 	}
 
 	static function be32(b:Bytes, at:Int):Int

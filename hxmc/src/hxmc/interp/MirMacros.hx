@@ -677,6 +677,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		hxmc.ir.Lower.targetMin = abi.os == "macos" ? opts.minos(abi) : 0;
 		hxmc.ir.Lower.mirHost = 0; // (a bundle: code loaded, not a loader)
 		hxmc.ir.Lower.bounds = opts.bounds;
 		hxmc.ir.Lower.resources = [];

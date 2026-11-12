@@ -274,6 +274,7 @@ class Lower implements LowerQueries {
 	public static var targetArm = -1;
 	public static var targetCode = -1;
 	public static var targetPlatform = -1; // (Mem.platform: Abi.platformCode)
+	public static var targetMin = 0; // (Apple: the deployment target, Options.minos; hxmc.Platform.supports)
 	// Mem.mirHost: 1 when the program loads code for the Mir interpreter (Main)
 	public static var mirHost = 0;
 	// the program's resources (--resource, Context.addResource), haxe.Resource's

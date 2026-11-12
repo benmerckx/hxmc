@@ -31,6 +31,9 @@ class TargetFlags {
 			// hxmc's std, warnings in the program's (-D hxmc.strict: errors)
 			hxmc.ir.RawCheck.seconds = 0;
 			if (keep != null) com.callbacks.addAfterTyping(types -> hxmc.ir.RawCheck.run(com, types));
+			// Apple's APIs newer than the deployment target only where guarded (the same)
+			hxmc.ir.AvailCheck.seconds = 0;
+			if (keep != null) com.callbacks.addAfterTyping(types -> hxmc.ir.AvailCheck.run(com, types));
 			if (com.platform.match(CustomTarget("hxmc"))) {
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))
 					context.Common.rawDefine(com, f);
@@ -45,8 +48,9 @@ class TargetFlags {
 		macros.eval.EvalJit.missingExternHook = evalExtern;
 	}
 
+	// (and an inlined constant's or function's @:hxmc.available: hxmc.ir.AvailCheck)
 	static function keepUnsafe(m:core.Ast.MetadataEntry):Bool
-		return core.Meta.metaEq(m.meta, core.MetaList.StrictMeta.Custom(":hxmc.unsafe"));
+		return core.Meta.metaEq(m.meta, core.MetaList.StrictMeta.Custom(":hxmc.unsafe")) || core.Meta.metaEq(m.meta, core.MetaList.StrictMeta.Custom(hxmc.ir.Available.META));
 
 	// The macro context's target is not the program's: hxmc.target and
 	// hxmc.libc are left out of its defines, as Haxe leaves the platforms'
