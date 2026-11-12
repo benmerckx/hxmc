@@ -21,7 +21,7 @@
 #     compiler (`haxe` with hxmc built in) for the six targets, the port as
 #     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
-#   - crosshost (five jobs, the cases in shards): the tool as a WebAssembly
+#   - crosshost (four jobs, the cases in shards): the tool as a WebAssembly
 #     module building the corpus and itself byte-identical;
 #   - npm-pack: the npm packages (with the compiler as a WebAssembly module;
 #     built with the module cache off);
@@ -564,7 +564,7 @@ jobs:
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
   # itself, byte-identical to the native tool (make crosshost; the cases in
-  # five shards, every target in each, the tool in the first)
+  # four shards, every target in each, the tool in the first)
   crosshost:
     needs: [changes, rt, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
@@ -572,7 +572,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -594,7 +594,7 @@ jobs:
           make rt && touch bin/hxmc/rt/*/*.o
           make hxmc
       - name: hxmc as a WebAssembly module, byte-identical output
-        run: make crosshost CROSSHOST_ARGS="--tool --shard ${{ matrix.shard }}/5"
+        run: make crosshost CROSSHOST_ARGS="--tool --shard ${{ matrix.shard }}/4"
 
   # the npm packages (packages/): @hxmc/cli, its six platform packages and
   # @hxmc/source, at one version: the tag's (v*), a nightly prerelease on main,

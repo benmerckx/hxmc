@@ -180,7 +180,7 @@ a release is published only when all of them pass.
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the release binaries and lix for the six targets |
 | `build-checks` | yes | the module cache checks, `make dev-check` (apart from `build`, which most jobs wait for) |
 | `corpus` | yes | the corpus for every target (four jobs), on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
-| `crosshost` | yes | `make crosshost` (five jobs, the cases in shards: `--shard i/5`) |
+| `crosshost` | yes | `make crosshost` (four jobs, the cases in shards: `--shard i/4`; the module's builds on node workers) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
 | `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
