@@ -14,7 +14,7 @@ import hxmc.unsafe.Ptr;
 // bytes (NativeArray<hxmc.Byte>: T_BYTES, its length in its header, the bytes
 // from offset 0). BytesBuffer (T_BYTESBUFFER): slot 0 the length, slot 1
 // its storage (its capacity).
-@:keep @:allow(hxmc)
+@:allow(hxmc)
 class Bytes {
 	static inline function len(b:Dynamic):Int
 		return Repr.bytesLen(b);

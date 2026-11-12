@@ -11,7 +11,6 @@ import hxmc.unsafe.Ptr;
 // ordinary locals here (the compiler roots them), raw addresses are taken
 // again after each allocation. Small Int boxes and the two Bool boxes are
 // static (outside the heap: the collector leaves them alone).
-@:keep
 class Boxes {
 	static inline var SMALL_MIN = -128;
 	static inline var SMALL_MAX = 1023;

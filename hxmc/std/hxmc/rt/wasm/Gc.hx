@@ -26,7 +26,7 @@ import hxmc.rt.Tagged;
 // handshake (one thread, thread-locals are globals), no native handles (no C
 // resources), and finalisers are registered but never run. Every function
 // here is @:hxmc.unsafe: it runs while objects move, with raw addresses.
-@:hxmc.wasm @:keep
+@:hxmc.wasm
 class Gc {
 	static inline var MINOR_MAX = 32 << 20;
 	static inline var MINOR_MIN = 4 << 20;

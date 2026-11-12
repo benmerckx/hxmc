@@ -32,7 +32,7 @@ import hxmc.unsafe.*;
 // through, as before. Entries Objective-C calls (ObjC.entry) have no
 // personality: an exception they raise (a Haxe exception leaving a method)
 // goes on to Objective-C's frames.
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:allow(hxmc.rt)
 class ObjCExceptions {
 	// _Unwind_Action
 	static inline var SEARCH_PHASE = 1;

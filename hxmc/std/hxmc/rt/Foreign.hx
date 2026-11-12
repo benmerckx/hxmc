@@ -57,7 +57,7 @@ import hxmc.unsafe.*;
 // thread the runtime attached, comes from a thread the runtime may not have
 // counted yet); the collector reads them with the world stopped, without
 // it. The kind table never moves, so its hooks are read without the lock.
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:allow(hxmc.rt)
 class Foreign {
 	// ---- a kind's descriptor: a C struct of words (rt_foreign_kind copies it)
 	public static inline var K_NAME = 0; // const char *: the kind's name (reports)

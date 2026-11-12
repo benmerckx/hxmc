@@ -24,7 +24,7 @@ import hxmc.unsafe.Ptr;
 //
 // The inline functions are the encoding; MemLower expands the same inline
 // (Tag, Untag) and calls the exports here on its slow paths.
-@:keep @:access(hxmc.rt.Boxes) @:access(hxmc.rt.Dyn)
+@:access(hxmc.rt.Boxes) @:access(hxmc.rt.Dyn)
 class Tagged {
 	// a word at or above this is a scalar (Int or Float), below it a reference
 	public static inline var SCALAR_BITS = 49;

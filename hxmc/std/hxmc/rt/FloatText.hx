@@ -18,7 +18,7 @@ import hxmc.unsafe.Ptr;
 // exponents are exact in double arithmetic (Clinger), and a candidate
 // decimal is compared with the halfway points around the double instead of
 // being read back.
-@:keep @:allow(hxmc.rt)
+@:allow(hxmc.rt)
 class FloatText {
 	static inline var LIMBS = 256;
 	static inline var BIG = 8 + 4 * LIMBS;

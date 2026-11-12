@@ -26,7 +26,7 @@ import hxmc.unsafe.*;
 // other fault goes to the handler that was there before (the default: the
 // process dies of the signal, as without this handler). RT_NULL_ACCESS=0
 // installs nothing.
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:allow(hxmc.rt)
 class Faults {
 	// the null page and its neighbours: Linux never maps the first 64 KB
 	// (vm.mmap_min_addr), Windows reserves them, macOS maps nothing below 4 GB;

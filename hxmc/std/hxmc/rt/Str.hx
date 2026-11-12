@@ -26,7 +26,7 @@ import hxmc.unsafe.Ptr;
 // with the intrinsics only: an operation of the language that the runtime
 // implements here (string concatenation, Std.string...) would call itself.
 // The functions over C strings (Ptr) are linear memory's.
-@:keep @:allow(hxmc.rt)
+@:allow(hxmc.rt)
 class Str {
 	public static inline var T_STRING = 16; // (Types.T_STRING, Types.T_STRING1)
 	public static inline var T_STRING1 = 17;
@@ -395,7 +395,7 @@ class Str {
 	#if !hxmc.strhash
 	// (FNV-1a over the units, as a tool without hxmc.strhash computes literals'
 	// hashes: TargetFlags)
-	@:hxmc.unsafe static function hashSlow(s:String):Int {
+	@:keep @:hxmc.unsafe static function hashSlow(s:String):Int {
 		var x = 0x811C9DC5;
 		if (isOne(s)) {
 			var c = chars1(s);
@@ -412,7 +412,7 @@ class Str {
 	}
 	#else
 	// (the mark the compiler reads: Lower.strWordHash)
-	@:hxmc.wordHash @:hxmc.unsafe static function hashSlow(s:String):Int {
+	@:keep @:hxmc.wordHash @:hxmc.unsafe static function hashSlow(s:String):Int {
 		var n = len(s);
 		var h = hashMix(k64(0x243F6A88, 0x85A308D3), (n : I64));
 		var p = unitsAddr(s);

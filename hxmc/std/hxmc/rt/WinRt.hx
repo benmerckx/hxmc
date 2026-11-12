@@ -15,7 +15,7 @@ import hxmc.unsafe.*;
 // chunks), and rt_win_decommit gives them back. A guard is a part of a range
 // that is never committed. The handler and everything it calls are no-GC
 // functions: they run on any thread, at any instruction.
-@:hxmc.os("windows") @:keep @:allow(hxmc.rt)
+@:hxmc.os("windows") @:allow(hxmc.rt)
 class WinRt {
 	static inline var MAX_RANGES = 256;
 	// a range: start, end ([start, end), 0 when free), guard start, guard end

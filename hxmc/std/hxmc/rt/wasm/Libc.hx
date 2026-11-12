@@ -7,7 +7,7 @@ import hxmc.unsafe.Ptr;
 // The rest of the C library the runtime's Haxe code calls (hxmc.unsafe.LibC),
 // for WebAssembly: musl's rand, the calendar in UTC (WASI has no time zones:
 // localtime_r is gmtime_r), clock_gettime over WASI's clocks, errno.
-@:hxmc.wasm @:keep
+@:hxmc.wasm
 class Libc {
 	static var seed:I64;
 	static var errnoCell:Ptr;

@@ -13,7 +13,7 @@ import hxmc.unsafe.Ptr;
 // and arithmetic, type tests, Std.string of any value, and the reflection
 // intrinsics behind Type and Reflect (hxmc.Native). The table of field
 // names is Names; fid() puts a lock-free cache in front of it.
-@:keep @:allow(hxmc.rt)
+@:allow(hxmc.rt)
 class Dyn {
 	// ---- field names
 

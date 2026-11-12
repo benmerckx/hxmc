@@ -73,7 +73,7 @@ import hxmc.unsafe.*;
 // Every function here but the allocation slow path, the finalisers' calls
 // and NativeGc's entry points is @:hxmc.unsafe: it runs while objects move,
 // with raw addresses.
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:allow(hxmc.rt)
 class Gc {
 	static inline var K_OBJ = 0;
 	static inline var K_PARR = 1;

@@ -7,7 +7,7 @@ import hxmc.unsafe.Ptr;
 // The slow paths of allocation and reference stores that generated code
 // calls (WebAssembly's are in wasm/Gc.hx): one call sequence each, so that
 // every allocation or reference store site has a short slow path.
-@:hxmc.native @:keep
+@:hxmc.native
 class GcPaths {
 	// Gc.allocSlow with the header assembled here (the type index is a
 	// link-time constant: it cannot be shifted into place by the linker): a

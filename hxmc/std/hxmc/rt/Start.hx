@@ -10,7 +10,7 @@ import hxmc.unsafe.*;
 // calls rt_init, then rt_run_main with the program's body; generated code
 // throws with rt_throw, which jumps to the innermost try's handler (setjmp
 // in the try, longjmp here).
-@:hxmc.native @:keep
+@:hxmc.native
 class Start {
 	@:hxmc.export("rt_argc") static var argc:Int;
 	@:hxmc.export("rt_argv") static var argv:Ptr;

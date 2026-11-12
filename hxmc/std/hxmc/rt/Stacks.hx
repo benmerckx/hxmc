@@ -16,7 +16,7 @@ import hxmc.unsafe.*;
 // never follows a frame pointer it cannot trust; with an empty table (the
 // program names no stacks, -D hxmc.no-stacks) or no frame records
 // (-D hxmc.no-frame-pointers, WebAssembly) the stacks are empty.
-@:hxmc.native @:keep @:allow(hxmc.rt) @:access(hxmc.rt.Interp)
+@:hxmc.native @:allow(hxmc.rt) @:access(hxmc.rt.Interp)
 class Stacks {
 	// the frames a stack keeps at most
 	public static inline var MAX = 256;

@@ -26,7 +26,6 @@ import hxmc.unsafe.LibC;
 //
 // An Array's storage is a NativeArray of the Array's kind, its length the
 // Array's capacity (Boxes): an Array without room has the empty one.
-@:keep
 class NArray {
 	static inline function kindOf(a:Dynamic):Int {
 		var t = tindex(a);

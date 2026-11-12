@@ -38,7 +38,7 @@ import hxmc.unsafe.*;
 // functions are found by name (LoadLibraryA, GetProcAddress) at their first
 // use. Windows only (@:hxmc.os): elsewhere the lowering makes every COM
 // operation a throw.
-@:hxmc.os("windows") @:keep @:allow(hxmc.rt) @:allow(hxmc.com) @:access(hxmc.rt.Str)
+@:hxmc.os("windows") @:allow(hxmc.rt) @:allow(hxmc.com) @:access(hxmc.rt.Str)
 class ComKind {
 	static inline var S_OK = 0;
 	static inline var E_NOINTERFACE = 0x80004002;

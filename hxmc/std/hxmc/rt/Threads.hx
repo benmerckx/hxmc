@@ -24,7 +24,7 @@ import hxmc.unsafe.*;
 //
 // The API of hxmc.NativeThread (spawn, park, mutexes, conditions,
 // semaphores, thread-local values) is ThreadApi, typed with it.
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:allow(hxmc.rt)
 class Threads {
 	static inline var RUNNING = 0;
 	static inline var SAFE = 1; // in a safe region, or stopped at a safepoint

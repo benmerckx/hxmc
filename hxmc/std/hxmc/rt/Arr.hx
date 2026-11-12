@@ -12,7 +12,7 @@ import hxmc.unsafe.Mem;
 // the capacity; the element access, growth and kind conversion themselves
 // stay with the collector, hx_arr_*). The rest are the language's own
 // array operations on Array<Dynamic>, which go through them.
-@:keep @:allow(hxmc.rt)
+@:allow(hxmc.rt)
 class Arr {
 	static inline function len(a:Dynamic):Int
 		return Repr.arrLen(a);

@@ -9,7 +9,7 @@ import hxmc.rt.C;
 // null"). The value thrown is the literal: nothing is allocated before
 // the handler runs. Its own module, loaded into every program (Runtime):
 // a test may be in any function, Faults is the native targets' only.
-@:keep @:allow(hxmc.rt)
+@:allow(hxmc.rt)
 class NullAccess {
 	@:hxmc.export("rt_null_access") static function nullAccess():Void
 		Rt.rt_throw("Null Access");

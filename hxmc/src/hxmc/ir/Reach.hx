@@ -139,8 +139,9 @@ class Reach {
 				if (a == null) setters.set(g, a = []);
 				if (a.indexOf(f) < 0) a.push(f);
 			}
-			// (an initializer setting no static: there for what else it does)
-			if (gs.length == 0) mark(f);
+			// (an initializer setting no static: there for what else it does; one
+			// doing nothing, as that of a class whose statics DCE removed, is not)
+			if (gs.length == 0 && f.body.length > 0) mark(f);
 		}
 		mark(p.main);
 		if (p.entryRun != null) mark(p.entryRun);

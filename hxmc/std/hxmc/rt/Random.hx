@@ -19,7 +19,6 @@ import hxmc.unsafe.Posix;
 // random_get on WASI. Without them, the time and addresses mixed by
 // splitmix64. So every run, and every thread, draws its own sequence.
 // Nothing here allocates or reaches a GC point (FnLower.NOGC: Math_random).
-@:keep
 class Random {
 	// the state; all zero (a new thread's) until seeded
 	@:hxmc.threadLocal static var s0:I64;

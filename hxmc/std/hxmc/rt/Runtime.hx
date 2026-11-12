@@ -1,9 +1,11 @@
 package hxmc.rt;
 
 // The runtime's Haxe modules (docs/hxmc.md, "Runtime in Haxe"), loaded
-// into every program through Std (hxmc/std/Std.hx). Their classes are
-// @:keep (DCE keeps them typed); hxmc compiles only the functions a program
-// calls, and the @:hxmc.export ones (generated code calls them by symbol).
+// into every program through Std (hxmc/std/Std.hx). DCE keeps the statics
+// generated code reaches by symbol (@:hxmc.export, @:hxmc.host,
+// @:hxmc.threadLocal: hxmc.StdDce) and what they reach, whose bodies alone are
+// typed (hxmc.LazyStd); hxmc compiles only the functions a program calls, and
+// the @:hxmc.export ones (generated code calls them by symbol).
 // A module defining a symbol generated code refers to is imported here for
 // each target that needs it, not left to another module that loads it:
 // every build checks these imports define them all, whatever the program

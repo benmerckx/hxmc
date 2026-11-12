@@ -14,7 +14,7 @@ import hxmc.unsafe.*;
 // the program's, every thread's. The file: LLVM_PROFILE_FILE, else
 // default.profraw, with %p the process id, %h the host name, %t $TMPDIR and
 // %% a %; another pattern (%m, %c, %b) is written as it is.
-@:hxmc.native @:keep
+@:hxmc.native
 class Pgo {
 	static inline var MAX = 4096;
 

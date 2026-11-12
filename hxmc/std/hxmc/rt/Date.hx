@@ -12,7 +12,6 @@ import hxmc.unsafe.Ptr;
 // its calendar fields come from the C library (mktime, localtime_r,
 // gmtime_r; the UCRT's _mktime64, _localtime64_s, _gmtime64_s on Windows),
 // whose struct tm starts with nine ints on every target.
-@:keep
 class Date {
 	static inline function windows():Bool
 		return Mem.os() == 2;

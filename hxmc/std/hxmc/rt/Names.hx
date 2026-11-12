@@ -21,7 +21,7 @@ import hxmc.unsafe.Ptr;
 // another type looks the field up into a per-thread table of immutable
 // entries by (type, field id). Before the second thread starts, entries are
 // refilled on each miss.
-@:keep @:allow(hxmc.rt)
+@:allow(hxmc.rt)
 class Names {
 	static inline var CHUNK = 1024;
 	static inline var CHUNKS = 4096;

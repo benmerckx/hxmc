@@ -7,7 +7,7 @@ import hxmc.unsafe.Ptr;
 
 // The program's end and uncaught exceptions on WebAssembly (docs/hxmc.md,
 // "WebAssembly"; the field names are hxmc.rt.Names on every target).
-@:hxmc.wasm @:keep
+@:hxmc.wasm
 class Exit {
 	// ---- the program's end
 

@@ -39,7 +39,7 @@ import hxmc.unsafe.*;
 // JavaVM), or an Android activity's JavaVM is given (Jvm.useActivity).
 // POSIX only (Linux in the dynamic glibc mode, Android, macOS): on Windows
 // and WebAssembly the lowering makes every Java operation a throw.
-@:hxmc.native @:keep @:allow(hxmc.rt) @:allow(hxmc.java) @:access(hxmc.rt.Str)
+@:hxmc.native @:allow(hxmc.rt) @:allow(hxmc.java) @:access(hxmc.rt.Str)
 class JniKind {
 	// ---- the jni.h function tables' slots (JNINativeInterface_, JNIInvokeInterface_)
 	static inline var GetVersion = 4;

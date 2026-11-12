@@ -12,7 +12,7 @@ import hxmc.unsafe.*;
 // the same data would take in OCaml's representation (an estimate), where
 // arrays, strings and maps hang from (the first object referring to them, by
 // type and field), the heap's own sizes and the process's RSS.
-@:hxmc.native @:keep
+@:hxmc.native
 class Census {
 	static inline var K_OBJ = 0;
 	static var mapTypes:Ptr; // per type: 1 for the haxe.ds maps

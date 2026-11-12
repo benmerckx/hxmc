@@ -12,7 +12,7 @@ import hxmc.unsafe.Ptr;
 // may exceed 2 GB of the 4 GB). malloc/free: size classes of powers
 // of two (16 bytes to 1 MB) with free lists, carved from 1 MB arenas;
 // larger blocks are regions. One thread: no locks.
-@:hxmc.wasm @:keep
+@:hxmc.wasm
 class Heap {
 	static inline var PAGE = 65536;
 	static inline var MAX_FREE = 1024;

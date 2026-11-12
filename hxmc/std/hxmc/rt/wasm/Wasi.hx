@@ -6,7 +6,7 @@ import hxmc.unsafe.Ptr;
 
 // The runtime's view of WASI: the arguments and the environment (read once),
 // the preopened directories and path resolution, buffered standard output.
-@:hxmc.wasm @:keep
+@:hxmc.wasm
 class Wasi {
 	static inline var OUTBUF = 65536;
 

@@ -20,7 +20,7 @@ import hxmc.unsafe.*;
 // (deallocDefer). The runtime does not link libobjc: its functions come as
 // addresses from generated code, or are found by name (dlsym), once the
 // kind is registered (at the first object that needs it).
-@:hxmc.native @:keep @:allow(hxmc.rt)
+@:hxmc.native @:allow(hxmc.rt)
 class ObjCKind {
 	// (0: not registered yet; published with a release store once its record
 	// and the functions below are written, read with an acquire load: known)
