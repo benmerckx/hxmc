@@ -555,7 +555,7 @@ dev-check: $(TOOL) $(STD) $(HOST_RT)
 # cases with Mir macros against the reference, the compiled functions kept
 # across builds, statics in the compilation server (CASES restricts the corpus)
 mir-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
-	export HXMC_STD=$(abspath bin/hxmc/std); $(SCRIPT) MirCheck --haxe $(HOST_HAXE) --reference $(REFERENCE) -j $(JOBS) $(CASES)
+	export HXMC_STD=$(abspath bin/hxmc/std); $(SCRIPT) MirCheck --eval $(TOOL) --haxe $(HOST_HAXE) --reference $(REFERENCE) -j $(JOBS) $(CASES)
 
 bench: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) bin/lix/lix
 	$(SCRIPT) Bench $(BENCH_ARGS)

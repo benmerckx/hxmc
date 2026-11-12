@@ -1158,7 +1158,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo sysctl -q -w kernel.core_pattern=core; fi
           ulimit -c 0 2>/dev/null || true
-          "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run MirCheck --haxe "$MIR_HAXE" --reference "$MIR_REF" -j $MIR_JOBS --summary "$GITHUB_STEP_SUMMARY"
+          "$MIR_EVAL" -cp hxmc/test -cp haxe/test --run MirCheck --eval "$MIR_EVAL" --haxe "$MIR_HAXE" --reference "$MIR_REF" -j $MIR_JOBS --summary "$GITHUB_STEP_SUMMARY"
       - name: Mir lane, a benchmark macro and the formatter's build
         if: always() && steps.mir.outcome == 'success'
         timeout-minutes: 20
