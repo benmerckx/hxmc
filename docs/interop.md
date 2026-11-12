@@ -1718,13 +1718,10 @@ function animate(view:NSView)
   supports(b)` allows both), in the else-branch of `if (!...)`, on the
   right of `||` after `!`, and after `if (!...) return;` (or `throw`,
   `break`, `continue`). Inlined code is checked where it lands.
-- **Versions at compile time**: the target's platform is defined with
-  its deployment target, `macos`, `ios` or `maccatalyst` (only the one
-  being built for), so `#if (macos >= 14.0)` decides on a version alone,
-  for a build that requires 14.0 anyway. Haxe's `#if` compares the value
-  as a float, so within 10.x `10.15` counts as older than `10.9`; macOS
-  11 and later, and iOS, compare right. The macro context does not see
-  them.
+- **No `#if` on versions**: a program is typed once for all native
+  targets, so the deployment target is not a define. Where the target
+  already has a declaration, `Platform.supports(x)` is the constant
+  `true` and the other branch is not compiled, as with `Platform.os()`.
 - **Weak imports**: a C function, C variable or Objective-C class newer
   than the deployment target is imported weakly, so the program still
   launches on an older system, where its address is null. Calling it

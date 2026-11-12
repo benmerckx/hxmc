@@ -2,8 +2,8 @@ import hxmc.Platform;
 
 // Availability (docs/interop.md, "Availability"), built with -D hxmc.strict:
 // every use below is allowed. What no system has yet (99.0) is imported
-// weakly, so the program launches, and is never reached. `#if (macos >=
-// ...)` tests the deployment target.
+// weakly, so the program launches, and is never reached; a guard the
+// deployment target covers folds.
 // define: hxmc.strict
 @:hxmc.lib("/usr/lib/libobjc.A.dylib") @:hxmc.objc extern class NSObject {
 	function init():NSObject;
@@ -63,11 +63,5 @@ class ObjCAvailable {
 		// (a declaration's own versions: its class's, a C function's, an enum constant's)
 		if (Platform.supports(HxmcFuture.alloc)) trace(HxmcFuture.alloc().init()) else trace("supports: not yet");
 		trace(Platform.supports(HxmcFuture), Platform.supports(Sys2.getppid), Platform.supports(Sys2.getpid), Platform.supports(Mode.New));
-		#if (macos >= 10.15 || ios >= 15.0 || maccatalyst >= 15.0)
-		trace("#if: the deployment target");
-		#end
-		#if (macos >= 99.0 || ios >= 99.0 || maccatalyst >= 99.0)
-		trace(future());
-		#end
 	}
 }

@@ -15,9 +15,6 @@
 	@:hxmc.available(macos >= 14.0, ios >= 17.0, maccatalyst >= 16.2) static function older():Int;
 }
 
-#if !(maccatalyst >= 16.0) #error "maccatalyst: the deployment target, 16.0" #end
-#if (macos || ios) #error "maccatalyst: only its own" #end
-
 class AvailCatalyst {
 	static function main() {
 		trace(Lib.newer());

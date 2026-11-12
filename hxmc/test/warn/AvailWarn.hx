@@ -6,8 +6,8 @@
 // Platform.supports guard allows what the declaration it names needs (its
 // own and its class's version), not more, in its then-branch, after `&&`,
 // in the else-branch of its `!`, after `||` and after an early return; a
-// version is its literal's text (11.10 is newer than 11.9); `#if (macos >= 11.0)` tests the deployment
-// target (docs/interop.md, "Availability").
+// version is its literal's text (11.10 is newer than 11.9)
+// (docs/interop.md, "Availability").
 // target: macos-arm64
 // warns: Lib.newer: macOS 14.0 and later, the deployment target is 11.0 (guard it with Platform.supports(...))
 // warns: Future.alloc: macOS 13.0 and later, the deployment target is 11.0
@@ -63,9 +63,6 @@ enum Shape {
 @:hxmc.available(macos >= 12.0) class Box {
 	public function new() {}
 }
-
-#if !(macos >= 11.0) #error "macos: the deployment target, 11.0" #end
-#if (macos >= 11.1 || ios || maccatalyst) #error "macos: only the deployment target" #end
 
 class AvailWarn {
 	@:hxmc.available(macos >= 12.0) static function twelve():Int

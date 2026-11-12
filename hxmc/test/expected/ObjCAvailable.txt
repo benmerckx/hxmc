@@ -9,4 +9,3 @@ ObjCAvailable.hx:57: false
 ObjCAvailable.hx:62: 1000
 ObjCAvailable.hx:64: supports: not yet
 ObjCAvailable.hx:65: false, true, true, false
-ObjCAvailable.hx:67: #if: the deployment target

@@ -10,7 +10,7 @@ import core.Ast.Expr;
 // abstract's constant, conditions as `#if` and `@:require` write them; a
 // platform it does not list, every version of it. hxmc.Platform.supports
 // tests a declaration's (hxmc.Supports: Platform.atLeast's three versions,
-// PLATFORMS' first); `#if (macos >= 14.0)` the deployment target. Versions
+// PLATFORMS' first). Versions
 // are numbers as LC_BUILD_VERSION writes them: major << 16 | minor << 8 |
 // patch (0: any version), read from the literal's text (10.15 is newer than
 // 10.9) or version("10.15.4"). Mac Catalyst's are iOS's. AvailCheck checks

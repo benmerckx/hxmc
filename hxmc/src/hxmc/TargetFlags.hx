@@ -41,12 +41,6 @@ class TargetFlags {
 				// writes the profile on Linux, hxmc.rt.Pgo, so the typing needs it)
 				var pgo = Options.flag("hxmc.llvm-pgo");
 				if (pgo == "gen" && !core.Define.rawDefined(com.defines, "hxmc.llvm_pgo")) core.Define.rawDefineValue(com.defines, "hxmc.llvm_pgo", pgo);
-				// (an Apple target's platform, macos, ios or maccatalyst, its
-				// deployment target: `#if (macos >= 14.0)`, what
-				// hxmc.Platform.supports folds against. #if compares it as a float:
-				// major.minor, 10.15 below 10.9; docs/interop.md, "Availability")
-				var apple = hxmc.ir.AvailCheck.target(com.defines);
-				if (apple != null) core.Define.rawDefineValue(com.defines, apple.platform, hxmc.ir.Available.version(apple.min));
 			}
 			if (prev != null) prev(com, actx);
 		}
@@ -58,10 +52,9 @@ class TargetFlags {
 	static function keepUnsafe(m:core.Ast.MetadataEntry):Bool
 		return core.Meta.metaEq(m.meta, core.MetaList.StrictMeta.Custom(":hxmc.unsafe")) || core.Meta.metaEq(m.meta, core.MetaList.StrictMeta.Custom(hxmc.ir.Available.META));
 
-	// The macro context's target is not the program's: hxmc.target,
-	// hxmc.libc and the Apple platform's version (macos, ios, maccatalyst)
-	// are left out of its defines, as Haxe leaves the platforms' names out
-	// (Common.adaptDefinesToMacroContext). Macro code reads the
+	// The macro context's target is not the program's: hxmc.target and
+	// hxmc.libc are left out of its defines, as Haxe leaves the platforms'
+	// names out (Common.adaptDefinesToMacroContext). Macro code reads the
 	// program's through Context.definedValue. A module the macro context types
 	// sees what it sees in a native build that names no target: else
 	// `#if (hxmc.target == "wasm32-wasi")` code typed there for a macro reaches
@@ -70,8 +63,6 @@ class TargetFlags {
 	static function macroDefines(defines:core.Define.DefineContext) {
 		core.Define.rawUndefine(defines, "hxmc.target");
 		core.Define.rawUndefine(defines, "hxmc.libc");
-		for (p in ["macos", "ios", "maccatalyst"])
-			core.Define.rawUndefine(defines, p);
 	}
 
 	// hxmc's externs in the macro context on Eval: hxmc.unsafe's (Mem, LibC,

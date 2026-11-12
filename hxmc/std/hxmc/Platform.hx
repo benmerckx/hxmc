@@ -39,9 +39,8 @@ class Platform {
 	// Apple's), a constant the test folds; else asked of the system. In its
 	// then-branch (and `&&`, `!`, `||`, an early return) what needs no
 	// more may be used. True, with a warning, for a declaration without
-	// @:hxmc.available. For a decision on versions alone, `#if (macos >=
-	// 14.0)` tests the deployment target at compile time (docs/interop.md,
-	// "Availability"). A macro: hxmc.Supports
+	// @:hxmc.available (docs/interop.md, "Availability"). A macro:
+	// hxmc.Supports
 	public static macro function supports(declaration:haxe.macro.Expr):haxe.macro.Expr
 		return hxmc.Supports.expand(declaration);
 
