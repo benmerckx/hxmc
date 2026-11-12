@@ -151,12 +151,10 @@ class LazyStd {
 	// Finalization.sortedHook: the modules the sort's typing loaded, finalized, and sorted again until none
 	static function sortedAgain(ctx:context.Typecore.Typer, s:{types:Array<ModuleType>, modules:Array<ModuleDef>}) {
 		if (ctx.com != com || !on) return s;
-		var again = inferring();
-		while (again || moduleCount(ctx.com) != s.modules.length) {
+		if (inferring() || moduleCount(ctx.com) != s.modules.length) do {
 			finalizeNew(ctx, s.types);
 			s = typing.Finalization.sortTypes(ctx.com, ctx.com.moduleLut);
-			again = false;
-		}
+		} while (moduleCount(ctx.com) != s.modules.length);
 		// (typed with their modules, filtered with the program)
 		forced = [];
 		for (m in s.modules)
