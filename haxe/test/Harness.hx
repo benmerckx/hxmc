@@ -43,13 +43,12 @@ class Harness {
 		this file instead of being returned), `timeout` (seconds; then the process
 		and the ones it started are killed, as hxmc's tool runs itself again,
 		hxmc.Main: `timedOut` and code -1), `merge` (stderr into stdout), `stdin`
-		(a file). Not on Windows: cwd, env and timeout there change the
-		process-wide state (the Windows users run one process at a time).
+		(a file). Windows: through libuv (execLuv; HARNESS_LUV=1 elsewhere too).
 	**/
 	public static function exec(cmd:Array<String>, ?o:ExecOptions):ExecResult {
 		if (o == null) o = {};
 		var t0 = now();
-		if (windows) return execWindows(cmd, o, t0);
+		if (windows || Sys.getEnv("HARNESS_LUV") == "1") return execLuv(cmd, o, t0);
 		var tmp = o.log == null ? tempName() : null;
 		var outFile = o.log != null ? o.log : tmp + ".out";
 		var errFile = o.log != null || o.merge == true ? null : tmp + ".err";
@@ -87,35 +86,96 @@ class Harness {
 		return r;
 	}
 
-	static function execWindows(cmd:Array<String>, o:ExecOptions, t0:Float):ExecResult {
-		var cwd = Sys.getCwd();
-		var saved = new Map<String, Null<String>>();
+	// Windows has no /bin/sh: the process through libuv (eval.luv, on an
+	// event loop of this call's), which gives a child its own working
+	// directory and environment, so the harness's own stay as they are and
+	// threads start processes at once. stdout and stderr through pipes (with
+	// merge, stderr after stdout), stdin a pipe the file is written to; the
+	// timeout ends the process (Windows: its tree, taskkill /T; elsewhere the
+	// process alone)
+	static function execLuv(cmd:Array<String>, o:ExecOptions, t0:Float):ExecResult {
+		var r:ExecResult = {code: -1, out: "", err: "", seconds: 0, timedOut: false};
+		var loop = eval.luv.Loop.init().resolve();
+		// (Windows: names in any case, PATH as Path)
+		var env = new Map<String, eval.NativeString>();
+		for (k => v in Sys.environment())
+			env[k] = v;
 		if (o.env != null)
 			for (k => v in o.env) {
-				saved[k] = Sys.getEnv(k);
-				Sys.putEnv(k, v == null ? "" : v);
+				for (e in [for (e in env.keys()) e])
+					if (e == k || (windows && e.toUpperCase() == k.toUpperCase())) env.remove(e);
+				if (v != null) env[k] = v;
 			}
-		if (o.cwd != null) Sys.setCwd(o.cwd);
-		var r:ExecResult = {code: -1, out: "", err: "", seconds: 0, timedOut: false};
-		try {
-			var p = new sys.io.Process(cmd[0], cmd.slice(1));
-			var lock = new Lock();
-			var err = "";
-			Thread.create(() -> {
-				err = p.stderr.readAll().toString();
-				lock.release();
-			});
-			var out = p.stdout.readAll().toString();
-			lock.wait();
-			r.code = p.exitCode();
-			p.close();
-			if (o.merge == true || o.log != null) out += err else r.err = err;
-			if (o.log != null) File.saveContent(o.log, out) else r.out = out;
-		} catch (e:Dynamic) {
-			r.err = Std.string(e);
+		var outPipe = eval.luv.Pipe.init(loop).resolve(), errPipe = eval.luv.Pipe.init(loop).resolve();
+		var inPipe = o.stdin == null ? null : eval.luv.Pipe.init(loop).resolve();
+		var redirect = [
+			eval.luv.Process.toParentPipe(eval.luv.Process.stdout, outPipe, false, true, false),
+			eval.luv.Process.toParentPipe(eval.luv.Process.stderr, errPipe, false, true, false)
+		];
+		if (inPipe != null) redirect.push(eval.luv.Process.toParentPipe(eval.luv.Process.stdin, inPipe, true, false, false));
+		var done = false;
+		var timer:Null<eval.luv.Timer> = null;
+		var spawned = eval.luv.Process.spawn(loop, cmd[0], [for (a in cmd) (a : eval.NativeString)], {
+			environment: env,
+			workingDirectory: o.cwd,
+			redirect: redirect,
+			windowsHide: true,
+			// (a signal's end as the shell reports it: 128 + its number)
+			onExit: (p, status, signal) -> {
+				r.code = signal != 0 ? 128 + signal : status.toInt();
+				done = true;
+				if (timer != null) {
+					timer.stop();
+					timer.close(() -> {});
+				}
+				p.close(() -> {});
+			}
+		});
+		var pipes:Array<eval.luv.Handle> = [outPipe, errPipe];
+		if (inPipe != null) pipes.push(inPipe);
+		switch spawned {
+			case Error(e):
+				for (h in pipes)
+					eval.luv.Handle.close(h, () -> {});
+				loop.run(DEFAULT);
+				loop.close();
+				r.code = 127;
+				r.err = cmd[0] + ": " + e.toString();
+				r.seconds = now() - t0;
+				return r;
+			case Ok(p):
+				if (o.timeout != null) {
+					timer = eval.luv.Timer.init(loop).resolve();
+					timer.start(() -> {
+						if (done) return;
+						r.timedOut = true;
+						if (windows) {
+							var k = new sys.io.Process("taskkill", ["/T", "/F", "/PID", Std.string(p.pid())]);
+							k.exitCode();
+							k.close();
+						} else
+							eval.luv.Process.killPid(p.pid(), SIGKILL);
+					}, Std.int(o.timeout * 1000));
+				}
 		}
-		if (o.cwd != null) Sys.setCwd(cwd);
-		for (k => v in saved) Sys.putEnv(k, v == null ? "" : v);
+		var out = new haxe.io.BytesBuffer(), err = new haxe.io.BytesBuffer();
+		function read(pipe:eval.luv.Pipe, to:haxe.io.BytesBuffer)
+			eval.luv.Stream.readStart(pipe, res -> switch res {
+				case Ok(b): to.add(b.toBytes());
+				case Error(_): pipe.close(() -> {});
+			});
+		read(outPipe, out);
+		read(errPipe, err);
+		if (inPipe != null) {
+			var data = eval.luv.Buffer.fromBytes(File.getBytes(o.stdin));
+			eval.luv.Stream.write(inPipe, [data], (_, _) -> inPipe.close(() -> {}));
+		}
+		loop.run(DEFAULT);
+		loop.close();
+		var so = out.getBytes().toString(), se = err.getBytes().toString();
+		if (r.timedOut) r.code = -1;
+		if (o.merge == true || o.log != null) so += se else r.err = se;
+		if (o.log != null) File.saveContent(o.log, so) else r.out = so;
 		r.seconds = now() - t0;
 		return r;
 	}

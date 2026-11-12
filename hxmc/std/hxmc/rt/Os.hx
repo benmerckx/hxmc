@@ -359,6 +359,21 @@ class Os {
 
 	// ---- the end of the program
 
+	// what ends the process instead, with the exit code, when the program
+	// ends (main returned: Start.mainEnded; Sys.exit) (a callback; null:
+	// nothing; not exit's: an uncaught exception, the runtime's own ends): a
+	// JVM the program made (JniKind.create) ends it as Java's System.exit
+	// does, its threads stopped before exit runs libjvm's destructors
+	public static var exitHook:Ptr;
+
+	// the program ends with this code: the hook, once (it does not return)
+	@:hxmc.unsafe public static function exiting(code:Int) {
+		var h = exitHook;
+		if (h.isNull()) return;
+		exitHook = Ptr.nil();
+		Ind.call1(h, code);
+	}
+
 	// (Android: _exit, as PosixSys.exit; a moment first for what was
 	// written to stderr to reach logcat, through hxmc.os's pipe)
 	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int) {
@@ -515,4 +530,8 @@ abstract Report(Ptr) {
 @:hxmc.c @:hxmc.fast @:hxmc.lib("ws2_32") private extern class W {
 	static function WSAPoll(fds:Ptr, n:Int, ms:Int):Int;
 	static function WSAGetLastError():Int;
+}
+
+@:hxmc.c @:hxmc.fast private extern class Ind {
+	@:hxmc.indirect static function call1(f:Ptr, code:Int):Void;
 }

@@ -185,6 +185,7 @@ class WinSys {
 
 	public static function exit(code:Int):Void {
 		Win32.fflush(Ptr.nil());
+		Os.exiting(code);
 		Win32.exit(code);
 	}
 
