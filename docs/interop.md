@@ -200,7 +200,9 @@ does a string's (its length, its width, its units as a `ReadOnlySpan`).
 The views are the trusted part, `@:hxmc.unsafe`; what reads through them
 is checked. A view trusts its value's type, so a safe kernel passes no
 `Dynamic` and no type parameter's value where a typed GC value is expected
-(`StrView.length(d)` of a `d:Dynamic`: `reject/KernelViewDynamic`); one that
+(`StrView.length(d)` of a `d:Dynamic`: `reject/KernelViewDynamic`), nor
+the result of a kernel declared to return a type parameter, whatever the
+type it is called with (its body may have made it of a `Dynamic`); one that
 takes `Dynamic` tests the type itself, as `TypeView` does (`TypeView.string`
 gives a tested string as a `String`). A view's functions are inlined where they are called, as the
 inline representation calls they stand for were, and a kernel called at
