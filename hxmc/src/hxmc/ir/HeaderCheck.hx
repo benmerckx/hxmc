@@ -57,8 +57,7 @@ class HeaderCheck {
 		if (hs.length == 0 || StringTools.startsWith(sym, CInterop.INDIRECT)) return;
 		var name = CInterop.cName(c, cf);
 		// (an assembler name, stat$INODE64: no C identifier)
-		if (name == null || name.indexOf("$") >= 0 || seen.exists(name)) return;
-		seen.set(name, true);
+		if (name == null || name.indexOf("$") >= 0) return;
 		for (h in hs)
 			if (headers.indexOf(h) < 0) headers.push(h);
 		var conds = strings(":hxmc.cif", c.clMeta).concat(strings(":hxmc.cif", cf.cfMeta));
@@ -90,7 +89,14 @@ class HeaderCheck {
 							out.push('static_assert(hxmc_check::fits<${A()}, ' + bytes + '>(), "$what: ' + pn + ' (' + bytes + ' bytes) holds what C writes there");');
 						case _:
 					}
-					arg('hxmc_check::span<${A()}, ${element(et)}>()', "a pointer to " + described(et));
+					// (C reads a struct per element the length counts: of the element's size,
+					// but bytes counted as bytes, or one struct in a constant minimum, fits)
+					var exact = switch p.args[i] {
+						case ASpanPtr(-1, min) if (min > 0): false;
+						case ASpanPtr(_): CInterop.sizeOf(et) != 1;
+						case _: true;
+					};
+					arg('hxmc_check::span<${A()}, ${element(et, exact)}>()', "a pointer to " + described(et));
 					switch p.args[i] {
 						case ASpan: arg('hxmc_check::word<${A()}>()', "a size_t (the length of " + pn + ")");
 						case _:
@@ -115,11 +121,15 @@ class HeaderCheck {
 			out.push('static_assert(hxmc_check::cstring<$R>(), "$what: the result is a C string (char *)");');
 		else if (p.ret >= 0) {
 			var et = CInterop.ctype(KernelCheck.spanOf(s.ret).elem);
-			out.push('static_assert(hxmc_check::span<$R, ${element(et)}>(), "$what: the result is a pointer to ${described(et)}");');
+			out.push('static_assert(hxmc_check::span<$R, ${element(et, true)}>(), "$what: the result is a pointer to ${described(et)}");');
 		} else
 			out.push('static_assert(${test(R, sig.ret)}, "$what: the result is ${described(sig.ret)}");');
 		if (conds.length > 0) out.push("#endif");
-		funcs.push(out.join("\n"));
+		// (each declaration of a symbol checked: two classes may declare it differently)
+		var text = out.join("\n");
+		if (seen.exists(text)) return;
+		seen.set(text, true);
+		funcs.push(text);
 		for (ct in sig.args.concat([sig.ret]))
 			note(ct);
 		for (a in s.args) {
@@ -138,10 +148,11 @@ class HeaderCheck {
 			case _:
 		}
 
-	static function element(ct:CTy):String
+	// exact: a struct pointee has the scalar's size (C reads the span's count of them)
+	static function element(ct:CTy, exact:Bool):String
 		return switch ct {
 			case CStruct(c) if (cname(c) != null): cname(c);
-			case _: 'hxmc_check::scalar<${CInterop.sizeOf(ct)}>';
+			case _: 'hxmc_check::scalar<${CInterop.sizeOf(ct)}, ${exact}>';
 		}
 
 	static function described(ct:CTy):String
@@ -197,10 +208,11 @@ template<class T, int N> constexpr bool integer() { return (__is_integral(T) || 
 template<class T, int N> constexpr bool floating() { return __is_floating_point(T) && size<T>() == N; }
 template<class T> constexpr bool pointer() { return __is_pointer(T) || __is_same(__remove_cv(T), decltype(nullptr)); }
 template<class T> constexpr bool word() { return __is_integral(T) && size<T>() == sizeof(void *); }
-template<int N> struct scalar {};
+template<int N, bool exact> struct scalar {};
 template<class P, class E> struct pointee { static constexpr bool ok = __is_void(P) || __is_same(P, E); };
-template<class P, int N> struct pointee<P, scalar<N>> {
-	static constexpr bool ok = __is_void(P) || __is_class(P) || __is_union(P) || ((__is_arithmetic(P) || __is_enum(P) || __is_pointer(P)) && size<P>() == N);
+template<class P, int N, bool exact> struct pointee<P, scalar<N, exact>> {
+	static constexpr bool ok = __is_void(P) || ((__is_class(P) || __is_union(P)) && (!exact || size<P>() == N || size<P>() < 0))
+		|| ((__is_arithmetic(P) || __is_enum(P) || __is_pointer(P)) && size<P>() == N);
 };
 template<class T, class E> constexpr bool span() { return __is_pointer(T) && pointee<__remove_cv(__remove_pointer(T)), E>::ok; }
 template<class T, int N> constexpr bool fits() { return size<__remove_cv(__remove_pointer(T))>() <= N; }

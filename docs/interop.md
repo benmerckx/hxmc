@@ -754,8 +754,10 @@ Each function is checked for its number of parameters (and `...` for
 `@:hxmc.varargs`), each parameter and the result for its kind and size: an
 integer of 4 bytes, a float, a pointer, a `size_t`, a struct by its name;
 a span's element against the pointee (a named struct, or any type of the
-element's size, `void` or a struct for scalars), and a minimum length
-against the pointee's size. The C++ is only for its type traits (clang's
+element's size, `void` or a struct of it for scalars: C reads one per
+element the length counts; any struct for bytes counted by a parameter, or
+for a constant minimum, checked against the pointee's size). Every
+declaration is checked, also a second one of the same function. The C++ is only for its type traits (clang's
 builtins, no C++ library): the declarations are C's.
 
 ```
