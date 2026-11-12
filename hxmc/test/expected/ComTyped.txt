@@ -1,9 +1,9 @@
 exit 0
-ComTyped.hx:72: 0, true
-ComTyped.hx:77: outs, 8, 1.75
-ComTyped.hx:80: sumAll, 5, 0
-ComTyped.hx:83: pair, true, true, 0
-ComTyped.hx:95: pairs released, 0
+ComTyped.hx:76: 0, true
+ComTyped.hx:81: outs, 8, 1.75
+ComTyped.hx:84: sumAll, 5, 0
+ComTyped.hx:87: pair, true, true, 0
+ComTyped.hx:99: pairs released, 0
 ComTyped.hx:102: peek, 11
 ComTyped.hx:105: peek detached, 0x80004003
 ComTyped.hx:107: closed, true
