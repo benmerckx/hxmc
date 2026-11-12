@@ -21,6 +21,6 @@ class BytesView {
 		return Span.unsafeOf((cast Bytes.bytes(b.getData()) : Ptr<UInt8>), b.length);
 
 	// a BytesBuffer's length
-	public static function bufLength(bb:Dynamic):Int
+	public static function bufLength(bb:haxe.io.BytesBuffer):Int
 		return Repr.bbLen(bb);
 }

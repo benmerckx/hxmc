@@ -710,12 +710,12 @@ class Dyn {
 		if (ta == tb) {
 			if (ta == T_BOXFLOAT) return TypeView.float(a) == TypeView.float(b);
 			if (ta == T_BOXINT || ta == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
-			if (isString(ta)) return Str.eqSlow(a, b);
+			if (isString(ta)) return Str.eqSlow(TypeView.string(a), TypeView.string(b));
 		}
 		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) return unboxI64(a) == unboxI64(b);
 		if (isNum(a) && isNum(b)) return unboxFloat(a) == unboxFloat(b);
 		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
-		if (isString(ta) && isString(tb)) return Str.eqSlow(a, b);
+		if (isString(ta) && isString(tb)) return Str.eqSlow(TypeView.string(a), TypeView.string(b));
 		if (ta == T_TYPEOBJ && tb == T_TYPEOBJ) return TypeView.described(a) == TypeView.described(b);
 		// (two closures of one method and object: equal, as on Eval and hl)
 		if (ta == tb && ta >= T_FIRST && (TypeView.kind(ta) == TK_BOUND || isMethodClosure(ta))) return compareMethods(a, b);
@@ -758,7 +758,7 @@ class Dyn {
 			var x = unboxFloat(a), y = unboxFloat(b);
 			return x < y ? -1 : x > y ? 1 : 0;
 		}
-		if (isString(ta) && isString(tb)) return Str.cmp(a, b);
+		if (isString(ta) && isString(tb)) return Str.cmp(TypeView.string(a), TypeView.string(b));
 		if (TypeView.same(a, b)) return 0;
 		// two dates: by time, as JavaScript's `a == b ? 0 : a > b ? 1 : -1`
 		// (Eval: -1 but for the same date)

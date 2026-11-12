@@ -198,7 +198,11 @@ a field, an index or an operator. What is inside is read through a view: a
 kernel that knows the layout and gives it out checked, as `hxmc.rt.StrView`
 does a string's (its length, its width, its units as a `ReadOnlySpan`).
 The views are the trusted part, `@:hxmc.unsafe`; what reads through them
-is checked. A view's functions are inlined where they are called, as the
+is checked. A view trusts its value's type, so a safe kernel passes no
+`Dynamic` and no type parameter's value where a typed GC value is expected
+(`StrView.length(d)` of a `d:Dynamic`: `reject/KernelViewDynamic`); one that
+takes `Dynamic` tests the type itself, as `TypeView` does (`TypeView.string`
+gives a tested string as a `String`). A view's functions are inlined where they are called, as the
 inline representation calls they stand for were, and a kernel called at
 one place of its module is inlined there whatever its loops (`KernelOnce`):
 a kernel per width, as `count1` and `count2`, costs no call.
@@ -215,7 +219,8 @@ is an index of a row of the type table, which `TypeView.kind(t)` and
 `@:hxmc.proof` (or an abstract over one), and only `@:hxmc.unsafe` code
 makes one. A safe kernel holds, passes, compares and returns a proof;
 it never casts to one, nor takes another value where one is expected (a
-`Dynamic` unboxed). GC code could make one from anything, so only
+`Dynamic` unboxed, the result of a kernel declared to return a type
+parameter: `reject/KernelProofGeneric`). GC code could make one from anything, so only
 kernels and `@:hxmc.unsafe` code call a function that takes a proof, and
 such a function is no value (no closure, no reflection). No static, no
 struct field and no span element is a proof: GC code writes those, and a

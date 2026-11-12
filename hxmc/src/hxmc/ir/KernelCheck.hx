@@ -22,7 +22,9 @@ using core.TFunctions;
 //     in a @:hxmc.blocking kernel: held in locals, passed to kernels,
 //     returned, compared with null; read only through a kernel that knows
 //     the layout (a view: hxmc.rt.StrView), never by a field or an index;
-//     no allocation (string literals are static data);
+//     no allocation (string literals are static data); no Dynamic nor a
+//     type parameter's value where a typed one is expected (a view trusts
+//     its value's type);
 //   - no raw memory: no value of hxmc.unsafe's types but its C scalars
 //     (Ptr, IoBuffer, Arena, CString, Slice, ...) nor of an abstract over
 //     one, no call of Mem (but its pure functions: unsigned comparisons
@@ -37,7 +39,8 @@ using core.TFunctions;
 //     and Std.int; no throw, no try, no untyped code;
 //   - a proof (a @:hxmc.proof abstract, or one over it: hxmc.rt.TypeView's
 //     TypeIndex) is held, passed, compared and returned, never made: no
-//     cast to it, no other value where one is expected (an unboxed Dynamic);
+//     cast to it, no other value where one is expected (an unboxed Dynamic,
+//     a call whose declared result is a type parameter);
 //     only @:hxmc.unsafe code makes one, and only kernels and @:hxmc.unsafe
 //     code call a function taking one (FnLower), which is no value
 //     (Lower.reflectStatics); no span of proofs, no static or struct field
@@ -174,10 +177,43 @@ class KernelCheck {
 		return h != null ? h.a : null;
 	}
 
-	// a value src where one of type t is expected: a proof (a handle) only from one of its kind
+	public static inline var TYPED = "a view trusts its value's type: no Dynamic or type parameter where a typed GC value is expected";
+
+	// t loose: Dynamic, a type parameter, or an abstract over one (Any)
+	static function loose(t:T):Bool {
+		var depth = 0;
+		while (depth++ < 16)
+			switch t.follow() {
+				case TDynamic(_): return true;
+				case TInst(c, _): return c.clKind.match(KTypeParameter(_));
+				case TAbstract(a, pl) if (!core.Meta.has(core.Meta.CoreType, a.aMeta)):
+					t = core.TFunctions.applyParams(a.aParams, pl, a.aThis);
+				case _: return false;
+			}
+		return false;
+	}
+
+	// a GC value of a type a view may trust (a String, a class's instance)
+	function typed(t:T):Bool
+		return !loose(t) && gcType(t);
+
+	// the type src has as its callee declares it: a call's result type before
+	// its type parameters are applied (conv<T>(x:Dynamic):T makes any T)
+	static function declared(src:TExpr):T
+		return switch src.eexpr {
+			case TCall({eexpr: TField(_, FStatic(_, cf))}, _):
+				switch cf.cfType.follow() {
+					case TFun(s): s.ret;
+					case _: src.etype;
+				}
+			case _: src.etype;
+		}
+
+	// a value src where one of type t is expected: a proof (a handle) only
+	// from one of its kind, a typed GC value only from one of its type
 	function flow(t:T, src:TExpr) {
 		var p = vouched(t);
-		if (p == null) return;
+		if (p == null && !typed(t)) return;
 		switch src.eexpr {
 			case TParenthesis(x) | TMeta(_, x):
 				flow(t, x);
@@ -191,8 +227,11 @@ class KernelCheck {
 					flow(t, c.caseExpr);
 				if (sw.switchDefault != null) flow(t, sw.switchDefault);
 			case _:
-				if (vouched(src.etype) != p)
-					fail(src.epos, "a value of type " + typeName(src.etype) + " as the " + (proofOf(t) != null ? "proof " : "handle ") + typeName(t), proofOf(t) != null ? PROOF : HANDLE);
+				var st = declared(src);
+				if (p == null) {
+					if (loose(st)) fail(src.epos, "a value of type " + typeName(st) + " as a " + typeName(t), TYPED);
+				} else if (vouched(st) != p)
+					fail(src.epos, "a value of type " + typeName(st) + " as the " + (proofOf(t) != null ? "proof " : "handle ") + typeName(t), proofOf(t) != null ? PROOF : HANDLE);
 		}
 	}
 
@@ -253,8 +292,11 @@ class KernelCheck {
 		return true;
 	}
 
+	function gcType(t:T):Bool
+		return !isRaw(t) && !t.follow().match(TFun(_)) && Ir.isRef(l.ty(t));
+
 	function isGc(e:TExpr):Bool
-		return !isRaw(e.etype) && !e.etype.follow().match(TFun(_)) && Ir.isRef(l.ty(e.etype));
+		return gcType(e.etype);
 
 	static function isNullConst(e:TExpr):Bool
 		return switch e.eexpr {

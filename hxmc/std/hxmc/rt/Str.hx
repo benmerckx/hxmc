@@ -1136,10 +1136,10 @@ class Str {
 		Repr.sbSetLen(b, at);
 	}
 
-	@:hxmc.host("StringBuf_clear") @:hxmc.kernel static function sbClear(b:Dynamic):Void
+	@:hxmc.host("StringBuf_clear") @:hxmc.kernel static function sbClear(b:StringBuf):Void
 		StrBufView.clear(b);
 
-	@:hxmc.host("StringBuf_get_length") @:hxmc.kernel static function sbGetLength(b:Dynamic):Int
+	@:hxmc.host("StringBuf_get_length") @:hxmc.kernel static function sbGetLength(b:StringBuf):Int
 		return StrBufView.length(b);
 
 	// (one-byte where every unit fits: a buffer widened, then cleared, may hold none above 0xFF)
