@@ -18,9 +18,9 @@ The fixpoint and crosshost must stay byte-identical.
 
 | Tier | What it runs |
 | --- | --- |
-| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the module cache's store, the lowering's queries (`CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, CompactParGc x10, CompactEnums x10 and HeaderEnums x10 (parallel collections of compact objects), crosshost on three cases, debug info, shared libraries, Java through JNI (JniCheck), iOS's plain Mach-O, the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
-| `make full` | every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
+| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the unit checks (`Units`; `CASES=` restricts the corpus) |
+| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, CompactParGc x10, CompactEnums x10 and HeaderEnums x10 (parallel collections of compact objects), crosshost on three cases, debug info, the native output (`NativeCheck` shared, jni, macho; uikit on a Mac with Xcode), the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
+| `make full` | quick, plus every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference
 
@@ -46,7 +46,7 @@ of each file.
 | `unit.hxml` | `unit` | unit tests of port modules, in-process | pass |
 | `fuzz/` | `make test-fuzz LANE=...` | random programs per target (`diff:<target>`) or by output (`exec:<a>,<b>`), reduced on failure; `--cases haxe/test/fuzz/cases` reruns the kept ones | CI: diff lanes of ten targets, two exec lanes |
 | `IpcStress` | (upstream-tests.yml) | multi-byte strings through Eval's `sys.io.Process`, with concurrent file reads | 86 checks per round |
-| `EncCheck` | | the x86-64 and AArch64 encoders against `llvm-mc` (not in CI) | |
+| `tools/hxmc/EncCheck` | | the x86-64 and AArch64 encoders against `llvm-mc` (not in CI) | |
 
 Sequential runs pass `-D disable-parallelism`: the reference itself is not
 deterministic in parallel mode.
@@ -88,24 +88,22 @@ each lane on the kept cases and 400 random programs.
 | --- | --- | --- |
 | `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files; `hxmc/test/reject`'s programs the compiler must reject (each `// expect: ` line part of the error) and `hxmc/test/warn`'s it must build with warnings (each `// warns: ` line part of them) |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
-| `HeaderCheck` | `header-check` | the C declarations that name their headers (the std's typed bindings, `CBindings*`) against each of the seven targets' headers, compiled by zig as C++ assertions; `hxmc/test/header/BadLayout.hx` must fail ([interop.md](interop.md#checking-declarations-against-the-headers)); CI's `native-output` job |
+| `HeaderCheck` | `native-check` (`NATIVE=header`) | the C declarations that name their headers (the std's typed bindings, `CBindings*`) against each of the seven targets' headers, compiled by zig as C++ assertions; `hxmc/test/header/BadLayout.hx` must fail ([interop.md](interop.md#checking-declarations-against-the-headers)) |
 | `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
 | `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`), a module defined in its definer's typing that calls back into it, the definer edited and back (`--defined`), a registry a macro class keeps whose readers' fields come from it, two programs of one class path filling it (`--state`), macros that use state no macro keeps (a class's own static initialisation, a std override's statics) restoring the modules they ran in; for hxmc, JS and Eval (`PORT=1` adds the port) |
-| `CacheCheck` | `quick` | the cache store: trimming, packs, the cap, an unwritable cache |
-| `RtSearchCheck` | `quick` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
-| `FrontendCheck` | `quick` | a compiler built from hxmc's sources with its own main (`hxmc/test/frontend`) adds a function to the lowered program through `hxmc.Main.beforeCodegen` ([hxmc.md](hxmc.md#frontends)); the program it builds calls it |
+| `CacheCheck` | `units` | the cache store: trimming, packs, the cap, an unwritable cache |
+| `RtSearchCheck` | `units` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
+| `Units` | `units`, `quick` | `RootFactsCheck` and `MirCompactCheck` (Roots and MIR compaction on hand-made functions), `CacheCheck`, `RtSearchCheck` (not on Windows), and the frontends' seam: a compiler built from hxmc's sources with its own main (`hxmc/test/frontend`) adds a function to the lowered program through `hxmc.Main.beforeCodegen` ([hxmc.md](hxmc.md#frontends)); the program it builds calls it |
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
-| `SharedCheck` | `shared-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
-| `JniCheck` | `jni-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
-| `MachOCheck` | `macho-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform and minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit) |
-| `UIKitCheck` | `uikit-check` | UIKitHello, a UIKit app with its own `hxmc_ui_main`, in its bundle: run as a Mac Catalyst agent app and in the iOS simulator's iPhone and iPad (the delegate, the body after launch, the window key and sized); a Mac with Xcode |
+| `SharedCheck` | `native-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
+| `JniCheck` | `native-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
+| `MachOCheck` | `native-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform and minimum, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit) |
+| `UIKitCheck` | `native-check` | UIKitHello, a UIKit app with its own `hxmc_ui_main`, in its bundle: run as a Mac Catalyst agent app and in the iOS simulator's iPhone and iPad (the delegate, the body after launch, the window key and sized); a Mac with Xcode |
 | `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run), a class a macro's callback defines and a build macro's persistent state in builds of two signatures (with an initializer or without, and after an error in a macro) among them, in memory, from HXB and connected (`--server-connect`: each answer arriving whole); the modules an edit compiles; two programs in turn under a cap of 1 MB (`hxmc.server-mb`: each build drops the other program's) |
-| `Corpus --mir-run` | `mir-run-check` | the corpus run inside the compiler on the Mir interpreter |
-| `Conformance --target-only` | `mir-macros-check` | the macro cases with Mir macros against the reference (66 of 67: Issue11631 uses Eval's `mbedtls`) |
-| `MirCacheCheck` | `mir-cache-check` | Mir macros' compiled functions kept across builds |
-| `MirServerCheck` | `mir-server-check` | Mir macros' statics in the compilation server, against the reference |
+| `MirCheck` | `mir-check` | the Mir lane: the corpus run inside the compiler on the Mir interpreter (`Corpus --mir-run`), the macro cases with Mir macros against the reference (`Conformance --target-only`; Issue11631 uses Eval's `mbedtls`: `MirCheck.KNOWN`), Mir macros' compiled functions kept across builds (`MirCacheCheck`), their statics in the compilation server against the reference (`MirServerCheck`, not on Windows) |
+| `NativeCheck` | `native-check` | the native-output checks above as parts (`NATIVE=shared\|jni\|macho\|uikit\|header`; `elf <dir>`: `ElfCheck`, the glibc mode's executables with readelf), each skipping itself where it cannot run |
 
 **The corpus.** Golden files are frozen: a new case gets one with
 `--bless` (checked by hand); a changed output is an edit of its golden file
@@ -177,20 +175,20 @@ a release is published only when all of them pass.
 | `changes` | yes | what the run needs (`.github/select.sh`); whether the runtime objects' release exists |
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the release binaries and lix for the six targets |
-| `build-checks` | yes | the module cache checks, `make dev-check` (apart from `build`, which most jobs wait for) |
+| `checks` | yes | `make units`, `make test-module-cache PORT=1`, `make dev-check`, `make native-check` on Linux (`SharedCheck`, `JniCheck` with the image's JDK 21, `MachOCheck`, `HeaderCheck`: [the contract](using.md#native-output-for-a-packager)); apart from `build`, which most jobs wait for |
 | `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi; apart from `corpus`, which the test jobs wait for) |
 | `corpus` | yes | the corpus for every target (five jobs, Windows' a job per target), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
 | `crosshost` | yes | `make crosshost` (four jobs, the cases in shards: `--shard i/4`; the module's builds on node workers) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
-| `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
-| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, except on the Intel Mac, the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
+| `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger, the fuzzer's diff lanes |
+| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, except on the Intel Mac, the Mir lane (`MirCheck`, as `make mir-check`) and `MirBench` |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
 | `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
 | `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
-| `native-output` | no | `make native-check` on Linux: `SharedCheck`, `JniCheck` (the image's JDK 21) and `MachOCheck` ([the contract](using.md#native-output-for-a-packager)) |
-| `upstream-tests` | no | upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
+| `llvm` | no | the nightly and dispatches only: the corpus with the LLVM back end (`-D hxmc.llvm`) on linux-x86_64, linux-arm64 and macos-arm64 |
+| `upstream-tests` | no | the nightly and dispatches only: upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
 | `publish-npm` | | after every gate: the seven packages at one version (the six platform packages, then `@hxmc/cli`), names, versions and optional dependencies checked, with provenance through npm's trusted publishing; on `v*` tags as `latest`, from main as `<version>-nightly.<date>.<commit>` tagged `next` |
 | `release`, `pages` | | the nightly release or a tagged release; the website from main |
 

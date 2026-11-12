@@ -561,7 +561,7 @@ var lo = 0, hi = 0;
 Lib.minmax(3, -7, 12, Span.of(lo), Span.of(hi));                // int *min, int *max
 ```
 
-`CBindingsStrings` and `CBindingsOut` check these (and `make header-check`
+`CBindingsStrings` and `CBindingsOut` check these (and `make native-check NATIVE=header`
 their declarations: a `String` is checked to be `char *`).
 
 **Arrays from GC code.** `ReadOnlySpan.ofArray(a)` passes an `Array` of
@@ -742,7 +742,7 @@ Dirs.next(d);                                          // ends the program: an i
 A declaration that disagrees with C (a field at another offset, an `Int`
 where C has a `long`, a parameter too few) is undefined behaviour at run
 time. `-D hxmc.header-check=<file>` writes the program's declarations that
-name their headers as C++ assertions over them, and `make header-check`
+name their headers as C++ assertions over them, and `make native-check NATIVE=header`
 (`hxmc/test/HeaderCheck.hx`) compiles them with zig for each target
 against its own C library (musl, macOS's, MinGW-w64's, wasi-libc): a
 mismatch fails the build, naming the declaration.
@@ -769,7 +769,7 @@ HeaderCheck.hx:23: QR.q: q is an integer of 8 bytes
 cb_value: parameter 1 (o) is an integer of 4 bytes
 ```
 
-`make header-check` covers the std's typed bindings (`hxmc.rt.PosixApi`,
+`make native-check NATIVE=header` covers the std's typed bindings (`hxmc.rt.PosixApi`,
 `Os`'s), `CBindings` against `CBindings.h`, and must fail on
 `hxmc/test/header/BadLayout.hx`. Without zig it is skipped. Android's and
 the glibc mode's headers are not among them yet (Layouts.hx reads those).
@@ -1921,7 +1921,7 @@ try p.play("x.ogg", 0) catch (e:JavaException) trace(e.className, e.javaMessage)
 
 The corpus cases `JniCalls`, `JniArrays`, `JniRefs`, `JniPeers` and
 `JniThreads` embed a JVM (linux-x86_64 in the glibc mode, with a JDK:
-`make jni-check`, [testing.md](testing.md)); `JniElsewhere` runs on every
+`make native-check NATIVE=jni`, [testing.md](testing.md)); `JniElsewhere` runs on every
 target; `JniCheck` also loads an hxmc library into `java` and builds it
 for Android.
 
