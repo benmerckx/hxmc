@@ -1,4 +1,5 @@
 import Harness.*;
+import haxe.io.Path;
 import sys.FileSystem;
 
 // The Mir lane (make mir-check; CI's test jobs, on each machine but Intel
@@ -23,8 +24,10 @@ class MirCheck {
 		if (eval == null || haxe == null || ref == null) fail("usage: MirCheck --eval <eval> --haxe <haxe> --reference <haxe> [-j N] [--summary <file>] [case ...]");
 		if (Sys.getEnv("HXMC_STD") == null) fail("MirCheck: HXMC_STD (hxmc's std for the macro context)");
 		var jobs = a.get("-j", "4"), summary = a.has("--summary") ? ["--summary", a.get("--summary")] : [];
-		Sys.putEnv("HXMC_HAXE", FileSystem.fullPath(haxe));
-		Sys.putEnv("HAXE_REFERENCE", FileSystem.fullPath(ref));
+		// (forward slashes: the port's command runs through a shell, Windows too)
+		haxe = Path.normalize(FileSystem.fullPath(haxe));
+		Sys.putEnv("HXMC_HAXE", haxe);
+		Sys.putEnv("HAXE_REFERENCE", Path.normalize(FileSystem.fullPath(ref)));
 		var parts = [
 			{name: "corpus", args: ["Corpus", "--mir-run", "-v", "-j", jobs].concat(a.rest)},
 			{name: "cache", args: ["MirCacheCheck"]}
@@ -35,7 +38,7 @@ class MirCheck {
 		var failed = [];
 		for (p in parts) {
 			Sys.println('== Mir lane: ${p.name}');
-			if (p.name == "macros") Sys.putEnv("HAXE_IN_HAXE_PORT", FileSystem.fullPath(haxe) + " -D hxmc.macros=mir");
+			if (p.name == "macros") Sys.putEnv("HAXE_IN_HAXE_PORT", haxe + " -D hxmc.macros=mir");
 			if (Sys.command(eval, ["-cp", "hxmc/test", "-cp", "haxe/test", "--run"].concat(p.args)) != 0) failed.push(p.name);
 		}
 		if (failed.length > 0) fail("MirCheck: failed: " + failed.join(", "));
