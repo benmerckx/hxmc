@@ -3,7 +3,7 @@ import hxmc.x64.Asm;
 // Table-driven test of the x86-64 encoder (hxmc/tools/enctest.py): prints
 // one line per instruction, `<intel syntax>|<our bytes in hex>`; the script
 // assembles the text with llvm-mc and compares the bytes. Runs on Eval:
-//   haxe -cp hxmc/src -cp hxmc/test/encoder --run EncTest
+//   haxe -cp hxmc/src -cp tools/hxmc/encoder --run EncTest
 class EncTest {
 	static var out = new StringBuf();
 

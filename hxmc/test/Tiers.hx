@@ -6,36 +6,32 @@ using StringTools;
 
 // Tiered checks of hxmc (`make quick|check|full`, which rebuild the tool
 // first): one line per lane with its result and time, a summary at the end,
-// exit 1 if any lane failed.
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run Tiers quick|check|full [--port] [case ...]
-//   quick  the x64 corpus (64 KB nursery), again with RT_VERIFY=1 and
-//          -D hxmc.verify-tags (Corpus --verify-tags), and the wasm corpus
-//          under node, again with a 64 KB nursery, an old space of 1 MB at
-//          first, a budget of 64 MB (RT_MAX_MB) and RT_VERIFY=1 (its major
-//          collections, compactions), the module cache's store (CacheCheck), where the tool
-//          finds the runtime objects in npm's layout (RtSearchCheck), a frontend's
-//          compiler adding a function after the lowering (FrontendCheck):
-//          after every edit
+// exit 1 if any lane failed. Each tier runs quick's checks.
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run Tiers quick|check|full [--port] [case ...]
+//   quick  the unit checks (Units), the x64 corpus (64 KB nursery), again
+//          with RT_VERIFY=1 and -D hxmc.verify-tags (Corpus --verify-tags),
+//          and the wasm corpus under node, again with a 64 KB nursery, an old
+//          space of 1 MB at first, a budget of 64 MB (RT_MAX_MB) and
+//          RT_VERIFY=1 (its major collections, compactions): after every edit
 //   check  quick + linux-arm64 (qemu) and windows-x86_64 (wine), x64 with a
 //          16 KB nursery, the wasm corpus with legacy exception handling
 //          (-D hxmc.wasm-eh=legacy) under node, the corpus in the dynamic glibc
 //          mode (-D hxmc.libc=glibc) for x64 and arm64 (qemu, with the cross C
-//          library) and its executables checked with readelf (ElfCheck),
+//          library) and its executables checked with readelf (NativeCheck elf),
 //          ThreadNatives x30 (16 KB, and with the adaptive nursery), the tool as
 //          a module building three cases for x64, arm64 and wasm32-wasi
 //          byte-identical to the native tool, the debugging information and
 //          unwind tables (DebugCheck: gdb on the host, the tools elsewhere),
-//          shared libraries (SharedCheck), Java through JNI (JniCheck: an
-//          embedded JVM, a library Java loads, Android's builds) and iOS's
-//          plain Mach-O outputs (MachOCheck);
-//          --port adds the native port's self-compile: before commits
-//   full   x64, arm64 and wine at 64, 16 and 256 KB, each with RT_VERIFY=1 too
-//          (at 64 KB with -D hxmc.verify-tags);
+//          the native output (NativeCheck shared, jni, macho; uikit on a Mac
+//          with Xcode); --port adds the native port's self-compile: before
+//          commits
+//   full   quick + x64, arm64 and wine at 64, 16 and 256 KB, each with
+//          RT_VERIFY=1 too (at 64 KB with -D hxmc.verify-tags);
 //          x64 and arm64 in the glibc mode, also at 16 KB with RT_VERIFY=1;
 //          wasm under node and wasmtime at 16, 64 and 256 KB, under node with
-//          RT_VERIFY=1 at 64 (and -D hxmc.verify-tags) and 256 KB and with legacy exception handling at
-//          16 and 64 KB; ThreadNatives x300 (16 KB) and x100 (64 KB); the heap
-//          census of a debug build; the
+//          RT_VERIFY=1 at 64 (and -D hxmc.verify-tags) and 256 KB and with
+//          legacy exception handling at 16 and 64 KB; ThreadNatives x300
+//          (16 KB) and x100 (64 KB); the heap census of a debug build; the
 //          port's self-compile natively (64 KB, 256 KB, 256 KB with
 //          RT_VERIFY=1, the adaptive nursery with RT_VERIFY=1) and as a
 //          module (node, node with 256 KB, wasmtime, node with legacy
@@ -47,7 +43,7 @@ using StringTools;
 // for the port lanes.
 class Tiers {
 	static var results:Array<{name:String, ok:Bool}> = [];
-	static final SCRIPT = ["bin/hxmc/hxmc", "-cp", "hxmc/test", "-cp", "haxe/test", "--run"];
+	static final SCRIPT = ["bin/hxmc/hxmc", "-cp", "hxmc/test", "-cp", "haxe/test", "-cp", "hxmc/src", "--run"];
 	static final LEGACY = ["--wasm-eh", "legacy"];
 	static final GLIBC = ["--libc", "glibc"];
 	// (the tagged words of type parameters' values tested before every read as a reference)
@@ -82,16 +78,6 @@ class Tiers {
 	static function script(args:Array<String>) return () -> {
 		var r = exec(SCRIPT.concat(args), {merge: true});
 		{ok: r.code == 0, detail: lastLine(r.out)};
-	}
-
-	static function rootFacts() {
-		var dir = "bin/hxmc-t/root-facts";
-		mkdirs(dir);
-		var out = dir + "/m" + (windows ? ".exe" : "");
-		var r = exec(["bin/hxmc/hxmc", out, "-cp", "haxe/src", "-cp", "hxmc/src", "-cp", "hxmc/test", "-D", "disable-parallelism",
-			"-D", "hih_no_generators", "-main", "RootFactsCheck", "-cp", "bin/hxmc/std", "--custom-target", "hxmc"], {merge: true});
-		if (r.code == 0) r = exec([FileSystem.fullPath(out)], {merge: true, env: ["RT_VERIFY" => "1", "RT_MINOR_KB" => "64"]});
-		return {ok: r.code == 0, detail: lastLine(r.out)};
 	}
 
 	// (kb 0: the adaptive nursery, RT_MINOR_KB unset; verify: RT_VERIFY=1)
@@ -168,11 +154,6 @@ class Tiers {
 			lane('debug info $t', script(["DebugCheck", "--target", t]));
 	}
 
-	static function make(args:Array<String>) return () -> {
-		var r = exec(["make", "--no-print-directory"].concat(args), {merge: true});
-		{ok: r.code == 0, detail: lastLine(r.out)};
-	}
-
 	static function fixpoint() {
 		var r = exec(["make", "--no-print-directory", "fixpoint"], {merge: true});
 		var said = [for (l in r.out.split("\n")) if (l.startsWith("fixpoint:")) l];
@@ -185,19 +166,17 @@ class Tiers {
 		var tier = args[0], port = args.contains("--port");
 		var cases = [for (a in args.slice(1)) if (a != "--port") a];
 		var t0 = now();
-		lane("root facts", rootFacts);
+		lane("units", script(["Units"]));
+		// (full has these at 64 KB among its nurseries)
 		if (tier != "full") {
 			lane("x64", corpus(cases));
 			lane("x64 RT_VERIFY verify-tags", corpus(null, ["RT_VERIFY" => "1"], cases, VERIFY_TAGS));
 			lane("wasm node", corpus("wasm32-wasi", null, cases));
-			// (the old space's major collections at every 16 MB promoted, all
-			// compactions (RT_COMPACT=2: a small program would grow memory and
-			// copy, RT_GROW_MB), and under a budget of linear memory, checked)
-			lane("wasm node compacting RT_VERIFY", corpus("wasm32-wasi", ["RT_MINOR_KB" => "64", "RT_OLD_MB" => "1", "RT_MAX_MB" => "64", "RT_COMPACT" => "2", "RT_VERIFY" => "1"], cases));
-			lane("module cache store", script(["CacheCheck"]));
-			if (Sys.systemName() != "Windows") lane("runtime-object search", script(["RtSearchCheck"]));
-			lane("frontend seam", script(["FrontendCheck"]));
 		}
+		// (the old space's major collections at every 16 MB promoted, all
+		// compactions (RT_COMPACT=2: a small program would grow memory and
+		// copy, RT_GROW_MB), and under a budget of linear memory, checked)
+		lane("wasm node compacting RT_VERIFY", corpus("wasm32-wasi", ["RT_MINOR_KB" => "64", "RT_OLD_MB" => "1", "RT_MAX_MB" => "64", "RT_COMPACT" => "2", "RT_VERIFY" => "1"], cases));
 		if (tier == "check") {
 			lane("x64 16K", corpus(null, ["RT_MINOR_KB" => "16"], cases));
 			lane("arm64 (qemu)", corpus("linux-arm64", null, cases));
@@ -205,16 +184,15 @@ class Tiers {
 			lane("x64 glibc", corpus(null, null, cases, GLIBC));
 			// (arm64: the cross C library's root for qemu, libc6-arm64-cross)
 			if (FileSystem.exists(Sys.getEnv("QEMU_LD_PREFIX") ?? "/usr/aarch64-linux-gnu")) lane("arm64 glibc (qemu)", corpus("linux-arm64", null, cases, GLIBC));
-			lane("glibc readelf", script(["ElfCheck", "bin/hxmc-t"]));
-			lane("shared libraries", script(["SharedCheck"]));
-			lane("Java (JNI)", script(["JniCheck"]));
-			lane("iOS Mach-O", make(["macho-check"]));
+			lane("glibc readelf", script(["NativeCheck", "elf", "bin/hxmc-t"]));
+			for (p in ["shared", "jni", "macho"])
+				lane('native $p', script(["NativeCheck", p]));
 			// (macOS with Xcode's iOS simulator: the corpus run in an iPhone simulator)
 			if (Corpus.iosDevice() != null) lane("iOS simulator", corpus("ios-sim-arm64", null, cases));
 			// (an arm64 Mac: the corpus as Mac Catalyst processes, UIKit's views among them)
 			if (Corpus.hostTarget() == "macos-arm64") lane("Mac Catalyst", corpus("macos-catalyst-arm64", null, cases));
 			// (a Mac with Xcode: a UIKit app in its bundle, Catalyst and the simulator's iPhone and iPad)
-			if (Corpus.iosDevice() != null) lane("UIKit app", make(["uikit-check"]));
+			if (Corpus.iosDevice() != null) lane("native uikit", script(["NativeCheck", "uikit"]));
 			lane("wasm node legacy EH", corpus("wasm32-wasi", null, cases, LEGACY));
 			lane("ThreadNatives x30", threads(30, 16));
 			lane("ThreadNatives x30 adaptive", threads(30, 0));
@@ -236,7 +214,7 @@ class Tiers {
 				lane('$t glibc', corpus(t, null, cases, GLIBC));
 				lane('$t glibc 16K RT_VERIFY', corpus(t, ["RT_MINOR_KB" => "16", "RT_VERIFY" => "1"], cases, GLIBC));
 			}
-			lane("glibc readelf", script(["ElfCheck", "bin/hxmc-t"]));
+			lane("glibc readelf", script(["NativeCheck", "elf", "bin/hxmc-t"]));
 			debugLanes();
 			for (kb in ["16", "64", "256"]) {
 				lane('wasm node ${kb}K', corpus("wasm32-wasi", ["RT_MINOR_KB" => kb], cases));

@@ -13,7 +13,7 @@ import hxmc.unsafe.UInt8;
 // bytes, no raw memory, so the safe kernels of PosixSys and PosixNet call
 // them. Lengths are bytes: a C length in bytes takes a span of UInt8. The
 // same symbols as hxmc.unsafe.Posix's, and fast as those; make
-// header-check compiles the declarations against each target's headers.
+// native-check NATIVE=header compiles the declarations against each target's headers.
 @:hxmc.c @:hxmc.fast @:hxmc.safe @:hxmc.header("unistd.h", "fcntl.h", "signal.h", "sys/types.h", "sys/stat.h", "sys/socket.h", "time.h")
 extern class PosixApi {
 	static function read(fd:Int, buf:Span<UInt8>):I64;

@@ -13,7 +13,7 @@ using core.TFunctions;
 // the result's kind and size (an integer of 4 bytes, a pointer, a span's
 // element, a struct by its name), each struct's size and its fields'
 // offsets and sizes. `zig c++ -target <triple> -fsyntax-only` compiles
-// it (make header-check, hxmc/test/HeaderCheck.hx): a declaration that
+// it (make native-check NATIVE=header, hxmc/test/HeaderCheck.hx): a declaration that
 // disagrees with C fails there. C++ only for its type traits (clang's
 // builtins, -nostdinc++: no C++ library wraps the C headers); the
 // declarations are C's.

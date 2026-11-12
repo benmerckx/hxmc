@@ -33,7 +33,7 @@ using StringTools;
 // run by the interpreter in it: hxmc.rt.Interp), in bin/hxmc-t-interp;
 // --mir-run runs every case inside the native compiler, `haxe` with hxmc
 // built in (HXMC_HAXE, default the host's bin/npm/native/<host>/haxe: make
-// mir-run-check) with -D hxmc.run=mir --run
+// mir-check) with -D hxmc.run=mir --run
 // (hxmc.interp.MirRun: no executable), in bin/hxmc-t-mir; the cases known to
 // fail there are MIR_RUN_KNOWN's.
 // --verify-tags builds every case with -D hxmc.verify-tags (references tested

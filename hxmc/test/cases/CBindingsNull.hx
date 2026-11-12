@@ -7,7 +7,7 @@ import hxmc.unsafe.Ptr;
 // NULL at typed bindings (docs/interop.md, "Typed bindings"): a
 // Null<ReadOnlySpan<T>> (`const T * _Nullable`), a Null<F> callback and a
 // Null<H> handle pass NULL for null; an hxmc.Out<H> is a handle's
-// out-parameter (H *). make header-check checks the declarations.
+// out-parameter (H *). make native-check NATIVE=header checks the declarations.
 @:hxmc.handle(0) abstract Node(Ptr) {}
 
 @:hxmc.c @:hxmc.fast @:hxmc.safe @:hxmc.header("CBindingsNull.h") extern class N {

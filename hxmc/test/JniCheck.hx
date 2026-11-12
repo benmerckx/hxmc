@@ -30,7 +30,7 @@ class JniCheck {
 	static function skip(what:String, why:String)
 		Sys.println(pad(what, 56) + " skipped  " + why);
 
-	static function main() {
+	public static function run(args:Array<String>):Int {
 		var tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
 		var jdk = Corpus.jdk();
 		var cases = [for (k in Corpus.JNI.keys()) k];
@@ -103,8 +103,9 @@ class JniCheck {
 		}
 		if (failures.length > 0) {
 			Sys.println("JniCheck: " + failures.length + " failed");
-			Sys.exit(1);
+			return 1;
 		}
 		Sys.println("JniCheck: all passed");
+		return 0;
 	}
 }

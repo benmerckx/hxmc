@@ -5,7 +5,7 @@ import hxmc.unsafe.USize;
 // Arrays at typed bindings (docs/interop.md, "Typed bindings"):
 // ReadOnlySpan.ofArray(a) copies an Array's structs or scalars into C memory
 // for the call, Span.ofArray(a) back into the Array after it, so GC code
-// passes many CGRects without raw memory. make header-check checks them.
+// passes many CGRects without raw memory. make native-check NATIVE=header checks them.
 // define: hxmc.strict
 @:hxmc.struct @:hxmc.cname("struct ca_rect") @:publicFields class Rect {
 	var x:Float;

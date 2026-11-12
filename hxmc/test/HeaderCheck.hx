@@ -39,12 +39,12 @@ class HeaderCheck {
 		{main: "CBindingsArrays", cp: "hxmc/test/cases", native: false, posix: false}
 	];
 
-	static function main() {
-		var targets = Sys.args().length > 0 ? Sys.args() : ORDER;
+	public static function run(args:Array<String>):Int {
+		var targets = args.length > 0 ? args : ORDER;
 		var zig = Sys.getEnv("ZIG") ?? "zig";
 		if (try exec([zig, "version"]).code != 0 catch (_:Dynamic) true) {
 			Sys.println("header check: skipped (no zig)");
-			return;
+			return 0;
 		}
 		mkdirs(OUT);
 		var failed = 0, ok = 0;
@@ -71,7 +71,7 @@ class HeaderCheck {
 			}
 		}
 		Sys.println('header check: $ok/${ok + failed} ok');
-		if (failed > 0) Sys.exit(1);
+		return failed > 0 ? 1 : 0;
 	}
 
 	// null: the declarations agree with the headers; else what failed
