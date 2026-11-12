@@ -175,13 +175,15 @@ a release is published only when all of them pass.
 | --- | --- | --- |
 | `changes` | yes | what the run needs (`.github/select.sh`); whether the runtime objects' release exists |
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
-| `build` | yes | the bootstrap from the stage0, the fixpoint, the module cache checks, `make dev-check`, the release binaries and lix for the six targets |
-| `corpus` | yes | the corpus for every target (three jobs), on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
-| `crosshost` | yes | `make crosshost` (two jobs) |
+| `build` | yes | the bootstrap from the stage0, the fixpoint, the release binaries and lix for the six targets |
+| `build-checks` | yes | the module cache checks, `make dev-check` (apart from `build`, which most jobs wait for) |
+| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi; apart from `corpus`, which the test jobs wait for) |
+| `corpus` | yes | the corpus for every target (five jobs, Windows' a job per target), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
+| `crosshost` | yes | `make crosshost` (four jobs, the cases in shards: `--shard i/4`; the module's builds on node workers) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
 | `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger in three shards, the fuzzer's diff lanes in three jobs |
-| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
+| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, except on the Intel Mac, the Mir lane (`Corpus --mir-run`, the macro cases with Mir macros, `MirCacheCheck`, `MirServerCheck` except on Windows, `MirBench`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
 | `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |

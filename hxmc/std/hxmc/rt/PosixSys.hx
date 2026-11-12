@@ -175,6 +175,7 @@ class PosixSys {
 
 	public static function exit(code:Int):Void {
 		Posix.fflush(Ptr.nil());
+		Os.exiting(code);
 		// (Android: the process ends without the other libraries' destructors,
 		// which the system's threads, EGL's among them, may still need)
 		if (Mem.target() >= 9) Os.exit(code) else Posix.exit(code);

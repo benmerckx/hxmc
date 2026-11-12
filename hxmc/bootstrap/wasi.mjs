@@ -1,14 +1,17 @@
 // Runs a WebAssembly module hxmc built for wasm32-wasi under node's WASI, in
 // this process: imported by the launcher, or as a command
 //   node hxmc/bootstrap/wasi.mjs <module.wasm[.br]> [args...]
+//   node hxmc/bootstrap/wasi.mjs --serve <module.wasm[.br]>
 // The module sees the arguments, the environment and the whole file system
 // (preopened as "/"; on Windows /c/<dir>, /d/<dir>, ... for C:\<dir>, ...), and resolves
 // relative paths against $PWD. A module ending in .br (brotli) or .gz is
 // decompressed first (the committed stage0 is hxmc/bootstrap/stage0.wasm.br).
+// --serve runs one command line after another (serveWasm).
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
+import readline from 'node:readline';
 import v8 from 'node:v8';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +52,8 @@ function preopens() {
 		for (const e of entries) {
 			if (n >= 60) return r;
 			if (!e.isDirectory() || e.name.startsWith('$')) continue;
+			// (unreadable system folders, e.g. C:\Recovery for a non-admin, fail uvwasi_init)
+			try { fs.readdirSync(`${d}:\\${e.name}`); } catch { continue; }
 			r[`/${d.toLowerCase()}/${e.name}`] = `${d}:\\${e.name}`;
 			n++;
 		}
@@ -65,7 +70,9 @@ export function wasiPath(p) {
 // variables that hold paths (HAXE_STD_PATH may hold several, by the host's delimiter)
 const PATH_VARS = ['HAXE_STD_PATH', 'HXMC_STD', 'HXMC_RT_DIR', 'HXMC_RT_OBJ', 'HXMC_EXE_LIST'];
 
-export function runWasm(module, args, env = process.env) {
+// the module compiled (o.mod: compiled before, serveWasm's) and run in a new
+// instance; o.stdout, o.stderr: descriptors for its standard streams
+export function runWasm(module, args, env = process.env, o = {}) {
 	const e = { ...env, PWD: wasiPath(process.cwd()) };
 	// (one thread: the port sizes its task pool by NUMBER_OF_PROCESSORS, set on Windows)
 	delete e.NUMBER_OF_PROCESSORS;
@@ -85,11 +92,10 @@ export function runWasm(module, args, env = process.env) {
 		env: e,
 		preopens: pre,
 		returnOnExit: true,
+		...(o.stdout === undefined ? {} : { stdout: o.stdout }),
+		...(o.stderr === undefined ? {} : { stderr: o.stderr }),
 	});
-	let bytes = fs.readFileSync(module);
-	if (module.endsWith('.br')) bytes = zlib.brotliDecompressSync(bytes);
-	else if (module.endsWith('.gz')) bytes = zlib.gunzipSync(bytes);
-	const mod = new WebAssembly.Module(bytes);
+	const mod = o.mod ?? compileWasm(module);
 	const imports = wasi.getImportObject();
 	let memory = null;
 	if (process.platform === 'win32' || env.HXMC_WASI_READDIR) readdirShim(imports.wasi_snapshot_preview1, pre, () => memory);
@@ -103,6 +109,40 @@ export function runWasm(module, args, env = process.env) {
 	inst = new WebAssembly.Instance(mod, imports);
 	memory = inst.exports.memory;
 	return wasi.start(inst) ?? 0;
+}
+
+export function compileWasm(module) {
+	let bytes = fs.readFileSync(module);
+	if (module.endsWith('.br')) bytes = zlib.brotliDecompressSync(bytes);
+	else if (module.endsWith('.gz')) bytes = zlib.gunzipSync(bytes);
+	return new WebAssembly.Module(bytes);
+}
+
+// Command lines run one after another in new instances of the module
+// compiled once: each as its own process would run it (its own memory and
+// WASI), but without compiling the module again and optimizing its hot
+// functions again (V8 shares a module's code between its instances; a build
+// of hxmc as a module is 16 MB, a process of its own cost twice the CPU
+// time). A JSON line on stdin per run, {args, env, log}: env added to this
+// process's, the run's stdout and stderr to the file log; its exit code a
+// line on stdout (70 when the module trapped, the error in the log).
+// Crosshost's workers.
+export async function serveWasm(module) {
+	const mod = compileWasm(module);
+	for await (const line of readline.createInterface({ input: process.stdin })) {
+		if (line.trim() === '') continue;
+		const j = JSON.parse(line);
+		const log = fs.openSync(j.log, 'w');
+		let code;
+		try {
+			code = runWasm(module, j.args, { ...process.env, ...j.env }, { mod, stdout: log, stderr: log });
+		} catch (e) {
+			fs.writeSync(log, `${e?.stack ?? e}\n`);
+			code = 70;
+		}
+		fs.closeSync(log);
+		process.stdout.write(`${code}\n`);
+	}
 }
 
 // node's WASI (uvwasi) has no fd_readdir on Windows (no seekdir/telldir
@@ -158,9 +198,10 @@ function readdirShim(w, pre, mem) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	if (process.argv.length < 3) {
-		console.error('usage: node wasi.mjs <module.wasm[.br]> [args...]');
+	if (process.argv.length < 3 || (process.argv[2] === '--serve' && process.argv.length !== 4)) {
+		console.error('usage: node wasi.mjs <module.wasm[.br]> [args...] | --serve <module.wasm[.br]>');
 		process.exit(2);
 	}
-	process.exitCode = runWasm(process.argv[2], process.argv.slice(3));
+	if (process.argv[2] === '--serve') await serveWasm(process.argv[3]);
+	else process.exitCode = runWasm(process.argv[2], process.argv.slice(3));
 }

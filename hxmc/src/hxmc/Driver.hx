@@ -138,6 +138,49 @@ class Driver {
 	var templates = new haxe.ds.ObjectMap<FuncInfo, {t:Null<Inline.Template>}>();
 	var tlock = new sys.thread.Mutex();
 
+	// (experimental) LLVM: the module's functions LlvmGen takes, per module
+	var llvmFuncs = 0;
+	var llvmWhy = new Map<String, Int>();
+
+	var llvmPending:Array<LlvmGen> = [];
+	var llvmWhole:Null<LlvmGen> = null;
+
+	// LLVM's code compiled after the data (the program-wide numbers known, or
+	// the whole program as one LLVM module): not in the module objects
+	inline function llvmDeferred():Bool
+		return o.llvm != null && (o.llvmWhole || o.llvmConsts);
+
+	function llvmFor(module:String):Null<LlvmGen> {
+		if (o.llvm == null || abi.wasm || interp != null) return null;
+		if (!o.llvmRt && StringTools.startsWith(module, "hxmc.rt.")) return null;
+		if (o.llvmWhole) {
+			lock.acquire();
+			if (llvmWhole == null) {
+				var g = newLlvm("program");
+				g.shared = true;
+				llvmWhole = g;
+			}
+			lock.release();
+			return llvmWhole;
+		}
+		return newLlvm(module);
+	}
+
+	function newLlvm(module:String):LlvmGen {
+		if (LlvmGen.triple(abi) == null) throw "hxmc: -D hxmc.llvm: no LLVM triple for " + abi.name;
+		var dir = out + ".hxmc/llvm";
+		lock.acquire();
+		if (!sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+		lock.release();
+		var g = new LlvmGen(abi, o.llvm, o.llvmClang, module, dir, o.llvmCpu);
+		g.tbaa = o.llvmTbaa;
+		g.flags = o.llvmFlags;
+		g.pgo = o.llvmPgo;
+		g.lines = hxmc.ir.Lower.lines;
+		g.keepFrames = prep.p.stacks && !o.llvmInline;
+		return g;
+	}
+
 	function template(fn:FuncInfo):Null<Inline.Template> {
 		tlock.acquire();
 		var e = templates.get(fn);
@@ -155,7 +198,7 @@ class Driver {
 	}
 
 	// one function into `obj` (with its emitter)
-	function compileFunc(fn:FuncInfo, obj:Obj, emit:Target.Emitter, ras:Regalloc.Scratch) {
+	function compileFunc(fn:FuncInfo, obj:Obj, emit:Target.Emitter, ras:Regalloc.Scratch, ?llvm:LlvmGen) {
 		var name = prep.funcSym(fn);
 		try {
 			var s0 = haxe.Timer.stamp();
@@ -221,6 +264,8 @@ class Driver {
 			// lowering only allocation folding, the CFG's cleanup and
 			// dead code
 			if (o.opt && sroa) new Sroa(mf).run();
+			// (HXMC_DUMP with HXMC_DUMP_OBJ=1: the object-level Mir before Opt too)
+			if (dumpSet != null && dumpSet.exists(name) && Sys.getEnv("HXMC_DUMP_OBJ") == "1") Sys.println("(object level)\n" + mf.dump());
 			// (Array reads in counted loops tested once before them)
 			if (o.opt && LoopVersion.on && (interp == null || !interp.wants(fn))) {
 				var lv = new LoopVersion(mf);
@@ -290,6 +335,26 @@ class Driver {
 					bss.bssSize += Abi.IC_SIZE * mb.icaches;
 				}
 				return;
+			}
+			// (experimental) LLVM: the function as LLVM IR, compiled with the module (LlvmGen)
+			if (llvm != null) {
+				var why = llvm.accepts(mf);
+				if (why == null) {
+					llvm.func(mf, hxmc.ir.Lower.lines ? (fn.display != null ? fn.display : name) : null);
+					if (mb.icaches > 0) {
+						var bss = obj.section(".bss", Bss, 16);
+						bss.bssSize = (bss.bssSize + 15) & ~15;
+						obj.define(mb.icSym, bss, bss.bssSize, Abi.IC_SIZE * mb.icaches, llvmDeferred()); // (global: LLVM's object is another one then)
+						bss.bssSize += Abi.IC_SIZE * mb.icaches;
+					}
+					lock.acquire();
+					llvmFuncs++;
+					lock.release();
+					return;
+				}
+				lock.acquire();
+				llvmWhy.set(why, (llvmWhy.exists(why) ? llvmWhy.get(why) : 0) + 1);
+				lock.release();
 			}
 			if (abi.wasm) {
 				// WebAssembly: structured code from the Mir, no instruction selection or registers
@@ -403,6 +468,7 @@ class Driver {
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
+		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
 		var ks = [for (k in foldWhy.keys()) k];
 		ks.sort((a, b) -> foldWhy.get(b) - foldWhy.get(a));
@@ -434,12 +500,14 @@ class Driver {
 
 	// (+strhash=fnv: the program's std hashes strings with FNV-1a, FnLower.wordHash;
 	// a string switch lowered for one hash is wrong with the other)
+	// (+pgo=: the LLVM profile's path, time and size: codeKey has only the flag)
 	function toolKey():String {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv")
+			+ (o.llvm != null && o.llvmPgo != null && o.llvmPgo != "gen" ? "+pgo=" + o.llvmPgo + "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
 	// the functions that may be inlined (before the keys: they are part of them)
@@ -553,7 +621,8 @@ class Driver {
 			lits[mi] = fp.newStrings;
 			var mem = resident ? memObjs.get(memPaths[mi]) : null;
 			if (store != null) paths[mi] = store.objectPath(CacheKey.ofHash(ModuleObject, key), moduleFile(order[mi]));
-			if (mem != null && mem.key == key) objs[mi] = mem.obj;
+			if (llvmDeferred()) {} // (LLVM's code compiled after the data: not cached)
+			else if (mem != null && mem.key == key) objs[mi] = mem.obj;
 			else if (!abi.wasm && (store != null || index.get(moduleFile(order[mi])) == key) && sys.FileSystem.exists(paths[mi])) {
 				var o = try ElfReader.read(sys.io.File.getBytes(paths[mi])) catch (_:Dynamic) null;
 				if (o != null) objs[mi] = o;
@@ -597,8 +666,20 @@ class Driver {
 			var ras = scratches.pop();
 			lock.release();
 			if (ras == null) ras = new Regalloc.Scratch(Target.selector(abi));
+			var llvm = llvmFor(order[mi]);
 			for (f in byModule.get(order[mi]))
-				compileFunc(f, obj, emit, ras);
+				compileFunc(f, obj, emit, ras, llvm);
+			if (llvm != null && !llvmDeferred()) {
+				var lo = llvm.compile();
+				if (lo != null) {
+					obj.append(lo);
+					llvm.records(obj);
+				}
+			} else if (llvm != null && llvm.count > 0) {
+				lock.acquire();
+				if (llvmPending.indexOf(llvm) < 0) llvmPending.push(llvm);
+				lock.release();
+			}
 			// (one grown by a giant function is dropped: kept, its arrays would
 			// hold hundreds of MB per thread until the end of the build)
 			if (!ras.oversized()) {
@@ -607,7 +688,7 @@ class Driver {
 				lock.release();
 			}
 			// (WebAssembly objects are not cached: ElfWriter has no relocations for them)
-			if (!abi.wasm) {
+			if (!abi.wasm && !llvmDeferred()) {
 				var b = ElfWriter.write(obj, abi.arm);
 				if (store != null) store.writeObject(CacheKey.ofHash(ModuleObject, keys[mi]), moduleFile(order[mi]), b) else sys.io.File.saveBytes(paths[mi], b);
 			}
@@ -620,7 +701,7 @@ class Driver {
 		} else
 			sys.io.File.saveContent(indexPath, newIndex.toString());
 		// (LinkPE drops sections from the objects it links: not kept)
-		if (resident && abi.os != "windows") {
+		if (resident && abi.os != "windows" && !llvmDeferred()) {
 			for (mi in 0...nm)
 				memObjs.set(memPaths[mi], {key: keys[mi], obj: objs[mi]});
 			ServerMemory.output(out);
@@ -638,21 +719,43 @@ class Driver {
 			dg.spareSigs = hxmc.macro.MirHost.SPARE_SIGS;
 		}
 		dg.run();
-		dg.allocStubs(objs, demit);
-		dg.stubs(objs, demit);
-		dg.cstrLiterals(objs);
-		dg.cVars(objs);
-		dg.emptyArrays(objs);
-		var jni = dg.jniCells(objs);
-		dg.objcRefs(objs);
+		// (LLVM's code compiled after the data: what it refers to, for the data)
+		var dobjs = objs.concat([for (g in llvmPending) g.refs()]);
+		dg.allocStubs(dobjs, demit);
+		dg.stubs(dobjs, demit);
+		dg.cstrLiterals(dobjs);
+		dg.cVars(dobjs);
+		dg.emptyArrays(dobjs);
+		var jni = dg.jniCells(dobjs);
+		dg.objcRefs(dobjs);
 		dg.objcCaught(demit);
-		dg.resources(objs);
+		dg.resources(dobjs);
 		// (-D hxmc.interp: the functions interpreted, by entry stub, for the interpreter's indirect calls)
 		if (interp != null) interp.table(data) else if (Lambda.exists(prep.p.funcs, f -> f.module == "hxmc.rt.Interp")) hxmc.interp.InterpGen.InterpSet.emptyTable(data);
 		// (the functions and their lines for the runtime's stacks: StackTable)
 		Dwarf.enabled = o.debugLines;
+		data.defineAbs(StackTable.FLAGS, (prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0) | (jni > 0 ? StackTable.JNI : 0)
+			| (o.llvm != null && abi.os == "windows" && !abi.arm ? StackTable.WIN64_LLVM : 0));
+		// (LLVM, deferred: compiled now, the program-wide numbers known: -D hxmc.llvm-consts)
+		if (llvmPending.length > 0) {
+			var abs:Null<Map<String, Int>> = null;
+			if (o.llvmConsts) {
+				abs = new Map();
+				for (s in data.symbols)
+					if (s.abs) abs.set(s.name, s.offset);
+			}
+			var tl = haxe.Timer.stamp();
+			var los:Array<Obj> = [for (_ in llvmPending) null];
+			parallel(llvmPending.length, jobs, k -> los[k] = llvmPending[k].compile(abs));
+			for (k in 0...los.length)
+				if (los[k] != null) {
+					llvmPending[k].records(los[k]);
+					objs.push(los[k]);
+				}
+			if (o.stats) Sys.println('hxmc: llvm: ${llvmPending.length} deferred module(s) compiled ${ms(haxe.Timer.stamp() - tl)}');
+		}
+		// (after LLVM's deferred code: its functions are in the table too)
 		StackTable.add(data, objs, prep.p.stacks && !abi.wasm);
-		data.defineAbs(StackTable.FLAGS, (prep.p.stacks && !abi.wasm && !o.mirHost ? StackTable.flags(prep.p) : 0) | (jni > 0 ? StackTable.JNI : 0));
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
@@ -707,6 +810,8 @@ class Driver {
 			return {undef: undef, defined: defined};
 		}
 		var links = o.links.concat(hxmc.ir.CInterop.LINKS);
+		// (Linux: also without LLVM, as the runtime's writer is typed in, hxmc.rt.Pgo)
+		if (o.llvmPgo == "gen" && (o.llvm != null || abi.os == "linux")) links.push(LlvmGen.profileRuntime(abi, o.llvmClang));
 		if (links.length > 0) {
 			var u = undefinedNames();
 			for (x in LinkInputs.load(links, abi, u.undef, u.defined)) {

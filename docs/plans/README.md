@@ -11,6 +11,7 @@ what, why, and the approach decided. What comes next and in which order:
 | [io.md](io.md) | completion-based I/O (io_uring, IOCP): off-heap buffers, system calls, blocking calls |
 | [heap-layout.md](heap-layout.md) | the object header, Bytes, strings and arrays |
 | [codegen.md](codegen.md) | escape analysis, allocation folding, debugging information |
+| [llvm.md](llvm.md) | experimental: Mir through LLVM (`-D hxmc.llvm`), the mapping, status and next steps |
 | [targets.md](targets.md) | WebAssembly, Android, iOS, Windows, Linux, macOS |
 | [dev-loop.md](dev-loop.md) | the dev loop: faster reloads, snapshot hooks, Windows, iOS devices |
 | [lowlevel.md](lowlevel.md) | C interop and low-level Haxe: native memory, manual memory, value enums |

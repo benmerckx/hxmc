@@ -62,9 +62,12 @@ class StackTable {
 	// symbol: 1 exception stacks (haxe.NativeStackTrace.exceptionStack live:
 	// throws record their stack), 2 an exception's stack (haxe.Exception.get_stack
 	// live: an exception records its stack when made), 4 the program calls
-	// Java (DataGen.jniCells: hxmc.rt.Start keeps the main thread's own stack)
+	// Java (DataGen.jniCells: hxmc.rt.Start keeps the main thread's own stack),
+	// 8 functions compiled by LLVM on windows-x86_64 (-D hxmc.llvm: their rbp
+	// is not their frame record, hxmc.rt.Stacks.callerOf)
 	public static inline var FLAGS = "hxmc_stack_flags";
 	public static inline var JNI = 4;
+	public static inline var WIN64_LLVM = 8;
 
 	public static function flags(p:hxmc.ir.Ir.Program):Int {
 		var r = 0;

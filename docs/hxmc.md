@@ -1740,7 +1740,12 @@ Linear memory only grows, and browsers refuse it early, so the runtime
 
 A major collection compacts the old space where it is (`compactOld`)
 unless the memory already free (free chunks and regions) holds a copy of
-the old space's chunks whatever they hold, when it copies as before. A
+the old space's chunks whatever they hold, or memory grown for that copy
+stays within `RT_GROW_MB` (256 MB; at most 2048) and `RT_MAX_MB`, when it
+copies as before (growing memory first). Below that floor a growing
+program trades footprint (up to about twice what is live) for speed (no
+compaction's extra trace and walks); above it, or when the host refuses
+`memory.grow`, it compacts. A
 copy needs memory for all that is live beside the old space, so a copying
 collection's peak is the old space and what is live (a resident compiler
 keeping 500 MB live reached 1.8 GB); a compaction's is the old space and
@@ -1757,7 +1762,8 @@ objects slide towards the list's start (a move never overwrites an object
 not moved yet), their headers restored; the chunks left empty go to the
 free chunks. Large objects stay where they are. It costs about 1.7 times
 a copying collection's time for as much live (two traces and three walks
-of the chunks, against one trace). `RT_COMPACT=0` copies always.
+of the chunks, against one trace). `RT_COMPACT=0` copies always;
+`RT_COMPACT=2` compacts at every major collection (a test lane's).
 
 Objects over 128 KB get a region of their own in the old space (aligned to
 64 KB, the granule of the table that says which space an address is in).
@@ -1926,6 +1932,14 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.frame-pointers=0` | `HXMC_FRAME_POINTERS` | yes | x86-64: no frame pointers (or `-D hxmc.no-frame-pointers`) |
 | `hxmc.symbols` | `HXMC_SYMBOLS` | yes | a symbol table |
 | `hxmc.checked` | | yes | a diagnostic build: checks on, no Mir optimizations ([using.md](using.md#options); the define only: the std reads it) |
+| `hxmc.llvm[=O1\|O2\|O3\|Os]` | `HXMC_LLVM` | yes | (experimental) the functions LLVM takes compiled by clang ([plans/llvm.md](plans/llvm.md)) |
+| `hxmc.llvm-rt` | `HXMC_LLVM_RT` | yes | the runtime's modules too |
+| `hxmc.llvm-cpu=<cpu>` | `HXMC_LLVM_CPU` | yes | clang's -mcpu (arm64) or -march (x86-64) |
+| `hxmc.llvm-whole`, `hxmc.llvm-consts`, `hxmc.llvm-release` | `HXMC_LLVM_WHOLE`, `..._CONSTS`, `..._RELEASE` | yes | the whole program one LLVM module; program-wide numbers as constants; both (not cached) |
+| `hxmc.llvm-tbaa=1\|<list>` | `HXMC_LLVM_TBAA` | yes | Mir's memory classes as LLVM alias information |
+| `hxmc.llvm-flags=<args>`, `hxmc.llvm-clang=<path>` | `HXMC_LLVM_FLAGS`, `HXMC_LLVM_CLANG` | yes | more of clang's arguments; the clang |
+| `hxmc.llvm-pgo=gen\|<profile>` | `HXMC_LLVM_PGO` | yes | an instrumented program, or one compiled with the profile (the object cache's key has the file's time and size) |
+| `hxmc.llvm-inline` | `HXMC_LLVM_INLINE` | yes | LLVM inlines in a program that reads its stacks too |
 | `hxmc.jobs=<n>` | `HXMC_JOBS` | no | parallel module compilations |
 | `hxmc.stats` | `HXMC_STATS` | no | what the build did and how long it took |
 | `hxmc.verbose` | `HXMC_VERBOSE` | no | live functions |
@@ -1967,7 +1981,8 @@ For compiled programs (run time):
 | `RT_NULL_ACCESS=0` | no fault handler |
 | `RT_STACK_MB` | wasm32: the shadow stack's and frame stack's size |
 | `RT_MAX_MB` | wasm32: a budget for linear memory: collections come sooner as what is live nears it (soft: [WebAssembly](#memory)) |
-| `RT_COMPACT=0` | wasm32: a major collection copies what is live always, rather than compacting the old space when free memory does not hold the copy |
+| `RT_COMPACT=0` | wasm32: a major collection copies what is live always, rather than compacting the old space when free memory does not hold the copy (`=2`: it compacts always) |
+| `RT_GROW_MB` | wasm32: below this much linear memory (256; 0: never) a major collection grows memory to copy rather than compacting ([WebAssembly](#memory)) |
 | `RT_REGION_MB` | Windows: the old space's regions (2 GB by default); with compact types at most 15 GB ([compressed references](#compressed-references)) |
 | `RT_LOADED_MB` | a Mir host with compact types: the room below 32 GB for the data of the code it loads (1024) ([compressed references](#compressed-references)) |
 | `RT_PEER_BUDGET` | objects paired with Objective-C ones and boxes of ids gone to the old space since the last major collection that start the next (1000; 0: off; `RT_STATS` reports them) |

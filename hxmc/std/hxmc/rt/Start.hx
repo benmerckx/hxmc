@@ -71,6 +71,10 @@ class Start {
 		if (Mem.target() >= 9) U.__cxa_atexit(Callback.addr(Gc.report), Ptr.nil(), Mem.sym("__dso_handle")) else U.atexit(Callback.addr(Gc.report));
 		#end
 		Faults.init(); // (null accesses throw)
+		// (Linux: the profile of an instrumented program, written at exit)
+		#if (hxmc.llvm_pgo == "gen")
+		if (Mem.os() == 0 && Mem.target() < 9) Pgo.init();
+		#end
 	}
 
 	// The program's main runs on a reserved stack of RT_STACK_MB (default
@@ -137,11 +141,13 @@ class Start {
 	// run yet (Foreign.runDeferred), as a spawned thread runs its own as it
 	// ends (Threads.run). A program's main thread then ends (what is put off
 	// for it later goes to any thread); a library's (hxmc.shared) goes on
-	// calling into it, and runs what is put off for it then
+	// calling into it, and runs what is put off for it then. A program's
+	// end goes through Os.exitHook (a JVM it made: Java's System.exit)
 	static function mainEnded():Void {
 		if (Foreign.ndeferred != 0) Foreign.runDeferred();
 		#if !hxmc.shared
 		if (Foreign.me() > 0) Foreign.threadExit(Foreign.me());
+		Os.exiting(0);
 		#end
 	}
 
