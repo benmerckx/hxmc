@@ -67,7 +67,7 @@ import hxmc.unsafe.UInt8;
 }
 
 @:hxmc.framework("Foundation") @:hxmc.objc extern class NSArray extends NSObject {
-	static function arrayWithObjects(firstObj:Null<NSObject>, ...rest:NSObject):NSArray;
+	@:hxmc.nilTerminated static function arrayWithObjects(firstObj:Null<NSObject>, ...rest:NSObject):NSArray;
 	function count():Int64;
 	function objectAtIndex(i:Int64):NSObject;
 	@:hxmc.callback(comparator)
