@@ -1,5 +1,5 @@
 // The frame chain (Abi.framePointers): with a frame record in every function
-// (arm64 always; x86-64 by default, unless -D hxmc.no-frame-pointers), a
+// (arm64 always; x86-64 by default, unless -D hxmc.frame-pointers=0), a
 // walk from Mem.frame() through the saved frame pointers
 // passes every frame up to main's, as a profiler (perf record -g) or a
 // debugger unwinds: through recursion, closures, the runtime's Haxe code

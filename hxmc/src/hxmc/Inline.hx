@@ -21,7 +21,7 @@ using core.ds.VectorTools;
 // copy's own: it pushes and pops it).
 class Inline {
 	// the limits: -D hxmc.inline=<flat>,<loop>,<runtime flat>,<IR nodes>,<depth>
-	// (else HXMC_INLINE), for every target; an empty or missing field keeps its
+	// for every target; an empty or missing field keeps its
 	// default (configure, the build's: Options.apply; the object cache's key has
 	// the flag: Options.codeKey)
 	static inline var IR_DEFAULT = 40;
@@ -278,8 +278,6 @@ class Inline {
 		}
 		if (!all) f.blocks = [for (b in f.blocks) if (b.mark == reach) b];
 	}
-
-	public static var devirtOn = true; // (the build's, Options.apply)
 
 	// Devirtualization: a virtual call on an object made in f (New: its class
 	// exactly known) calls the class's implementation of the selector

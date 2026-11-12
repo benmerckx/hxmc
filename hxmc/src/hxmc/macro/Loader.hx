@@ -1004,11 +1004,9 @@ class Loader {
 	public static function compactHost():Bool
 		return Gc.compactRefs();
 
-	// the compiler's Mem.compact, the code it loads lowered with it (a tool
-	// without Mem.compact, which defines no hxmc.memcompact, tests each type
-	// at run time: hxmc.rt.GcCore.compactTypes)
+	// the compiler's Mem.compact, the code it loads lowered with it
 	public static function compactTypes():Int
-		return #if hxmc.memcompact Mem.compact() #else compactHost() ? 1 : 0 #end;
+		return Mem.compact();
 
 	// n zeroed bytes for a bundle: in the window with the native tier, else
 	// malloc's (never freed); with compressed references (compactHost) pages

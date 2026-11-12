@@ -94,14 +94,10 @@ class Reach {
 		this.stats = stats;
 	}
 
-	// (HXMC_REACH=0: every function stays, as the lowering made them)
-	static var on = true;
-
 	public static function run(p:Program, stats:Bool) {
 		var r = new Reach(p, stats);
 		r.analyze();
 		if (whyName != null) r.explain();
-		if (!on) return;
 		r.apply();
 	}
 

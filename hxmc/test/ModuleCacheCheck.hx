@@ -937,12 +937,12 @@ class ModuleCacheCheck {
 			if (!late && !defined && !Sys.args().contains("--nondet")) macroState(target);
 		for (target in ["hxmc", "js", "interp"])
 			if (!only) noState(target);
-		// the cache off by HXMC_MODULE_CACHE=0 although the define asks for it
+		// the cache off by HXMC_MODULE_CACHE=0, on by default, off by the define
 		if (!only) {
 			var pdir = dir + "/hxmc-hello";
-			var r = exec([tool, pdir + "/out.off", "-cp", "src", "-main", "Main", "-D", "hxmc.module-cache", "-cp", dir + "/std", "--custom-target", "hxmc"],
+			var r = exec([tool, pdir + "/out.off", "-cp", "src", "-main", "Main", "-cp", dir + "/std", "--custom-target", "hxmc"],
 				{cwd: pdir, env: env(false), merge: true});
-			check("HXMC_MODULE_CACHE=0 wins over -D hxmc.module-cache", r.code == 0 && r.out.indexOf("module cache") < 0);
+			check("HXMC_MODULE_CACHE=0 turns it off", r.code == 0 && r.out.indexOf("module cache") < 0);
 			var r = exec([tool, pdir + "/out.def", "-cp", "src", "-main", "Main", "-cp", dir + "/std", "--custom-target", "hxmc"],
 				{cwd: pdir, env: [for (k => v in env(false)) k => k == "HXMC_MODULE_CACHE" ? null : v], merge: true});
 			check("on by default", r.code == 0 && r.out.indexOf("variants read") >= 0);

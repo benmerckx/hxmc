@@ -141,9 +141,8 @@ class Opt {
 			}
 		}
 		if (nullsDropped) dce();
-		if (licmOn)
-			for (_ in 0...3)
-				if (!licm()) break;
+		for (_ in 0...3)
+			if (!licm()) break;
 		if (barriers > 0) {
 			freshTargets();
 			loneBarrierOperands();
@@ -172,8 +171,6 @@ class Opt {
 		rewrite();
 		dce();
 	}
-
-	static var licmOn = true; // (the build's, Options.apply)
 
 	// ---- loop-invariant code motion
 

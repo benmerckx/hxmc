@@ -22,7 +22,6 @@ class Frames {
 		this.f = f;
 
 	static inline var NONE = 0x40000000; // (no offset: not the frame's address)
-	static var live = true; // (the build's, Options.apply)
 
 	public function run() {
 		var r:Null<MIns> = null;
@@ -110,7 +109,7 @@ class Frames {
 						i.dead = true;
 						storesRemoved++;
 					}
-		if (reads > 0 && stores > storesRemoved && live && nslots <= 32) {
+		if (reads > 0 && stores > storesRemoved && nslots <= 32) {
 			// (the same with the slots as the bits of an Int: most frames)
 			var inOrder = f.newMark();
 			for (k in 0...n) {
@@ -166,7 +165,7 @@ class Frames {
 					} else o &= ~(1 << s);
 				}
 			}
-		} else if (reads > 0 && stores > storesRemoved && live) {
+		} else if (reads > 0 && stores > storesRemoved) {
 			// the slots live at each point: read by a later load before a
 			// store replaces them
 			var inOrder = f.newMark();

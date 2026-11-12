@@ -485,7 +485,7 @@ class FnLower {
 		for (i in 1...fi.args.length)
 			xs[i - 1] = coerce(ELocal(fi.args[i]), fi.args[i].ty, TRef(RAny));
 		var arr = temp(TRef(RArr(TRef(RAny))), ENewArr(TRef(RAny), xs));
-		var call = ECallHost(l.native("hx_dyn_call"), vector(ELocal(inner), arr), TRef(RAny));
+		var call = ECallHost("hx_dyn_call", vector(ELocal(inner), arr), TRef(RAny));
 		if (fi.ret == TVoid) {
 			out.push(SExpr(call));
 			out.push(SReturn(null));
@@ -1016,7 +1016,7 @@ class FnLower {
 			case [TRef(_), TRef(RNativeArr(_))] if (Ir.isWord(from) && nativeConversion(from, to)):
 				return coerce(coerce(x, from, TRef(RAny)), TRef(RAny), to);
 			case [_, TRef(RNativeArr(b))] if (nativeConversion(from, to)):
-				return temp(to, ECallHost(l.native("hx_narray_view"), vector(x, EInt(nativeKind(b))), to));
+				return temp(to, ECallHost("hx_narray_view", vector(x, EInt(nativeKind(b))), to));
 			case [TRef(RClos(a)), TRef(RClos(b))] if (a != b):
 				if (x.match(ENull(_))) return ENull(to);
 				if (hasStruct(a) || hasStruct(b)) structFail('a function taking or returning a struct value cannot become a function of another type');
@@ -1037,7 +1037,7 @@ class FnLower {
 				var c = asLocal(x, from);
 				var r = newLocal("closure", to), same = newLocal("same", from);
 				out.push(SIf(EBin(RefEq, ELocal(c), ENull(from)), vector(SSet(r, ENull(to))), vector(
-					SSet(same, ECallHost(l.native("hx_clos_of_sig"), vector(ELocal(c), EStr(b.key)), TRef(RAny))),
+					SSet(same, ECallHost("hx_clos_of_sig", vector(ELocal(c), EStr(b.key)), TRef(RAny))),
 					SIf(EBin(RefEq, ELocal(same), ENull(from)), vector(SSet(r, ENewClos(l.dynAdapter(b), vector(ELocal(c))))), vector(SSet(r, ECast(to, ELocal(same)))))
 				)));
 				return ELocal(r);
@@ -1120,7 +1120,7 @@ class FnLower {
 			case Lower.BOUNDS_SILENT:
 				var r = newLocal("e", elemValue(elem));
 				// (seen as Dynamic: the default of the storage's kind)
-				var none = dynElem(elem) ? ECallHost(l.native("hx_narray_default"), vector(a), elem) : nullOf(elemValue(elem));
+				var none = dynElem(elem) ? ECallHost("hx_narray_default", vector(a), elem) : nullOf(elemValue(elem));
 				out.push(SIf(inBounds(a, i), vector(SSet(r, get)), vector(SSet(r, none))));
 				return ELocal(r);
 			case Lower.BOUNDS_THROWS:
@@ -1151,19 +1151,19 @@ class FnLower {
 		var d = fi.display != null ? fi.display : fi.name;
 		var dot = d.lastIndexOf(".");
 		var file = EStr(p.pfile), line = EInt(CInterop.lineOf(p.pfile, p.pmin)), cls = EStr(dot < 0 ? "" : d.substr(0, dot)), name = EStr(d.substr(dot + 1));
-		return ECallHost(l.native("hx_narray_oob"), vector(i, ECallHost("hxmc_narray_length", vector(a), TI32), file, line, cls, name), TRef(RAny));
+		return ECallHost("hx_narray_oob", vector(i, ECallHost("hxmc_narray_length", vector(a), TI32), file, line, cls, name), TRef(RAny));
 	}
 
 	// a value converted to String (for concatenation)
 	function toStr(x:Ex, t:Ty):Ex {
 		return switch t {
-			case TRef(RStr): temp(TRef(RStr), ECallHost(l.native("hx_str_or_null"), vector(x), TRef(RStr)));
-			case TI32: temp(TRef(RStr), ECallHost(l.native("hx_str_of_int"), vector(x), TRef(RStr)));
-			case TF64: temp(TRef(RStr), ECallHost(l.native("hx_str_of_float"), vector(x), TRef(RStr)));
-			case TI64: temp(TRef(RStr), ECallHost(l.native("hx_str_of_i64"), vector(x), TRef(RStr)));
-			case TBool: temp(TRef(RStr), ECallHost(l.native("hx_str_of_bool"), vector(x), TRef(RStr)));
+			case TRef(RStr): temp(TRef(RStr), ECallHost("hx_str_or_null", vector(x), TRef(RStr)));
+			case TI32: temp(TRef(RStr), ECallHost("hx_str_of_int", vector(x), TRef(RStr)));
+			case TF64: temp(TRef(RStr), ECallHost("hx_str_of_float", vector(x), TRef(RStr)));
+			case TI64: temp(TRef(RStr), ECallHost("hx_str_of_i64", vector(x), TRef(RStr)));
+			case TBool: temp(TRef(RStr), ECallHost("hx_str_of_bool", vector(x), TRef(RStr)));
 			case TStruct(_) | TRef(RTag | RNull(TI32 | TF64)): toStr(coerce(x, t, TRef(RAny)), TRef(RAny));
-			case _: temp(TRef(RStr), ECallHost(l.native("hx_std_string"), vector(x), TRef(RStr)));
+			case _: temp(TRef(RStr), ECallHost("hx_std_string", vector(x), TRef(RStr)));
 		}
 	}
 
@@ -1219,7 +1219,7 @@ class FnLower {
 		for (id in ids) {
 			var a = appends.get(id);
 			appends.remove(id);
-			out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), vector(SSet(a.s, ECallHost(l.native("StringBuf_toString"), vector(ELocal(a.buf)), TRef(RStr)))), vector()));
+			out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), vector(SSet(a.s, ECallHost("StringBuf_toString", vector(ELocal(a.buf)), TRef(RStr)))), vector()));
 		}
 	}
 
@@ -1296,12 +1296,12 @@ class FnLower {
 			sx = t.match(TRef(RStr)) ? (isConst(sx) ? sx : ELocal(asLocal(sx, t))) : toStr(sx, t);
 			sxs.push(sx);
 		}
-		var adds = [for (sx in sxs) SExpr(ECallHost(l.native("StringBuf_add"), vector(ELocal(a.buf), coerce(sx, TRef(RStr), TRef(RAny))), TVoid))];
+		var adds = [for (sx in sxs) SExpr(ECallHost("StringBuf_add", vector(ELocal(a.buf), coerce(sx, TRef(RStr), TRef(RAny))), TVoid))];
 		var start = [
-			SSet(a.buf, ECallHost(l.native("StringBuf_new"), vector(), SBUF)),
-			SExpr(ECallHost(l.native("StringBuf_add"), vector(ELocal(a.buf), coerce(ELocal(a.s), TRef(RStr), TRef(RAny))), TVoid))
+			SSet(a.buf, ECallHost("StringBuf_new", vector(), SBUF)),
+			SExpr(ECallHost("StringBuf_add", vector(ELocal(a.buf), coerce(ELocal(a.s), TRef(RStr), TRef(RAny))), TVoid))
 		].concat(adds);
-		var concat = [for (sx in sxs) SSet(a.s, ECallHost(l.native("hx_str_concat"), vector(ELocal(a.s), sx), TRef(RStr)))].concat([SSet(a.first, EInt(0))]);
+		var concat = [for (sx in sxs) SSet(a.s, ECallHost("hx_str_concat", vector(ELocal(a.s), sx), TRef(RStr)))].concat([SSet(a.first, EInt(0))]);
 		out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)), Vector.fromArrayCopy(adds),
 			vector(SIf(ELocal(a.first), Vector.fromArrayCopy(concat), Vector.fromArrayCopy(start)))));
 	}
@@ -1311,7 +1311,7 @@ class FnLower {
 	function flushAppend(v:TVar) {
 		var a = appends.get(v.vId);
 		out.push(SIf(EBin(RefNe, ELocal(a.buf), ENull(SBUF)),
-			vector(SSet(a.s, ECallHost(l.native("StringBuf_toString"), vector(ELocal(a.buf)), TRef(RStr))), SSet(a.buf, ENull(SBUF))), vector()));
+			vector(SSet(a.s, ECallHost("StringBuf_toString", vector(ELocal(a.buf)), TRef(RStr))), SSet(a.buf, ENull(SBUF))), vector()));
 	}
 
 	// ---- statements
@@ -1319,10 +1319,7 @@ class FnLower {
 	function stmt(e:TExpr) {
 		curExpr = e;
 		var at = Lower.lines ? pos(e) : -1;
-		if (!Lower.survey) stmt1(e) else try stmt1(e) catch (err:LowerError) {
-			l.record(err, fi.name);
-			out.push(SThrow(ENull(TRef(RAny))));
-		}
+		stmt1(e);
 		// (a statement that lowered to nothing leaves no position)
 		if (at >= 0 && out.length == at + 1) out.pop();
 	}
@@ -1663,16 +1660,7 @@ class FnLower {
 	// run time: chunks of 8 units (the last one the last 8, overlapping, or
 	// all of a shorter string), each mixed in as its low bytes and, where one
 	// is not 0, its high bytes, the length first; avalanched, folded to 32 bits
-	// (or FNV-1a over the units, where the program's std computes that: Lower.strWordHash)
-	public static var wordHash = true;
-
 	public static function strHash(s:String):Int {
-		if (!wordHash) {
-			var x = 0x811C9DC5;
-			for (i in 0...s.length)
-				x = (x ^ StringTools.fastCodeAt(s, i)) * 16777619;
-			return x == 0 ? 1 : x;
-		}
 		inline function k64(hi:Int, lo:Int)
 			return haxe.Int64.make(hi, lo);
 		inline function mix(h:haxe.Int64, w:haxe.Int64) {
@@ -1822,7 +1810,7 @@ class FnLower {
 				objcTestDyn(c);
 			case _:
 				var tr = typeRefOfType(t);
-				tr == null ? null : x -> ECallHost(l.native("hx_is"), vector(x, EType(tr)), TBool);
+				tr == null ? null : x -> ECallHost("hx_is", vector(x, EType(tr)), TBool);
 		}
 	}
 
@@ -1913,10 +1901,10 @@ class FnLower {
 					var lo = asLocal(x, TRef(RAny));
 					var r = newLocal("cast", TRef(RAny));
 					out.push(SSet(r, ELocal(lo)));
-					out.push(SIf(ENot(EInstOf(ci, ELocal(lo))), vector(SSet(r, ECallHost(l.native("hx_cast"), vector(ELocal(lo), EType(TRClass(ci))), TRef(RAny)))), vector()));
+					out.push(SIf(ENot(EInstOf(ci, ELocal(lo))), vector(SSet(r, ECallHost("hx_cast", vector(ELocal(lo), EType(TRClass(ci))), TRef(RAny)))), vector()));
 					return coerce(ELocal(r), TRef(RAny), tyOf(e));
 				}
-				var c = temp(TRef(RAny), ECallHost(l.native("hx_cast"), vector(x, EType(typeRef(mt))), TRef(RAny)));
+				var c = temp(TRef(RAny), ECallHost("hx_cast", vector(x, EType(typeRef(mt))), TRef(RAny)));
 				coerce(c, TRef(RAny), tyOf(e));
 			case TTypeExpr(mt):
 				switch mt {
@@ -1954,7 +1942,7 @@ class FnLower {
 						elemRead(isVectorData(a.etype) ? EArrGetU(elem, xs[0], ix) : EArrGet(elem, xs[0], ix), elem, tyOf(e));
 					case _:
 						var xs = operands(vector(a, i));
-						var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_aget"), vector(coerce(xs[0], tyOf(a), TRef(RAny)), coerce(xs[1], tyOf(i), TI32)), TRef(RAny)));
+						var r = temp(TRef(RAny), ECallHost("hx_dyn_aget", vector(coerce(xs[0], tyOf(a), TRef(RAny)), coerce(xs[1], tyOf(i), TI32)), TRef(RAny)));
 						coerce(r, TRef(RAny), tyOf(e));
 				}
 			case TBinop(op = OpBoolAnd | OpBoolOr | OpEq | OpNotEq | OpLt | OpLte | OpGt | OpGte, a, b) if (tyOf(e) != TBool):
@@ -1976,7 +1964,7 @@ class FnLower {
 					case TInst(pc, _): pc.clKind.match(KTypeParameter(_));
 					case _: false;
 				};
-				if (erased) temp(tyOf(e), ECallHost(l.native("hx_narray_open"), vector(n), tyOf(e)));
+				if (erased) temp(tyOf(e), ECallHost("hx_narray_open", vector(n), tyOf(e)));
 				else ECallHost("hxmc_narray_new", vector(EInt(nativeKind(switch tyOf(e) {
 					case TRef(RNativeArr(t)): t;
 					case _: fail("NativeArray type", e);
@@ -1995,7 +1983,7 @@ class FnLower {
 				fail("Objective-C class " + c.clPath.name + ": made by " + c.clPath.name + ".alloc().init...(...), not new", e);
 			case TNew(c, _, cargs) if (c.hasClassFlag(CExtern)):
 				var s = ctorSig(c);
-				var x = temp(TRef(RNative(Lower.nativeName(c))), ECallHost(l.native(Lower.nativeName(c) + "_new"), args(cargs, s, null), TRef(RNative(Lower.nativeName(c)))));
+				var x = temp(TRef(RNative(Lower.nativeName(c))), ECallHost(Lower.nativeName(c) + "_new", args(cargs, s, null), TRef(RNative(Lower.nativeName(c)))));
 				coerce(x, TRef(RNative(Lower.nativeName(c))), tyOf(e));
 			case TNew(c, _, cargs):
 				var ci = l.classInfo(c);
@@ -2074,7 +2062,7 @@ class FnLower {
 			// (reification's position in macro code compiled for hxmc, -D hxmc.macros=mir:
 			// the expression's own, as Eval has it; the compiler that loads the code makes it)
 			case TIdent("$__mk_pos__"):
-				temp(TRef(RAny), ECallHost(l.native("hxmc_mir_macro_pos"), vector(EStr(e.epos.pfile), EInt(e.epos.pmin), EInt(e.epos.pmax)), TRef(RAny)));
+				temp(TRef(RAny), ECallHost("hxmc_mir_macro_pos", vector(EStr(e.epos.pfile), EInt(e.epos.pmin), EInt(e.epos.pmax)), TRef(RAny)));
 			case TIdent(n): fail("identifier " + n, e);
 			case _: fail("expression " + e.eexpr.getName(), e);
 		}
@@ -2120,7 +2108,7 @@ class FnLower {
 					case Var(_) if (CInterop.isStruct(c)): structGet(obj, c, cf, e);
 					case Var(_) if (c.hasClassFlag(CExtern)):
 						var t = hty(cf.cfType);
-						var x = temp(t, ECallHost(l.native(Lower.nativeName(c) + "_get_" + cf.cfName), vector(receiverCheck(recvValue(obj), erase(tyOf(obj)))), t));
+						var x = temp(t, ECallHost(Lower.nativeName(c) + "_get_" + cf.cfName, vector(receiverCheck(recvValue(obj), erase(tyOf(obj)))), t));
 						coerce(x, t, tyOf(e));
 					case Var(_) if (c.hasClassFlag(CInterface)):
 						anonGet(cf.cfName, obj, e);
@@ -2163,7 +2151,7 @@ class FnLower {
 						}
 					case Var(_) if (c.hasClassFlag(CExtern)):
 						var t = hty(cf.cfType);
-						coerce(temp(t, ECallHost(l.native(Lower.nativeName(c) + "_" + cf.cfName), vector(), t)), t, tyOf(e));
+						coerce(temp(t, ECallHost(Lower.nativeName(c) + "_" + cf.cfName, vector(), t)), t, tyOf(e));
 					case Var(_):
 						var g = l.staticVar(c, cf);
 						var t = l.globalTy(g);
@@ -2174,7 +2162,7 @@ class FnLower {
 							case _: fail("extern static " + cf.cfName + " is not a function", e);
 						};
 						var sig = l.sig([for (a in s.args) hty(a.type)], hty(s.ret));
-						var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig);
+						var li = l.hostClosure(Lower.nativeName(c) + "_" + cf.cfName, sig);
 						coerce(temp(TRef(RClos(sig)), ENewClos(li, vector())), TRef(RClos(sig)), tyOf(e));
 					case Method(MethDynamic):
 						var g = staticDynMethod(c, cf);
@@ -2192,7 +2180,7 @@ class FnLower {
 				anonGet(cf.cfName, obj, e);
 			case FDynamic(name):
 				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
-				var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_get"), vector(o, EStr(name)), TRef(RAny)));
+				var r = temp(TRef(RAny), ECallHost("hx_dyn_get", vector(o, EStr(name)), TRef(RAny)));
 				coerce(r, TRef(RAny), tyOf(e));
 			// (a Java method as a value: none)
 			case FClosure(cl, cf) if (cl != null && Jni.isJava(cl.cls)):
@@ -2275,7 +2263,7 @@ class FnLower {
 				case _: fail("extern method " + cf.cfName + " is not a function", e);
 			};
 			var sig = l.sig([for (a in s.args) hty(a.type)], hty(s.ret));
-			var li = l.hostClosure(l.native(Lower.nativeName(c) + "_" + cf.cfName), sig, erase(tyOf(obj)));
+			var li = l.hostClosure(Lower.nativeName(c) + "_" + cf.cfName, sig, erase(tyOf(obj)));
 			var x = temp(TRef(RClos(sig)), newClosure(li, vector(recvValue(obj))));
 			return coerce(x, TRef(RClos(sig)), rt);
 		}
@@ -2348,7 +2336,7 @@ class FnLower {
 			var k = impls[j];
 			var d = defaultOf(j);
 			var vars = varsOf(j);
-			var test = ECallHost(l.native("hx_is"), vector(coerce(o, TRef(RObj(l.rootClass())), TRef(RAny)), EType(TRClass(l.classInfo(k.cls)))), TBool);
+			var test = ECallHost("hx_is", vector(coerce(o, TRef(RObj(l.rootClass())), TRef(RAny)), EType(TRClass(l.classInfo(k.cls)))), TBool);
 			out.push(SIf(test, block(() -> out.push(SSet(r, d != null ? defaultValue(d, t, i, vars, given, givenTys, () -> o, l.classInfo(k.cls)) : nullOf(t)))), vector()));
 		}
 		return ELocal(r);
@@ -2489,7 +2477,7 @@ class FnLower {
 			args[0] = acc;
 			for (j in 0...m)
 				args[j + 1] = xs[i + j];
-			acc = temp(TRef(RStr), ECallHost(l.native(m == 1 ? "hx_str_concat" : "hx_str_concat" + (m + 1)), args, TRef(RStr)));
+			acc = temp(TRef(RStr), ECallHost(m == 1 ? "hx_str_concat" : "hx_str_concat" + (m + 1), args, TRef(RStr)));
 			i += m;
 		}
 		return acc;
@@ -2508,13 +2496,13 @@ class FnLower {
 		var isStr = (t:Ty) -> t.match(TRef(RStr));
 		if (op == OpAdd && (rt.match(TRef(RStr)) || isStr(ta) || isStr(tb))) {
 			var sa = toStr(xa, ta), sb = toStr(xb, tb);
-			return temp(TRef(RStr), ECallHost(l.native("hx_str_concat"), vector(sa, sb), TRef(RStr)));
+			return temp(TRef(RStr), ECallHost("hx_str_concat", vector(sa, sb), TRef(RStr)));
 		}
 		var num = (t:Ty) -> t == TI32 || t == TF64 || t == TBool || t == TI64 || t.match(TRef(RNull(_)));
 		if (!num(ta) || !num(tb)) {
 			// Dynamic arithmetic
 			var da = coerce(xa, ta, TRef(RAny)), db = coerce(xb, tb, TRef(RAny));
-			var r = temp(TRef(RAny), ECallHost(l.native("hx_dyn_op"), vector(EInt(opCode(op)), da, db), TRef(RAny)));
+			var r = temp(TRef(RAny), ECallHost("hx_dyn_op", vector(EInt(opCode(op)), da, db), TRef(RAny)));
 			return coerce(r, TRef(RAny), rt);
 		}
 		var scalar = (t:Ty) -> switch t {
@@ -2787,7 +2775,7 @@ class FnLower {
 				// Array.resize, not a structural store by name
 				var o = ELocal(asLocal(value(obj), tyOf(obj)));
 				var x = pure(compute(() -> EArrLen(o), TI32, TI32), TI32);
-				out.push(SExpr(ECallHost(l.native("Array_resize"), vector(o, x), TVoid)));
+				out.push(SExpr(ECallHost("Array_resize", vector(o, x), TVoid)));
 				return coerce(x, TI32, et);
 			case TField(obj, FAnon(cf) | FInstance(_, _, cf)):
 				var t = stored(tyOf(lhs));
@@ -2811,8 +2799,8 @@ class FnLower {
 			case TField(obj, FDynamic(name)):
 				var o = ELocal(asLocal(coerce(value(obj), tyOf(obj), TRef(RAny)), TRef(RAny)));
 				var t = TRef(RAny);
-				var x = pure(compute(() -> temp(t, ECallHost(l.native("hx_dyn_get"), vector(o, EStr(name)), t)), t, t), t);
-				out.push(SExpr(ECallHost(l.native("hx_dyn_set"), vector(o, EStr(name), x), TVoid)));
+				var x = pure(compute(() -> temp(t, ECallHost("hx_dyn_get", vector(o, EStr(name)), t)), t, t), t);
+				out.push(SExpr(ECallHost("hx_dyn_set", vector(o, EStr(name), x), TVoid)));
 				return coerce(x, t, et);
 			case TArray(a, i):
 				switch tyOf(a) {
@@ -2833,8 +2821,8 @@ class FnLower {
 						var t = TRef(RAny);
 						var o = ELocal(asLocal(coerce(value(a), tyOf(a), t), t));
 						var ix = ELocal(asLocal(coerce(value(i), tyOf(i), TI32), TI32));
-						var x = pure(compute(() -> temp(t, ECallHost(l.native("hx_dyn_aget"), vector(o, ix), t)), t, t), t);
-						out.push(SExpr(ECallHost(l.native("hx_dyn_aset"), vector(o, ix, x), TVoid)));
+						var x = pure(compute(() -> temp(t, ECallHost("hx_dyn_aget", vector(o, ix), t)), t, t), t);
+						out.push(SExpr(ECallHost("hx_dyn_aset", vector(o, ix, x), TVoid)));
 						return coerce(x, t, et);
 				}
 			case _:
@@ -2978,7 +2966,7 @@ class FnLower {
 				var xs = operands(el);
 				if (!erased)
 					return ECallHost("hxmc_narray_lit", VectorTools.cons(EInt(nativeKind(elem)), xs.mapi((i, x) -> coerce(x, tyOf(el[i]), elemValue(elem)))), rt);
-				var a = ELocal(asLocal(ECallHost(l.native("hx_narray_open"), vector(EInt(el.length)), rt), rt));
+				var a = ELocal(asLocal(ECallHost("hx_narray_open", vector(EInt(el.length)), rt), rt));
 				for (i in 0...el.length)
 					nativeWrite(elem, a, EInt(i), ELocal(asLocal(coerce(xs[i], tyOf(el[i]), elemValue(elem)), elemValue(elem))));
 				return a;
@@ -3016,7 +3004,7 @@ class FnLower {
 				if (intrinsic != null) return intrinsic;
 				var t = hty(s.ret);
 				var xs = args(cargs, s.args.map(a -> hty(a.type)), null);
-				return coerceRhs(ECallHost(l.native(name), xs, t), t, rt);
+				return coerceRhs(ECallHost(name, xs, t), t, rt);
 			case TField(obj, FDynamic("cca")) if (tyOf(obj).match(TRef(RStr)) && cargs.length == 1):
 				// StringTools.fastCodeAt / unsafeCodeAt: `untyped s.cca(i)` (0 past the end, as on cpp/hl)
 				var xs = operands(vector(obj, cargs[0]));
@@ -3126,7 +3114,7 @@ class FnLower {
 				var cmp = TRef(RClos(l.sig([elem, elem], TI32)));
 				var xs = args(VectorTools.cons(obj, cargs), vector(tyOf(obj), cmp), null);
 				xs[0] = receiverCheck(xs[0], tyOf(obj));
-				return coerceRhs(ECallHost(l.native(elem == TI32 ? "Array_sortInt" : "Array_sortFloat"), xs, TVoid), TVoid, rt);
+				return coerceRhs(ECallHost(elem == TI32 ? "Array_sortInt" : "Array_sortFloat", xs, TVoid), TVoid, rt);
 			case TField(obj, FInstance(c, _, cf)) if (c.hasClassFlag(CExtern) || Lower.isCore(c, "String") || Lower.isCore(c, "Array")):
 				var s = switch TFunctions.follow(cf.cfType) {
 					case TFun(s): s;
@@ -3142,7 +3130,7 @@ class FnLower {
 				xs[0] = receiverCheck(xs[0], to[0]);
 				var intrinsic = intrinsicMethod(name, xs, to[0]);
 				if (intrinsic != null) return coerce(intrinsic, t, rt);
-				return coerceRhs(ECallHost(l.native(name), xs, t), t, rt);
+				return coerceRhs(ECallHost(name, xs, t), t, rt);
 			case TField(obj, FInstance(c, _, cf)):
 				switch cf.cfKind {
 					case Var(_):
@@ -3203,7 +3191,7 @@ class FnLower {
 				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
 				var xs = args(cargs, new Vector<Ty>(cargs.length, TRef(RAny)), null);
 				var arr = temp(TRef(RArr(TRef(RAny))), ENewArr(TRef(RAny), xs));
-				var r = ECallHost(l.native("hx_dyn_call_field"), vector(o, EStr(name), arr), TRef(RAny));
+				var r = ECallHost("hx_dyn_call_field", vector(o, EStr(name), arr), TRef(RAny));
 				return coerceRhs(r, TRef(RAny), rt);
 			case _:
 				return callValue(f, cargs, e);
@@ -3224,7 +3212,7 @@ class FnLower {
 				var c = asLocal(fx, TRef(RAny));
 				var xs = args(cargs, new Vector<Ty>(cargs.length, TRef(RAny)), null);
 				var arr = temp(TRef(RArr(TRef(RAny))), ENewArr(TRef(RAny), xs));
-				return coerceRhs(ECallHost(l.native("hx_dyn_call"), vector(ELocal(c), arr), TRef(RAny)), TRef(RAny), rt);
+				return coerceRhs(ECallHost("hx_dyn_call", vector(ELocal(c), arr), TRef(RAny)), TRef(RAny), rt);
 		}
 	}
 
@@ -3387,12 +3375,12 @@ class FnLower {
 				// Std.isOfType(v, Class), (v, Enum): whether v is a type object of a
 				// class or of an enum (hx_is_typeobj; hx_is knows no such type)
 				var k = typeObjectKind(cargs[1]);
-				coerce(ECallHost(l.native("hx_is_typeobj"), vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
+				coerce(ECallHost("hx_is_typeobj", vector(coerce(value(cargs[0]), tyOf(cargs[0]), TRef(RAny)), EInt(k)), TBool), TBool, tyOf(e));
 			case "Std_isOfType" if (cargs.length == 2 && Ir.isWord(tyOf(cargs[0]))):
 				// (a type parameter's word: a number's tested without a box,
 				// Tagged.isOf; the word's bits as they are, ECast)
 				var xs = operands(cargs);
-				coerce(ECallHost(l.native("hx_tag_is"), vector(ECast(TI64, xs[0]), coerce(xs[1], tyOf(cargs[1]), TRef(RAny))), TBool), TBool, tyOf(e));
+				coerce(ECallHost("hx_tag_is", vector(ECast(TI64, xs[0]), coerce(xs[1], tyOf(cargs[1]), TRef(RAny))), TBool), TBool, tyOf(e));
 			case _: null;
 		}
 	}
@@ -6203,7 +6191,7 @@ class FnLower {
 		var t = TRef(RObj(ci));
 		var b = switch from {
 			case TRef(RObj(k)) if (k == ci): asLocal(x, from);
-			case _: asLocal(temp(TRef(RAny), ECallHost(l.native("hx_cast"), vector(coerce(x, from, TRef(RAny)), EType(TRClass(ci))), TRef(RAny))), TRef(RAny));
+			case _: asLocal(temp(TRef(RAny), ECallHost("hx_cast", vector(coerce(x, from, TRef(RAny)), EType(TRClass(ci))), TRef(RAny))), TRef(RAny));
 		};
 		var s = newSlot(structTy(c), true);
 		unboxed.set(s, true);

@@ -60,8 +60,8 @@ using core.ds.VectorTools;
 // restored module, whose expressions are the filtered ones (Skeletons,
 // through Finalization.sortExprHook).
 //
-// On by default; HXMC_MODULE_CACHE=0 or -D hxmc.no-module-cache turns it
-// off (HXMC_MODULE_CACHE=0 also when -D hxmc.module-cache is given).
+// On by default; -D hxmc.no-module-cache (or HXMC_MODULE_CACHE=0, which the
+// tool sets for its own run again) turns it off.
 // Through `haxe` (HaxeMain) and the tool alike, for every target. Not used
 // (the build types everything from source): display requests, the
 // compilation server and its clients (already in memory), builds of several
@@ -776,10 +776,9 @@ class ModuleCache {
 		fresh(s, core.Globals.sTypePath(m.mPath) + " refers to " + core.Globals.sTypePath(c.clPath) + "." + name + ", which it no longer has");
 	}
 
-	// (HXMC_MODULE_CACHE=0 wins over the define: the tool sets it for its own
-	// run again, ModuleCache.again)
+	// (HXMC_MODULE_CACHE=0: the tool sets it for its own run again, ModuleCache.again)
 	public static function wanted(com:CommonContext):Bool {
-		return Sys.getEnv("HXMC_MODULE_CACHE") != "0" && Options.on("hxmc.module-cache", true, com.defines) && CacheDir.define(com, "hxmc.no-module-cache") == null;
+		return Sys.getEnv("HXMC_MODULE_CACHE") != "0" && CacheDir.define(com, "hxmc.no-module-cache") == null;
 	}
 
 	// why a build that wants the cache cannot use it (null: it can)

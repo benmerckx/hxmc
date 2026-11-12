@@ -60,25 +60,9 @@ class Lower {
 			case NotCoro(t): t;
 		}
 
-	// whether the program's Str.hash is the word-at-a-time hash (its hashSlow
-	// marked @:hxmc.wordHash), else FNV-1a: literals and string switches
-	// (FnLower.strHash) hash as the runtime the program links does, whichever
-	// std it was typed with (the std a tool of either kind builds: TargetFlags)
-	static function strWordHash(types:Array<core.TType.ModuleType>):Bool {
-		for (t in types)
-			switch t {
-				case TClassDecl(c) if (c.clPath.name == "Str" && c.clPath.pack.join(".") == "hxmc.rt"):
-					var f = c.clStatics.get("hashSlow");
-					return f != null && core.Meta.has(Custom(":hxmc.wordHash"), f.cfMeta);
-				case _:
-			}
-		return true;
-	}
-
 	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
 		Lower.basic = basic;
 		if (l == null) l = new Lower();
-		FnLower.wordHash = strWordHash(types);
 		var mainField = main.clStatics.get("main");
 		l.prog.main = l.staticFunc(main, mainField);
 		// (haxe.EntryPoint.run after main, as Finalization.maybeAddEntrypoint adds
@@ -112,14 +96,9 @@ class Lower {
 			c != null && order.exists(c) ? order.get(c) : types.length;
 		};
 		l.prog.inits.sort((a, b) -> pos(a) - pos(b));
-		if (survey) l.writeSurvey();
 		return l.prog;
 	}
 
-	// ---- survey mode (HXMC_SURVEY=file): record unsupported constructs, keep going
-
-	public static var survey = false; // (the build's, Options.apply)
-	static var surveyFile:Null<String> = null;
 	// statements carry their source lines (Stmt.SPos): native builds but with
 	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
@@ -135,36 +114,9 @@ class Lower {
 	// code of the compiler running this lowering is its code. What that code
 	// does (FuncInfo.noGc, blocks), or null when the compiler lacks it.
 	public static var hostCode:Null<FuncInfo->Null<{noGc:Bool, blocks:Bool}>> = null;
-	public var errors = new Map<String, {count:Int, example:String}>();
-	public var natives = new Map<String, Int>(); // runtime functions called, with counts
-
-	public function record(e:LowerError, fn:String) {
-		var r = errors.get(e.msg);
-		if (r == null) errors.set(e.msg, {count: 1, example: fn + " " + e.where}) else r.count++;
-	}
-
-	function writeSurvey() {
-		var keys = [for (k in errors.keys()) k];
-		keys.sort((a, b) -> errors.get(b).count - errors.get(a).count);
-		var out = new StringBuf();
-		for (k in keys)
-			out.add('${errors.get(k).count}\t$k\t${errors.get(k).example}\n');
-		var ns = [for (k in natives.keys()) k];
-		ns.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
-		out.add('\n${ns.length} natives:\n');
-		for (k in ns)
-			out.add('${natives.get(k)}\t$k\n');
-		out.add('\n${prog.funcs.length} functions, ${prog.classes.length} classes, ${prog.enums.length} enums, ${prog.shapes.length} shapes, ${prog.lambdas.length} lambdas\n');
-		sys.io.File.saveContent(surveyFile, out.toString());
-	}
-
 	public function guarded(fi:FuncInfo, f:() -> Void):() -> Void {
 		return () -> {
-			try f() catch (e:LowerError) {
-				if (!survey) throw e.toString();
-				record(e, fi.name);
-				fi.body = vector(SThrow(ENull(TRef(RAny))));
-			}
+			try f() catch (e:LowerError) throw e.toString();
 			bindHosts(fi);
 		}
 	}
@@ -550,11 +502,6 @@ class Lower {
 
 	public function fail(msg:String):Dynamic
 		throw new LowerError(msg, "");
-
-	public function native(name:String):String {
-		natives.set(name, (natives.exists(name) ? natives.get(name) : 0) + 1);
-		return name;
-	}
 
 	public static function ident(pack:Array<String>, name:String):String
 		return pack.concat([name]).join("_");
@@ -2078,7 +2025,7 @@ class Lower {
 		var self = new Local(0, "this0", TRef(RAny));
 		fi.args.push(self);
 		fi.ret = TVoid;
-		fi.body = vector(SExpr(ECallHost(native("StringBuf_init"), vector(ELocal(self)), TVoid)), SReturn(null));
+		fi.body = vector(SExpr(ECallHost("StringBuf_init", vector(ELocal(self)), TVoid)), SReturn(null));
 		pending.push(() -> bindHosts(fi));
 		return fi;
 	}

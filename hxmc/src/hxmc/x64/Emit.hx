@@ -69,17 +69,6 @@ class Emit implements hxmc.Target.Emitter {
 	var slotOff:Vector<Int>;
 	var frameSize = 0;
 
-	// HXMC_SIZE_STATS=1: bytes of code by instruction kind, hot and cold
-	// blocks, frame slots and other memory, prologue and epilogues (all functions, all threads)
-	public static var sizeStats = false; // (the build's, Options.apply)
-	static var statLock = new sys.thread.Mutex();
-	public static var statBytes = new Map<String, Int>();
-
-	static function stat(k:String, n:Int) {
-		statLock.acquire();
-		statBytes.set(k, (statBytes.exists(k) ? statBytes.get(k) : 0) + n);
-		statLock.release();
-	}
 	var saved:Vector<Int>;
 	var savedX:Vector<Int>; // Win64: xmm6-15 used, saved in the frame (all 128 bits)
 	var savedXOff:Vector<Int>;
@@ -96,11 +85,7 @@ class Emit implements hxmc.Target.Emitter {
 		return a;
 	}
 
-	// (measurement: how much run time depends on code layout alone, the
-	// noise of A/B comparisons: HXMC_FALIGN aligns functions, HXMC_FSHIFT
-	// pads before each one)
-	static var FALIGN = 16;
-	static var FSHIFT = 0;
+	static inline var FALIGN = 16;
 
 	public function useSection(name:Null<String>) {
 		text = obj.section(name != null ? name : ".text", Text, FALIGN);
@@ -110,8 +95,6 @@ class Emit implements hxmc.Target.Emitter {
 
 	public function func(f:LFunc, usedRegs:Vector<Bool>, global:Bool):Symbol {
 		text.buf.align(FALIGN, 0xcc);
-		for (_ in 0...FSHIFT)
-			text.buf.u8(0xcc);
 		var start = text.buf.len;
 		a.reset();
 		// frame: outgoing arguments, then the slots
@@ -175,7 +158,6 @@ class Emit implements hxmc.Target.Emitter {
 			op(Unwind.SAVE, savedX[k], savedXOff[k]);
 		}
 		op(Unwind.ENDPROLOGUE);
-		if (sizeStats) stat("prologue", text.buf.len - start);
 		epiLabel = -1;
 		// (a move of a register to itself: a zero or sign extension is not)
 		f.threadJumps(i -> (i.op : XOp) == JMP,
@@ -202,30 +184,10 @@ class Emit implements hxmc.Target.Emitter {
 					case _:
 				}
 			}
-			if (sizeStats) {
-				for (i in b.ins) {
-					var at = text.buf.len;
-					var ep = epilogueBytes;
-					ins(i, next, tables);
-					var nb = text.buf.len - at;
-					var kind = Std.string(i.op);
-					if ((i.op : XOp) == LOAD || (i.op : XOp) == STORE || (i.op : XOp) == STOREI)
-						kind += (i.base == LIns.FRAME ? "-frame" : i.base < 0 ? "-sym" : "-mem") + i.mem;
-					if ((i.op : XOp) == STOREI) kind += i.imm == 0 && i.isym == null ? "z" : "c";
-					stat((b.cold ? "cold " : "hot ") + kind, nb - (epilogueBytes - ep));
-					stat(b.cold ? "cold" : "hot", nb);
-				}
-			} else
-				for (i in b.ins)
-					ins(i, next, tables);
+			for (i in b.ins)
+				ins(i, next, tables);
 		}
-		var tf = text.buf.len;
 		var map = a.finish(start);
-		if (sizeStats) {
-			stat("epilogue", epilogueBytes);
-			stat("finish (branch relaxation)", text.buf.len - tf);
-			epilogueBytes = 0;
-		}
 		// jump tables: 32-bit offsets from the table
 		for (t in tables) {
 			text.buf.align(4, 0);
