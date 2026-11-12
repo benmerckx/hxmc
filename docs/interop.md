@@ -2034,7 +2034,7 @@ their Java from it ([plans/jni.md](plans/jni.md#the-glue);
 
 | | |
 | --- | --- |
-| `Jvm.create(options)` | embeds a JVM: libjvm opened at run time (`dlopen`; `Jvm.libjvm()`: `HXMC_LIBJVM`, else `JAVA_HOME`'s `lib/server/libjvm.so`, `jre/lib/<arch>/server` for Java 8, `libjvm.dylib` on macOS, else `/usr/lib/jvm/default-java`, else the loader's search), `JNI_CreateJavaVM` with the options (`-Djava.class.path=` is `CLASSPATH`'s when none is given); a JVM the process has already is used instead |
+| `Jvm.create(options)` | embeds a JVM: libjvm opened at run time (`dlopen`; `Jvm.libjvm()`: `HXMC_LIBJVM`, else `JAVA_HOME`'s `lib/server/libjvm.so`, `jre/lib/<arch>/server` for Java 8, `libjvm.dylib` on macOS, else `/usr/lib/jvm/default-java`, else the loader's search), `JNI_CreateJavaVM` with the options (`-Djava.class.path=` is `CLASSPATH`'s when none is given); a JVM the process has already is used instead. A program that made its JVM ends through Java's `System.exit` (when `main` returns, and `Sys.exit`): the JVM's shutdown hooks run and its threads stop before the C library's `exit`, nothing waits for its other threads |
 | `Jvm.onLoad(vm)` | the program is a library Java loads (`System.loadLibrary`; `-D hxmc.shared` in the glibc mode, Android's `.so`, with `-D hxmc.exports=JNI_OnLoad`): its `JNI_OnLoad` calls this, which keeps the JVM and the loader of the loading code's classes, runs `main` on a thread of its own and waits for it |
 | `Jvm.useActivity(activity)` | an Android activity's JVM (`ANativeActivity`'s `vm`) and class loader (the app's, which knows `classes.dex`'s) |
 | `Jvm.exists` | whether there is a JVM |

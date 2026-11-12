@@ -594,7 +594,29 @@ class JniKind {
 		if (r != 0) return "JNI_CreateJavaVM failed (" + r + ")";
 		setVm(Mem.getPtr(pvm, 0), Mem.getPtr(pvm, 8));
 		findLoader(Mem.getPtr(pvm, 8));
+		Os.exitHook = Callback.addr(javaExit);
 		return null;
+	}
+
+	// the end of a program that made its JVM (Os.exitHook): Java's
+	// System.exit, which stops the JVM's threads before the C library's exit
+	// (as the java launcher's end does). Otherwise exit runs libjvm's
+	// destructors while they run: -Xcheck:jni's check of the signal handlers
+	// (every 10 ms) then reads the handlers it saved, freed, and reports
+	// every one modified. Its shutdown hooks run; nothing waits for its
+	// other threads. Not on the way back (a pending exception: exit as before)
+	@:hxmc.callback @:hxmc.unsafe static function javaExit(code:Int):Void {
+		var env = envHere();
+		if (env.isNull()) return;
+		var sys = Mem.getPtr(cells, C_SYSTEM);
+		var m = smethod(env, sys, Mem.cstr("exit"), Mem.cstr("(I)V"));
+		if (!m.isNull()) {
+			var a = Mem.stack(8);
+			Mem.setI64(a, 0, 0);
+			Mem.setI32(a, 0, code);
+			callIn(env, CallStaticMethodA + 3 * T_VOID, sys, m, a);
+		}
+		if (pending(env)) Ind.p1(fn(env, ExceptionClear), env);
 	}
 
 	@:hxmc.unsafe(gc) static function hasVm():Bool

@@ -41,10 +41,14 @@ class Server {
 		return p;
 	}
 
-	// whether a TCP socket listens on the port (Linux /proc: connecting to probe
-	// would send an empty request, which makes the reference's server stop)
+	// whether a TCP socket listens on the port (Linux /proc, elsewhere lsof
+	// (macOS), without it a wait: connecting to probe would send an empty
+	// request, which makes the reference's server stop)
 	static function listening(port:Int):Bool {
 		if (!FileSystem.exists("/proc/net/tcp")) {
+			var r = exec(["lsof", "-nP", "-iTCP:" + port, "-sTCP:LISTEN", "-t"]);
+			if (r.code == 0) return true;
+			if (r.code == 1 && r.err.trim() == "") return false;
 			Sys.sleep(2);
 			return true;
 		}
@@ -57,10 +61,14 @@ class Server {
 	}
 
 	// whether a child process still runs (Eval has no non-blocking exitCode():
-	// /proc, where an exited child is a zombie until it is waited for)
+	// /proc, elsewhere ps (macOS), where an exited child is a zombie until it
+	// is waited for: kill -0 counts it as running)
 	public static function alive(p:sys.io.Process):Bool {
 		var stat = '/proc/${p.getPid()}/stat';
-		if (!FileSystem.exists(stat)) return exec(["kill", "-0", Std.string(p.getPid())]).code == 0;
+		if (!FileSystem.exists(stat)) {
+			var st = exec(["ps", "-o", "stat=", "-p", Std.string(p.getPid())]).out.trim();
+			return st != "" && !st.startsWith("Z");
+		}
 		var t = readText(stat);
 		var close = t.lastIndexOf(")");
 		return close >= 0 && t.charAt(close + 2) != "Z";

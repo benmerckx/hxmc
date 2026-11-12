@@ -7,13 +7,16 @@ using StringTools;
 // hxmc's output does not depend on the host it runs on: the tool built as a
 // WebAssembly module (wasm32-wasi, run under node) must write the same bytes
 // as the native tool.
-//   <haxe> -cp hxmc/test -cp haxe/test --run Crosshost [--targets T,T,...] [--tool] [--wasm M] [-j N] [case ...]
+//   <haxe> -cp hxmc/test -cp haxe/test --run Crosshost [--targets T,T,...] [--tool] [--shard I/N] [--wasm M] [-j N] [case ...]
 // The native tool (bin/hxmc/hxmc) builds itself from source as a module
 // (bin/hxmc-t/xhost/hxmc.wasm; --wasm reuses one, e.g. the stage0), then both
 // build each corpus case (all when none is named) for each target (default:
 // all seven, and Linux in the dynamic glibc mode: <target>-glibc) and the outputs are compared byte for byte; --tool also builds
-// the tool itself both ways (for the host). Outputs that agree are deleted;
-// differing ones stay in bin/hxmc-t/xhost/<target>/.
+// the tool itself both ways (for the host). --shard I/N keeps every Nth case
+// from the I-th (0-based; CI's jobs), and the tool only in shard 0. Outputs
+// that agree are deleted; differing ones stay in bin/hxmc-t/xhost/<target>/.
+// The module's builds run in node workers, one per thread (wasi.mjs --serve:
+// each build in a new instance of the module compiled once).
 class Crosshost {
 	static final OUT = "bin/hxmc-t/xhost";
 	static final TARGETS = ["linux-x86_64", "linux-arm64", "windows-x86_64", "windows-arm64", "macos-x86_64", "macos-arm64", "wasm32-wasi",
@@ -22,31 +25,79 @@ class Crosshost {
 	public static final TOOL_ARGS = ["-cp", "haxe/src", "-cp", "hxmc/src", "-main", "hxmc.Main", "-D", "disable-parallelism", "-D", "hih_no_generators"];
 
 	static function main() {
-		var a = parseArgs(Sys.args(), ["--targets", "--wasm", "-j"]);
+		var a = parseArgs(Sys.args(), ["--targets", "--wasm", "-j", "--shard"]);
 		var cases = a.rest;
 		if (cases.length == 0) {
 			cases = [for (f in FileSystem.readDirectory("hxmc/test/cases")) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
 			cases.sort(compare);
 		}
+		var shard = 0;
+		if (a.has("--shard")) {
+			var p = a.get("--shard").split("/");
+			var i:Null<Int> = Std.parseInt(p[0]), n:Null<Int> = p.length == 2 ? Std.parseInt(p[1]) : null;
+			if (i == null || n == null || n < 1 || i < 0 || i >= n) fail("--shard I/N, 0 <= I < N: " + a.get("--shard"));
+			shard = i;
+			cases = [for (k in 0...cases.length) if (k % n == i) cases[k]];
+		}
 		mkdirs(OUT);
 		var t0 = now();
 		var wasm = a.get("--wasm");
 		if (wasm == null) {
-			var b = build(["bin/hxmc/hxmc"], OUT + "/hxmc.wasm", TOOL_ARGS, "wasm32-wasi");
+			var b = build(null, OUT + "/hxmc.wasm", TOOL_ARGS, "wasm32-wasi");
 			if (b.err != null) fail("the tool as a module: " + b.err);
 			wasm = b.out;
 			Sys.println('the tool as a module: ${FileSystem.stat(wasm).size} bytes, ${fixed(now() - t0)}s');
 		}
 		wasm = FileSystem.fullPath(wasm);
 		var jobs = [for (t in a.get("--targets", TARGETS.join(",")).split(",")) for (c in cases) {target: t, name: c}];
-		if (a.has("--tool")) jobs.unshift({target: host(), name: "TOOL"});
+		if (a.has("--tool") && shard == 0) jobs.unshift({target: host(), name: "TOOL"});
 		var bad = 0;
-		parallel(jobs, a.int("-j", cpus()), j -> compareOne(wasm, j.target, j.name), (j, r) -> {
+		// (each job's seconds)
+		parallel(jobs, a.int("-j", cpus()), j -> {
+			var t = now();
+			var r = compareOne(wasm, j.target, j.name);
+			{ok: r.ok, detail: r.detail, seconds: now() - t};
+		}, (j, r) -> {
 			if (!r.ok) bad++;
-			Sys.println(pad(j.target, 15) + " " + pad(j.name, 15) + " " + (r.ok ? "ok  " : "FAIL") + " " + r.detail);
+			Sys.println(pad(j.target, 15) + " " + pad(j.name, 15) + " " + (r.ok ? "ok  " : "FAIL") + " " + pad(fixed(r.seconds) + "s", 7) + " " + r.detail);
 		});
+		for (w in idle) {
+			w.stdin.close();
+			w.close();
+		}
 		Sys.println('crosshost: ${jobs.length - bad}/${jobs.length} identical, ${Math.round(now() - t0)}s');
 		Sys.exit(bad > 0 ? 1 : 0);
+	}
+
+	// the workers no thread is using
+	static var idle:Array<sys.io.Process> = [];
+	static final idleMutex = new sys.thread.Mutex();
+
+	// a build of the module's on a worker (one started when none is idle): its
+	// exit code, its output in log (a worker that ends without an answer: -1)
+	static function onWorker(wasm:String, args:Array<String>, env:Map<String, Null<String>>, log:String):Int {
+		idleMutex.acquire();
+		var w = idle.pop();
+		idleMutex.release();
+		if (w == null) {
+			var cmd = nodeWasm("--serve");
+			w = new sys.io.Process(cmd[0], cmd.slice(1).concat([wasm]));
+		}
+		var e = {};
+		for (k => v in env) if (v != null) Reflect.setField(e, k, v);
+		var code = try {
+			w.stdin.writeString(haxe.Json.stringify({args: args, env: e, log: haxe.io.Path.isAbsolute(log) ? log : root + "/" + log}) + "\n");
+			w.stdin.flush();
+			Std.parseInt(w.stdout.readLine());
+		} catch (_:Dynamic) null;
+		if (code == null) {
+			w.close();
+			return -1;
+		}
+		idleMutex.acquire();
+		idle.push(w);
+		idleMutex.release();
+		return code;
 	}
 
 	static function host():String {
@@ -55,10 +106,11 @@ class Crosshost {
 		return os + "-" + (m == "aarch64" || m == "arm64" ? "arm64" : "x86_64");
 	}
 
-	public static function nodeWasm(wasm:String):Array<String>
-		return ["node", "--no-warnings", "--stack-size=65500", FileSystem.fullPath("hxmc/bootstrap/wasi.mjs"), wasm];
+	public static function nodeWasm(arg:String):Array<String>
+		return ["node", "--no-warnings", "--stack-size=65500", FileSystem.fullPath("hxmc/bootstrap/wasi.mjs"), arg];
 
-	static function build(tool:Array<String>, out:String, args:Array<String>, target:String):{out:String, err:Null<String>} {
+	// (wasm: the module, built on a worker; otherwise the native tool)
+	static function build(wasm:Null<String>, out:String, args:Array<String>, target:String):{out:String, err:Null<String>} {
 		for (p in [out, out + ".exe"]) if (FileSystem.exists(p)) FileSystem.deleteFile(p);
 		rmrf(out + ".hxmc");
 		var env:Map<String, Null<String>> = [];
@@ -68,7 +120,14 @@ class Crosshost {
 		if (target != "wasm32-wasi") env["HXMC_RT_OBJ"] = FileSystem.fullPath('bin/hxmc/rt/$rt/rt.o');
 		var glibc = target.endsWith("-glibc");
 		var mode = glibc ? ["-D", "hxmc.target=" + target.substr(0, target.length - 6), "-D", "hxmc.libc=glibc"] : ["-D", 'hxmc.target=$target'];
-		var r = exec(tool.concat([out]).concat(args).concat(["-cp", "bin/hxmc/std", "--custom-target", "hxmc"]).concat(mode), {env: env, merge: true});
+		var argv = [out].concat(args).concat(["-cp", "bin/hxmc/std", "--custom-target", "hxmc"]).concat(mode);
+		var r = if (wasm == null) exec(["bin/hxmc/hxmc"].concat(argv), {env: env, merge: true}) else {
+			var log = out + ".log";
+			var code = onWorker(wasm, argv, env, log);
+			var text = readText(log);
+			try FileSystem.deleteFile(log) catch (_:Dynamic) {}
+			{code: code, out: text};
+		}
 		rmrf(out + ".hxmc");
 		if (!FileSystem.exists(out) && FileSystem.exists(out + ".exe")) out += ".exe";
 		if (r.code != 0 || !FileSystem.exists(out)) return {out: out, err: 'exit ${r.code}: ' + tail(r.out.trim(), 300)};
@@ -95,9 +154,9 @@ class Crosshost {
 			if (native.skip != null) return {ok: true, detail: "skipped: " + native.skip};
 			if (native.links.length > 0) args = args.concat(["-D", "hxmc.link=" + native.links.join(",")]);
 		}
-		var n = build(["bin/hxmc/hxmc"], '$d/$name-n', args, target);
+		var n = build(null, '$d/$name-n', args, target);
 		if (n.err != null) return {ok: false, detail: "native tool: " + n.err};
-		var w = build(nodeWasm(wasm), '$d/$name-w', args, target);
+		var w = build(wasm, '$d/$name-w', args, target);
 		if (w.err != null) return {ok: false, detail: "module: " + w.err};
 		var x = File.getBytes(n.out), y = File.getBytes(w.out);
 		if (x.compare(y) == 0) {
