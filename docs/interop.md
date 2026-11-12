@@ -546,10 +546,12 @@ trace(Lib.lib_upper("abc"));                                   // no Arena, no f
 ```
 
 **Out-parameters from GC code.** `Span.of(x)` passes a variable (a local,
-a field, a static) as a span of one: x is copied into a slot of the frame
+a static, a field of `this` or of a local, which the call may write: not
+final, `(default, null)` only in its class) as a span of one: x is copied into a slot of the frame
 for the call and back after it, so an out-struct or an out-scalar needs no
 `Mem.stack`. `ReadOnlySpan.of(v)` passes a value as `const T *`, copied in
-only. Both are a call's arguments (`reject/SpanOfValue`, `SpanOfOutside`);
+only. Both are a call's arguments (`reject/SpanOfValue`, `SpanOfOutside`,
+`SpanOfCall`, `SpanOfFinal`, `SpanOfReadOnly`);
 structs by value pass and return as any struct does.
 
 ```haxe

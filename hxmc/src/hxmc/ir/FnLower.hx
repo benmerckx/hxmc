@@ -3741,6 +3741,17 @@ class FnLower {
 	function spanWhere(e:TExpr):String
 		return where(e) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
 
+	// a field this function may assign: not final, written as a plain variable
+	// (default, null) only in its own class
+	function writable(c:TClass, cf:TClassField):Bool {
+		if (cf.hasClassFieldFlag(CfFinal)) return false;
+		return switch cf.cfKind {
+			case Var({vWrite: AccNormal}): true;
+			case Var({vWrite: AccNo}): fi.display != null && StringTools.startsWith(fi.display, core.Globals.sTypePath(c.clPath) + ".");
+			case _: false;
+		}
+	}
+
 	function spanFail(e:TExpr, what:String, rule:String):Dynamic
 		throw new LowerError(KernelCheck.spanError(where(e), fi.display != null ? fi.display : fi.name, what, rule), "");
 
@@ -3881,8 +3892,13 @@ class FnLower {
 			var s = newSlot(sdt, true);
 			make(s, ELocal(slot), EInt(1));
 			if (a.aPath.name == "Span")
+				// (the places @:hxmc.close clears: a field's object evaluated again after the call is a local or this)
 				switch strip(cargs[0]).eexpr {
-					case TLocal(_) | TField(_, FInstance(_) | FStatic(_)):
+					case TLocal(v) if (v.hasVarFlag(VFinal)):
+						spanFail(e, "Span.of(x) of the final " + v.vName, "C writes the span: x is copied back after the call (ReadOnlySpan.of for a value)");
+					case TField(_, FInstance(c, _, cf) | FStatic(c, cf)) if (!writable(c, cf)):
+						spanFail(e, "Span.of(x) of " + cf.cfName + ", which is not writable here", "C writes the span: x is copied back after the call (ReadOnlySpan.of for a value)");
+					case TLocal(_) | TField({eexpr: TConst(TThis) | TLocal(_)}, FInstance(_)) | TField(_, FStatic(_)):
 						boundary.releases.push(() -> {
 							if (sc == null) {
 								assign(cargs[0], () -> {
@@ -3901,7 +3917,7 @@ class FnLower {
 							}
 						});
 					case _:
-						spanFail(e, "Span.of(x) of no variable", "C writes the span: x is a local, a field or a static, copied back after the call (ReadOnlySpan.of for a value)");
+						spanFail(e, "Span.of(x) of no variable", "C writes the span: x is a local, a static or a field of this or of a local, copied back after the call (ReadOnlySpan.of for a value)");
 				}
 			return coerce(ELocal(s), sdt, tyOf(e));
 		}
