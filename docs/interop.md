@@ -759,10 +759,14 @@ Each function is checked for its number of parameters (and `...` for
 integer of 4 bytes, a float, a pointer, a `size_t`, a struct by its name;
 a span's element against the pointee (a named struct, or any type of the
 element's size, `void` or a struct of it for scalars: C reads one per
-element the length counts; any struct for bytes counted by a parameter, or
-for a constant minimum, checked against the pointee's size). Every
-declaration is checked, also a second one of the same function. The C++ is only for its type traits (clang's
-builtins, no C++ library): the declarations are C's.
+element the length counts; a `struct sockaddr` for bytes, whose length
+counts bytes; any struct for a constant minimum, checked against the
+pointee's size). Every declaration is checked, also a second one of the
+same function. What no header says stays the declaration's word: that C
+reads no more of a span than its length or minimum (a count passed as a
+plain parameter beside a constant minimum is not tied to the span), and
+that a `struct sockaddr`'s length is its bytes. The C++ is only for its
+type traits (clang's builtins, no C++ library): the declarations are C's.
 
 ```
 HeaderCheck.hx:23: QR.q: q is an integer of 8 bytes
