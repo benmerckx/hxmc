@@ -743,10 +743,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # (the debugger and the fuzzer's diff lanes: full runs only)
-        suite: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["hxb macro hxblib haxelib libs unit","display server jsonrpc","targets","debugger"]' || '["hxb macro hxblib haxelib libs unit","display server jsonrpc","targets"]') }}
-        include:
-          - {suite: debugger, fuzz: 'diff:hxb diff:interp diff:js diff:python diff:lua diff:php diff:hlc diff:neko diff:hl diff:swf'}
+        # (the debugger and the fuzzer's diff lanes: full runs only; an include that matches no
+        # combination is a job of its own, so the list is the expression)
+        include: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"suite":"hxb macro hxblib haxelib libs unit"},{"suite":"display server jsonrpc"},{"suite":"targets"},{"suite":"debugger","fuzz":"diff:hxb diff:interp diff:js diff:python diff:lua diff:php diff:hlc diff:neko diff:hl diff:swf"}]' || '[{"suite":"hxb macro hxblib haxelib libs unit"},{"suite":"display server jsonrpc"},{"suite":"targets"}]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1251,15 +1250,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # (linux-x64 alone outside full runs)
-        plat: ${{ fromJSON(needs.changes.outputs.full == 'true' && '["linux-x64","linux-arm64","darwin-arm64","darwin-x64","win32-x64","win32-arm64"]' || '["linux-x64"]') }}
-        include:
-          - {os: ubuntu-24.04, plat: linux-x64, lix: linux-x86_64, full: true}
-          - {os: ubuntu-24.04-arm, plat: linux-arm64}
-          - {os: macos-15, plat: darwin-arm64, lix: macos-arm64}
-          - {os: macos-15-intel, plat: darwin-x64}
-          - {os: windows-2025, plat: win32-x64}
-          - {os: windows-11-arm, plat: win32-arm64}
+        # (linux-x64 alone outside full runs; an include that matches no
+        # combination is a job of its own, so the list is the expression)
+        include: ${{ fromJSON(needs.changes.outputs.full == 'true' && '[{"os":"ubuntu-24.04","plat":"linux-x64","lix":"linux-x86_64","full":true},{"os":"ubuntu-24.04-arm","plat":"linux-arm64"},{"os":"macos-15","plat":"darwin-arm64","lix":"macos-arm64"},{"os":"macos-15-intel","plat":"darwin-x64"},{"os":"windows-2025","plat":"win32-x64"},{"os":"windows-11-arm","plat":"win32-arm64"}]' || '[{"os":"ubuntu-24.04","plat":"linux-x64","lix":"linux-x86_64","full":true}]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
