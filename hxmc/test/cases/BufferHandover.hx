@@ -1,7 +1,8 @@
 // Memory handed between raw code and an owned Buffer without a copy:
-// Buffer.adopt takes an IoBuffer raw code made, detach gives it back
-// (the Buffer closed, empty), refused while a span of it is lent, and once
-// closed. Built -D hxmc.strict: only the trusted functions touch the raw side.
+// Buffer.adopt takes an IoBuffer raw code made (none refused, one of no
+// bytes taken), detach gives it back (the Buffer closed, empty: close() then
+// does nothing), refused once closed. Built -D hxmc.strict: only the
+// trusted functions touch the raw side.
 // define: hxmc.strict
 import hxmc.Buffer;
 import hxmc.unsafe.IoBuffer;
@@ -22,6 +23,10 @@ class BufferHandover {
 		return v;
 	}
 
+	// a buffer of no bytes adopted
+	@:hxmc.unsafe(gc) static function empty():Buffer
+		return Buffer.adopt(IoBuffer.alloc(0));
+
 	// a null IoBuffer refused
 	@:hxmc.unsafe(gc) static function nothing():String
 		return try {
@@ -35,6 +40,11 @@ class BufferHandover {
 		b.set(0, 10);
 		Sys.println("detached: " + given(b) + ", closed " + b.closed + ", length " + b.length);
 		Sys.println("null: " + nothing());
+		b.close();
+		Sys.println("closed after: " + b.closed + ", length " + b.length);
+		var e = empty();
+		Sys.println("empty: " + e.length + " bytes, " + e.getBytes(0, 0).length);
+		e.close();
 		Sys.println("again: " + (try {
 			given(b);
 			"detached";

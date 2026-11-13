@@ -157,33 +157,54 @@ class RawCheck {
 	// made by the function, or the closure, it was, which keeps none of the
 	// function's metadata; it is trusted as the function that makes it is, so
 	// @:hxmc.unsafe on a coroutine covers its whole body (and a coroutine
-	// closure's made in it, transitively)
+	// closure's made in it, transitively). Not one that unmarked code also
+	// makes: an unmarked inline function's coroutine closure, inlined into a
+	// marked one too, stays checked (one class for every copy)
 	static function machines(types:Array<ModuleType>):Map<TClass, Bool> {
-		var made = new Map<TClass, Bool>(), work:Array<TClass> = [];
-		var from:Null<core.TType.ModuleDef> = null;
-		function walk(e:TExpr) {
-			switch e.eexpr {
-				case TNew(k, _, _) if (!made.exists(k) && k.clModule == from && machine(k)):
-					made.set(k, true);
-					work.push(k);
-				case _:
+		var classes = [
+			for (t in types)
+				switch t {
+					case TClassDecl(c) if (c.clModule.mExtra.mProcessed == 0 && !machine(c)): c;
+					case _: continue;
+				}
+		];
+		// (the machines that code reaches, through the machines it makes)
+		function reach(seeds:Array<{c:TClass, e:TExpr}>, skip:Map<TClass, Bool>, sameModule:Bool):Map<TClass, Bool> {
+			var made = new Map<TClass, Bool>(), work:Array<{c:TClass, e:TExpr}> = seeds.copy();
+			while (work.length > 0) {
+				var w = work.pop();
+				function walk(e:TExpr) {
+					switch e.eexpr {
+						case TNew(k, _, _) if (!made.exists(k) && !skip.exists(k) && (!sameModule || k.clModule == w.c.clModule) && machine(k)):
+							made.set(k, true);
+							for (cf in fieldsOf(k))
+								if (cf.cfExpr != null) work.push({c: k, e: cf.cfExpr});
+						case _:
+					}
+					core.Texpr.iter(walk, e);
+				}
+				walk(w.e);
 			}
-			core.Texpr.iter(walk, e);
+			return made;
 		}
-		function fields(c:TClass, all:Bool) {
-			from = c.clModule;
-			var fs = c.clConstructor == null ? [] : [c.clConstructor];
-			for (cf in fs.concat(c.clOrderedStatics).concat(c.clOrderedFields))
-				if (cf.cfExpr != null && (all || trusted(c, cf))) walk(cf.cfExpr);
+		var marked = [], unmarked = [];
+		for (c in classes)
+			for (cf in fieldsOf(c))
+				if (cf.cfExpr != null) (declared(c, cf) ? marked : unmarked).push({c: c, e: cf.cfExpr});
+		return reach(marked, reach(unmarked, new Map(), false), true);
+	}
+
+	// (a class's functions and variables)
+	static function fieldsOf(c:TClass):Array<TClassField>
+		return (c.clConstructor == null ? [] : [c.clConstructor]).concat(c.clOrderedStatics).concat(c.clOrderedFields);
+
+	// (declared @:hxmc.unsafe: not a kernel's trust, KernelCheck's)
+	static function declared(c:TClass, cf:TClassField):Bool {
+		if (Lower.isUnsafe(c.clMeta) || Lower.isUnsafe(cf.cfMeta)) return true;
+		return switch c.clKind {
+			case KAbstractImpl(a): Lower.isUnsafe(a.aMeta);
+			case _: false;
 		}
-		for (t in types)
-			switch t {
-				case TClassDecl(c) if (c.clModule.mExtra.mProcessed == 0): fields(c, false);
-				case _:
-			}
-		while (work.length > 0)
-			fields(work.pop(), true);
-		return made;
 	}
 
 	// (a coroutine's state machine: the class the transform made, HxCoro_..., a

@@ -651,9 +651,10 @@ Raw code hands memory over without a copy: `Buffer.adopt(io)` makes a
 Buffer own an `IoBuffer` that raw code made (a job's result, a decoder's
 pixels), and `b.detach()` gives the memory back as an `IoBuffer` for raw
 code to free (a job's input moved to another thread), closing the Buffer;
-it throws while a span is lent. Both have a raw type, so only
-`@:hxmc.unsafe` code calls them, and an API can take and return Buffers
-while what is inside moves memory as it did. `BufferHandover` checks them.
+it throws while a span is lent, as `close()` does. Both have a raw type,
+so only `@:hxmc.unsafe` code calls them, and an API can take and return
+Buffers while what is inside moves memory as it did. `BufferHandover`
+checks them.
 
 
 ### Typed callbacks

@@ -2,4 +2,6 @@ exit 0
 adopted: 4 bytes, 1 4
 detached: 14, closed true, length 0
 null: Buffer.adopt: no buffer
+closed after: true, length 0
+empty: 0 bytes, 0
 again: Buffer: closed
