@@ -306,7 +306,9 @@ class LinkMachO extends LinkCore {
 		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section) && !Unwind.none(r.ops)) r];
 		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing).sec : null;
 		addr.set(header, 0);
-		var pos = HEADER_RESERVE;
+		// (an iPhone's: __text from the first page after the header's, the
+		// pages LC_ENCRYPTION_INFO_64 names, as ld64 lays them out)
+		var pos = abi.platform == "ios" ? PAGE : HEADER_RESERVE;
 		function group(list:Array<Section>):{start:Int, end:Int} {
 			if (list.length > 0) pos = LinkCore.align(pos, list[0].align);
 			var start = pos;
@@ -694,6 +696,20 @@ class LinkMachO extends LinkCore {
 		h.u32(1);
 		h.u32(3); // TOOL_LD
 		h.u32(0x00010000);
+		// an iPhone's: LC_ENCRYPTION_INFO_64, __TEXT's pages after the
+		// header's, not encrypted (cryptid 0): the App Store encrypts them
+		// (FairPlay) and refuses a binary without the command (ITMS-90125,
+		// "not built with Apple's linker"); the simulator's and Mac
+		// Catalyst's have none, as ld64's
+		if (abi.platform == "ios") {
+			ncmds++;
+			h.u32(0x2c);
+			h.u32(24);
+			h.u32(PAGE); // cryptoff
+			h.u32(textEnd - PAGE); // cryptsize
+			h.u32(0); // cryptid
+			h.u32(0);
+		}
 		// main
 		if (!dylib) {
 			ncmds++;
