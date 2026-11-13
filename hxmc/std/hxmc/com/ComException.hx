@@ -1,5 +1,6 @@
 package hxmc.com;
 
+import hxmc.Platform;
 import hxmc.unsafe.*;
 
 // A failed HRESULT (docs/interop.md, "COM"): what a COM method's call throws
@@ -38,12 +39,12 @@ class ComException extends haxe.Exception {
 
 	// "0x80004002: No such interface supported": the code and the system's message
 	public static function describe(hr:Int):String {
-		var text = Mem.os() == 2 ? systemMessage(hr) : null;
+		var text = Platform.os() == 2 ? systemMessage(hr) : null;
 		return text != null && text != "" ? hex(hr) + ": " + text : hex(hr);
 	}
 
 	// FormatMessageW's text of hr (FROM_SYSTEM, IGNORE_INSERTS), its line end dropped
-	static function systemMessage(hr:Int):Null<String> {
+	@:hxmc.unsafe(gc) static function systemMessage(hr:Int):Null<String> {
 		var buf = Mem.stack(8);
 		Mem.setPtr(buf, 0, Ptr.nil());
 		// (ALLOCATE_BUFFER 0x100 | IGNORE_INSERTS 0x200 | FROM_SYSTEM 0x1000)

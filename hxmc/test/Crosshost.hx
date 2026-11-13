@@ -147,6 +147,7 @@ class Crosshost {
 			if (!target.startsWith("macos") && Corpus.MACOS_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.MACOS_ONLY[name]};
 			if (!target.startsWith("macos") && !target.startsWith("ios") && Corpus.APPLE_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.APPLE_ONLY[name]};
 			if (!Corpus.uikit(target) && Corpus.UIKIT_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.UIKIT_ONLY[name]};
+			if (target.startsWith("windows") && Corpus.POSIX_LINKED.exists(name)) return {ok: true, detail: "skipped: " + Corpus.POSIX_LINKED[name]};
 			if (!target.startsWith("windows") && Corpus.WINDOWS_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.WINDOWS_ONLY[name]};
 			if ((!target.startsWith("linux") || glibc) && Corpus.MUSL_ONLY.exists(name)) return {ok: true, detail: "skipped: " + Corpus.MUSL_ONLY[name]};
 			var native = Corpus.nativeInputs({name: name, cps: ["hxmc/test/cases"], main: name}, glibc ? target.substr(0, target.length - 6) : target, d, glibc ? "glibc" : null);

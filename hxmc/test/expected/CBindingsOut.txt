@@ -1,0 +1,9 @@
+exit 0
+CBindingsOut.hx:40: 0, 9, 2
+CBindingsOut.hx:42: 0, 14, 2
+CBindingsOut.hx:43: -1, 0, 0
+CBindingsOut.hx:46: -7, 12
+CBindingsOut.hx:48: 4, 2, 42, 11
+CBindingsOut.hx:49: 18, 20
+CBindingsOut.hx:51: 3
+CBindingsOut.hx:57: 930216

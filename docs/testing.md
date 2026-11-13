@@ -86,8 +86,9 @@ each lane on the kept cases and 400 random programs.
 
 | Check | Make target | What |
 | --- | --- | --- |
-| `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files |
+| `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files; `hxmc/test/reject`'s programs the compiler must reject (each `// expect: ` line part of the error) and `hxmc/test/warn`'s it must build with warnings (each `// warns: ` line part of them) |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
+| `HeaderCheck` | `header-check` | the C declarations that name their headers (the std's typed bindings, `CBindings*`) against each of the seven targets' headers, compiled by zig as C++ assertions; `hxmc/test/header/BadLayout.hx` must fail ([interop.md](interop.md#checking-declarations-against-the-headers)); CI's `native-output` job |
 | `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |
 | fixpoint | `fixpoint` | the tool rebuilds itself byte-identically, with the module cache cold, warm and off |
 | `ModuleCacheCheck` | `test-module-cache` | outputs with the module cache are byte-identical to outputs without it, through edits, define changes, macros that keep state, shadowing, a second output, a module of abstracts with overloaded call operators restored under its typed users, modules macros define built into two programs of one class path one after the other (`--late`), a module defined in its definer's typing that calls back into it, the definer edited and back (`--defined`), a registry a macro class keeps whose readers' fields come from it, two programs of one class path filling it (`--state`), macros that use state no macro keeps (a class's own static initialisation, a std override's statics) restoring the modules they ran in; for hxmc, JS and Eval (`PORT=1` adds the port) |
@@ -120,7 +121,8 @@ compressed references). A
 `// span-checks: <Class.function>=<n> ...` line names the span element
 checks left in each function's optimized code, which a build with
 `HXMC_DUMP` counts (`SpanLoops`: the checks a loop proves are dropped); a
-`// bytes-checks:` line the same of `haxe.io.Bytes`' range tests
+`// range-checks:` line the same of range checks (`sub`, `fill`, `blit`:
+`SpanRanges`), a `// bytes-checks:` line of `haxe.io.Bytes`' range tests
 (`BytesReadLoops`). Writing a
 case's archive must not warn of an unbound type parameter (`hxb-warning`:
 an expression of the case or of hxmc's std whose type left its type

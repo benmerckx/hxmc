@@ -23,6 +23,14 @@ class TargetFlags {
 		compiler.Compiler.beforeTypingHook = function(com, actx) {
 			// (and the build's switches of the passes, before anything reads them)
 			Options.apply(com.defines);
+			// (an inline function's @:hxmc.unsafe stays on the copies Haxe inlines:
+			// trusted where they land, hxmc.ir.RawCheck)
+			var keep = com.platform.match(CustomTarget("hxmc")) ? keepUnsafe : null;
+			optimization.Inline.keepMetaHook = keep;
+			// raw memory only in @:hxmc.unsafe code, checked once typed: errors in
+			// hxmc's std, warnings in the program's (-D hxmc.strict: errors)
+			hxmc.ir.RawCheck.seconds = 0;
+			if (keep != null) com.callbacks.addAfterTyping(types -> hxmc.ir.RawCheck.run(com, types));
 			if (com.platform.match(CustomTarget("hxmc"))) {
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))
 					context.Common.rawDefine(com, f);
@@ -36,6 +44,9 @@ class TargetFlags {
 		context.Common.macroDefinesHook = macroDefines;
 		macros.eval.EvalJit.missingExternHook = evalExtern;
 	}
+
+	static function keepUnsafe(m:core.Ast.MetadataEntry):Bool
+		return core.Meta.metaEq(m.meta, core.MetaList.StrictMeta.Custom(":hxmc.unsafe"));
 
 	// The macro context's target is not the program's: hxmc.target and
 	// hxmc.libc are left out of its defines, as Haxe leaves the platforms'

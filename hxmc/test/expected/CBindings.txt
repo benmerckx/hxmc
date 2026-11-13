@@ -1,0 +1,9 @@
+exit 0
+CBindings.hx:84: 1160, 552
+CBindings.hx:86: ABClo, world
+CBindings.hx:87: 55, 9002, -1
+CBindings.hx:88: 201
+CBindings.hx:90: 300, 2, false
+CBindings.hx:91: 3, 5
+CBindings.hx:92: 41, 13
+CBindings.hx:95: 32, 8

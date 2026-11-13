@@ -1,6 +1,9 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
+import hxmc.ReadOnlySpan;
+import hxmc.Span;
 import hxmc.rt.Layouts as L;
 import hxmc.rt.C;
 import hxmc.unsafe.*;
@@ -16,18 +19,18 @@ import hxmc.unsafe.*;
 @:hxmc.native
 class Os {
 	static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	static inline function mac():Bool
-		return Mem.os() == 1;
+		return Platform.os() == 1;
 
 	// ---- the environment
 
 	// getenv of a name (a string literal: a C string in the program's data; null: unset)
-	public static inline function getenv(name:String):Ptr
+	@:hxmc.unsafe(gc) public static inline function getenv(name:String):Ptr
 		return C.getenv(Mem.cstr(name));
 
-	public static inline function has(name:String):Bool
+	@:hxmc.unsafe(gc) public static inline function has(name:String):Bool
 		return !getenv(name).isNull();
 
 	// atoi of p: leading blanks, a sign, the digits
@@ -53,7 +56,7 @@ class Os {
 	}
 
 	// atoi of an environment variable (a string literal), or def when it is unset
-	public static inline function envInt(name:String, def:Int):Int
+	@:hxmc.unsafe(gc) public static inline function envInt(name:String, def:Int):Int
 		return envIntC(Mem.cstr(name), def);
 
 	@:hxmc.unsafe static function envIntC(name:Ptr, def:Int):Int {
@@ -63,52 +66,53 @@ class Os {
 
 	// ---- errno (kept across the runtime's own calls around blocking natives)
 
-	@:hxmc.unsafe static function errnoPtr():Ptr
-		return windows() ? C._errno() : mac() ? C.__error() : Mem.target() >= 9 ? C.__errno() : C.__errno_location();
+	// (the thread's errno as a span of one: C's location, which the declarations vouch for)
+	@:hxmc.kernel static function errnoCell():Span<Int>
+		return windows() ? C.errnoWin() : mac() ? C.errnoMac() : Platform.target() >= 9 ? C.errnoBionic() : C.errnoLinux();
 
-	@:hxmc.unsafe public static function errno():Int
-		return Mem.getI32(errnoPtr(), 0);
+	@:hxmc.kernel public static function errno():Int
+		return errnoCell()[0];
 
-	@:hxmc.unsafe public static function setErrno(e:Int)
-		Mem.setI32(errnoPtr(), 0, e);
+	@:hxmc.kernel public static function setErrno(e:Int)
+		errnoCell()[0] = e;
 
 	// ---- time
 
 	// seconds on the monotonic clock
-	@:hxmc.unsafe public static function now():Float {
-		var ts = Mem.stack(16);
-		C.clock_gettime(L.CLOCK_MONOTONIC, ts);
-		var s:Float = cast Mem.getI64(ts, 0);
-		var ns:Float = Mem.getI32(ts, 8); // (tv_nsec: a long, 32 bits on Windows)
+	@:hxmc.kernel public static function now():Float {
+		var ts:Span<Int> = Span.stack(4);
+		C.clockGettime(L.CLOCK_MONOTONIC, ts);
+		var s:Float = cast ts.getI64(0);
+		var ns:Float = ts[2]; // (tv_nsec: a long, 32 bits on Windows)
 		return s + ns * 1e-9;
 	}
 
 	// (nanosleep, again after a signal; Windows: Sleep, in milliseconds as
 	// WinSys.sleep's: MinGW-w64's nanosleep returned after 3-4 ms of 10 on
 	// Windows on arm64)
-	@:hxmc.unsafe public static function sleep(seconds:Float) {
+	@:hxmc.kernel public static function sleep(seconds:Float) {
 		if (seconds <= 0) return;
 		if (windows()) {
-			hxmc.unsafe.Win32.Sleep(Std.int(seconds * 1000.0 + 0.5));
+			K.Sleep(Std.int(seconds * 1000.0 + 0.5));
 			return;
 		}
-		var t = Mem.stack(32);
+		var t:Span<I64> = Span.stack(4);
 		var whole = Math.ffloor(seconds);
-		Mem.setI64(t, 0, (cast whole : I64));
-		Mem.setI64(t, 8, (cast ((seconds - whole) * 1e9) : I64));
-		while (C.nanosleep(t, t) != 0 && errno() == L.EINTR) {}
+		t[0] = (cast whole : I64);
+		t[1] = (cast((seconds - whole) * 1e9) : I64);
+		while (C.nanosleepFor(t, t) != 0 && errno() == L.EINTR) {}
 	}
 
-	@:hxmc.unsafe public static function yield()
+	@:hxmc.kernel public static function yield()
 		if (windows()) K.SwitchToThread() else C.sched_yield();
 
 	// the processors online (Linux; elsewhere 1)
-	@:hxmc.unsafe public static function cpus():Int
-		return Mem.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
+	@:hxmc.kernel public static function cpus():Int
+		return Platform.os() == 0 ? C.sysconf(84).toInt() : 1; // _SC_NPROCESSORS_ONLN
 
 	// the physical memory in bytes, 0 when unknown (Linux but Android: _SC_PHYS_PAGES)
 	@:hxmc.unsafe public static function physicalBytes():I64 {
-		if (Mem.os() != 0 || Mem.target() >= 9) return 0;
+		if (Platform.os() != 0 || Platform.target() >= 9) return 0;
 		var pages = C.sysconf(85); // _SC_PHYS_PAGES
 		return pages > 0 ? pages * (pageSize() : I64) : 0;
 	}
@@ -178,7 +182,7 @@ class Os {
 	// apport), so the runtime's reservations are left out but for what it
 	// uses of them (docs/hxmc.md, "Core dumps")
 	@:hxmc.unsafe public static function coreDump(p:Ptr, bytes:I64, on:Bool) {
-		if (Mem.os() == 0) {
+		if (Platform.os() == 0) {
 			var mask:I64 = (pageSize() : I64) - 1;
 			var lo = p.toI64(), hi = lo + bytes;
 			if (on) {
@@ -207,7 +211,7 @@ class Os {
 	// 1 MB, top) is the stack's (the C library's guard is below it, its
 	// thread record and TLS above); its bounds Faults.dumpStacks's
 	@:hxmc.unsafe public static function threadStackCoreDump(bytes:I64) {
-		if (Mem.os() == 0) {
+		if (Platform.os() == 0) {
 			var top = Mem.stack(16);
 			var lo = top.addL(((1 << 20) : I64) - bytes);
 			stackCoreDump(lo, top.diff(lo), true);
@@ -222,10 +226,10 @@ class Os {
 	// pages of one process together wait for each other in the kernel (8
 	// threads: 2.6 GB in 0.93 s, against 0.28 s for one)
 	@:hxmc.unsafe public static function populate(p:Ptr, bytes:I64)
-		if (Mem.os() == 0) C.madvise(p, bytes, 23);
+		if (Platform.os() == 0) C.madvise(p, bytes, 23);
 
 	@:hxmc.unsafe public static function hugePages(p:Ptr, bytes:I64)
-		if (Mem.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
+		if (Platform.os() == 0) C.madvise(p, bytes, L.MADV_HUGEPAGE);
 
 	// ---- mutexes and conditions, in memory that never moves (malloc'ed or
 	// static): MUTEX_BYTES and COND_BYTES each
@@ -377,7 +381,7 @@ class Os {
 	// (Android: _exit, as PosixSys.exit; a moment first for what was
 	// written to stderr to reach logcat, through hxmc.os's pipe)
 	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int) {
-		if (Mem.target() >= 9) {
+		if (Platform.target() >= 9) {
 			C.fflush(Ptr.nil());
 			var ts = Mem.stack(16);
 			Mem.setI64(ts, 0, 0);
@@ -404,7 +408,7 @@ abstract Report(Ptr) {
 	public static inline var BYTES = 8 + 512;
 	static inline var CAP = 512;
 
-	public inline function new(p:Ptr) {
+	@:hxmc.unsafe public inline function new(p:Ptr) {
 		this = p;
 		Mem.setI32(p, 0, 0);
 	}
@@ -416,7 +420,7 @@ abstract Report(Ptr) {
 	}
 
 	// a string literal (a C string in the program's data)
-	public inline function str(s:String)
+	@:hxmc.unsafe(gc) public inline function str(s:String)
 		cstr(Mem.cstr(s), 0, -1);
 
 	// a C string, at least `width` wide (padded on the right, %-Ns), at most `max` (%.Ns)
@@ -472,17 +476,26 @@ abstract Report(Ptr) {
 	}
 }
 
-// the C library (libc; Windows: the UCRT and MinGW-w64's clock_gettime)
+// the C library (libc; Windows: the UCRT and MinGW-w64's clock_gettime);
+// @:hxmc.safe ones typed for the kernels above (docs/interop.md, "Typed bindings")
 @:hxmc.c @:hxmc.fast private extern class C {
+	@:hxmc.safe @:hxmc.len(1) @:native("__errno_location") @:hxmc.header("errno.h") @:hxmc.cif("defined(__linux__) && !defined(__ANDROID__)")
+	static function errnoLinux():Span<Int>;
+	@:hxmc.safe @:hxmc.len(1) @:native("__errno") @:hxmc.header("errno.h") @:hxmc.cif("defined(__ANDROID__)")
+	static function errnoBionic():Span<Int>;
+	@:hxmc.safe @:hxmc.len(1) @:native("__error") @:hxmc.header("errno.h") @:hxmc.cif("defined(__APPLE__)")
+	static function errnoMac():Span<Int>;
+	@:hxmc.safe @:hxmc.len(1) @:native("_errno") @:hxmc.header("errno.h") @:hxmc.cif("defined(_WIN32)")
+	static function errnoWin():Span<Int>;
+	// (struct timespec: tv_sec, then tv_nsec, a long: 16 bytes everywhere)
+	@:hxmc.safe @:hxmc.len(ts, 4) @:native("clock_gettime") @:hxmc.header("time.h") static function clockGettime(clock:Int, ts:Span<Int>):Int;
+	@:hxmc.safe @:hxmc.len(req, 2) @:hxmc.len(rem, 2) @:native("nanosleep") @:hxmc.header("time.h") @:hxmc.cif("!defined(_WIN32)")
+	static function nanosleepFor(req:ReadOnlySpan<I64>, rem:Span<I64>):Int;
+	@:hxmc.safe @:hxmc.header("sched.h") @:hxmc.cif("!defined(_WIN32)") static function sched_yield():Int;
+	@:hxmc.safe @:hxmc.header("unistd.h") @:hxmc.cif("!defined(_WIN32)") static function sysconf(name:Int):I64;
 	static function getenv(name:Ptr):Ptr;
-	static function __errno_location():Ptr;
-	static function __errno():Ptr; // (Bionic)
-	static function __error():Ptr;
-	static function _errno():Ptr;
 	static function clock_gettime(clock:Int, ts:Ptr):Int;
 	static function nanosleep(req:Ptr, rem:Ptr):Int;
-	static function sched_yield():Int;
-	static function sysconf(name:Int):I64;
 	static function mmap(addr:Ptr, len:I64, prot:Int, flags:Int, fd:Int, off:I64):Ptr;
 	static function munmap(addr:Ptr, len:I64):Int;
 	static function mprotect(addr:Ptr, len:I64, prot:Int):Int;
@@ -515,7 +528,8 @@ abstract Report(Ptr) {
 
 // Windows (kernel32)
 @:hxmc.c @:hxmc.fast @:hxmc.lib("kernel32") private extern class K {
-	static function SwitchToThread():Int;
+	@:hxmc.safe static function SwitchToThread():Int;
+	@:hxmc.safe static function Sleep(ms:Int):Void;
 	static function AcquireSRWLockExclusive(l:Ptr):Void;
 	static function TryAcquireSRWLockExclusive(l:Ptr):Int;
 	static function ReleaseSRWLockExclusive(l:Ptr):Void;

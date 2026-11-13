@@ -1,0 +1,8 @@
+exit 0
+KernelLoans.hx:31: 3, 3, -1
+KernelLoans.hx:32: abc, abc
+KernelLoans.hx:33: true, true, true, 2, 4, 1
+KernelLoans.hx:36: 7, 1
+KernelLoans.hx:42: 3, 1, x
+KernelLoans.hx:44: -15, 15, 2, -1, 0
+KernelLoans.hx:49: efbe410000c03ffeffffff, -2, 48879, 1.5

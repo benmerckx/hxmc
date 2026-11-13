@@ -49,7 +49,7 @@ class Arr {
 		return r;
 	}
 
-	static function indexFrom(a:Dynamic, x:Dynamic, from:Int):Int {
+	@:hxmc.unsafe(gc) static function indexFrom(a:Dynamic, x:Dynamic, from:Int):Int {
 		var n = len(a);
 		if (from < 0) {
 			from += n;
@@ -99,7 +99,7 @@ class Arr {
 	@:hxmc.host("Array_indexOf") static function indexOf(a:Dynamic, x:Dynamic, from:Null<Int>):Int
 		return indexFrom(a, x, from == null ? 0 : from);
 
-	@:hxmc.host("Array_lastIndexOf") static function lastIndexOf(a:Dynamic, x:Dynamic, from:Null<Int>):Int {
+	@:hxmc.unsafe(gc) @:hxmc.host("Array_lastIndexOf") static function lastIndexOf(a:Dynamic, x:Dynamic, from:Null<Int>):Int {
 		var n = len(a);
 		var f:Int = from == null ? n - 1 : from;
 		if (f < 0) f += n;
@@ -211,7 +211,7 @@ class Arr {
 		grow(a, n);
 	}
 
-	@:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
+	@:hxmc.unsafe(gc) @:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
 		// past the capacity, the storage allocated at twice the capacity, or
 		// at the new length when that is more (from empty: the length), as a
 		// push grows it (growing by one at a time stays amortised); the

@@ -147,10 +147,10 @@ abstract I64x2(V128) {
 		Mem128.storeSpan32(s, pos, this);
 
 	#if (target.name == "hxmc")
-	public static inline function loadPtr(p:hxmc.unsafe.Ptr, off:Int):I64x2
+	@:hxmc.unsafe(gc) public static inline function loadPtr(p:hxmc.unsafe.Ptr, off:Int):I64x2
 		return new I64x2(Ops.load("v128.load", p, off));
 
-	public inline function storePtr(p:hxmc.unsafe.Ptr, off:Int):Void
+	@:hxmc.unsafe(gc) public inline function storePtr(p:hxmc.unsafe.Ptr, off:Int):Void
 		Ops.store("v128.store", p, off, this);
 	#end
 

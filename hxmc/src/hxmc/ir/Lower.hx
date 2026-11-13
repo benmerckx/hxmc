@@ -1,7 +1,9 @@
 package hxmc.ir;
 
+import hxmc.Platform;
 import hxmc.ir.Ir;
 import hxmc.ir.LowerQueries;
+import hxmc.ir.CInterop;
 import hxmc.ir.Com.ComValue;
 import hxmc.ir.Jni.JniValue;
 import core.Ast.Binop;
@@ -182,7 +184,12 @@ class Lower implements LowerQueries {
 	// shared library's export, Abi.exports), always compiled.
 	var hostImpls = new Map<String, {c:TClass, cf:TClassField}>();
 
+	// hxmc.SpanSupport, whose kernels the typed C calls end the program
+	// with (FnLower.typedCall: an invalid handle), when the program has it
+	public static var spanSupport:Null<TClass> = null;
+
 	function findHosts(types:Array<core.TType.ModuleType>) {
+		spanSupport = null;
 		for (t in types)
 			switch t {
 				case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !(c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc")):
@@ -199,6 +206,7 @@ class Lower implements LowerQueries {
 							staticFunc(c, cf);
 						}
 				case TClassDecl(c) if (runtimeClass(c)):
+					if (c.clPath.name == "SpanSupport" && c.clPath.pack.length == 1) spanSupport = c;
 					if (!ofTarget(c)) continue;
 					for (cf in c.clOrderedStatics) {
 						if (cf.cfMeta.length == 0) continue;
@@ -229,9 +237,9 @@ class Lower implements LowerQueries {
 	// whether it is of this target (its __init__ runs, findHosts, and
 	// reflection finds it by types and @:keep, ClassInfo.otherTarget)
 	public static function ofTarget(c:TClass):Bool {
-		// @:hxmc.android: the Android targets' only (Mem.target() 9 and 10)
+		// @:hxmc.android: the Android targets' only (Platform.target() 9 and 10)
 		if (hasMeta(":hxmc.android", c.clMeta) && targetCode >= 0 && targetCode < 9) return false;
-		// @:hxmc.ios: UIKit's targets only (Mem.platform() 1 to 3: iOS, its simulator, Mac Catalyst)
+		// @:hxmc.ios: UIKit's targets only (Platform.apple() 1 to 3: iOS, its simulator, Mac Catalyst)
 		if (hasMeta(":hxmc.ios", c.clMeta) && targetPlatform >= 0 && targetPlatform < 1) return false;
 		// @:hxmc.wasm: the runtime of WebAssembly only (what C provides elsewhere)
 		if (hasMeta(":hxmc.wasm", c.clMeta) && targetOs != 3) return false;
@@ -342,7 +350,7 @@ class Lower implements LowerQueries {
 	}
 
 	// replaces the calls of runtime functions implemented in Haxe in fi's
-	// body, and folds the target's constants: `if (Mem.os() == 2) a else b`
+	// body, and folds the target's constants: `if (Platform.os() == 2) a else b`
 	// keeps one branch (its symbols stay out of the other targets' links).
 	// An expression nothing changes in is kept; statement lists are copied
 	// while binding the body's calls and folding target constants.
@@ -590,10 +598,18 @@ class Lower implements LowerQueries {
 	public static function hasMeta(name:String, ml:core.Ast.Metadata):Bool
 		return core.Meta.has(Custom(name), ml);
 
-	// @:hxmc.unsafe, or its former name @:hxmc.noGc (still accepted): no GC
-	// point is reached (Facts.findNoGc checks it)
+	// @:hxmc.unsafe, or its former name @:hxmc.noGc (still accepted): trusted
+	// code, which reaches no GC point (Facts.findNoGc checks it) unless written
+	// @:hxmc.unsafe(gc)
 	public static function isUnsafe(ml:core.Ast.Metadata):Bool
 		return hasMeta(":hxmc.unsafe", ml) || hasMeta(":hxmc.noGc", ml);
+
+	// @:hxmc.unsafe promising no GC point (not @:hxmc.unsafe(gc))
+	public static function isNoGc(ml:core.Ast.Metadata):Bool {
+		if (hasMeta(":hxmc.noGc", ml)) return true;
+		var m = core.Meta.getOpt(Custom(":hxmc.unsafe"), ml);
+		return m != null && !(m.exprs.length == 1 && m.exprs[0].expr.match(EConst(Ident("gc"))));
+	}
 
 	// the string literal argument of hxmc's metadata `name`, or null
 	public static function metaString(name:String, ml:core.Ast.Metadata):Null<String>
@@ -1247,6 +1263,12 @@ class Lower implements LowerQueries {
 					case _: throw new LowerError('COM method ${decl.cfName} is not a function', CInterop.posOf(decl.cfPos));
 				};
 				var cs = Com.csig(decl, s);
+				for (k in 0...s.args.length)
+					switch Com.value(s.args[k].type) {
+						case VSpan | VOut(_):
+							throw new LowerError('$path implements ${decl.cfName}, whose parameter ${s.args[k].name} is a span or an hxmc.com.Out: COM calls Haxe objects with these not yet (calls of COM objects only)', where);
+						case _:
+					}
 				var mode = Com.mode(decl);
 				var name = Com.THUNK + ci.ident + "_" + i + "_" + slot;
 				var w = new FuncInfo(name + "__work", module);
@@ -1637,7 +1659,7 @@ class Lower implements LowerQueries {
 			fi.gcScan = {gc: !h.noGc, here: h.blocks, addr: false, callees: [], names: []};
 			return fi;
 		}
-		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, cf);
+		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, c, cf);
 		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.run(funcOf(cf));
@@ -1678,9 +1700,13 @@ class Lower implements LowerQueries {
 	public function callbackSym(fi:FuncInfo):String
 		return "hxmc_cb_" + fi.name;
 
-	function callback(fi:FuncInfo, cf:TClassField) {
+	function callback(fi:FuncInfo, c:TClass, cf:TClassField) {
 		var where = CInterop.posOf(cf.cfPos);
 		var tf = funcOf(cf);
+		if ([for (a in tf.tfArgs) if (KernelCheck.spanOf(a.variable.vType) != null) a].length > 0) {
+			spanCallback(fi, c, cf, tf, where);
+			return;
+		}
 		var cargs = [], structs = false;
 		for (a in fi.args.concat([new Local(-1, "result", fi.ret)])) {
 			if (a.id == -1 && a.ty == TVoid || a.name == "sret" && fi.sret && a.id == fi.args.length - 1) continue;
@@ -1762,6 +1788,96 @@ class Lower implements LowerQueries {
 		prog.funcs.push(w);
 	}
 
+	// a @:hxmc.callback kernel taking spans (docs/interop.md, "Typed
+	// callbacks"): C passes their memory as a typed binding's parameters are
+	// (CInterop.plan: an address and a size_t, or an address alone, its length
+	// a sibling parameter or a constant: @:hxmc.len), which its declaration
+	// vouches for; the wrapper makes the spans (a null address an empty one)
+	// and calls the kernel, which runs on C's thread in C's state, as an
+	// @:hxmc.unsafe callback does
+	function spanCallback(fi:FuncInfo, c:TClass, cf:TClassField, tf:TFunc, where:String) {
+		if (!fi.declKernel || fi.declBlocking) throw new LowerError('@:hxmc.callback ${cf.cfName} takes spans: it is a @:hxmc.kernel (spans exist only in kernels)', where);
+		if (fi.cSymbol != null) throw new LowerError('@:hxmc.callback ${cf.cfName} is also @:hxmc.export', where);
+		var s = switch TFunctions.follow(cf.cfType) {
+			case TFun(s): s;
+			case _: throw new LowerError('@:hxmc.callback ${cf.cfName} is no function', where);
+		};
+		var p = CInterop.plan(c, cf, s, cf.cfName, where);
+		KernelCheck.entries.set(fi.name, true);
+		if (p.ret >= 0) throw new LowerError('@:hxmc.callback ${cf.cfName}: a callback returns no span', where);
+		var w = new FuncInfo(fi.name + "__callback", fi.module);
+		w.cSymbol = callbackSym(fi);
+		w.display = fi.display;
+		w.pos = fi.pos;
+		var cargs:Array<CTy> = [], body:Array<Stmt> = [], id = 0;
+		// (the C arguments: each Haxe parameter's, a span's address first)
+		var ins:Array<Array<Local>> = [];
+		for (i in 0...s.args.length) {
+			var cts = switch p.args[i] {
+				case ASpan: [CPtr, CPtr];
+				case ASpanPtr(_): [CPtr];
+				case AValue | AHandle(_):
+					var ct = CInterop.ctype(s.args[i].type);
+					if (!ct.match(CI32 | CI64 | CF64 | CPtr)) throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} has the type ${CInterop.name(ct)}, which a callback cannot take yet (Int, Int64, Float, Ptr, spans)', where);
+					[ct];
+				case ACallback: throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a function', where);
+				case AString | AOut(_) | AIface(_): throw new LowerError('@:hxmc.callback ${cf.cfName}: parameter ${s.args[i].name} is a String, an hxmc.Out or a COM interface, which a callback cannot take yet', where);
+			}
+			ins.push([for (ct in cts) {
+				var lo = new Local(id++, s.args[i].name, ct == CI32 ? TI32 : ct == CF64 ? TF64 : TI64);
+				w.args.push(lo);
+				cargs.push(ct);
+				lo;
+			}]);
+		}
+		var ret = CInterop.ctype(tf.tfType);
+		if (!ret.match(CVoid | CI32 | CI64 | CF64 | CPtr)) throw new LowerError('@:hxmc.callback ${cf.cfName}: the result has the type ${CInterop.name(ret)}, which a callback cannot return yet', where);
+		w.cAbi = {args: cargs, ret: ret};
+		w.ret = fi.ret;
+		var xs:Array<Ex> = [];
+		for (i in 0...s.args.length)
+			switch p.args[i] {
+				case ASpan | ASpanPtr(_):
+					var sd = structOf(KernelCheck.spanOf(s.args[i].type) != null ? switch TFunctions.follow(s.args[i].type) {
+						case TAbstract(a, _): a.aThis;
+						case t: t;
+					} : s.args[i].type);
+					if (sd == null) throw new LowerError('@:hxmc.callback ${cf.cfName}: a span\'s data is no struct', where);
+					var addr = ins[i][0];
+					// (the length: C's size_t, a sibling parameter, or the constant)
+					var n:Ex = switch p.args[i] {
+						case ASpan: EConv(L2I, ELocal(ins[i][1]));
+						case ASpanPtr(count, _) if (count >= 0): ins[count][0].ty == TI64 ? EConv(L2I, ELocal(ins[count][0])) : ELocal(ins[count][0]);
+						case ASpanPtr(_, min): EInt(min);
+						case _: EInt(0);
+					};
+					var len = new Local(id++, "len", TI32), slot = new Local(id++, "span", TStruct(core.Globals.sTypePath(sd.clPath), CInterop.layout(sd).size));
+					w.locals.push(len);
+					w.locals.push(slot);
+					body.push(SSet(len, n));
+					// (a null address, or a negative length: an empty span)
+					body.push(SIf(EBin(Or, EBin(LEq, ELocal(addr), EConv(I2L, EInt(0))), EBin(Lt, ELocal(len), EInt(0))), vector(SSet(len, EInt(0))), vector()));
+					body.push(SSet(slot, ECallHost("hxmc_unsafe_Mem_structSlot", vector(EInt(CInterop.layout(sd).size), EInt(8)), TI64)));
+					body.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI64", vector(ELocal(slot), EInt(CInterop.field(sd, "ptr").off), ELocal(addr)), TVoid)));
+					body.push(SExpr(ECallHost("hxmc_unsafe_Mem_setI32", vector(ELocal(slot), EInt(CInterop.field(sd, "length").off), ELocal(len)), TVoid)));
+					xs.push(ELocal(slot));
+				case _:
+					xs.push(ELocal(ins[i][0]));
+			}
+		var call = ECall(fi, Vector.fromArrayCopy(xs));
+		if (fi.ret == TVoid) {
+			body.push(SExpr(call));
+			body.push(SReturn(null));
+		} else {
+			var r = new Local(id++, "r", fi.ret);
+			w.locals.push(r);
+			body.push(SSet(r, call));
+			body.push(SReturn(ELocal(r)));
+		}
+		w.body = Vector.fromArrayCopy(body);
+		prog.funcs.push(w);
+	}
+
 	// hxmc's attributes of a function: @:hxmc.unsafe, @:hxmc.kernel and
 	// @:hxmc.blocking (checked by Facts.findNoGc), @:hxmc.collects (it runs
 	// the collector), @:hxmc.export (its symbol) (@:hxmc.unsafe and
@@ -1770,11 +1886,18 @@ class Lower implements LowerQueries {
 		fi.pos = cf.cfPos;
 		fi.display = core.Globals.sTypePath(c.clPath) + "." + cf.cfName;
 		if (c.clMeta.length > 0) {
-			if (isUnsafe(c.clMeta)) fi.declNoGc = fi.declUnsafe = true;
+			if (isUnsafe(c.clMeta)) {
+				fi.declUnsafe = true;
+				if (isNoGc(c.clMeta)) fi.declNoGc = true;
+			}
 			if (hasMeta(":hxmc.kernel", c.clMeta)) fi.declNoGc = fi.declKernel = true;
+			fi.view = fi.declKernel && fi.declUnsafe;
 		}
 		if (cf.cfMeta.length == 0) return;
-		if (isUnsafe(cf.cfMeta)) fi.declNoGc = fi.declUnsafe = true;
+		if (isUnsafe(cf.cfMeta)) {
+			fi.declUnsafe = true;
+			if (isNoGc(cf.cfMeta)) fi.declNoGc = true;
+		}
 		if (hasMeta(":hxmc.kernel", cf.cfMeta)) fi.declNoGc = fi.declKernel = true;
 		fi.declBlocking = hasMeta(":hxmc.blocking", cf.cfMeta);
 		if (fi.declBlocking) fi.declNoGc = fi.declKernel = true;
@@ -2048,7 +2171,8 @@ class Lower implements LowerQueries {
 			if (cf.hasClassFieldFlag(CfExtern) || cf.hasClassFieldFlag(CfGeneric)) continue;
 			switch cf.cfKind {
 				// (a function taking or returning a struct is not reachable by name)
-				case Method(MethNormal | MethInline) if (funcOf(cf) != null && !hasStruct(staticFunc(c, cf))):
+				// (nor one taking a proof: KernelCheck.takesProof)
+				case Method(MethNormal | MethInline) if (funcOf(cf) != null && !hasStruct(staticFunc(c, cf)) && !KernelCheck.takesProof(cf.cfType)):
 					var f = staticFunc(c, cf);
 					ci.statics.push({name: cf.cfName, clos: staticClosure(f), fn: f, global: -1});
 				case Var(v) if ((cf.cfExpr != null || isPhysical(c, cf, v)) && !ty(cf.cfType).match(TStruct(_))):
@@ -2236,6 +2360,8 @@ class Lower implements LowerQueries {
 		if (g != null) return g;
 		if (KernelCheck.spanOf(cf.cfType) != null)
 			throw new LowerError(KernelCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " has a span type", KernelCheck.SPANS_LOCAL), "");
+		if (KernelCheck.proofOf(cf.cfType) != null)
+			throw new LowerError(KernelCheck.spanError(CInterop.posOf(cf.cfPos), "", "the static " + cf.cfName + " is a proof", KernelCheck.PROOF + ": no static holds one"), "");
 		var t = ty(cf.cfType); // first: it may register globals itself (enum constructors)
 		g = prog.globals.length;
 		globalOwner.set(g, c);

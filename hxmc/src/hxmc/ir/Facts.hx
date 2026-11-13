@@ -652,6 +652,20 @@ class Facts {
 						work.push(c);
 					}
 		}
+		// the functions that call a @:hxmc.blocking one, declared: on every
+		// target, wasm32 too where no call enters a region (kernelCulprit's loans)
+		var regionWork = [for (f in p.funcs) if (f.declBlocking) f];
+		regionCallers = new Map();
+		while (regionWork.length > 0) {
+			var g = regionWork.pop();
+			var cs = callers.get(g);
+			if (cs != null)
+				for (c in cs)
+					if (!regionCallers.exists(c)) {
+						regionCallers.set(c, true);
+						regionWork.push(c);
+					}
+		}
 		// @:hxmc.unsafe: a promise the runtime's Haxe code relies on (raw
 		// addresses kept across calls), checked: every violation, with the
 		// chain of calls to the first GC point; @:hxmc.kernel and
@@ -667,6 +681,57 @@ class Facts {
 		if (errors.length > 0) {
 			errors.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 			throw errors.join("\n");
+		}
+		findWritesStatics();
+	}
+
+	// Which kernels may write a static (FuncInfo.writesStatics): one whose
+	// body writes one (SSetGlobal: a thread-local's too), stores to raw
+	// memory or calls a C or runtime function that is not a pure intrinsic,
+	// or calls a function that may (any but a kernel; a failed span check's
+	// report ends the program, SpanSupport). Every other function may.
+	function findWritesStatics() {
+		var own = new Map<FuncInfo, Array<FuncInfo>>();
+		for (f in p.funcs) {
+			f.writesStatics = true;
+			if (!f.declKernel || f.declBlocking) continue;
+			var writes = false, callees = [];
+			function ex(e:Ex) {
+				if (writes) return;
+				switch e {
+					case ECall(g, _) if (g.module != "hxmc.Span" || g.cSymbol != null):
+						if (!g.declKernel || g.declBlocking) writes = true else callees.push(g);
+					case ECallHost(n, _, _) if (!FnLower.PURE_INTRINSICS.exists(n) && !StringTools.startsWith(n, "hxmc_unsafe_Mem_get") && n != "hxmc_unsafe_Mem_cstr"):
+						writes = true;
+					case ECallDispatch(_) | ECallClos(_) | ECallAnon(_):
+						writes = true;
+					case _:
+				}
+				Facts.iterEx(ex, e);
+			}
+			function st(s:Stmt) {
+				if (writes) return;
+				if (s.match(SSetGlobal(_, _))) writes = true;
+				Facts.iterStmt(st, ex, s);
+			}
+			for (s in f.body)
+				st(s);
+			if (!writes) own.set(f, callees);
+		}
+		// (a kernel writes none while its callees write none: to a fixed point)
+		for (f in own.keys())
+			f.writesStatics = false;
+		var changed = true;
+		while (changed) {
+			changed = false;
+			for (f => callees in own)
+				if (!f.writesStatics)
+					for (g in callees)
+						if (g.writesStatics) {
+							f.writesStatics = true;
+							changed = true;
+							break;
+						}
 		}
 	}
 
@@ -684,12 +749,24 @@ class Facts {
 	// @:hxmc.blocking) functions and of C or runtime functions that are no GC
 	// point (@:hxmc.fast or @:hxmc.blocking externs, Mem's intrinsics). Null
 	// when it holds, else the first violation.
+	//
+	// A kernel that enters no safe region may hold GC values all the same, as
+	// loans: nothing collects while it runs, so nothing moves or frees what
+	// it was handed (Span.ofBytes' rule, for every GC type). It stores none
+	// of them anywhere (it has no write barrier). One that enters a region
+	// holds none: other threads collect meanwhile.
+	var regionCallers = new Map<FuncInfo, Bool>();
+
 	function kernelCulprit(f:FuncInfo):Null<String> {
-		if (Ir.isRef(f.ret)) return "returns a value of a GC type";
-		for (a in f.args)
-			if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type';
-		for (lo in f.locals)
-			if (Ir.isRef(lo.ty)) return 'its local ${lo.name} has a GC type';
+		var loans = !f.declBlocking && !f.blocks && !regionCallers.exists(f);
+		var region = " (a kernel that enters a safe region holds no GC values)";
+		if (!loans) {
+			if (Ir.isRef(f.ret)) return "returns a value of a GC type" + region;
+			for (a in f.args)
+				if (Ir.isRef(a.ty)) return 'its parameter ${a.name} has a GC type' + region;
+			for (lo in f.locals)
+				if (Ir.isRef(lo.ty)) return 'its local ${lo.name} has a GC type' + region;
+		}
 		var why:Null<String> = null;
 		function exWhy(e:Ex) {
 			if (why != null) return;
@@ -705,13 +782,19 @@ class Facts {
 				case ECallHost(n, _, _) if (!FnLower.noGcHost(n) && n != "rt_blocking_enter" && n != "rt_blocking_restore"): why = "it calls " + n + ", which may collect";
 				// (a string literal is static data, never moved: Mem.cstr's and Mem.sym's names)
 				case EStr(_):
-				case _ if (Ir.isRef(Ir.typeOf(e))): why = "it has a value of a GC type (" + e.getName() + ")";
+				case _ if (!loans && Ir.isRef(Ir.typeOf(e))): why = "it has a value of a GC type (" + e.getName() + ")" + region;
 				case _:
 			}
 			Facts.iterEx(exWhy, e);
 		}
+		function stored(v:Ex)
+			if (why == null && Ir.isRef(Ir.typeOf(v))) why = "it stores a GC value (a kernel's GC values are loans: kept in locals only)";
 		function stWhy(s:Stmt) {
 			if (why != null) return;
+			switch s {
+				case SSetField(_, _, _, v) | SAnonSet(_, _, _, v) | SArrSet(_, _, _, v) | SArrPush(_, _, v) | SBoxSet(_, _, v) | SSetGlobal(_, v): stored(v);
+				case _:
+			}
 			Facts.iterStmt(stWhy, exWhy, s);
 		}
 		for (s in f.body)
@@ -870,6 +953,15 @@ class Facts {
 								+ ", which lets other threads collect (a safe region) while the Bytes may move (kernel: a Bytes is lent only to a kernel that enters no region; lend an IoBuffer's instead)";
 							if (errors.indexOf(m) < 0) errors.push(m);
 						}
+					// (a typed C call, FnLower.typedCall: one in a safe region lets
+					// other threads collect)
+					case ECallHost(n, _, _) if (pending && CInterop.BLOCKING.exists(n)):
+						pending = false;
+						var m = where(f) + displayName(f) + ": a span over a Bytes is passed to the C function " + n
+							+ ", which runs in a safe region while the Bytes may move (kernel: a Bytes is lent only to a call that enters no region; lend an IoBuffer's instead)";
+						if (errors.indexOf(m) < 0) errors.push(m);
+					case ECallHost(n, _, _) if (pending && FnLower.C_EXTERNS.exists(n) && !StringTools.startsWith(n, "rt_blocking_")):
+						pending = false;
 					case _:
 				}
 				Facts.iterEx(ex, e);

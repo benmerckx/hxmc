@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.Layouts as L;
 import hxmc.rt.Threads.Mutator;
@@ -271,7 +272,7 @@ class Gc {
 	static var weakLock:Ptr;
 
 	// a slot holding o (null too)
-	@:hxmc.export("rt_weak_new") static function weakNew(o:Dynamic):Int {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_weak_new") static function weakNew(o:Dynamic):Int {
 		lockLeaf(weakLock);
 		var i = weakFreeHead;
 		if (i != 0) {
@@ -293,7 +294,7 @@ class Gc {
 	}
 
 	// the object slot i holds: null once it died (or a free slot's)
-	@:hxmc.export("rt_weak_get") static function weakGet(i:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_weak_get") static function weakGet(i:Int):Dynamic {
 		lockLeaf(weakLock);
 		var p = i > 0 && i < nweak && Mem.getI32(weakSlots, 8 * i) & 1 == 0 ? Mem.getPtr(weakSlots, 8 * i) : Ptr.nil();
 		unlockLeaf(weakLock);
@@ -301,14 +302,14 @@ class Gc {
 	}
 
 	// slot i (taken) holds o from now on
-	@:hxmc.export("rt_weak_set") static function weakSet(i:Int, o:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_weak_set") static function weakSet(i:Int, o:Dynamic):Void {
 		lockLeaf(weakLock);
 		if (i > 0 && i < nweak && Mem.getI32(weakSlots, 8 * i) & 1 == 0) Mem.setPtr(weakSlots, 8 * i, Mem.addr(o));
 		unlockLeaf(weakLock);
 	}
 
 	// slot i given back
-	@:hxmc.export("rt_weak_free") static function weakFree(i:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_weak_free") static function weakFree(i:Int):Void {
 		lockLeaf(weakLock);
 		if (i > 0 && i < nweak && Mem.getI32(weakSlots, 8 * i) & 1 == 0) {
 			Mem.setPtr(weakSlots, 8 * i, Ptr.ofI64(((weakFreeHead : I64) << 1) | 1));
@@ -440,7 +441,7 @@ class Gc {
 	// the closure of block b (made by blockNew; a global block of a closure
 	// capturing nothing, in the data: its address, hxmc.ir.ObjC.GLOBAL_BLOCK),
 	// for its invoke
-	@:hxmc.export("rt_objc_block_get") static function blockGet(b:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_block_get") static function blockGet(b:Ptr):Dynamic {
 		var c = Mem.getPtr(b, BLOCK_SIZE - 8);
 		return Mem.obj(Mem.getI32(b, 8) & BLOCK_IS_GLOBAL != 0 ? c : Mem.getPtr(blockEntry(c.toI64().toInt()), 0));
 	}
@@ -448,7 +449,7 @@ class Gc {
 	// the closure of block b when blockNew made it with this invoke (of the
 	// closure's signature), else null: a block becoming a function again is
 	// that function (hxmc.ir.ObjC.blockFunction)
-	@:hxmc.export("rt_objc_block_fn") static function blockFn(b:Ptr, invoke:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_block_fn") static function blockFn(b:Ptr, invoke:Ptr):Dynamic {
 		if (Mem.getPtr(b, 16) != invoke) return null;
 		if (Mem.getI32(b, 8) & BLOCK_IS_GLOBAL != 0) return blockGet(b);
 		if (Mem.getI32(b, 8) & BLOCK_HAS_COPY_DISPOSE == 0) return null;
@@ -497,21 +498,21 @@ class Gc {
 	// GcCore.fwdLow) ending the space. The nursery's allocations end 8 bytes
 	// short of youngEnd (youngTop), so its test, generated code's too, is
 	// [start, end).)
-	static inline function inYoung(p:Ptr):Bool
+	@:hxmc.unsafe(gc) static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
-	static inline function inFrom(p:Ptr):Bool
+	@:hxmc.unsafe(gc) static inline function inFrom(p:Ptr):Bool
 		return fromStart.ult(p) && !fromEnd.ult(p);
 
-	static inline function inOld(p:Ptr):Bool
+	@:hxmc.unsafe(gc) static inline function inOld(p:Ptr):Bool
 		return oldStart.ult(p) && !oldPtr.ult(p);
 
 	// where the nursery's allocations end: 8 bytes short of youngEnd where an
 	// object may have no slots (its address its end: inYoung)
-	static inline function youngTop():Ptr
+	@:hxmc.unsafe(gc) static inline function youngTop():Ptr
 		return fwdLow() ? youngEnd.add(-8) : youngEnd;
 
-	static inline function region(i:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function region(i:Int):Ptr
 		return i == 0 ? region0 : region1;
 
 	static inline function lockLeaf(l:Ptr)
@@ -529,13 +530,13 @@ class Gc {
 		return copyIn(p);
 
 	// (inline in the drain loops: no call per copied object)
-	static inline function copyIn(p:Ptr):Ptr {
+	@:hxmc.unsafe(gc) static inline function copyIn(p:Ptr):Ptr {
 		var w0 = hdrW0(p);
 		return if (isFwd(w0)) fwdAddr(p) else copyTo(p, wordsOf(p, w0));
 	}
 
 	// p (its payload's words: n) copied
-	static inline function copyTo(p:Ptr, n:Int):Ptr {
+	@:hxmc.unsafe(gc) static inline function copyTo(p:Ptr, n:Int):Ptr {
 		var words = n + 1;
 		var dst = oldPtr, s = p.add(-8);
 		#if hxmc.census
@@ -567,13 +568,13 @@ class Gc {
 		return n;
 	}
 
-	static inline function minorForward(p:Ptr):Ptr
+	@:hxmc.unsafe(gc) static inline function minorForward(p:Ptr):Ptr
 		return inYoung(p) ? copyOut(p) : p;
 
-	static inline function majorForward(p:Ptr):Ptr
+	@:hxmc.unsafe(gc) static inline function majorForward(p:Ptr):Ptr
 		return inYoung(p) || inFrom(p) ? copyOut(p) : p;
 
-	static inline function fwd(p:Ptr):Ptr
+	@:hxmc.unsafe(gc) static inline function fwd(p:Ptr):Ptr
 		return major ? majorForward(p) : minorForward(p);
 
 	// a root forwarded, then everything reachable from it that is still to
@@ -662,7 +663,7 @@ class Gc {
 
 	// o's young children copied (its header's first word w0, its words n),
 	// pushed from gcStack[top] (which has room for all of them): the new top
-	static inline function scanYoung(o:Ptr, w0:Int, n:Int, top:Int):Int {
+	@:hxmc.unsafe(gc) static inline function scanYoung(o:Ptr, w0:Int, n:Int, top:Int):Int {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
@@ -715,7 +716,7 @@ class Gc {
 
 	// the children pushed from gcTop to top, reversed (pushed in slot order:
 	// the first one goes on top)
-	static inline function pushed(top:Int) {
+	@:hxmc.unsafe(gc) static inline function pushed(top:Int) {
 		var a = gcTop, b = top - 1;
 		gcTop = top;
 		var stack = gcStack;
@@ -739,7 +740,7 @@ class Gc {
 		return minorSlotAny(o, i, top, arr, false);
 
 	// (c: i is the 4-byte half of a compressed reference)
-	static inline function minorSlotAny(o:Ptr, i:Int, top:Int, arr:Bool, c:Bool):Int {
+	@:hxmc.unsafe(gc) static inline function minorSlotAny(o:Ptr, i:Int, top:Int, arr:Bool, c:Bool):Int {
 		var t = top;
 		var v = getRefAt(o, i, c);
 		if (!v.ult(youngStart) && v.ult(youngEnd)) {
@@ -807,7 +808,7 @@ class Gc {
 	// runtime's checks that the storage did not change at an allocation
 	// (Boxes.arrGrow): they find the copy; reading at most the length. The
 	// elements past the length are zero, so the copy's are too.
-	static inline function arrTrim(o:Ptr, v:Ptr, vw0:Int):I64 {
+	@:hxmc.unsafe(gc) static inline function arrTrim(o:Ptr, v:Ptr, vw0:Int):I64 {
 		var kind = Mem.getI32(o, 4);
 		var len = Mem.getI32(o, 0);
 		var cap = Mem.getI32(v, -4);
@@ -832,7 +833,7 @@ class Gc {
 	@:hxmc.unsafe static function drainMajor()
 		drainWith(true);
 
-	static inline function drainWith(maj:Bool) {
+	@:hxmc.unsafe(gc) static inline function drainWith(maj:Bool) {
 		while (gcTop > 0) {
 			var o = Mem.getPtr(gcStack, (gcTop - 1) << 4);
 			var w0 = hdrW0(o); // (never forwarded: copied just now)
@@ -890,7 +891,7 @@ class Gc {
 		}
 	}
 
-	static inline function push(o:Ptr) {
+	@:hxmc.unsafe(gc) static inline function push(o:Ptr) {
 		if (gcTop == gcCap) grow();
 		var e = gcStack.add(gcTop << 4);
 		Mem.setPtr(e, 0, o);
@@ -1063,7 +1064,7 @@ class Gc {
 	// does; the object is then K_PARR, and slot 0, outside the heap, is left
 	// alone by the collector); freeFn(p) (a no-GC @:hxmc.callback or a C
 	// function) frees p once it is unreachable
-	@:hxmc.host("rt_native_new_refs") static function nativeNew(p:Ptr, freeFn:Ptr, nrefs:Int):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_native_new_refs") static function nativeNew(p:Ptr, freeFn:Ptr, nrefs:Int):Dynamic {
 		var o:Dynamic = nrefs > 0 ? Mem.alloc(1 + nrefs, T_NATIVE_REFS, K_PARR) : Mem.alloc(1, T_NATIVE, K_RAW);
 		nativeRegister(o, p, freeFn, 0);
 		return o;
@@ -1073,7 +1074,7 @@ class Gc {
 	// tag in a second slot (the only native handles of two: Foreign.isBox):
 	// freeFn a function, or a kind (below Foreign.MAX_KINDS) whose releases
 	// are put off, aux the thread that made it (Foreign.nativeFree)
-	static function nativeNewBox(p:Ptr, freeFn:Ptr, aux:Int, tag:I64):Dynamic {
+	@:hxmc.unsafe(gc) static function nativeNewBox(p:Ptr, freeFn:Ptr, aux:Int, tag:I64):Dynamic {
 		var o:Dynamic = Mem.alloc(2, T_NATIVE, K_RAW);
 		Mem.setI64(Mem.addr(o), 8, tag);
 		nativeRegister(o, p, freeFn, aux);
@@ -1308,7 +1309,7 @@ class Gc {
 				n = Os.cpus();
 				if (n > PAR_MAX) n = PAR_MAX;
 			}
-			parThreads = n < 1 || Mem.os() != 0 || Mem.arm() ? 1 : n;
+			parThreads = n < 1 || Platform.os() != 0 || Platform.arm() ? 1 : n;
 		}
 		if (parThreads < 2 || Threads.mt == 0 || gcBfs || youngUsed < (PAR_MIN_YOUNG : I64)) return false;
 		if (parHelpers == 0) {
@@ -1639,7 +1640,7 @@ class Gc {
 	@:hxmc.unsafe static function parDrainMajor()
 		parDrainWith(true);
 
-	static inline function parDrainWith(maj:Bool) {
+	@:hxmc.unsafe(gc) static inline function parDrainWith(maj:Bool) {
 		while (pTop > 0) {
 			if (pTop > SHARE_MIN && Atomic.load32(Mem.sym("hxmc_par_idle")) > 0) parShare();
 			if (pTop + 2 * SMALL_SLOTS + 1 > pCap) parReserve(pTop + 2 * SMALL_SLOTS + 1);
@@ -1663,7 +1664,7 @@ class Gc {
 	@:hxmc.unsafe static function parScanLargeMajor(o:Ptr)
 		parScanLargeWith(o, true);
 
-	static inline function parScanLargeWith(o:Ptr, maj:Bool) {
+	@:hxmc.unsafe(gc) static inline function parScanLargeWith(o:Ptr, maj:Bool) {
 		parReserve(pTop + LARGE_SLICE);
 		var at = pTop - 1;
 		var e = pStack.add(at << 4);
@@ -1699,7 +1700,7 @@ class Gc {
 		}
 	}
 
-	static inline function parScanYoung(o:Ptr, w0:Int, n:Int, top:Int, maj:Bool):Int {
+	@:hxmc.unsafe(gc) static inline function parScanYoung(o:Ptr, w0:Int, n:Int, top:Int, maj:Bool):Int {
 		var t = top;
 		var k = Types.kindOfWord(w0);
 		if (k == K_OBJ) {
@@ -1741,7 +1742,7 @@ class Gc {
 	}
 
 	// minorHalves'
-	static inline function parHalves(o:Ptr, m:Int, h:Int, top:Int, maj:Bool):Int {
+	@:hxmc.unsafe(gc) static inline function parHalves(o:Ptr, m:Int, h:Int, top:Int, maj:Bool):Int {
 		var t = top, i = h;
 		while (m != 0) {
 			if (m & 1 != 0) t = parSlotAny(o, i, t, maj, false, true);
@@ -1751,7 +1752,7 @@ class Gc {
 		return t;
 	}
 
-	static inline function parPushed(top:Int) {
+	@:hxmc.unsafe(gc) static inline function parPushed(top:Int) {
 		var a = pTop, b = top - 1;
 		pTop = top;
 		var stack = pStack;
@@ -1766,15 +1767,15 @@ class Gc {
 
 	// minorSlot's, the copy raced for (maj: a major collection's, which
 	// copies the from-space's objects too)
-	static inline function parSlot(o:Ptr, i:Int, top:Int, maj:Bool):Int
+	@:hxmc.unsafe(gc) static inline function parSlot(o:Ptr, i:Int, top:Int, maj:Bool):Int
 		return parSlotWith(o, i, top, maj, false);
 
 	// (arr: o is an Array, slot i its storage, copied as arrTrim says)
-	static inline function parSlotWith(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool):Int
+	@:hxmc.unsafe(gc) static inline function parSlotWith(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool):Int
 		return parSlotAny(o, i, top, maj, arr, false);
 
 	// (c: i is the 4-byte half of a compressed reference)
-	static inline function parSlotAny(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool, c:Bool):Int {
+	@:hxmc.unsafe(gc) static inline function parSlotAny(o:Ptr, i:Int, top:Int, maj:Bool, arr:Bool, c:Bool):Int {
 		var t = top;
 		var v = getRefAt(o, i, c);
 		if (!v.ult(youngStart) && v.ult(youngEnd))
@@ -1786,7 +1787,7 @@ class Gc {
 
 	// slot i of o, v (young, or in the from-space), forwarded: the new top
 	// (c: the 4-byte half i, a compressed reference)
-	static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr, arr:Bool, c:Bool):Int {
+	@:hxmc.unsafe(gc) static inline function parCopySlot(o:Ptr, i:Int, top:Int, v:Ptr, arr:Bool, c:Bool):Int {
 		var t = top;
 		{
 			var vw0 = Atomic.load32(v.add(-8));
@@ -2028,8 +2029,11 @@ class Gc {
 	static inline var MULT_FIRST = 4;
 	static inline var MULT_MAX = 16;
 
-	@:hxmc.unsafe static function majorLimit(collected:I64, need:I64) {
-		var live = oldPtr.diff(oldStart);
+	@:hxmc.unsafe static function majorLimit(collected:I64, need:I64)
+		oldEnd = oldStart.addL(limitFor(oldPtr.diff(oldStart), collected, need));
+
+	// (the policy: of what is live, a kernel over the policy's statics)
+	@:hxmc.kernel static function limitFor(live:I64, collected:I64, need:I64):I64 {
 		if (growthMult < 1) growthMult = 1;
 		var little = live * 4 >= collected * 3;
 		if (little) {
@@ -2052,7 +2056,7 @@ class Gc {
 		var least = live + need + minorSize;
 		if (limit < least) limit = least;
 		if (limit > regionBytes - minorSize) limit = regionBytes - minorSize;
-		oldEnd = oldStart.addL(limit);
+		return limit;
 	}
 
 	// [region, top) of the old space's region in a core dump (2 MB aligned:
@@ -2101,7 +2105,7 @@ class Gc {
 	// (an image another linker wrote), the program stops
 	@:hxmc.unsafe static function macWindow() {
 		// (the test here too: an older tool keeps the function, and __dso_handle is Mach-O's)
-		if (Mem.os() == 1) {
+		if (Platform.os() == 1) {
 			var h = Mem.sym("__dso_handle");
 			var n = Mem.getI32(h, 16);
 			var c = h.add(32);
@@ -2130,7 +2134,7 @@ class Gc {
 	@:hxmc.unsafe static function heapReserve(bytes:I64):Ptr {
 		if (!compactWindow()) return Os.reserve(bytes);
 		var at = (compactNext + ((2 << 20) - 1)) & ~(((2 : I64) << 20) - 1);
-		if (Mem.os() == 1) {
+		if (Platform.os() == 1) {
 			// (macOS: the image's segment, the program's own: mapped over)
 			if (compactLimit - at < bytes) return Ptr.nil();
 			var p = Os.mapOver(Ptr.ofI64(at), bytes);
@@ -2170,7 +2174,7 @@ class Gc {
 	@:hxmc.unsafe static function resizeNursery(size:I64) {
 		// (macOS: MADV_DONTNEED may leave the pages as they were, so they stay
 		// dirty: the nursery grows again into them)
-		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size) && Mem.os() != 1) {
+		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size) && Platform.os() != 1) {
 			// zeros again above (pages are released whole: the partial page below
 			// the next 64 KB boundary stays dirty)
 			var z = youngStart.addL((size + 0xFFFF) - ((size + 0xFFFF) & 0xFFFF));
@@ -2192,6 +2196,12 @@ class Gc {
 	// after a minor collection that promoted `promoted` of `used` bytes, by
 	// `threads` threads (the policy above)
 	@:hxmc.unsafe static function adaptNursery(promoted:I64, used:I64, threads:Int) {
+		var size = nurseryFor(promoted, used, threads);
+		if (size != minorSize) resizeNursery(size);
+	}
+
+	// (the policy: the nursery's next size, a kernel over its statics)
+	@:hxmc.kernel static function nurseryFor(promoted:I64, used:I64, threads:Int):I64 {
 		adaptThreads(threads);
 		var floor:I64 = (MINOR_MIN : I64) * mutators;
 		var ceiling:I64 = (MINOR_CAP : I64) * mutators;
@@ -2207,13 +2217,12 @@ class Gc {
 			}
 		} else
 			lowFor = 0;
-		var size = promotionSize < floor ? floor : promotionSize > ceiling ? ceiling : promotionSize;
-		if (size != minorSize) resizeNursery(size);
+		return promotionSize < floor ? floor : promotionSize > ceiling ? ceiling : promotionSize;
 	}
 
 	// the threads that allocated in the cycle that ended: more at once, fewer
 	// after FEWER_THREADS_AFTER collections (then the most of those cycles)
-	@:hxmc.unsafe static function adaptThreads(n:Int) {
+	@:hxmc.kernel static function adaptThreads(n:Int) {
 		if (n < 1) n = 1;
 		if (n >= mutators) {
 			mutators = n;
@@ -2275,7 +2284,7 @@ class Gc {
 	@:hxmc.unsafe static function prefaultAhead(promoted:I64) {
 		if (pfState == 0) {
 			if (oldPtr.diff(oldStart) < (PF_START : I64)) return;
-			if (Mem.os() != 0) {
+			if (Platform.os() != 0) {
 				pfState = -1;
 				return;
 			}
@@ -2491,10 +2500,10 @@ class Gc {
 	}
 
 	// room for `bytes` in the thread's TLAB, refilled if needed (false: the nursery is full)
-	static inline function youngRoom(bytes:Int, raw:Bool):Bool
+	@:hxmc.unsafe(gc) static inline function youngRoom(bytes:Int, raw:Bool):Bool
 		return yrlim.diff(yptr) >= bytes || tlabRefill(bytes, raw);
 
-	@:hxmc.host("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr {
 		// RT_VERIFY: every allocation comes here (no TLAB limit, tlabRefill),
 		// so one in a safe region, which another thread may be collecting
 		// through, is caught (Blocking.enter, a @:hxmc.blocking job)
@@ -2512,7 +2521,7 @@ class Gc {
 	// (Mem.allocRaw, Mem.allocArrayRaw: GcPaths.allocSlowRaw), of an object
 	// without references (Types.K_RAW: a string, the storage of numbers),
 	// which is not zeroed: no scan reads its slots
-	@:hxmc.collects static function allocSlowRaw(header:I64, bytes:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.collects static function allocSlowRaw(header:I64, bytes:Int):Ptr {
 		if (poison && Threads.inRegion())
 			die("hxmc: allocation in a safe region (between Blocking.enter and leave, or in a blocking call): another thread may collect meanwhile (RT_VERIFY)\n");
 		Threads.safepoint();
@@ -2654,7 +2663,7 @@ class Gc {
 
 	// calls the queued finalisers (an exception escapes when propagate is
 	// set; otherwise, at an allocation, it is reported)
-	static function callFinalisers(propagate:Bool) {
+	@:hxmc.unsafe(gc) static function callFinalisers(propagate:Bool) {
 		if (finalsRunning != 0) return;
 		finalsRunning = 1;
 		while (true) {
@@ -2693,7 +2702,7 @@ class Gc {
 	}
 
 	// an exception nothing caught, on stderr: prefix, then Std.string(e)
-	static function uncaught(prefix:String, e:Dynamic) {
+	@:hxmc.unsafe(gc) static function uncaught(prefix:String, e:Dynamic) {
 		exn = Ptr.nil();
 		var s = Str.toUtf8(prefix + Std.string(e) + "\n");
 		Os.write(s, LibC.strlen(s).toInt());
@@ -2717,7 +2726,7 @@ class Gc {
 		compactNext = ((Mem.mirHost() == 1 ? 2 : 1) : I64) << 30;
 		compactLimit = (COMPACT_LIMIT : I64) << 30;
 		// (macOS: in the image's __HXHEAP segment, LinkMachO.heapWindow)
-		if (Mem.os() == 1 && compactWindow()) macWindow();
+		if (Platform.os() == 1 && compactWindow()) macWindow();
 		// (the image's static objects, which compressed references reach too:
 		// below 32 GB at the executable's fixed address, hxmc.Main.compactRefs)
 		if (compactWindow() && !Mem.sym("rt_types").ult(Ptr.ofI64((COMPACT_LIMIT : I64) << 30))) die("the executable is loaded above 32 GB: its compressed references (@:hxmc.compact) cannot reach it\n");
@@ -2787,7 +2796,7 @@ class Gc {
 			if (r.isNull() && regionBytes > ((512 : I64) << 20)) {
 				// (macOS's window stays reserved: no access again, not unmapped)
 				if (i == 1) {
-					if (Mem.os() == 1 && compactWindow()) Os.guard(region0, regionBytes) else Os.release(region0, regionBytes);
+					if (Platform.os() == 1 && compactWindow()) Os.guard(region0, regionBytes) else Os.release(region0, regionBytes);
 				}
 				regionBytes = regionBytes / 2;
 				compactNext = regionsAt;
@@ -2868,7 +2877,7 @@ class Gc {
 	}
 	#end
 
-	static inline function die(msg:String)
+	@:hxmc.unsafe(gc) static inline function die(msg:String)
 		dieC(Mem.cstr(msg));
 
 	@:hxmc.unsafe static function dieC(msg:Ptr) {
@@ -2884,7 +2893,7 @@ class Gc {
 	@:hxmc.unsafe static function procRss(out:Ptr) {
 		Mem.setI64(out, 0, 0);
 		Mem.setI64(out, 8, 0);
-		if (Mem.os() != 0) return;
+		if (Platform.os() != 0) return;
 		var fd = Posix.open(Mem.cstr("/proc/self/status"), 0x80000, 0); // O_CLOEXEC
 		if (fd < 0) return;
 		var buf = Mem.stack(8192);
@@ -3066,16 +3075,16 @@ class Gc {
 	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
 		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
 
-	@:hxmc.unsafe public static function recordCount():Int
+	@:hxmc.kernel public static function recordCount():Int
 		return nrecords;
 
 	@:hxmc.unsafe public static function clock():Float
 		return Os.now();
 
-	@:hxmc.unsafe public static function counts(which:Int):Int
+	@:hxmc.kernel public static function counts(which:Int):Int
 		return which == 0 ? collections : which == 1 ? minors : majors;
 
-	@:hxmc.unsafe public static function pause(which:Int):Float
+	@:hxmc.kernel public static function pause(which:Int):Float
 		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
 
 	// what the old space holds (large objects included) and the nursery up to
@@ -3094,10 +3103,10 @@ class Gc {
 
 	static var objsizeReached:Bool;
 
-	@:hxmc.unsafe public static function reached():Bool
+	@:hxmc.kernel public static function reached():Bool
 		return objsizeReached;
 
-	static inline function inHeap(p:Ptr):Bool
+	@:hxmc.unsafe(gc) static inline function inHeap(p:Ptr):Bool
 		return !p.isNull() && (inYoung(p) || inOld(p));
 
 	// a set of addresses: (keys, capacity, length) at s; open addressing
@@ -3109,13 +3118,19 @@ class Gc {
 		Mem.setI64(s, 16, 0);
 	}
 
-	@:hxmc.unsafe static function psetSlot(keys:Ptr, cap:I64, p:Ptr):Int {
-		var h = (p.toI64() >>> 3) * (((0x9E3779B9 : I64) << 32) | ((0x7F4A7C15 : I64) & 0xFFFFFFFF));
-		var i = (h & (cap - 1)).toInt();
+	// (the keys lent as a span of cap words, a power of two: the index masked)
+	@:hxmc.unsafe static inline function psetSlot(keys:Ptr, cap:I64, p:Ptr):Int
+		return psetProbe(hxmc.ReadOnlySpan.unsafeOf((cast keys : Ptr<I64>), cap.toInt()), p.toI64());
+
+	@:hxmc.kernel static function psetProbe(keys:hxmc.ReadOnlySpan<I64>, p:I64):Int {
+		var m = keys.length - 1;
+		if (m < 0 || keys.length & m != 0) return 0;
+		var h = (p >>> 3) * (((0x9E3779B9 : I64) << 32) | ((0x7F4A7C15 : I64) & 0xFFFFFFFF));
+		var i = h.toInt() & m;
 		while (true) {
-			var k = Mem.getPtr(keys, 8 * i);
-			if (k.isNull() || k == p) return i;
-			i = ((i + 1 : I64) & (cap - 1)).toInt();
+			var k = keys[i];
+			if (k == (0 : I64) || k == p) return i;
+			i = (i + 1) & m;
 		}
 	}
 

@@ -47,12 +47,13 @@ class Corpus {
 	static final STD = "bin/hxmc/std";
 	static final CASES = "hxmc/test/cases";
 	static final REJECT = "hxmc/test/reject";
+	static final WARN = "hxmc/test/warn";
 	static final EXPECTED = "hxmc/test/expected";
 	static final FUZZ_ZIP = "hxmc/test/fuzz-1000.zip";
 	static final FUZZ = "bin/hxmc-fuzz";
 	// the cases a WebAssembly module cannot run
-	static final WASM_EXCLUDED = ["CompactRefs" => "threads, and an object's size (compressed references: native only)", "CompactParGc" => "threads (the native collector's parallel collections)", "CompactRefsChecked" => "CompactRefs's (threads, an object's size)", "CompactParGcChecked" => "CompactParGc's (threads)", "FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ForeignKinds" => "foreign objects: the native runtime only (docs/plans/foreign-objects.md)", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "ConditionTimedWait" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
-		"NullAccessThreads" => "no threads on wasm32-wasi", "TlsSymbol" => "native TLS symbols: wasm32-wasi uses linker cells", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi"];
+	static final WASM_EXCLUDED = ["CompactRefs" => "threads, and an object's size (compressed references: native only)", "CompactParGc" => "threads (the native collector's parallel collections)", "CompactRefsChecked" => "CompactRefs's (threads, an object's size)", "CompactParGcChecked" => "CompactParGc's (threads)", "FastCallbackDies" => "no safe regions on wasm32-wasi: a callback has no wrapper", "ForeignKinds" => "foreign objects: the native runtime only (docs/plans/foreign-objects.md)", "ThreadNatives" => "no threads on wasm32-wasi", "ThreadLocal" => "no threads on wasm32-wasi", "ConditionTimedWait" => "no threads on wasm32-wasi", "BufferClose" => "no threads on wasm32-wasi", "NetNatives" => "no sockets on wasm32-wasi", "NetConnectAsync" => "no sockets on wasm32-wasi", "NetPoll" => "no sockets on wasm32-wasi", "NetPollWait" => "no sockets on wasm32-wasi", "NetPollFds" => "no processes nor poll on wasm32-wasi", "ProcessCwdEnv" => "no processes on wasm32-wasi", "ProcessSignals" => "no processes on wasm32-wasi", "NonBlockingRead" => "no processes on wasm32-wasi",
+		"NullAccessThreads" => "no threads on wasm32-wasi", "TlsSymbol" => "native TLS symbols: wasm32-wasi uses linker cells", "BlockingCalls" => "no threads on wasm32-wasi", "NestedRegions" => "no threads on wasm32-wasi", "BlockingFunctions" => "no threads on wasm32-wasi", "KernelFunctions" => "no threads on wasm32-wasi", "KernelSafe" => "no threads on wasm32-wasi", "SpanInflate" => "no threads on wasm32-wasi", "SafeRegionAlloc" => "no processes nor safe regions on wasm32-wasi", "SafeRegionRoots" => "no threads nor processes on wasm32-wasi", "CallStacks" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "CallStacksGc" => "no call stacks on wasm32-wasi (docs/hxmc.md, \"Debugging\")", "NullAccessCrash" => "no memory protection on wasm32-wasi (a read of an address beyond the memory traps)", "RandomSeed" => "no threads nor processes on wasm32-wasi", "SafepointPoll" => "no threads on wasm32-wasi", "CBindingsFds" => "POSIX descriptors (a C library's, not WASI's)"];
 	// the cases of Linux and macOS only (Windows ends a crash with the exception's code)
 	static final POSIX_ONLY = ["NullAccessCrash" => "a fault's exit status: Windows reports the exception's code", "ComElsewhere" => "COM's operations where there is no COM (they throw)"];
 	// the cases iOS cannot run: they start other programs (the simulator's are
@@ -60,7 +61,7 @@ class Corpus {
 	public static final IOS_EXCLUDED = [for (n in ["FileTimes", "NetPollFds", "SysNatives"]) n => "starts other programs: iOS runs none"];
 	// the cases of Apple's systems only (Objective-C: libobjc and Foundation, on
 	// macOS and the iOS simulator), and of macOS only (AppKit)
-	public static final APPLE_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCWeak", "ObjCIdentity", "ObjCCaptures", "ObjCBlocks", "ObjCThreads", "ObjCStrings", "ObjCStress", "ObjCProtocols", "ObjCGenerics", "ObjCConstants", "ObjCCoreGraphics", "ObjCCBlocks", "ObjCClassMethods", "ObjCAdopt", "ObjCDealloc", "ObjCVariadic", "ObjCFast", "ObjCAbstracts", "ObjCExceptions", "ObjCStatics", "ObjCDetach", "ObjCMode", "ObjCModeWeak", "ObjCUnowned", "ObjCModeClassMethods", "ObjCModeSelf", "ObjCUnownedCheck"]) n => "Objective-C: Apple's systems only"];
+	public static final APPLE_ONLY = [for (n in ["ObjCMessages", "ObjCDeclarations", "ObjCSubclass", "ObjCOwnership", "ObjCBoxes", "ObjCUncaught", "ObjCWeak", "ObjCIdentity", "ObjCCaptures", "ObjCBlocks", "ObjCThreads", "ObjCStrings", "ObjCStress", "ObjCProtocols", "ObjCGenerics", "ObjCConstants", "ObjCCoreGraphics", "ObjCCBlocks", "ObjCClassMethods", "ObjCAdopt", "ObjCDealloc", "ObjCVariadic", "ObjCFast", "ObjCAbstracts", "ObjCExceptions", "ObjCStatics", "ObjCDetach", "ObjCMode", "ObjCModeWeak", "ObjCUnowned", "ObjCModeClassMethods", "ObjCModeSelf", "ObjCUnownedCheck", "ObjCTyped", "ObjCCFTyped"]) n => "Objective-C: Apple's systems only"];
 	public static final MACOS_ONLY = [for (n in ["ObjCInit", "ObjCProperties", "ObjCSuper", "ObjCHierarchy"]) n => "AppKit: macOS only"];
 	// the cases of UIKit's targets only (the iOS simulator, Mac Catalyst)
 	public static final UIKIT_ONLY = ["ObjCUIKit" => "UIKit: iOS and Mac Catalyst only"];
@@ -69,10 +70,12 @@ class Corpus {
 	public static function uikit(t:String):Bool
 		return t.startsWith("ios") || t.startsWith("macos-catalyst");
 	// the cases of Windows only (COM: ole32 and oleaut32, the system's COM objects)
-	public static final WINDOWS_ONLY = [for (n in ["ComCalls", "ComObjects", "ComDemos", "ComThreads"]) n => "COM: Windows only"];
+	public static final WINDOWS_ONLY = [for (n in ["ComCalls", "ComObjects", "ComDemos", "ComThreads", "ComTyped"]) n => "COM: Windows only"];
 	// the cases wine runs only with a display (DISPLAY: xvfb-run), and wine's fonts (fonts-wine): the file dialog's controls, DirectWrite's layouts
 	static final WINE_DISPLAY = ["ComDemos" => "the file dialog and DirectWrite: wine needs a display (xvfb-run) and its fonts"];
 	// the cases of Linux only (hxmc.unsafe.Linux: a compile error elsewhere)
+	// the cases that link POSIX symbols Windows lacks (Crosshost skips them there too)
+	public static final POSIX_LINKED = ["CBindingsFds" => "POSIX's read, write and pipe: no such symbols on Windows"];
 	public static final LINUX_ONLY = ["LinuxSyscall" => "Linux's system calls (hxmc.unsafe.Linux)", "LinuxVarargs" => "Linux's system calls (hxmc.unsafe.Linux)"];
 	// the cases of the static mode on Linux only (musl's members in rt.o: glibc 2.17, the dynamic mode's floor, lacks them)
 	public static final MUSL_ONLY = ["LinuxEntropy" => "getentropy and getrandom: musl's, the static mode on Linux only"];
@@ -182,6 +185,10 @@ class Corpus {
 		var rejects = [for (f in FileSystem.readDirectory(REJECT)) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
 		rejects.sort(compare);
 		for (f in rejects) cases.push({name: "reject-" + f, cps: [REJECT], main: f});
+		// programs the compiler must build with warnings (raw memory outside @:hxmc.unsafe): warn-<Name>
+		var warns = [for (f in FileSystem.readDirectory(WARN)) if (f.endsWith(".hx")) f.substr(0, f.length - 3)];
+		warns.sort(compare);
+		for (f in warns) cases.push({name: "warn-" + f, cps: [WARN], main: f});
 		for (d in fuzzPrograms()) cases.push({name: "fuzz-" + d, cps: [FUZZ + "/" + d], main: "Main"});
 		if (names.length == 0) return cases;
 		var known = [for (c in cases) c.name => c];
@@ -195,6 +202,7 @@ class Corpus {
 		mkdirs(d);
 		var wasm = target != null && target.startsWith("wasm");
 		if (c.name.startsWith("reject-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "a compile error"} : rejectCase(c);
+		if (c.name.startsWith("warn-")) return stage != null || libc != null || mirRun ? {name: c.name, status: "excluded", detail: "compile warnings"} : rejectCase(c);
 		var t = target != null ? target : hostTarget();
 		if (!t.startsWith("windows") && WINDOWS_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: WINDOWS_ONLY[c.name]};
 		var native = nativeInputs(c, t, d);
@@ -213,6 +221,7 @@ class Corpus {
 		if (!uikit(t) && UIKIT_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: UIKIT_ONLY[c.name]};
 		if ((!t.startsWith("linux") || libc == "glibc") && MUSL_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: MUSL_ONLY[c.name]};
 		if (t.startsWith("windows") && POSIX_ONLY.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_ONLY[c.name]};
+		if (t.startsWith("windows") && POSIX_LINKED.exists(c.name)) return {name: c.name, status: "excluded", detail: POSIX_LINKED[c.name]};
 		if (t == "windows-x86_64" && stage == null && Sys.systemName() != "Windows" && Sys.getEnv("DISPLAY") == null && WINE_DISPLAY.exists(c.name))
 			return {name: c.name, status: "excluded", detail: WINE_DISPLAY[c.name]};
 		if (mirRun && MIR_RUN_EXCLUDED.exists(c.name)) return {name: c.name, status: "excluded", detail: MIR_RUN_EXCLUDED[c.name]};
@@ -268,9 +277,9 @@ class Corpus {
 			var live = liveFrom(c, d + "/src-" + haxe.io.Path.withoutDirectory(exe), notLive, cmd.slice(6).concat(defines));
 			if (live != null) return {name: c.name, status: "live", detail: live};
 		}
-		for (kind in ["span-checks", "bytes-checks"]) {
+		for (kind in ["span-checks", "range-checks", "bytes-checks"]) {
 			var checks = caseLine(src, kind);
-			// (Bytes' tests: of the default build; -D hxmc.verify-tags tests the
+			// (Bytes' tests and ranges: of the default build; -D hxmc.verify-tags tests the
 			// references read between two accesses, which reloads the length)
 			if (checks != null && target == null && libc == null && (kind == "span-checks" || !verifyTags)) {
 				var bad = spanChecks(d, cmd.concat(defines), checks, kind);
@@ -349,11 +358,17 @@ class Corpus {
 	// those its loop proves), counted in the Mir HXMC_DUMP prints (the calls
 	// of SpanSupport.outOfRange), from a build that compiles every function
 	// (a cache of its own): null when each count is the one named, else why
-	// not. A `// bytes-checks:` line: the same of haxe.io.Bytes' accesses
+	// not. A `// range-checks:` line: the same of the range checks (sub,
+	// fill, blit: the calls of SpanSupport.badRange). A `// bytes-checks:`
+	// line: the same of haxe.io.Bytes' accesses
 	// (the loads of haxe.io.Error.OutsideBounds they throw: one per access
 	// whose test is left). (cmd: the case's build)
 	static function spanChecks(d:String, cmd:Array<String>, spec:String, kind:String):Null<String> {
-		var mark = kind == "span-checks" ? "call F_hxmc_SpanSupport_outOfRange" : "<haxe.io.Error.OutsideBounds> = load";
+		var mark = switch kind {
+			case "span-checks": "call F_hxmc_SpanSupport_outOfRange";
+			case "range-checks": "call F_hxmc_SpanSupport_badRange";
+			case _: "<haxe.io.Error.OutsideBounds> = load";
+		}
 		var want = new Map<String, Int>();
 		for (w in spec.split(" "))
 			if (w != "") {
@@ -486,11 +501,13 @@ class Corpus {
 	}
 
 	// A case the compiler must reject: every `// expect: <text>` line of its
-	// source names a part of the error.
+	// source names a part of the error; or one it must build with warnings:
+	// every `// warns: <text>` line a part of them.
 	static function rejectCase(c:CorpusCase):CorpusResult {
 		var src = File.getContent(c.cps[0] + "/" + c.main + ".hx");
 		var want = [for (l in src.split("\n")) if (l.trim().startsWith("// expect: ")) l.trim().substr(11)];
-		if (want.length == 0) return {name: c.name, status: "no-golden", detail: "no `// expect: ` line"};
+		var warns = [for (l in src.split("\n")) if (l.trim().startsWith("// warns: ")) l.trim().substr(10)];
+		if (want.length == 0 && warns.length == 0) return {name: c.name, status: "no-golden", detail: "no `// expect: ` line"};
 		var d = OUT + "/" + c.name;
 		mkdirs(d);
 		var cmd = [tool, d + "/m", "-cp", FileSystem.fullPath(c.cps[0]), "-cp", FileSystem.fullPath(STD), "-main", c.main, "--custom-target", "hxmc", "-D", "disable-parallelism"];
@@ -499,6 +516,12 @@ class Corpus {
 		if (own.length > 0) cmd = cmd.concat(["-D", "hxmc.target=" + own[0]]) else if (target != null) cmd = cmd.concat(["-D", "hxmc.target=" + target]);
 		var r = exec(cmd.concat(caseDefines(c.cps[0] + "/" + c.main + ".hx")));
 		var out = r.out + r.err;
+		if (warns.length > 0) {
+			if (r.code != 0) return {name: c.name, status: "differs", detail: "rejected, but must compile:\n" + tail(out, 1500)};
+			for (w in warns)
+				if (out.indexOf(w) < 0) return {name: c.name, status: "differs", detail: 'the warnings lack "$w":\n' + tail(out, 1500)};
+			return {name: c.name, status: "ok", detail: "warned"};
+		}
 		if (r.code == 0) return {name: c.name, status: "differs", detail: "compiled, but must be rejected"};
 		for (w in want)
 			if (out.indexOf(w) < 0) return {name: c.name, status: "differs", detail: 'the error lacks "$w":\n' + tail(out, 1500)};

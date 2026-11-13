@@ -2,6 +2,7 @@ package hxmc;
 
 import hxmc.I64;
 import hxmc.ReadOnlySpan;
+import hxmc.Span;
 import hxmc.rt.Bytes;
 import hxmc.rt.C;
 import hxmc.rt.Repr;
@@ -11,71 +12,67 @@ import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 import hxmc.unsafe.UInt8;
 
-// DEFLATE (RFC 1951) decompression and CRC-32 over raw memory, for programs
-// that inflate whole buffers (the compiler's ZIP reader): haxe.zip.InflateImpl
-// and haxe.crypto.Crc32 are several times slower. A canonical-Huffman
-// decoder of streams held whole in memory, over raw addresses (nothing
-// allocates while it runs, so the buffers stay in place). Errors (invalid
-// codes, the input running out, the output overflowing) set the state's
-// error flag, which every loop checks.
+// DEFLATE (RFC 1951) decompression and CRC-32 in kernels over spans, for
+// programs that inflate whole buffers (the compiler's ZIP reader):
+// haxe.zip.InflateImpl and haxe.crypto.Crc32 are several times slower. A
+// canonical-Huffman decoder of streams held whole in memory, the buffers lent
+// for the call (Span.ofBytes), its state and tables in the frame
+// (Span.stack). Errors (invalid codes, the input running out, the output
+// overflowing) set the state's error flag, which every loop checks.
 class NativeZip {
-	// the decoder's state (a frame area): in, inlen, inpos, out, outlen,
-	// outpos (8 bytes each), bitbuf, bitcnt, err (4 bytes each)
-	static inline var IN = 0;
-	static inline var INLEN = 8;
-	static inline var INPOS = 16;
-	static inline var OUT = 24;
-	static inline var OUTLEN = 32;
-	static inline var OUTPOS = 40;
-	static inline var BITBUF = 48;
-	static inline var BITCNT = 52;
-	static inline var ERR = 56;
-	// a Huffman code: count[16] then symbol[288] (16-bit)
-	static inline var HUFF = 608;
+	// (a code's Ints: counts[16], then symbols[288])
+	static inline var HUFF = 16 + 288;
 
-	// the tables of RFC 1951 3.2.5 (values + 1 for the extra bits and the
-	// code length order: no NUL in a literal)
-	static inline var LBASE = "\u0003\u0004\u0005\u0006\u0007\u0008\u0009\u000a\u000b\u000d\u000f\u0011\u0013\u0017\u001b\u001f#+3;CScs\u0083£ÃãĂ";
-	static inline var LEXT = "\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0002\u0002\u0002\u0002\u0003\u0003\u0003\u0003\u0004\u0004\u0004\u0004\u0005\u0005\u0005\u0005\u0006\u0006\u0006\u0006\u0001";
-	static inline var DBASE = "\u0001\u0002\u0003\u0004\u0005\u0007\u0009\u000d\u0011\u0019!1Aa\u0081ÁāƁȁ́Ё؁ࠁఁခ᠁ 、䀁态";
-	static inline var DEXT = "\u0001\u0001\u0001\u0001\u0002\u0002\u0003\u0003\u0004\u0004\u0005\u0005\u0006\u0006\u0007\u0007\u0008\u0008\u0009\u0009\u000a\u000a\u000b\u000b\u000c\u000c\u000d\u000d\u000e\u000e";
-	static inline var ORDER = "\u0011\u0012\u0013\u0001\u0009\u0008\u000a\u0007\u000b\u0006\u000c\u0005\u000d\u0004\u000e\u0003\u000f\u0002\u0010";
+	// (fail: the error flag, which every loop checks)
+	static inline function err(s:Span<ZipState>):Bool
+		return s[0].err != 0;
 
-	static inline function tab(t:String, i:Int):Int
-		return Repr.unit(t, i);
+	static inline function fail(s:Span<ZipState>)
+		s[0].err = 1;
 
-	static inline function err(s:Ptr):Bool
-		return Mem.getI32(s, ERR) != 0;
+	// (the tables of RFC 1951 3.2.5, values + 1 for the extra bits: ZipTab)
+	static inline function lbase(i:Int):Int
+		return ZipTab.lbase()[i].toInt();
 
-	static inline function fail(s:Ptr)
-		Mem.setI32(s, ERR, 1);
+	static inline function lext(i:Int):Int
+		return ZipTab.lext()[i].toInt();
 
-	@:hxmc.unsafe static function bits(s:Ptr, need:Int):Int {
-		var val:I64 = Mem.getI32(s, BITBUF);
+	static inline function dbase(i:Int):Int
+		return ZipTab.dbase()[i].toInt();
+
+	static inline function dext(i:Int):Int
+		return ZipTab.dext()[i].toInt();
+
+	static inline function order(i:Int):Int
+		return ZipTab.order()[i].toInt();
+
+	@:hxmc.kernel static function bits(s:Span<ZipState>, inp:ReadOnlySpan<UInt8>, need:Int):Int {
+		var val:I64 = s[0].bitbuf;
 		val = val & (((1 : I64) << 32) - 1);
-		var cnt = Mem.getI32(s, BITCNT);
+		var cnt = s[0].bitcnt;
 		while (cnt < need) {
-			var pos = Mem.getI64(s, INPOS);
-			if (pos == Mem.getI64(s, INLEN)) {
+			var pos = s[0].inpos;
+			if (pos < 0 || pos >= inp.length) {
 				fail(s);
 				return 0;
 			}
-			val = val | ((Mem.getU8(Mem.getPtr(s, IN).addL(pos), 0) : I64) << cnt);
-			Mem.setI64(s, INPOS, pos + 1);
+			val = val | (((inp[pos] : Int) : I64) << cnt);
+			s[0].inpos = pos + 1;
 			cnt += 8;
 		}
-		Mem.setI32(s, BITBUF, (val >>> need).toInt());
-		Mem.setI32(s, BITCNT, cnt - need);
+		s[0].bitbuf = (val >>> need).toInt();
+		s[0].bitcnt = cnt - need;
 		return (val & (((1 : I64) << need) - 1)).toInt();
 	}
 
-	@:hxmc.unsafe static function decode(s:Ptr, h:Ptr):Int {
+	@:hxmc.kernel static function decode(s:Span<ZipState>, inp:ReadOnlySpan<UInt8>, h:ReadOnlySpan<Int>):Int {
+		if (h.length < HUFF) return -1;
 		var code = 0, first = 0, index = 0;
 		for (len in 1...16) {
-			code |= bits(s, 1);
+			code |= bits(s, inp, 1);
 			if (err(s)) return -1;
-			var count = Mem.getI16(h, 2 * len);
-			if (code - count < first) return Mem.getI16(h, 32 + 2 * (index + (code - first)));
+			var count = h[len];
+			if (code - count < first) return h[16 + index + (code - first)];
 			index += count;
 			first += count;
 			first <<= 1;
@@ -86,47 +83,48 @@ class NativeZip {
 	}
 
 	// 0 for a complete code, > 0 for an incomplete one, < 0 for an oversubscribed one
-	@:hxmc.unsafe static function construct(h:Ptr, length:Ptr, n:Int):Int {
-		var offs = Mem.stack(32);
+	@:hxmc.kernel static function construct(h:Span<Int>, length:ReadOnlySpan<Int>, n:Int):Int {
+		if (h.length < HUFF || n > length.length || n > 288) return -1;
+		var offs:Span<Int> = Span.stack(16);
 		for (len in 0...16)
-			Mem.setI16(h, 2 * len, 0);
+			h[len] = 0;
 		for (sym in 0...n) {
-			var l = Mem.getI16(length, 2 * sym);
-			Mem.setI16(h, 2 * l, Mem.getI16(h, 2 * l) + 1);
+			var l = length[sym];
+			h[l] = h[l] + 1;
 		}
-		if (Mem.getI16(h, 0) == n) return 0;
+		if (h[0] == n) return 0;
 		var left = 1;
 		for (len in 1...16) {
 			left <<= 1;
-			left -= Mem.getI16(h, 2 * len);
+			left -= h[len];
 			if (left < 0) return left;
 		}
-		Mem.setI16(offs, 2, 0);
+		offs[1] = 0;
 		for (len in 1...15)
-			Mem.setI16(offs, 2 * (len + 1), Mem.getI16(offs, 2 * len) + Mem.getI16(h, 2 * len));
+			offs[len + 1] = offs[len] + h[len];
 		for (sym in 0...n) {
-			var l = Mem.getI16(length, 2 * sym);
+			var l = length[sym];
 			if (l != 0) {
-				var o = Mem.getI16(offs, 2 * l);
-				Mem.setI16(h, 32 + 2 * o, sym);
-				Mem.setI16(offs, 2 * l, o + 1);
+				var o = offs[l];
+				h[16 + o] = sym;
+				offs[l] = o + 1;
 			}
 		}
 		return left;
 	}
 
-	@:hxmc.unsafe static function codes(s:Ptr, lencode:Ptr, distcode:Ptr) {
+	@:hxmc.kernel static function codes(s:Span<ZipState>, inp:ReadOnlySpan<UInt8>, out:Span<UInt8>, lencode:ReadOnlySpan<Int>, distcode:ReadOnlySpan<Int>) {
 		while (true) {
-			var symbol = decode(s, lencode);
+			var symbol = decode(s, inp, lencode);
 			if (err(s)) return;
 			if (symbol < 256) {
-				var outpos = Mem.getI64(s, OUTPOS);
-				if (outpos == Mem.getI64(s, OUTLEN)) {
+				var outpos = s[0].outpos;
+				if (outpos >= out.length) {
 					fail(s);
 					return;
 				}
-				Mem.setI8(Mem.getPtr(s, OUT).addL(outpos), 0, symbol);
-				Mem.setI64(s, OUTPOS, outpos + 1);
+				out[outpos] = symbol;
+				s[0].outpos = outpos + 1;
 			} else if (symbol == 256) {
 				return;
 			} else {
@@ -135,82 +133,82 @@ class NativeZip {
 					fail(s);
 					return;
 				}
-				var len = tab(LBASE, symbol) + bits(s, tab(LEXT, symbol) - 1);
-				symbol = decode(s, distcode);
+				var len = lbase(symbol) + bits(s, inp, lext(symbol) - 1);
+				symbol = decode(s, inp, distcode);
 				if (err(s)) return;
 				if (symbol < 0 || symbol >= 30) {
 					fail(s);
 					return;
 				}
-				var dist = tab(DBASE, symbol) + bits(s, tab(DEXT, symbol) - 1);
-				var outpos = Mem.getI64(s, OUTPOS);
-				if (err(s) || (dist : I64) > outpos || (len : I64) > Mem.getI64(s, OUTLEN) - outpos) {
+				var dist = dbase(symbol) + bits(s, inp, dext(symbol) - 1);
+				var outpos = s[0].outpos;
+				if (err(s) || dist > outpos || len > out.length - outpos) {
 					fail(s);
 					return;
 				}
-				var p = Mem.getPtr(s, OUT).addL(outpos);
-				var q = p.add(-dist);
+				// (overlapping copies repeat the pattern: a byte at a time)
+				var q = outpos - dist;
 				for (i in 0...len)
-					Mem.setU8At(p, 0, i, Mem.getU8At(q, 0, i)); // overlapping copies repeat the pattern
-				Mem.setI64(s, OUTPOS, outpos + len);
+					out[outpos + i] = out[q + i];
+				s[0].outpos = outpos + len;
 			}
 		}
 	}
 
-	@:hxmc.unsafe static function stored(s:Ptr) {
-		Mem.setI32(s, BITBUF, 0); // skip to the next byte boundary
-		Mem.setI32(s, BITCNT, 0);
-		var inpos = Mem.getI64(s, INPOS), inlen = Mem.getI64(s, INLEN);
-		if (inlen - inpos < 4) {
+	@:hxmc.kernel static function stored(s:Span<ZipState>, inp:ReadOnlySpan<UInt8>, out:Span<UInt8>) {
+		s[0].bitbuf = 0; // skip to the next byte boundary
+		s[0].bitcnt = 0;
+		var inpos = s[0].inpos, inlen = inp.length;
+		if (inpos < 0 || inlen - inpos < 4) {
 			fail(s);
 			return;
 		}
-		var p = Mem.getPtr(s, IN).addL(inpos);
-		var len = Mem.getU8(p, 0) | (Mem.getU8(p, 1) << 8);
-		if (Mem.getU8(p, 2) != (~Mem.getU8(p, 0) & 0xFF) || Mem.getU8(p, 3) != (~Mem.getU8(p, 1) & 0xFF)) {
+		var b0:Int = inp[inpos], b1:Int = inp[inpos + 1], b2:Int = inp[inpos + 2], b3:Int = inp[inpos + 3];
+		var len = b0 | (b1 << 8);
+		if (b2 != (~b0 & 0xFF) || b3 != (~b1 & 0xFF)) {
 			fail(s);
 			return;
 		}
 		inpos += 4;
-		var outpos = Mem.getI64(s, OUTPOS);
-		if ((len : I64) > inlen - inpos || (len : I64) > Mem.getI64(s, OUTLEN) - outpos) {
+		var outpos = s[0].outpos;
+		if (len > inlen - inpos || len > out.length - outpos) {
 			fail(s);
 			return;
 		}
-		LibC.memcpy(Mem.getPtr(s, OUT).addL(outpos), Mem.getPtr(s, IN).addL(inpos), len);
-		Mem.setI64(s, INPOS, inpos + len);
-		Mem.setI64(s, OUTPOS, outpos + len);
+		out.blit(outpos, inp.sub(inpos, len), 0, len);
+		s[0].inpos = inpos + len;
+		s[0].outpos = outpos + len;
 	}
 
-	@:hxmc.unsafe static function fixed(s:Ptr) {
-		var lencode = Mem.stack(HUFF), distcode = Mem.stack(HUFF);
-		var lengths = Mem.stack(640);
+	@:hxmc.kernel static function fixed(s:Span<ZipState>, inp:ReadOnlySpan<UInt8>, out:Span<UInt8>) {
+		var lencode:Span<Int> = Span.stack(HUFF), distcode:Span<Int> = Span.stack(HUFF);
+		var lengths:Span<Int> = Span.stack(320);
 		for (sym in 0...288)
-			Mem.setI16(lengths, 2 * sym, sym < 144 ? 8 : sym < 256 ? 9 : sym < 280 ? 7 : 8);
+			lengths[sym] = sym < 144 ? 8 : sym < 256 ? 9 : sym < 280 ? 7 : 8;
 		construct(lencode, lengths, 288);
 		for (sym in 0...30)
-			Mem.setI16(lengths, 2 * sym, 5);
+			lengths[sym] = 5;
 		construct(distcode, lengths, 30);
-		codes(s, lencode, distcode);
+		codes(s, inp, out, lencode, distcode);
 	}
 
-	@:hxmc.unsafe static function dynamicBlock(s:Ptr) {
-		var lengths = Mem.stack(640);
-		var lencode = Mem.stack(HUFF), distcode = Mem.stack(HUFF);
-		var nlen = bits(s, 5) + 257;
-		var ndist = bits(s, 5) + 1;
-		var ncode = bits(s, 4) + 4;
+	@:hxmc.kernel static function dynamicBlock(s:Span<ZipState>, inp:ReadOnlySpan<UInt8>, out:Span<UInt8>) {
+		var lengths:Span<Int> = Span.stack(320);
+		var lencode:Span<Int> = Span.stack(HUFF), distcode:Span<Int> = Span.stack(HUFF);
+		var nlen = bits(s, inp, 5) + 257;
+		var ndist = bits(s, inp, 5) + 1;
+		var ncode = bits(s, inp, 4) + 4;
 		if (err(s) || nlen > 286 || ndist > 30) {
 			fail(s);
 			return;
 		}
 		var index = 0;
 		while (index < ncode) {
-			Mem.setI16(lengths, 2 * (tab(ORDER, index) - 1), bits(s, 3));
+			lengths[order(index) - 1] = bits(s, inp, 3);
 			index++;
 		}
 		while (index < 19) {
-			Mem.setI16(lengths, 2 * (tab(ORDER, index) - 1), 0);
+			lengths[order(index) - 1] = 0;
 			index++;
 		}
 		if (err(s) || construct(lencode, lengths, 19) != 0) { // the code length code must be complete
@@ -219,10 +217,10 @@ class NativeZip {
 		}
 		index = 0;
 		while (index < nlen + ndist) {
-			var symbol = decode(s, lencode);
+			var symbol = decode(s, inp, lencode);
 			if (err(s)) return;
 			if (symbol < 16) {
-				Mem.setI16(lengths, 2 * index++, symbol);
+				lengths[index++] = symbol;
 			} else {
 				var len = 0;
 				if (symbol == 16) {
@@ -230,37 +228,37 @@ class NativeZip {
 						fail(s);
 						return;
 					}
-					len = Mem.getI16(lengths, 2 * (index - 1));
-					symbol = 3 + bits(s, 2);
+					len = lengths[index - 1];
+					symbol = 3 + bits(s, inp, 2);
 				} else if (symbol == 17) {
-					symbol = 3 + bits(s, 3);
+					symbol = 3 + bits(s, inp, 3);
 				} else {
-					symbol = 11 + bits(s, 7);
+					symbol = 11 + bits(s, inp, 7);
 				}
 				if (err(s) || index + symbol > nlen + ndist) {
 					fail(s);
 					return;
 				}
 				while (symbol-- > 0)
-					Mem.setI16(lengths, 2 * index++, len);
+					lengths[index++] = len;
 			}
 		}
-		if (Mem.getI16(lengths, 2 * 256) == 0) { // no end-of-block code
+		if (lengths[256] == 0) { // no end-of-block code
 			fail(s);
 			return;
 		}
 		// an incomplete code is only allowed for a single length
 		var left = construct(lencode, lengths, nlen);
-		if (left < 0 || (left > 0 && nlen - Mem.getI16(lencode, 0) != 1)) {
+		if (left < 0 || (left > 0 && nlen - lencode[0] != 1)) {
 			fail(s);
 			return;
 		}
-		left = construct(distcode, lengths.add(2 * nlen), ndist);
-		if (left < 0 || (left > 0 && ndist - Mem.getI16(distcode, 0) != 1)) {
+		left = construct(distcode, lengths.sub(nlen, ndist), ndist);
+		if (left < 0 || (left > 0 && ndist - distcode[0] != 1)) {
 			fail(s);
 			return;
 		}
-		codes(s, lencode, distcode);
+		codes(s, inp, out, lencode, distcode);
 	}
 
 	// inflates the raw DEFLATE stream in src[srcPos, srcPos + srcLen) into
@@ -269,32 +267,21 @@ class NativeZip {
 	public static function inflateRaw(src:haxe.io.Bytes, srcPos:Int, srcLen:Int, dst:haxe.io.Bytes, dstPos:Int, dstLen:Int):Int {
 		if (srcPos < 0 || srcLen < 0 || srcPos > src.length - srcLen || dstPos < 0 || dstLen < 0 || dstPos > dst.length - dstLen)
 			outside();
-		// (no GC point from here: the buffers' addresses stay valid)
-		return inflate(Bytes.bytes(src.getData()).add(srcPos), srcLen, Bytes.bytes(dst.getData()).add(dstPos), dstLen);
+		return inflate(ReadOnlySpan.ofBytes(src, srcPos, srcLen), Span.ofBytes(dst, dstPos, dstLen));
 	}
 
-	// the raw DEFLATE stream of inLen bytes at inp inflated into the outLen
-	// bytes at out (inflateRaw's result)
-	@:hxmc.unsafe static function inflate(inp:Ptr, inLen:Int, out:Ptr, outLen:Int):Int {
-		var s = Mem.stack(64);
-		Mem.setPtr(s, IN, inp);
-		Mem.setI64(s, INLEN, inLen);
-		Mem.setI64(s, INPOS, 0);
-		Mem.setPtr(s, OUT, out);
-		Mem.setI64(s, OUTLEN, outLen);
-		Mem.setI64(s, OUTPOS, 0);
-		Mem.setI32(s, BITBUF, 0);
-		Mem.setI32(s, BITCNT, 0);
-		Mem.setI32(s, ERR, 0);
+	// the raw DEFLATE stream inp inflated into out (inflateRaw's result)
+	@:hxmc.kernel static function inflate(inp:ReadOnlySpan<UInt8>, out:Span<UInt8>):Int {
+		var s:Span<ZipState> = Span.stack(1);
 		var last = 0;
 		do {
-			last = bits(s, 1);
-			var type = bits(s, 2);
+			last = bits(s, inp, 1);
+			var type = bits(s, inp, 2);
 			if (err(s)) return -1;
-			if (type == 0) stored(s) else if (type == 1) fixed(s) else if (type == 2) dynamicBlock(s) else return -1;
+			if (type == 0) stored(s, inp, out) else if (type == 1) fixed(s, inp, out) else if (type == 2) dynamicBlock(s, inp, out) else return -1;
 			if (err(s)) return -1;
 		} while (last == 0);
-		return Mem.getI64(s, OUTPOS).toInt();
+		return s[0].outpos;
 	}
 
 	// the CRC-32 table of the reflected polynomial 0xEDB88320 (zlib's
@@ -319,7 +306,7 @@ class NativeZip {
 	// the CRC-32 (ISO-HDLC, as zlib's crc32) of b[pos, pos + len): the
 	// range checked here (OutsideBounds), the bytes lent to the kernel
 	// for its call, and the table, which lives for good
-	public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int
+	@:hxmc.unsafe(gc) public static function crc32(b:haxe.io.Bytes, pos:Int, len:Int):Int
 		return crcOf(ReadOnlySpan.ofBytes(b, pos, len), ReadOnlySpan.unsafeOf((table() : Ptr<Int>), 256));
 
 	// (in the safe subset of kernels: docs/interop.md, "Spans"; the loop
@@ -335,4 +322,34 @@ class NativeZip {
 
 	static function outside()
 		throw haxe.io.Error.OutsideBounds;
+}
+
+// the inflater's state, in place in a span of one
+@:hxmc.struct @:publicFields private class ZipState {
+	var inpos:Int;
+	var outpos:Int;
+	var bitbuf:Int;
+	var bitcnt:Int;
+	var err:Int;
+
+	function new() {}
+}
+
+// RFC 1951's tables (values + 1 for the extra bits), the program's read-only
+// data as spans for the inflater: a view
+@:hxmc.kernel @:hxmc.unsafe private class ZipTab {
+	public static function lbase():ReadOnlySpan<I64>
+		return ReadOnlySpan.unsafeOf((cast Mem.words("0000000000000003000000000000000400000000000000050000000000000006000000000000000700000000000000080000000000000009000000000000000a000000000000000b000000000000000d000000000000000f000000000000001100000000000000130000000000000017000000000000001b000000000000001f0000000000000023000000000000002b0000000000000033000000000000003b0000000000000043000000000000005300000000000000630000000000000073000000000000008300000000000000a300000000000000c300000000000000e30000000000000102", 16) : Ptr<I64>), 29);
+
+	public static function lext():ReadOnlySpan<I64>
+		return ReadOnlySpan.unsafeOf((cast Mem.words("00000000000000010000000000000001000000000000000100000000000000010000000000000001000000000000000100000000000000010000000000000001000000000000000200000000000000020000000000000002000000000000000200000000000000030000000000000003000000000000000300000000000000030000000000000004000000000000000400000000000000040000000000000004000000000000000500000000000000050000000000000005000000000000000500000000000000060000000000000006000000000000000600000000000000060000000000000001", 16) : Ptr<I64>), 29);
+
+	public static function dbase():ReadOnlySpan<I64>
+		return ReadOnlySpan.unsafeOf((cast Mem.words("0000000000000001000000000000000200000000000000030000000000000004000000000000000500000000000000070000000000000009000000000000000d000000000000001100000000000000190000000000000021000000000000003100000000000000410000000000000061000000000000008100000000000000c100000000000001010000000000000181000000000000020100000000000003010000000000000401000000000000060100000000000008010000000000000c01000000000000100100000000000018010000000000002001000000000000300100000000000040010000000000006001", 16) : Ptr<I64>), 30);
+
+	public static function dext():ReadOnlySpan<I64>
+		return ReadOnlySpan.unsafeOf((cast Mem.words("00000000000000010000000000000001000000000000000100000000000000010000000000000002000000000000000200000000000000030000000000000003000000000000000400000000000000040000000000000005000000000000000500000000000000060000000000000006000000000000000700000000000000070000000000000008000000000000000800000000000000090000000000000009000000000000000a000000000000000a000000000000000b000000000000000b000000000000000c000000000000000c000000000000000d000000000000000d000000000000000e000000000000000e", 16) : Ptr<I64>), 30);
+
+	public static function order():ReadOnlySpan<I64>
+		return ReadOnlySpan.unsafeOf((cast Mem.words("000000000000001100000000000000120000000000000013000000000000000100000000000000090000000000000008000000000000000a0000000000000007000000000000000b0000000000000006000000000000000c0000000000000005000000000000000d0000000000000004000000000000000e0000000000000003000000000000000f00000000000000020000000000000010", 16) : Ptr<I64>), 19);
 }

@@ -1,0 +1,9 @@
+exit 0
+CBindingsNull.hx:31: 21, -1, 120
+CBindingsNull.hx:32: 8, 4
+CBindingsNull.hx:34: 1, -1
+CBindingsNull.hx:40: child, 2, true
+CBindingsNull.hx:40: child, 3, true
+CBindingsNull.hx:44: 2, 3
+CBindingsNull.hx:46: -1, true, -1
+CBindingsNull.hx:48: false

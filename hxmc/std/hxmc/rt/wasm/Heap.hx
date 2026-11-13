@@ -73,7 +73,7 @@ class Heap {
 	}
 
 	// a request of `bytes` that cannot be met (outOfMemory's message)
-	@:hxmc.unsafe public static function refuse(bytes:Int)
+	@:hxmc.kernel public static function refuse(bytes:Int)
 		refused = bytes;
 
 	@:hxmc.unsafe static function ensure(p:Ptr) {
@@ -248,10 +248,10 @@ class Heap {
 
 	// ---- malloc
 
-	static inline function classHead(c:Int):Ptr
+	@:hxmc.unsafe(gc) static inline function classHead(c:Int):Ptr
 		return freeTab.add(16 * MAX_FREE + 8 * c);
 
-	@:hxmc.unsafe static function classOf(n:Int):Int {
+	@:hxmc.kernel static function classOf(n:Int):Int {
 		var c = MIN_CLASS;
 		while ((1 << c) < n + 8)
 			c++;
@@ -366,7 +366,7 @@ class Heap {
 	}
 
 	@:hxmc.export("memcmp") @:hxmc.unsafe public static function memcmp(a:Ptr, b:Ptr, n:I64):Int
-		return hxmc.rt.MemOps.compare(a, b, n);
+		return hxmc.rt.MemOps.compareAt(a, b, n);
 
 	@:hxmc.export("strdup") @:hxmc.unsafe public static function strdup(s:Ptr):Ptr {
 		var n = strlen(s);

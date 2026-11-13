@@ -1270,6 +1270,7 @@ class MirBuild extends MirWriter {
 				var c = mk(Call, mty(g.ret));
 				c.sym = p.funcSym(g);
 				c.keepsFrame = keepsFrame(c.sym);
+				c.keepsStatics = !g.writesStatics;
 				c.args = xs;
 				c.argTys = g.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));
 				var id = add(c);
@@ -2135,7 +2136,7 @@ class MirBuild extends MirWriter {
 
 	// Mem.target: 0 linux-x86_64, 1 linux-arm64, 2 macos-x86_64, 3 macos-arm64, 4 windows-x86_64, 5 windows-arm64, 6 wasm32-wasi,
 	// 7 linux-x86_64 and 8 linux-arm64 with glibc (-D hxmc.libc=glibc: its struct layouts, hxmc.rt.Layouts),
-	// 9 android-x86_64 and 10 android-arm64 (Bionic; `Mem.target() >= 9`: Android)
+	// 9 android-x86_64 and 10 android-arm64 (Bionic; `Platform.target() >= 9`: Android)
 	public static function targetCode(abi:Abi):Int
 		return abi.wasm ? 6 : abi.android ? (abi.arm ? 10 : 9) : abi.libc == "glibc" ? (abi.arm ? 8 : 7) : (abi.os == "linux" ? 0 : abi.os == "macos" ? 2 : 4) + (abi.arm ? 1 : 0);
 
@@ -2192,7 +2193,7 @@ class MirBuild extends MirWriter {
 
 	// the memory class of a raw access (Mem.getI32, setI32...) here: in the
 	// runtime's accessors of haxe.io.BytesData (hxmc.rt.Bytes: getInt32,
-	// setFloat...), the bytes of the array, which no object field or array
+	// setFloat...: raw, or through their span, BytesView), the bytes of the array, which no object field or array
 	// header shares (Opt.MElem: a Bytes' storage and length are not read
 	// again after each store); elsewhere any memory
 	function rawCls():Int
@@ -2344,11 +2345,11 @@ class MirBuild extends MirWriter {
 		}
 		inline function ldAt(ty:MTy, size:Int):Int {
 			var m = memAtIndexed(ex(args[0]), args[1], args[2], size);
-			return load(ty, size, m.base, m.disp, false, m.index, size);
+			return loadM(rawCls(), ty, size, m.base, m.disp, false, m.index, size);
 		}
 		inline function stAt(size:Int):Int {
 			var m = memAtIndexed(ex(args[0]), args[1], args[2], size);
-			store(size, m.base, m.disp, ex(args[3]), m.index, size);
+			storeM(rawCls(), size, m.base, m.disp, ex(args[3]), m.index, size);
 			return iconst(0);
 		}
 		return switch short {
@@ -2382,6 +2383,8 @@ class MirBuild extends MirWriter {
 			case "urem": op2(URem, I64, ex(args[0]), ex(args[1]));
 			case "f64Bits": op1(FToBits, I64, ex(args[0]));
 			case "bitsF64": op1(BitsToF, F64, ex(args[0]));
+			case "f32Bits": special("f64_to_f32", vector(ex(args[0])), I32);
+			case "bitsF32": special("f32_to_f64", vector(ex(args[0])), F64);
 			case "tagInt": tagFrom(TI32, ex(args[0]));
 			case "tagFloat": tagFrom(TF64, ex(args[0]));
 			case "tagBool": tagFrom(TBool, ex(args[0]));

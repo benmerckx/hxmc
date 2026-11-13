@@ -16,19 +16,19 @@ import hxmc.unsafe.Mem;
 @:allow(haxe.ds)
 class IdHash {
 	// the collections so far, and the major ones
-	static inline function count():Int
+	@:hxmc.unsafe(gc) static inline function count():Int
 		return Mem.getI32(Mem.sym("hxmc_gc_count"), 0);
 
-	static inline function majors():Int
+	@:hxmc.unsafe(gc) static inline function majors():Int
 		return Mem.getI32(Mem.sym("hxmc_gc_majors"), 0);
 
 	// the address's bits mixed (Fibonacci hashing: the high half of the
 	// product by 2^64 / phi); objects are 8-byte aligned
-	static inline function hash(k:Dynamic):Int
+	@:hxmc.unsafe(gc) static inline function hash(k:Dynamic):Int
 		return ((Mem.addr(k).toI64() * (((0x9E3779B9 : I64) << 32) | ((0x7F4A7C15 : I64) & 0xFFFFFFFF))) >>> 32).toInt();
 
 	// in the nursery: the object moves at the next collection
-	static inline function young(k:Dynamic):Bool {
+	@:hxmc.unsafe(gc) static inline function young(k:Dynamic):Bool {
 		var p = Mem.addr(k);
 		return !p.ult(Mem.getPtr(Mem.sym("rt_young_start"), 0)) && p.ult(Mem.getPtr(Mem.sym("rt_young_end"), 0));
 	}
@@ -37,10 +37,10 @@ class IdHash {
 	// at: read with acquire semantics, as other threads may share a map they
 	// only read, the first of which to see it out of date brings it up to
 	// date (under the lock below) and stores the count last
-	static inline function seen(slots:Dynamic):Int
+	@:hxmc.unsafe(gc) static inline function seen(slots:Dynamic):Int
 		return Atomic.load32(Mem.addr(slots));
 
-	static inline function setSeen(slots:Dynamic, n:Int)
+	@:hxmc.unsafe(gc) static inline function setSeen(slots:Dynamic, n:Int)
 		Atomic.store32(Mem.addr(slots), n);
 
 	#if (hxmc.target == "wasm32-wasi")

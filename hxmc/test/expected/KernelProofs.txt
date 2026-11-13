@@ -1,0 +1,7 @@
+exit 0
+KernelProofs.hx:69: 39, 4, true, false
+KernelProofs.hx:70: 1, 0
+KernelProofs.hx:71: 1, 4, 0
+KernelProofs.hx:72: 7, 2.5, 0, 0
+KernelProofs.hx:73: true, false, true, true, false
+KernelProofs.hx:75: true, 1, 1, 4

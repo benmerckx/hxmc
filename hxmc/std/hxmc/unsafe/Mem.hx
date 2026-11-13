@@ -31,8 +31,8 @@ extern class Mem {
 	// allocation (haxe.io.Bytes)
 	static function typeIndexOf(c:Class<Dynamic>):Int;
 	// the target: os() 0 Linux, 1 macOS, 2 Windows, 3 WASI (WebAssembly); arm() true on arm64
-	static function os():Int;
-	static function arm():Bool;
+	@:deprecated("Use hxmc.Platform.os()") static function os():Int;
+	@:deprecated("Use hxmc.Platform.arm()") static function arm():Bool;
 	// the target as one number (a comparison folds, and && or || of one
 	// first: `target() >= 9 && x` is false elsewhere, x not even reached;
 	// write platform tests as comparisons of os(), arm() or target()):
@@ -40,7 +40,7 @@ extern class Mem {
 	// 4 windows-x86_64, 5 windows-arm64, 6 wasm32-wasi, 7 linux-x86_64 and
 	// 8 linux-arm64 with glibc (-D hxmc.libc=glibc), 9 android-x86_64, 10
 	// android-arm64 (Bionic, os() Linux's: `Mem.target() >= 9` is Android)
-	static function target():Int;
+	@:deprecated("Use hxmc.Platform.target()") static function target():Int;
 	// 1 in a program that loads code for the Mir interpreter (a compiler with
 	// Mir macros and --run: it has hxmc.interp.MirMacros, for a native target;
 	// docs/hxmc.md, "Macros on the Mir interpreter"), else 0; a constant, as
@@ -56,7 +56,7 @@ extern class Mem {
 	// (target() macOS's: macos-arm64's libSystem and layouts, 3, or 2 for
 	// macos-catalyst-x86_64; packages
 	// only, not the runtime: the committed stage0 does not know it)
-	static function platform():Int;
+	@:deprecated("Use hxmc.Platform.apple()") static function platform():Int;
 	// a frame area of `bytes` (a constant), 16-byte aligned, valid while the function runs
 	static function stack(bytes:Int):Ptr;
 	// unsigned comparison
@@ -72,6 +72,9 @@ extern class Mem {
 	// the bits of a double, and the double of bits (a register move)
 	static function f64Bits(v:Float):I64;
 	static function bitsF64(b:I64):Float;
+	// a Float rounded to float32 (to nearest even): its bits; float32 bits as a Float (exactly)
+	static function f32Bits(v:Float):Int;
+	static function bitsF32(b:Int):Float;
 	// the tagged word of a value of a type parameter (hxmc.rt.Tagged; docs/hxmc.md,
 	// "Values of type parameters"), as MemLower encodes and decodes it inline:
 	// an Int or Float (pure), a Bool (its static box); back to an Int, Float or

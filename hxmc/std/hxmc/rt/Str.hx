@@ -6,6 +6,9 @@ import hxmc.rt.Repr;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.unsafe.UInt8;
+import hxmc.unsafe.UInt16;
+import hxmc.ReadOnlySpan;
 
 // The runtime's strings (formerly rt_str.c): UTF-16 strings, number
 // formatting, the String, StringBuf and Std natives, written over
@@ -36,7 +39,7 @@ class Str {
 
 	// ---- representation (hxmc.rt.Repr)
 
-	public static inline function isNull(o:Dynamic):Bool
+	@:hxmc.unsafe(gc) public static inline function isNull(o:Dynamic):Bool
 		return Repr.isNull(o);
 
 	public static inline function len(s:String):Int
@@ -51,14 +54,14 @@ class Str {
 
 	// the units of a one-byte string (chars1), a two-byte one (chars2) (in
 	// linear memory the address of unit 0: valid until the next GC point)
-	public static inline function chars1(s:String):Chars1
+	@:hxmc.unsafe(gc) public static inline function chars1(s:String):Chars1
 		return Repr.chars1(s);
 
-	public static inline function chars2(s:String):Chars
+	@:hxmc.unsafe(gc) public static inline function chars2(s:String):Chars
 		return Repr.chars2(s);
 
 	// linear memory's: the address of unit 0, after the length (valid until the next GC point)
-	public static inline function unitsAddr(s:String):Ptr
+	@:hxmc.unsafe(gc) public static inline function unitsAddr(s:String):Ptr
 		return Mem.addr(s).add(4);
 
 	// a string of `n` units, not yet written: one-byte (make1: each unit
@@ -70,7 +73,7 @@ class Str {
 		return Repr.make2(n);
 
 	// the units [pos, pos + n) of s as a new string (one-byte where they fit)
-	static function range(s:String, pos:Int, n:Int):String {
+	@:hxmc.unsafe(gc) static function range(s:String, pos:Int, n:Int):String {
 		if (isOne(s)) {
 			var r = make1(n);
 			Repr.copyFrom1(chars1(r), chars1(s), pos, n);
@@ -91,17 +94,17 @@ class Str {
 
 	// ---- C strings
 
-	@:hxmc.host("hx_str_of_ascii") static function ofAscii(c:Ptr):String
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_ascii") static function ofAscii(c:Ptr):String
 		return ofBytes(c, LibC.strlen(c).toInt());
 
 	// bytes [p, p + n) (outside the heap) as a string, a unit each
-	static function ofBytes(p:Ptr, n:Int):String {
+	@:hxmc.unsafe(gc) static function ofBytes(p:Ptr, n:Int):String {
 		var s = make1(n);
 		if (n > 0) LibC.memcpy(chars1(s), p, (n : I64));
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_utf8") public static function ofUtf8(c:Ptr, n:Int):String
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_utf8") public static function ofUtf8(c:Ptr, n:Int):String
 		return decode(Repr.octetsAt(c, n), 0, n);
 
 	// the UTF-8 bytes [from, end) of o as a string (not allocating
@@ -111,7 +114,7 @@ class Str {
 	// becomes one unit, U+DC80 to U+DCFF for 0x80 to 0xFF (as Python's
 	// surrogateescape), which utf8Into writes back as that byte: any bytes
 	// decoded and encoded again are the same bytes.
-	public static inline function decode(o:Octets, from:Int, end:Int):String {
+	@:hxmc.unsafe(gc) public static inline function decode(o:Octets, from:Int, end:Int):String {
 		// UTF-16 units first, and whether one is above 0xFF (a sequence led by
 		// 0xC4 or more, a byte of none)
 		var units = 0, i = from, wide = false;
@@ -183,7 +186,7 @@ class Str {
 
 	// decode's one-byte string: the bytes are ASCII and well-formed two-byte
 	// sequences of U+0080 to U+00FF, `units` of them
-	static function decodeOne(o:Octets, from:Int, end:Int, units:Int):String {
+	@:hxmc.unsafe(gc) static function decodeOne(o:Octets, from:Int, end:Int, units:Int):String {
 		var s = make1(units);
 		var d = chars1(s);
 		// (ASCII: the bytes themselves)
@@ -296,7 +299,7 @@ class Str {
 	}
 
 	// a malloc'ed UTF-8 copy ("null" for null)
-	@:hxmc.host("hx_str_to_utf8") @:hxmc.unsafe static function toUtf8(s:String):Ptr {
+	@:hxmc.host("hx_str_to_utf8") @:hxmc.unsafe public static function toUtf8(s:String):Ptr {
 		if (isNull(s)) {
 			var p = LibC.malloc(5);
 			Mem.setI32(p, 0, 0x6c6c756e); // "null"
@@ -311,46 +314,69 @@ class Str {
 	// ---- comparison, hashing
 
 	// a and b of the same length (MirBuild.strEq)
-	@:hxmc.export("hx_str_eq_slow") @:hxmc.unsafe static function eqSlow(a:String, b:String):Bool {
-		var n = len(a);
-		var one = isOne(a);
-		if (one == isOne(b)) return MemOps.compare(unitsAddr(a), unitsAddr(b), one ? (n : I64) : (2 * n : I64)) == 0;
-		return one ? eqMixed(a, b, n) : eqMixed(b, a, n);
+	@:hxmc.export("hx_str_eq_slow") @:hxmc.kernel static function eqSlow(a:String, b:String):Bool {
+		var oa = StrView.isOne(a);
+		if (oa == StrView.isOne(b)) return StrView.sameUnits(a, b);
+		// (one call: eqMixed is inlined, Inline.once)
+		return eqMixed(StrView.units1(oa ? a : b), StrView.units2(oa ? b : a));
 	}
 
-	// the n units of a one-byte string and of a two-byte one
-	@:hxmc.unsafe static function eqMixed(one:String, two:String, n:Int):Bool {
-		var c = chars1(one), d = chars2(two);
-		for (i in 0...n)
-			if (c.get(i) != d.get(i)) return false;
+	// the units of a one-byte string and of a two-byte one
+	@:hxmc.kernel static function eqMixed(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt16>):Bool {
+		if (c.length != d.length) return false;
+		for (i in 0...c.length)
+			if ((c[i] : Int) != (d[i] : Int)) return false;
 		return true;
 	}
 
-	@:hxmc.host("hx_str_cmp") @:hxmc.unsafe static function cmp(a:String, b:String):Int {
-		if (Repr.same(a, b)) return 0;
-		if (isNull(a)) return -1;
-		if (isNull(b)) return 1;
-		var na = len(a), nb = len(b);
-		var n = na < nb ? na : nb;
-		var oa = isOne(a), ob = isOne(b);
-		if (oa && ob) {
-			var ca = chars1(a), cb = chars1(b);
-			for (i in 0...n) {
-				var x = ca.get(i), y = cb.get(i);
-				if (x != y) return x < y ? -1 : 1;
-			}
-		} else if (!oa && !ob) {
-			var ca = chars2(a), cb = chars2(b);
-			for (i in 0...n) {
-				var x = ca.get(i), y = cb.get(i);
-				if (x != y) return x < y ? -1 : 1;
-			}
-		} else
-			for (i in 0...n) {
-				var x = unit(a, i), y = unit(b, i);
-				if (x != y) return x < y ? -1 : 1;
-			}
+	@:hxmc.host("hx_str_cmp") @:hxmc.kernel static function cmp(a:String, b:String):Int {
+		if (StrView.same(a, b)) return 0;
+		if (StrView.isNull(a)) return -1;
+		if (StrView.isNull(b)) return 1;
+		var oa = StrView.isOne(a), ob = StrView.isOne(b);
+		// (each kernel called once: inlined, Inline.once)
+		var c = if (oa == ob) oa ? cmp11(StrView.units1(a), StrView.units1(b)) : cmp22(StrView.units2(a), StrView.units2(b)) else {
+			var d = cmp12(StrView.units1(oa ? a : b), StrView.units2(oa ? b : a));
+			oa ? d : -d;
+		}
+		if (c != 0) return c;
+		var na = StrView.length(a), nb = StrView.length(b);
 		return na < nb ? -1 : na > nb ? 1 : 0;
+	}
+
+	// the order of the first units that differ (-1 or 1), 0 when one holds
+	// the other's first units
+	@:hxmc.kernel static function cmp11(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt8>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		for (i in 0...n) {
+			var x:Int = a[i], y:Int = b[i];
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return 0;
+	}
+
+	@:hxmc.kernel static function cmp22(a:ReadOnlySpan<UInt16>, b:ReadOnlySpan<UInt16>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		for (i in 0...n) {
+			var x:Int = a[i], y:Int = b[i];
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return 0;
+	}
+
+	@:hxmc.kernel static function cmp12(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt16>):Int {
+		var n = a.length < b.length ? a.length : b.length;
+		// (n tested against both lengths: their checks proved, dropped)
+		if (n > a.length || n > b.length) return 0;
+		for (i in 0...n) {
+			var x:Int = a[i], y:Int = b[i];
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return 0;
 	}
 
 	// A hash of the units, never 0, kept in the string's header where it
@@ -362,8 +388,8 @@ class Str {
 	// the last chunk is the last 8 units (overlapping the one before it) or,
 	// of a shorter string, all of them. A chunk is mixed in by a multiply
 	// (hashMix), the length first, the 64 bits avalanched and folded to 32.
-	@:hxmc.host("hx_str_hash") @:hxmc.unsafe static function hash(s:String):Int {
-		var h = Repr.storedHash(s);
+	@:hxmc.host("hx_str_hash") @:hxmc.kernel static function hash(s:String):Int {
+		var h = StrView.storedHash(s);
 		return h != 0 ? h : hashSlow(s);
 	}
 
@@ -384,9 +410,9 @@ class Str {
 		return (w | (w >>> 16)) & (((1 : I64) << 32) - 1);
 	}
 
-	// 8 two-byte units at p mixed in
-	@:hxmc.unsafe static inline function hashMix2(h:I64, p:Ptr):I64 {
-		var a = Mem.getI64(p, 0), b = Mem.getI64(p, 8);
+	// 8 two-byte units mixed in
+	static inline function hashMix2(h:I64, c:ReadOnlySpan<UInt16>):I64 {
+		var a = c.getI64(0), b = c.getI64(4);
 		h = hashMix(h, packLow(a) | (packLow(b) << 32));
 		var hi = packLow(a >>> 8) | (packLow(b >>> 8) << 32);
 		return hi != (0 : I64) ? hashMix(h, hi) : h;
@@ -395,47 +421,49 @@ class Str {
 	#if !hxmc.strhash
 	// (FNV-1a over the units, as a tool without hxmc.strhash computes literals'
 	// hashes: TargetFlags)
-	@:hxmc.unsafe static function hashSlow(s:String):Int {
+	@:hxmc.kernel static function hashSlow(s:String):Int {
 		var x = 0x811C9DC5;
-		if (isOne(s)) {
-			var c = chars1(s);
-			for (i in 0...len(s))
-				x = (x ^ c.get(i)) * 16777619;
+		if (StrView.isOne(s)) {
+			var c = StrView.units1(s);
+			for (i in 0...c.length)
+				x = (x ^ c[i]) * 16777619;
 		} else {
-			var c = chars2(s);
-			for (i in 0...len(s))
-				x = (x ^ c.get(i)) * 16777619;
+			var c = StrView.units2(s);
+			for (i in 0...c.length)
+				x = (x ^ c[i]) * 16777619;
 		}
 		if (x == 0) x = 1;
-		Repr.storeHash(s, x);
+		StrView.storeHash(s, x);
 		return x;
 	}
 	#else
 	// (the mark the compiler reads: Lower.strWordHash)
-	@:hxmc.wordHash @:hxmc.unsafe static function hashSlow(s:String):Int {
-		var n = len(s);
+	@:hxmc.wordHash @:hxmc.kernel static function hashSlow(s:String):Int {
+		var n = StrView.length(s);
 		var h = hashMix(k64(0x243F6A88, 0x85A308D3), (n : I64));
-		var p = unitsAddr(s);
 		var i = 0;
-		if (isOne(s)) {
-			while (i + 8 < n) {
-				h = hashMix(h, Mem.getI64(p, i));
+		// (i + 8 < n: i < n - 8, a span's word loop, Opt.fits)
+		if (StrView.isOne(s)) {
+			var c = StrView.units1(s);
+			while (i < n - 8) {
+				h = hashMix(h, c.getI64(i));
 				i += 8;
 			}
 			// (the last 8 bytes; of a shorter string, the bytes before its
-			// units too, its length and header's, shifted out)
-			if (n > 0) h = hashMix(h, n >= 8 ? Mem.getI64(p, n - 8) : Mem.getI64(p, n - 8) >>> (8 * (8 - n)));
+			// units too, its length and header's, shifted out: window1)
+			if (n > 0) h = hashMix(h, n >= 8 ? c.getI64(n - 8) : StrView.window1(s).getI64(n) >>> (8 * (8 - n)));
 		} else {
-			while (i + 8 < n) {
-				h = hashMix2(h, p.add(2 * i));
+			var c = StrView.units2(s);
+			while (i < n - 8) {
+				h = hashMix2(h, c.sub(i, 8));
 				i += 8;
 			}
 			if (n >= 8)
-				h = hashMix2(h, p.add(2 * (n - 8)));
+				h = hashMix2(h, c.sub(n - 8, 8));
 			else if (n > 0) {
 				var lo:I64 = 0, hi:I64 = 0;
 				for (k in 0...n) {
-					var u = Mem.getU16(p, 2 * k);
+					var u:Int = c[k];
 					lo = lo | ((u & 0xFF : I64) << (8 * k));
 					hi = hi | ((u >> 8 : I64) << (8 * k));
 				}
@@ -447,7 +475,7 @@ class Str {
 		h = h ^ (h >>> 33);
 		var x = h.toInt();
 		if (x == 0) x = 1;
-		Repr.storeHash(s, x);
+		StrView.storeHash(s, x);
 		return x;
 	}
 	#end
@@ -462,10 +490,10 @@ class Str {
 
 	// ---- concatenation and conversions
 
-	@:hxmc.host("hx_str_or_null") @:hxmc.unsafe static function orNull(s:String):String
-		return isNull(s) ? "null" : s;
+	@:hxmc.host("hx_str_or_null") @:hxmc.kernel static function orNull(s:String):String
+		return StrView.isNull(s) ? "null" : s;
 
-	@:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_concat") static function concat(a:String, b:String):String {
 		if (isNull(a)) a = "null";
 		if (isNull(b)) b = "null";
 		var na = len(a), nb = len(b);
@@ -490,7 +518,7 @@ class Str {
 	@:hxmc.host("hx_str_concat3") static function concat3(a:String, b:String, c:String):String
 		return concat4(a, b, c, "");
 
-	@:hxmc.host("hx_str_concat4") static function concat4(a:String, b:String, c:String, d:String):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_concat4") static function concat4(a:String, b:String, c:String, d:String):String {
 		if (isNull(a)) a = "null";
 		if (isNull(b)) b = "null";
 		if (isNull(c)) c = "null";
@@ -515,12 +543,12 @@ class Str {
 	}
 
 	// s's n units into the two-byte units u from ui (widened if one-byte)
-	static inline function put2(u:Chars, ui:Int, s:String, n:Int) {
+	@:hxmc.unsafe(gc) static inline function put2(u:Chars, ui:Int, s:String, n:Int) {
 		if (n == 0) return;
 		if (isOne(s)) Repr.widen(u, ui, chars1(s), 0, n) else Repr.copyTo(u, ui, chars2(s), n);
 	}
 
-	@:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_int") static function ofInt(v:Int):String {
 		// |v| <= 2^31 as an I64; u / 10 as (u * 0xCCCCCCCD) >>> 35
 		var m10 = ((0xCCCC : I64) << 16) | (0xCCCD : I64);
 		var neg = v < 0;
@@ -545,7 +573,7 @@ class Str {
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_i64") static function ofI64(v:I64):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_i64") static function ofI64(v:I64):String {
 		// digits of the negative value (no overflow at the minimum)
 		var neg = v < 0;
 		var m = neg ? v : -v;
@@ -568,13 +596,13 @@ class Str {
 		return s;
 	}
 
-	@:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("hx_str_of_float") static function ofFloat(v:Float):String {
 		var buf = Mem.stack(48);
 		FloatText.format(v, buf);
 		return ofBytes(buf, LibC.strlen(buf).toInt());
 	}
 
-	@:hxmc.host("hx_str_of_bool") @:hxmc.unsafe static function ofBool(v:Bool):String
+	@:hxmc.host("hx_str_of_bool") @:hxmc.kernel static function ofBool(v:Bool):String
 		return v ? "true" : "false";
 
 	// ---- String
@@ -627,7 +655,8 @@ class Str {
 	// those that the word xor that unit in every lane leaves 0, the first one
 	// the lowest lane flagged by (v - 0x01...) & ~v & 0x80... (a lane above a
 	// 0 lane may be flagged too, never one below)
-	@:hxmc.unsafe static function find(s:String, sub:String, from:Int):Int {
+	// (from >= 0, sub not empty; of other widths: across12, across21)
+	@:hxmc.unsafe @:hxmc.kernel static function find(s:String, sub:String, from:Int):Int {
 		var n = len(s), m = len(sub);
 		var i = from;
 		var last = n - m;
@@ -653,7 +682,7 @@ class Str {
 						i++;
 						continue;
 					}
-					if (m == 1 || MemOps.compare(p.add(i + 1), d.add(1), ((m - 1) : I64)) == 0) return i;
+					if (m == 1 || MemOps.compareAt(p.add(i + 1), d.add(1), ((m - 1) : I64)) == 0) return i;
 					i++;
 				}
 			} else {
@@ -674,24 +703,42 @@ class Str {
 						i++;
 						continue;
 					}
-					if (m == 1 || MemOps.compare(p.add(2 * i + 2), d.add(2), (2 * (m - 1) : I64)) == 0) return i;
+					if (m == 1 || MemOps.compareAt(p.add(2 * i + 2), d.add(2), (2 * (m - 1) : I64)) == 0) return i;
 					i++;
 				}
 			}
-		} else
-			while (i + m <= n) {
-				if (unitsAt(s, i, sub, m)) return i;
-				i++;
-			}
+			return -1;
+		}
+		return one ? across12(StrView.units1(s), StrView.units2(sub), from) : across21(StrView.units2(s), StrView.units1(sub), from);
+	}
+
+	// of other widths: c[i, i + m) == d[0, m) unit by unit (a window: SpanWindows)
+	@:hxmc.kernel static function across12(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt16>, from:Int):Int {
+		var n = c.length, m = d.length;
+		if (from < 0 || m < 1 || m > n) return -1;
+		var i = from;
+		while (i < n - m + 1) {
+			var k = 0;
+			while (k < m && (c[i + k] : Int) == (d[k] : Int))
+				k++;
+			if (k == m) return i;
+			i++;
+		}
 		return -1;
 	}
 
-	// s[i, i + m) == sub[0, m), of any widths
-	@:hxmc.unsafe static inline function unitsAt(s:String, i:Int, sub:String, m:Int):Bool {
-		var k = 0;
-		while (k < m && unit(s, i + k) == unit(sub, k))
-			k++;
-		return k == m;
+	@:hxmc.kernel static function across21(c:ReadOnlySpan<UInt16>, d:ReadOnlySpan<UInt8>, from:Int):Int {
+		var n = c.length, m = d.length;
+		if (from < 0 || m < 1 || m > n) return -1;
+		var i = from;
+		while (i < n - m + 1) {
+			var k = 0;
+			while (k < m && (c[i + k] : Int) == (d[k] : Int))
+				k++;
+			if (k == m) return i;
+			i++;
+		}
+		return -1;
 	}
 
 	@:hxmc.host("String_lastIndexOf") @:hxmc.unsafe static function lastIndexOf(s:String, sub:String, start:Null<Int>):Int {
@@ -700,27 +747,65 @@ class Str {
 		if (from > n - m) from = n - m;
 		// ("" before the start: 0, as Eval and ECMAScript; upstream's Issue5271)
 		if (m == 0) return from >= 0 ? from : 0;
+		return findLast(s, sub, from);
+	}
+
+	// the last i <= from where sub (not empty) is in s; -1 if none
+	@:hxmc.kernel static function findLast(s:String, sub:String, from:Int):Int {
+		var one = StrView.isOne(s);
+		if (one == StrView.isOne(sub)) return one ? last1(StrView.units1(s), StrView.units1(sub), from) : last2(StrView.units2(s), StrView.units2(sub), from);
+		return one ? lastAcross12(StrView.units1(s), StrView.units2(sub), from) : lastAcross21(StrView.units2(s), StrView.units1(sub), from);
+	}
+
+	// (each candidate: its first unit, then the others' bytes, MemOps.compare;
+	// i tested <= n - m: a window down, SpanWindows)
+	@:hxmc.kernel static function last1(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt8>, from:Int):Int {
+		var n = c.length, m = d.length;
+		if (m < 1 || m > n || from > n - m) return -1;
+		var first:Int = d[0], i = from;
+		while (i >= 0) {
+			if ((c[i] : Int) == first && (m == 1 || MemOps.compare(c.sub(i + 1, m - 1), d.sub(1, m - 1)) == 0)) return i;
+			i--;
+		}
+		return -1;
+	}
+
+	@:hxmc.kernel static function last2(c:ReadOnlySpan<UInt16>, d:ReadOnlySpan<UInt16>, from:Int):Int {
+		var n = c.length, m = d.length;
+		if (m < 1 || m > n || from > n - m) return -1;
+		var first:Int = d[0], i = from;
+		while (i >= 0) {
+			if ((c[i] : Int) == first && (m == 1 || MemOps.compare(c.sub(i + 1, m - 1).reinterpret(), d.sub(1, m - 1).reinterpret()) == 0)) return i;
+			i--;
+		}
+		return -1;
+	}
+
+	@:hxmc.kernel static function lastAcross12(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt16>, from:Int):Int {
+		var n = c.length, m = d.length;
+		if (m < 1 || m > n || from > n - m) return -1;
 		var i = from;
-		var one = isOne(s);
-		if (one == isOne(sub)) {
-			if (one) {
-				var c = chars1(s), d = chars1(sub);
-				while (i >= 0) {
-					if (Repr.matchAt1(c, d, i, m)) return i;
-					i--;
-				}
-			} else {
-				var c = chars2(s), d = chars2(sub);
-				while (i >= 0) {
-					if (Repr.matchAt(c, d, i, m)) return i;
-					i--;
-				}
-			}
-		} else
-			while (i >= 0) {
-				if (unitsAt(s, i, sub, m)) return i;
-				i--;
-			}
+		while (i >= 0) {
+			var k = 0;
+			while (k < m && (c[i + k] : Int) == (d[k] : Int))
+				k++;
+			if (k == m) return i;
+			i--;
+		}
+		return -1;
+	}
+
+	@:hxmc.kernel static function lastAcross21(c:ReadOnlySpan<UInt16>, d:ReadOnlySpan<UInt8>, from:Int):Int {
+		var n = c.length, m = d.length;
+		if (m < 1 || m > n || from > n - m) return -1;
+		var i = from;
+		while (i >= 0) {
+			var k = 0;
+			while (k < m && (c[i + k] : Int) == (d[k] : Int))
+				k++;
+			if (k == m) return i;
+			i--;
+		}
 		return -1;
 	}
 
@@ -769,7 +854,7 @@ class Str {
 
 	// s in upper or lower case: one-byte from a one-byte string, unless a
 	// unit's case is above 0xFF (the upper cases of U+00B5 and U+00FF)
-	static function mapCase(s:String, upper:Bool):String {
+	@:hxmc.unsafe(gc) static function mapCase(s:String, upper:Bool):String {
 		var n = len(s);
 		var t = CaseMap.table(upper);
 		if (isOne(s)) {
@@ -795,11 +880,11 @@ class Str {
 		return r;
 	}
 
-	@:hxmc.host("String_toString") @:hxmc.unsafe static function toString(s:String):String
+	@:hxmc.host("String_toString") @:hxmc.kernel static function toString(s:String):String
 		return s;
 
 	// new String(s): strings do not change, s itself
-	@:hxmc.host("String_new") @:hxmc.unsafe static function ofString(s:String):String
+	@:hxmc.host("String_new") @:hxmc.kernel static function ofString(s:String):String
 		return s;
 
 	@:hxmc.host("String_split") static function split(s:String, delim:String):Array<String> {
@@ -853,7 +938,7 @@ class Str {
 
 	// s's units [pos, pos + n) appended (the buffer widened first if one of
 	// them is above 0xFF)
-	static function sbAddRange(b:Dynamic, s:String, pos:Int, n:Int) {
+	@:hxmc.unsafe(gc) static function sbAddRange(b:Dynamic, s:String, pos:Int, n:Int) {
 		reserve(b, n);
 		var at = sbLen(b);
 		if (Repr.sbIsOne(b) && !isOne(s) && !Repr.fitsOne(chars2(s), pos, n)) Repr.sbWiden(b, Repr.sbCapacity(b), at);
@@ -863,7 +948,7 @@ class Str {
 
 	// s's units [pos, pos + n) written at `at` (room made; a two-byte
 	// buffer if any is above 0xFF; no GC point)
-	static inline function sbPut(b:Dynamic, at:Int, s:String, pos:Int, n:Int) {
+	@:hxmc.unsafe(gc) static inline function sbPut(b:Dynamic, at:Int, s:String, pos:Int, n:Int) {
 		if (Repr.sbIsOne(b)) {
 			if (isOne(s))
 				Repr.copyAt1(Repr.sbChars1(b), at, chars1(s), pos, n);
@@ -879,7 +964,7 @@ class Str {
 		sbAddStr(b, Repr.stdString(x));
 
 	// (the inline fast path's misses: a unit above 0xFF, a two-byte buffer, a full one)
-	@:hxmc.export("StringBuf_addChar_slow") static function sbAddCharSlow(b:Dynamic, c:Int):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("StringBuf_addChar_slow") static function sbAddCharSlow(b:Dynamic, c:Int):Void {
 		reserve(b, 2);
 		var n = sbLen(b);
 		if (Repr.sbIsOne(b)) {
@@ -924,7 +1009,7 @@ class Str {
 	}
 
 	// unit u (below 0x100) written at `at` (room made)
-	static inline function sbUnit(b:Dynamic, at:Int, u:Int)
+	@:hxmc.unsafe(gc) static inline function sbUnit(b:Dynamic, at:Int, u:Int)
 		if (Repr.sbIsOne(b)) Repr.sbChars1(b).set(at, u) else Repr.sbChars2(b).set(at, u);
 
 	// eight one-byte units (lanes1) or four two-byte ones (lanes2) of a 64-bit
@@ -950,35 +1035,37 @@ class Str {
 	// the index of the first quote, backslash or 0 unit of s from pos (its
 	// length if none): haxe.format.JsonParser.parseString's units to skip
 	// (hxmc's)
-	@:hxmc.unsafe public static function jsonRun(s:String, pos:Int):Int {
-		var n = len(s);
+	@:hxmc.kernel public static function jsonRun(s:String, pos:Int):Int {
 		var i = pos < 0 ? 0 : pos;
-		if (isOne(s)) {
-			var c = chars1(s);
-			while (i + 8 <= n) {
-				var w = Mem.getI64(c.at(i), 0);
+		var n = StrView.length(s);
+		if (i > n) return i;
+		// (from i: the span's word loop, Opt.fits; i + 8 <= n: k < m - 7)
+		if (StrView.isOne(s)) {
+			var c = StrView.units1(s).sub(i, n - i), m = n - i, k = 0;
+			while (k < m - 7) {
+				var w = c.getI64(k);
 				if (zero1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
-				i += 8;
+				k += 8;
 			}
-			while (i < n) {
-				var u = c.get(i);
+			while (k < m) {
+				var u:Int = c[k];
 				if (u == '"'.code || u == '\\'.code || u == 0) break;
-				i++;
+				k++;
 			}
-			return i;
+			return i + k;
 		}
-		var c = chars2(s);
-		while (i + 4 <= n) {
-			var w = Mem.getI64(c.at(i), 0);
+		var c = StrView.units2(s).sub(i, n - i), m = n - i, k = 0;
+		while (k < m - 3) {
+			var w = c.getI64(k);
 			if (zero2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
-			i += 4;
+			k += 4;
 		}
-		while (i < n) {
-			var u = c.get(i);
+		while (k < m) {
+			var u:Int = c[k];
 			if (u == '"'.code || u == '\\'.code || u == 0) break;
-			i++;
+			k++;
 		}
-		return i;
+		return i + k;
 	}
 
 	static inline function jsonEscaped(u:Int):Bool
@@ -986,33 +1073,34 @@ class Str {
 
 	// the index of the first unit of s from i, before n, that JsonPrinter
 	// escapes (n if none); the words skipped stop at any unit below 0x20
-	@:hxmc.unsafe static function jsonPlain(s:String, i:Int, n:Int):Int {
-		if (isOne(s)) {
-			var c = chars1(s);
-			while (i + 8 <= n) {
-				var w = Mem.getI64(c.at(i), 0);
+	// (0 <= i <= n <= the length; from i, as jsonRun)
+	@:hxmc.kernel static function jsonPlain(s:String, i:Int, n:Int):Int {
+		if (StrView.isOne(s)) {
+			var c = StrView.units1(s).sub(i, n - i), m = n - i, k = 0;
+			while (k < m - 7) {
+				var w = c.getI64(k);
 				if (low1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
-				i += 8;
+				k += 8;
 			}
-			while (i < n && !jsonEscaped(c.get(i)))
-				i++;
-			return i;
+			while (k < m && !jsonEscaped(c[k]))
+				k++;
+			return i + k;
 		}
-		var c = chars2(s);
-		while (i + 4 <= n) {
-			var w = Mem.getI64(c.at(i), 0);
+		var c = StrView.units2(s).sub(i, n - i), m = n - i, k = 0;
+		while (k < m - 3) {
+			var w = c.getI64(k);
 			if (low2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
-			i += 4;
+			k += 4;
 		}
-		while (i < n && !jsonEscaped(c.get(i)))
-			i++;
-		return i;
+		while (k < m && !jsonEscaped(c[k]))
+			k++;
+		return i + k;
 	}
 
 	// s as haxe.format.JsonPrinter quotes a string (its seven escapes, the
 	// other units as they are), appended in one go: the runs without an
 	// escape copied whole (JsonPrinter.quote, hxmc's)
-	@:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
+	@:hxmc.unsafe(gc) @:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
 		// (room for s and the quotes; an escape makes room for itself and
 		// the rest: it may collect)
 		var n = len(s);
@@ -1048,14 +1136,14 @@ class Str {
 		Repr.sbSetLen(b, at);
 	}
 
-	@:hxmc.host("StringBuf_clear") @:hxmc.unsafe static function sbClear(b:Dynamic):Void
-		Repr.sbSetLen(b, 0);
+	@:hxmc.host("StringBuf_clear") @:hxmc.kernel static function sbClear(b:StringBuf):Void
+		StrBufView.clear(b);
 
-	@:hxmc.host("StringBuf_get_length") @:hxmc.unsafe static function sbGetLength(b:Dynamic):Int
-		return sbLen(b);
+	@:hxmc.host("StringBuf_get_length") @:hxmc.kernel static function sbGetLength(b:StringBuf):Int
+		return StrBufView.length(b);
 
 	// (one-byte where every unit fits: a buffer widened, then cleared, may hold none above 0xFF)
-	@:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("StringBuf_toString") static function sbToString(b:Dynamic):String {
 		var n = sbLen(b);
 		if (Repr.sbIsOne(b)) {
 			var s = make1(n);
@@ -1114,7 +1202,7 @@ class Str {
 		return (neg ? -v : v).toInt();
 	}
 
-	@:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
+	@:hxmc.unsafe(gc) @:hxmc.host("Std_parseFloat") static function parseFloat(s:String):Float {
 		if (isNull(s)) return Math.NaN;
 		// ASCII bytes for strtod (any other unit ends the number, as its UTF-8 would)
 		var n = len(s);

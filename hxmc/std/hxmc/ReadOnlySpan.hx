@@ -23,6 +23,11 @@ abstract ReadOnlySpan<T>(SpanData) {
 
 	extern public function sub(pos:Int, len:Int):ReadOnlySpan<T>;
 
+	// (Span.getI64)
+	extern public function getI64(i:Int):hxmc.I64;
+
+	extern public function getI32(i:Int):Int;
+
 	extern public function reinterpret<U>():ReadOnlySpan<U>;
 
 	// an atomic load of element i (Span.load)
@@ -35,6 +40,15 @@ abstract ReadOnlySpan<T>(SpanData) {
 	extern public static function ofBytes(b:Bytes, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
 
 	extern public static function ofIoBuffer(buf:IoBuffer, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
+
+	extern public static function ofBuffer(buf:hxmc.Buffer, pos:Int = 0, len:Int = -1):ReadOnlySpan<UInt8>;
+
+	// a call's argument: a value as a span of one, copied for the call (`const T *`)
+	extern public static function of<T>(x:T):ReadOnlySpan<T>;
+
+	// a call's argument in GC code: the elements of a (scalars or structs)
+	// copied into C memory for the call: many structs from GC code
+	extern public static function ofArray<T>(a:Array<T>):ReadOnlySpan<T>;
 
 	extern public static function unsafeOf<T>(p:Ptr<T>, length:Int):ReadOnlySpan<T>;
 }

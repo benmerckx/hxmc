@@ -4,31 +4,42 @@
 
 package haxe.atomic;
 
+import hxmc.Span;
 import hxmc.unsafe.Atomic;
 import hxmc.unsafe.Mem;
+import hxmc.unsafe.Ptr;
+
+// An AtomicInt's cell, read for kernels (a view, as hxmc.rt.StrView): its
+// 32 bits as a span of one Int; of any value that is no T_NATIVE object (null
+// too), a span of none
+@:noCompletion @:hxmc.kernel @:hxmc.unsafe class Cell {
+	public static function of(a:Dynamic):Span<Int>
+		return Span.unsafeOf((cast Mem.addr(a) : Ptr<Int>), !hxmc.rt.Repr.isNull(a) && hxmc.rt.Types.tindex(a) == hxmc.rt.Types.T_NATIVE ? 1 : 0);
+}
 
 /**
 	Atomic integer.
 **/
 abstract AtomicInt(Dynamic) {
-	static function cell(v:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function cell(v:Int):Dynamic {
 		var a = Mem.allocRaw(1, hxmc.rt.Types.T_NATIVE, 2); // K_RAW
 		Mem.setI32(Mem.addr(a), 0, v);
 		return a;
 	}
 
-	// (the cell's address is taken in functions that never reach a GC point:
-	// inlined into the program, it could be taken before an allocation that
-	// moves the cell)
-	@:hxmc.unsafe static function add32(a:Dynamic, v:Int):Int
-		return Atomic.add32(Mem.addr(a), v);
+	// (kernels over the cell lent as a span, Cell: the cell's address is
+	// taken where nothing collects)
+	@:hxmc.kernel static function add32(a:Dynamic, v:Int):Int
+		return Cell.of(a).add(0, v);
 
-	@:hxmc.unsafe static function cas32(a:Dynamic, e:Int, r:Int):Int
-		return Atomic.cas32(Mem.addr(a), e, r);
+	@:hxmc.kernel static function cas32(a:Dynamic, e:Int, r:Int):Int
+		return Cell.of(a).compareExchange(0, e, r);
 
-	@:hxmc.unsafe static function exchange32(a:Dynamic, v:Int):Int
-		return Atomic.exchange32(Mem.addr(a), v);
+	@:hxmc.kernel static function exchange32(a:Dynamic, v:Int):Int
+		return Cell.of(a).exchange(0, v);
 
+	// (a plain load or store: the cell's test and check would be most of
+	// it, 3 times the raw access)
 	@:hxmc.unsafe static function load32(a:Dynamic):Int
 		return Atomic.load32(Mem.addr(a));
 
@@ -36,12 +47,12 @@ abstract AtomicInt(Dynamic) {
 		Atomic.store32(Mem.addr(a), v);
 
 	// a compare-exchange loop (op 0 and, 1 or, 2 xor): the previous value
-	@:hxmc.unsafe static function bitwise(a:Dynamic, v:Int, op:Int):Int {
-		var p = Mem.addr(a);
-		var o = Atomic.load32(p);
+	@:hxmc.kernel static function bitwise(a:Dynamic, v:Int, op:Int):Int {
+		var c = Cell.of(a);
+		var o = c.load(0);
 		while (true) {
 			var n = op == 0 ? o & v : op == 1 ? o | v : o ^ v;
-			var seen = Atomic.cas32(p, o, n);
+			var seen = c.compareExchange(0, o, n);
 			if (seen == o) return o;
 			o = seen;
 		}

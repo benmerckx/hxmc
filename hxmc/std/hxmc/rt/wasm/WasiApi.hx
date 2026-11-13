@@ -1,6 +1,8 @@
 package hxmc.rt.wasm;
 
 import hxmc.I64;
+import hxmc.Span;
+import hxmc.unsafe.UInt8;
 
 // WASI preview 1 (wasi_snapshot_preview1), the system interface of
 // WebAssembly programs: pointers are 32-bit offsets into linear memory
@@ -31,4 +33,17 @@ import hxmc.I64;
 	static function poll_oneoff(subs:Int, events:Int, n:Int, nevents:Int):Int;
 	static function random_get(buf:Int, len:Int):Int;
 	static function proc_exit(code:Int):Void;
+}
+
+// WASI's calls typed for checked kernels (docs/interop.md, "Typed
+// bindings"): the cells a call writes as spans (an address of linear
+// memory: an i32 of the import, as above), nothing raw. The same imports
+// as WasiApi's.
+@:hxmc.c @:hxmc.fast @:hxmc.safe extern class WasiCalls {
+	@:hxmc.len(out, 1) static function clock_time_get(id:Int, precision:I64, out:Span<I64>):Int;
+	@:hxmc.len(out, 1) static function fd_tell(fd:Int, out:Span<I64>):Int;
+	// (fdstat: 24 bytes, fs_flags a u16 at 2)
+	@:hxmc.len(st, 24) static function fd_fdstat_get(fd:Int, st:Span<UInt8>):Int;
+	static function fd_fdstat_set_flags(fd:Int, flags:Int):Int;
+	static function fd_close(fd:Int):Int;
 }

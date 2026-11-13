@@ -150,23 +150,23 @@ class Gc {
 	static var nrecords:Int;
 
 	// (the header: read through GcCore, as the native Gc.hx reads it)
-	static inline function inYoung(p:Ptr):Bool
+	@:hxmc.unsafe(gc) static inline function inYoung(p:Ptr):Bool
 		return !p.ult(youngStart) && p.ult(youngEnd);
 
 	// p's granule's state; 0 (none) for a word above the 4 GB the table
 	// covers: the tagged word of a scalar (hxmc.rt.Tagged), which a reference
 	// slot holds as the value of a type parameter
-	static inline function granOf(p:Ptr):Int
+	@:hxmc.unsafe(gc) static inline function granOf(p:Ptr):Int
 		return (p.toI64() >>> 32) == (0 : I64) ? Mem.getU8(gran, (p.toI64() >>> GRAN_SHIFT).toInt()) : 0;
 
 	static inline function isOld(p:Ptr):Bool
 		return granOf(p) != 0;
 
 	// a list's entry: its size, and whether it is a large object's region
-	static inline function entrySize(l:Ptr, i:Int):Int
+	@:hxmc.unsafe(gc) static inline function entrySize(l:Ptr, i:Int):Int
 		return Mem.getI64(l, 24 * i + 16).toInt() & ~LARGE_FLAG;
 
-	static inline function entryLarge(l:Ptr, i:Int):Bool
+	@:hxmc.unsafe(gc) static inline function entryLarge(l:Ptr, i:Int):Bool
 		return (Mem.getI64(l, 24 * i + 16).toInt() & LARGE_FLAG) != 0;
 
 	// ---- startup
@@ -272,7 +272,7 @@ class Gc {
 	static var cstackBase:Ptr;
 	static inline var CSTACK_RESERVE = 64 << 10;
 
-	@:hxmc.export("rt_stack_overflow") @:hxmc.unsafe static function stackOverflow():Void {
+	@:hxmc.export("rt_stack_overflow") @:hxmc.kernel static function stackOverflow():Void {
 		Wasi.writeLit(2, "stack overflow: the shadow stack's ");
 		Wasi.writeInt(2, stackMb);
 		Wasi.writeLit(2, " MB are full (RT_STACK_MB sets its size)\n");
@@ -341,21 +341,21 @@ class Gc {
 	}
 
 	// (as the native GcPaths.allocSlow: a record's slots from its bytes)
-	@:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlowParts(lo:Int, tindex:Int, bytes:Int):Ptr
+	@:hxmc.unsafe(gc) @:hxmc.export("hxmc_alloc_slow") @:hxmc.collects static function allocSlowParts(lo:Int, tindex:Int, bytes:Int):Ptr
 		return allocSlow(Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo), bytes);
 
 	// (raw: an allocation that writes every slot before it reads one, of an
 	// object without references, Types.K_RAW: not zeroed, as no scan reads
 	// its slots; MemLower.allocDyn, as the native GcPaths.allocSlowRaw)
-	@:hxmc.export("hxmc_alloc_slow_raw") @:hxmc.collects static function allocSlowRawParts(lo:Int, tindex:Int, bytes:Int):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.export("hxmc_alloc_slow_raw") @:hxmc.collects static function allocSlowRawParts(lo:Int, tindex:Int, bytes:Int):Ptr {
 		var header = Types.isRecord(tindex & 0xFFFF) ? Types.recordHdr(tindex & 0xFFFF, (bytes >> 3) - 1) : Types.arrayHdr(tindex, lo);
 		return allocAny(header, bytes, Types.kindOfWord(tindex) == Types.K_RAW);
 	}
 
-	@:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_alloc_slow") @:hxmc.collects static function allocSlow(header:I64, bytes:Int):Ptr
 		return allocAny(header, bytes, false);
 
-	@:hxmc.collects static function allocAny(header:I64, bytes:Int, raw:Bool):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.collects static function allocAny(header:I64, bytes:Int, raw:Bool):Ptr {
 		var p:Ptr;
 		if (bytes > minorSize >> 2 && youngEnd.diff(Mem.tlsGet("rt_young_ptr")) < (bytes : I64)) {
 			// large objects go straight to the old space (unless the free nursery
@@ -1273,16 +1273,23 @@ class Gc {
 	// halved after LOW_PROMOTION_AFTER in a row that promoted less than a
 	// 64th, between MINOR_MIN and MINOR_MAX
 	@:hxmc.unsafe static function adaptNursery(promoted:Int, used:Int) {
+		var size = nurseryFor(promoted, used);
+		if (size != minorSize) resizeNursery(size);
+	}
+
+	// (the policy: the nursery's next size, a kernel over its statics)
+	@:hxmc.kernel static function nurseryFor(promoted:Int, used:Int):Int {
 		if ((promoted : I64) * 16 > (used : I64)) {
 			lowFor = 0;
-			if (!growthOff && minorSize < MINOR_MAX) resizeNursery(minorSize * 2);
+			if (!growthOff && minorSize < MINOR_MAX) return minorSize * 2;
 		} else if ((promoted : I64) * 64 < (used : I64)) {
 			if (++lowFor >= LOW_PROMOTION_AFTER && minorSize > MINOR_MIN) {
-				resizeNursery(minorSize >> 1);
 				lowFor = 0;
+				return minorSize >> 1;
 			}
 		} else
 			lowFor = 0;
+		return minorSize;
 	}
 
 	// (right after a minor collection: the nursery is empty, so it may move)
@@ -1496,7 +1503,7 @@ class Gc {
 		Heap.free(tab);
 	}
 
-	@:hxmc.unsafe static function bad(lit:String, a:Int, b:Int, c:Int) {
+	@:hxmc.kernel static function bad(lit:String, a:Int, b:Int, c:Int) {
 		Wasi.writeLit(2, lit);
 		Wasi.writeInt(2, a);
 		Wasi.writeLit(2, " ");
@@ -1558,7 +1565,7 @@ class Gc {
 	@:hxmc.unsafe public static function recordField(k:Int, field:Int):Float
 		return Mem.getF64(records, 32 * (k % RECORDS) + 8 * field);
 
-	@:hxmc.unsafe public static function recordCount():Int
+	@:hxmc.kernel public static function recordCount():Int
 		return nrecords;
 
 	@:hxmc.unsafe public static function clock():Float {
@@ -1566,15 +1573,15 @@ class Gc {
 		return ns * 1e-9;
 	}
 
-	@:hxmc.unsafe public static function counts(which:Int):Int
+	@:hxmc.kernel public static function counts(which:Int):Int
 		return which == 0 ? collections : which == 1 ? minors : majors;
 
-	@:hxmc.unsafe public static function pause(which:Int):Float
+	@:hxmc.kernel public static function pause(which:Int):Float
 		return which == 0 ? lastPause : which == 1 ? totalPause : maxPause;
 
 	// RT_STATS at the program's end (Exit.mainDone), as the native Gc.report:
 	// "gc: <n> minor (<s>s), <m> major (<s>s), old <a> MB used; promoted <p> of <y> MB"
-	@:hxmc.unsafe public static function report() {
+	@:hxmc.kernel public static function report() {
 		if (!stats) return;
 		Wasi.writeLit(2, "gc: ");
 		Wasi.writeInt(2, minors);
@@ -1594,7 +1601,7 @@ class Gc {
 	}
 
 	// seconds with two decimals
-	@:hxmc.unsafe static function writeSecs(s:Float) {
+	@:hxmc.kernel static function writeSecs(s:Float) {
 		var c = Std.int(s * 100 + 0.5);
 		Wasi.writeInt(2, Std.int(c / 100));
 		if (c % 100 < 10) Wasi.writeLit(2, ".0") else Wasi.writeLit(2, ".");
@@ -1612,12 +1619,12 @@ class Gc {
 		return f;
 	}
 
-	@:hxmc.unsafe public static function heapBytes():Float {
+	@:hxmc.kernel public static function heapBytes():Float {
 		var b:Float = cast oldLimit;
 		return b + minorSize;
 	}
 
-	@:hxmc.unsafe public static function reached():Bool
+	@:hxmc.kernel public static function reached():Bool
 		return false;
 
 	// (no object sizes: 0)

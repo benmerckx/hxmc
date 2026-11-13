@@ -1,0 +1,7 @@
+exit 0
+CBindingsStrings.hx:19: 6, 0, -1
+CBindingsStrings.hx:20: hello from C
+CBindingsStrings.hx:21: ABC, é!
+CBindingsStrings.hx:22: true
+CBindingsStrings.hx:25: 4, abcd, -1
+CBindingsStrings.hx:29: 588890

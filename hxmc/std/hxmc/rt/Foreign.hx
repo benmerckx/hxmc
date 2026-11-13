@@ -245,7 +245,7 @@ class Foreign {
 	// o paired with ref, of kind k (o's first slot holds ref); typed: o's
 	// type is a class's whose objects are paired (refOf: not a value an
 	// Objective-C exception carries, ObjCExceptions). Its entry's index
-	static function pair(k:Int, o:Dynamic, ref:Ptr, typed:Bool):Int {
+	@:hxmc.unsafe(gc) static function pair(k:Int, o:Dynamic, ref:Ptr, typed:Bool):Int {
 		var p = Mem.addr(o);
 		var t = Types.tindex(o);
 		var maker = me();
@@ -287,7 +287,7 @@ class Foreign {
 	}
 
 	// the Haxe object of entry i (null: a free entry)
-	static function peerGet(i:Int):Dynamic {
+	@:hxmc.unsafe(gc) static function peerGet(i:Int):Dynamic {
 		Os.lock(lock);
 		var p = i >= 0 && i < npeers ? Mem.getPtr(peers, PEER_BYTES * i) : Ptr.nil();
 		Os.unlock(lock);
@@ -668,7 +668,7 @@ class Foreign {
 	// a foreign reference of kind k where a Haxe reference goes: the Haxe
 	// object of its peer, else its one box (retained: the native handle
 	// releases it once the box dies)
-	static function box(k:Int, ref:Ptr):Dynamic {
+	@:hxmc.unsafe(gc) static function box(k:Int, ref:Ptr):Dynamic {
 		if (ref.isNull()) return null;
 		var i = peerIndex(k, ref);
 		if (i >= 0) return peerGet(i);
@@ -760,14 +760,14 @@ class Foreign {
 
 	// the reference of a box, or of a peer (null: none): slot 0 both (a paired
 	// class's hidden field is its first: hxmc.ir.Lower.classInfo)
-	static function unbox(o:Dynamic):Ptr
+	@:hxmc.unsafe(gc) static function unbox(o:Dynamic):Ptr
 		return o == null ? Ptr.nil() : Mem.getPtr(Mem.addr(o), 0);
 
 	// the reference of v when it is a foreign object of kind k (its box; an
 	// object of a type whose objects are paired with k's: pair), else null:
 	// v of any type. No hook is called: a native handle is a box of k's by its
 	// tag (isBox), not by what its slot holds, which only k's hooks could read
-	static function refOf(k:Int, v:Dynamic):Ptr {
+	@:hxmc.unsafe(gc) static function refOf(k:Int, v:Dynamic):Ptr {
 		if (v == null) return Ptr.nil();
 		var p = Mem.addr(v);
 		var t = Types.tindex(v);
@@ -781,12 +781,12 @@ class Foreign {
 	// ---- owned fields
 
 	// the reference at offset off in o (retained by its store) released once o dies
-	static function own(k:Int, o:Dynamic, offset:Int):Void
+	@:hxmc.unsafe(gc) static function own(k:Int, o:Dynamic, offset:Int):Void
 		addOwned(k, Mem.addr(o), (offset : I64));
 
 	// a weak field: it holds a cell outside the heap (the kind's weak variable:
 	// a field moves with its object), destroyed with o and freed
-	static function ownWeak(k:Int, o:Dynamic, offset:Int):Void
+	@:hxmc.unsafe(gc) static function ownWeak(k:Int, o:Dynamic, offset:Int):Void
 		addOwned(k, Mem.addr(o), -((offset : I64) + 1));
 
 	@:hxmc.unsafe static function addOwned(k:Int, p:Ptr, off:I64) {
@@ -806,7 +806,7 @@ class Foreign {
 	}
 
 	// a new weak cell: null
-	static function weakCell():Ptr {
+	@:hxmc.unsafe(gc) static function weakCell():Ptr {
 		var cell = LibC.malloc(8);
 		Mem.setPtr(cell, 0, Ptr.nil());
 		return cell;

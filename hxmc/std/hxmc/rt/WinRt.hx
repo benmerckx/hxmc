@@ -171,11 +171,11 @@ class WinRt {
 	}
 
 	// a Winsock error as the errno OCaml's Unix library reports (unixsupport_win32.c)
-	@:hxmc.host("rt_win_sock_errno") @:hxmc.unsafe static function sockErrno(wsa:Int):Int
+	@:hxmc.host("rt_win_sock_errno") @:hxmc.kernel static function sockErrno(wsa:Int):Int
 		return L.wsaErrno(wsa);
 
 	// a Win32 error as the errno OCaml's runtime maps it to (caml_win32_maperr)
-	@:hxmc.unsafe public static function errnoOf(err:Int):Int
+	@:hxmc.kernel public static function errnoOf(err:Int):Int
 		return L.winErrno(err);
 
 	// WSAStartup, once (two threads racing call it twice: it counts)

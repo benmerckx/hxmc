@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.Layouts as L;
 import hxmc.rt.C;
@@ -108,9 +109,9 @@ class Threads {
 		thrStats = Os.has("RT_STATS");
 		if (thrStats) {
 			#if hxmc.shared
-			if (Mem.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle"));
+			if (Platform.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle"));
 			#else
-			if (Mem.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle")) else C.atexit(Callback.addr(thrReport));
+			if (Platform.target() >= 9) C.__cxa_atexit(Callback.addr(thrReport), Ptr.nil(), Mem.sym("__dso_handle")) else C.atexit(Callback.addr(thrReport));
 			#end
 		}
 	}
@@ -360,7 +361,7 @@ class Threads {
 	}
 
 	// the thread's job (its entry closure, a root in the record until here)
-	@:hxmc.callback static function run(t:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function run(t:Ptr):Void {
 		var m:Ptr<Mutator> = t;
 		var job:Dynamic = Mem.obj(m.value.job);
 		m.value.job = Ptr.nil();
@@ -410,7 +411,7 @@ class Threads {
 	}
 
 	// a new thread running job; its id
-	@:hxmc.collects static function spawn(job:Dynamic):Int {
+	@:hxmc.unsafe(gc) @:hxmc.collects static function spawn(job:Dynamic):Int {
 		var m = newRecord();
 		var sbase = Os.reserve(SSTACK_BYTES);
 		if (sbase.isNull()) {
@@ -564,7 +565,7 @@ class Threads {
 
 	// waits for any of n struct pollfd (revents set), letting other threads
 	// run: 1 ready, 0 timeout (seconds; < 0: none), -1 a descriptor was closed meanwhile
-	@:hxmc.host("rt_wait_fds") @:hxmc.collects static function waitFds(fds:Ptr, n:Int, timeout:Float):Int
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_wait_fds") @:hxmc.collects static function waitFds(fds:Ptr, n:Int, timeout:Float):Int
 		return waitFdsSafe(fds, n, timeout);
 
 	@:hxmc.unsafe static function waitFdsSafe(fds:Ptr, n:Int, timeout:Float):Int
@@ -611,7 +612,7 @@ class Threads {
 	}
 
 	// waits until fd is readable (write 0) or writable (write 1)
-	@:hxmc.host("rt_wait_fd") @:hxmc.collects static function waitFd(fd:Int, write:Int, timeout:Float):Int {
+	@:hxmc.unsafe(gc) @:hxmc.host("rt_wait_fd") @:hxmc.collects static function waitFd(fd:Int, write:Int, timeout:Float):Int {
 		var p = Mem.stack(16);
 		LibC.memset(p, 0, 16);
 		Mem.setI32(p, 0, fd);

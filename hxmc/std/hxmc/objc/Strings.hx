@@ -14,7 +14,7 @@ class Strings {
 	static inline var LATIN1 = 0x0201; // kCFStringEncodingISOLatin1
 
 	// an NSString of s (null: nil), autoreleased as every id a value is
-	public static function toNSString(s:Null<String>):Ptr {
+	@:hxmc.unsafe(gc) public static function toNSString(s:Null<String>):Ptr {
 		if (s == null) return Ptr.nil();
 		var n:I64 = Str.len(s);
 		// (no GC point from the address of the units to the copy)
@@ -24,7 +24,7 @@ class Strings {
 	}
 
 	// the string of an NSString (nil: null)
-	public static function ofNSString(ns:Ptr):Null<String> {
+	@:hxmc.unsafe(gc) public static function ofNSString(ns:Ptr):Null<String> {
 		if (ns.isNull()) return null;
 		var n = CF.CFStringGetLength(ns).toInt();
 		var latin1 = CF.CFStringGetCStringPtr(ns, LATIN1);

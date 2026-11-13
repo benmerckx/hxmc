@@ -508,6 +508,33 @@ class ObjC {
 		return declareC(l, args.slice(3), ret, variadic, fast);
 	}
 
+	// the function a message of typed parameters (CInterop.plan) is sent
+	// through: its C words as a typed C call passes them, a String result
+	// a pointer; setter: a property's, which returns nothing
+	public static function declareTyped(l:LowerQueries, cf:TClassField, s:TSignature, p:CInterop.CPlan, setter:Bool):String {
+		var where = CInterop.posOf(cf.cfPos);
+		var args = [];
+		for (i in 0...s.args.length)
+			switch p.args[i] {
+				case ASpan:
+					args.push(CPtr);
+					args.push(CPtr);
+				case ASpanPtr(_) | ACallback | AString | AOut(_) | AIface(_):
+					args.push(CPtr);
+				case AHandle(_):
+					args.push(CInterop.handleType(s.args[i].type));
+				case AValue:
+					var ct = ctype(s.args[i].type);
+					if (!CInterop.isScalar(ct) && !ct.match(CStruct(_)))
+						throw new LowerError('Objective-C method ${cf.cfName}: parameter ${s.args[i].name} has no C type a message can pass', where);
+					args.push(ct);
+			}
+		var ret = setter ? CVoid : p.str ? CPtr : ctype(s.ret);
+		if (ret != CVoid && !CInterop.isScalar(ret) && !ret.match(CStruct(_)))
+			throw new LowerError('Objective-C method ${cf.cfName}: the result has no C type a message can return', where);
+		return declareC(l, args, ret, null, Lower.hasMeta(":hxmc.fast", cf.cfMeta));
+	}
+
 	// the same of a message of C types (args after the receiver and selector);
 	// variadic: the number of its fixed ones (the others passed as a variadic
 	// function's: on Apple's arm64, on the stack)
@@ -672,6 +699,12 @@ class ObjC {
 				case TFun(s): s;
 				case _: continue;
 			};
+			// (spans and C function pointers, which Haxe methods take from Objective-C not yet)
+			if (core.ds.ArrayTools.exists(s.args, a -> KernelCheck.spanOf(a.type) != null || CInterop.outParam(a.type) != null) || core.Meta.has(Custom(":hxmc.callback"), decl.cfMeta)) {
+				if (decl != cf || (mode && !statics))
+					throw new LowerError('${cf.cfName} implements an Objective-C method that takes a span, an hxmc.Out or a C function pointer: Objective-C calls Haxe methods with these not yet (messages to Objective-C objects only)', CInterop.posOf(cf.cfPos));
+				continue;
+			}
 			var cts = [for (a in s.args) ctype(a.type)];
 			// (an override of a property's set_x: Objective-C's setter returns nothing)
 			var setter = decl != cf && isSetter(c, cf);

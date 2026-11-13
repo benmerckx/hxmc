@@ -1,0 +1,6 @@
+exit 0
+host: h_sum(number true, number 6)
+host: h_sum(number true, number 2)
+WasmSpans.hx:45: 597, 199
+WasmSpans.hx:47: 0123ef
+WasmSpans.hx:48: -198, 3, -1

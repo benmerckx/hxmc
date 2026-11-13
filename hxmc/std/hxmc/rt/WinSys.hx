@@ -20,7 +20,7 @@ import hxmc.unsafe.Win32;
 // quotes the arguments as Unix.make_cmdline does; exit codes are the
 // processes' own.
 class WinSys {
-	static inline function threads():Int
+	@:hxmc.unsafe(gc) static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
 	// a malloc'ed NUL-terminated UTF-16 copy of s
@@ -44,7 +44,7 @@ class WinSys {
 	}
 
 	// a NUL-terminated UTF-16 string (outside the heap) as a String (one-byte where every unit fits)
-	static function ofWide(w:Ptr):String {
+	@:hxmc.unsafe(gc) static function ofWide(w:Ptr):String {
 		var n = wlen(w);
 		if (MemRepr.fitsOne(w, 0, n)) {
 			var s = MemRepr.make1(n);
@@ -56,7 +56,7 @@ class WinSys {
 		return s;
 	}
 
-	static inline function ofC(p:Ptr):String
+	@:hxmc.unsafe(gc) static inline function ofC(p:Ptr):String
 		return Str.ofUtf8(p, LibC.strlen(p).toInt());
 
 	@:hxmc.unsafe static function errno():Int
@@ -71,7 +71,7 @@ class WinSys {
 		}
 	}
 
-	static function printTo(fd:Int, s:String)
+	@:hxmc.unsafe(gc) static function printTo(fd:Int, s:String)
 		SysCore.printTo(fd, s);
 
 	public static function print(s:String):Void
@@ -80,23 +80,23 @@ class WinSys {
 	public static function printErr(s:String):Void
 		printTo(2, s);
 
-	static inline function argc():Int
+	@:hxmc.unsafe(gc) static inline function argc():Int
 		return Mem.getI32(Mem.sym("rt_argc"), 0);
 
-	static inline function argv():Ptr
+	@:hxmc.unsafe(gc) static inline function argv():Ptr
 		return Mem.getPtr(Mem.sym("rt_argv"), 0);
 
-	public static function args():Array<String> {
+	@:hxmc.unsafe(gc) public static function args():Array<String> {
 		var a:Array<String> = [];
 		for (i in 1...argc())
 			a.push(ofC(Mem.getPtr(argv(), 8 * i)));
 		return a;
 	}
 
-	public static function argv0():String
+	@:hxmc.unsafe(gc) public static function argv0():String
 		return argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : null;
 
-	public static function getEnv(s:String):String {
+	@:hxmc.unsafe(gc) public static function getEnv(s:String):String {
 		var n = wide(s);
 		var v = Win32._wgetenv(n);
 		var r = v.isNull() ? null : ofWide(v);
@@ -106,7 +106,7 @@ class WinSys {
 
 	// _wputenv_s updates the C runtime's table and the process environment
 	// (which child processes inherit); an empty value removes the variable
-	public static function putEnv(s:String, v:String):Void {
+	@:hxmc.unsafe(gc) public static function putEnv(s:String, v:String):Void {
 		var n = wide(s);
 		var w = Str.isNull(v) ? wide("") : wide(v);
 		Win32._wputenv_s(n, w);
@@ -115,7 +115,7 @@ class WinSys {
 	}
 
 	// the process environment ("=C:=C:\..." entries included: Sys.environment skips them)
-	public static function environ():Array<String> {
+	@:hxmc.unsafe(gc) public static function environ():Array<String> {
 		var block = Win32.GetEnvironmentStringsW();
 		var a:Array<String> = [];
 		if (block.isNull()) return a;
@@ -145,7 +145,7 @@ class WinSys {
 	}
 
 	// _wgetcwd has no trailing separator but at a drive's root ("C:\")
-	public static function getCwd():String {
+	@:hxmc.unsafe(gc) public static function getCwd():String {
 		var w = Win32._wgetcwd(Ptr.nil(), 0);
 		if (w.isNull()) Rt.rt_throw("getCwd failed");
 		var s = ofWide(w);
@@ -155,7 +155,7 @@ class WinSys {
 		return s;
 	}
 
-	public static function setCwd(s:String):Bool {
+	@:hxmc.unsafe(gc) public static function setCwd(s:String):Bool {
 		var w = wide(s);
 		var r = Win32._wchdir(w);
 		LibC.free(w);
@@ -170,7 +170,7 @@ class WinSys {
 
 	// Sys.command: the C runtime's _wsystem (%COMSPEC% /c cmd), whose result
 	// is the exit code (OCaml's caml_sys_system_command on Windows)
-	public static function command(cmd:String):Int {
+	@:hxmc.unsafe(gc) public static function command(cmd:String):Int {
 		var w = wide(cmd);
 		var region = Leaf.rt_blocking_enter();
 		var r = Win32._wsystem(w); // w is malloc'ed: no heap address
@@ -183,14 +183,14 @@ class WinSys {
 	public static function commandArgs(cmd:String, args:Array<String>):Int
 		return -2;
 
-	public static function exit(code:Int):Void {
+	@:hxmc.unsafe(gc) public static function exit(code:Int):Void {
 		Win32.fflush(Ptr.nil());
 		Os.exiting(code);
 		Win32.exit(code);
 	}
 
 	// a FILETIME (100 ns units) as a 64-bit count
-	static inline function filetime(p:Ptr):I64
+	@:hxmc.unsafe(gc) static inline function filetime(p:Ptr):I64
 		return Mem.getI64(p, 0);
 
 	// seconds since the epoch: FILETIME counts 100 ns from 1601
@@ -209,7 +209,7 @@ class WinSys {
 		return s / 1e7;
 	}
 
-	public static function programPath():String {
+	@:hxmc.unsafe(gc) public static function programPath():String {
 		var buf = LibC.malloc(65536);
 		var n = Win32.GetModuleFileNameW(Ptr.nil(), buf, 32768);
 		var s = n == 0 || n >= 32768 ? (argc() > 0 ? ofC(Mem.getPtr(argv(), 0)) : "") : ofWide(buf);
@@ -219,7 +219,7 @@ class WinSys {
 
 	// extc's sys_getch: the console without line buffering, or a byte of a
 	// redirected standard input
-	public static function getChar(echo:Bool):Int {
+	@:hxmc.unsafe(gc) public static function getChar(echo:Bool):Int {
 		var h = Win32.GetStdHandle(-10); // STD_INPUT_HANDLE
 		var ft = !(h.toI64() == -1) ? Win32.GetFileType(h) : 2; // FILE_TYPE_CHAR
 		if (ft == 2) {
@@ -241,7 +241,7 @@ class WinSys {
 	// (_O_WRONLY 1, _O_RDWR 2, _O_APPEND 8, _O_CREAT 0x100, _O_TRUNC 0x200,
 	// _O_BINARY 0x8000, _O_NOINHERIT 0x80; _S_IREAD | _S_IWRITE 0x180)
 
-	public static function fileOpen(path:String, mode:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileOpen(path:String, mode:Int):Int {
 		var flags = switch mode {
 			case 0: 0;
 			case 1: 1 | 0x100 | 0x200;
@@ -301,7 +301,7 @@ class WinSys {
 
 	// Reads and writes of pipes and consoles block: with other threads they go
 	// through a malloc'ed buffer in a safe region (a collection may move the Bytes)
-	public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileRead(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
@@ -315,7 +315,7 @@ class WinSys {
 		return readHeap(fd, b, pos, len);
 	}
 
-	public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
+	@:hxmc.unsafe(gc) public static function fileWrite(fd:Int, b:Dynamic, pos:Int, len:Int):Int {
 		if (pos < 0 || len < 0 || pos > Bytes.len(b) - len) outside();
 		if (threads() > 1) {
 			var tmp = LibC.malloc(len > 0 ? len : 1);
@@ -344,10 +344,10 @@ class WinSys {
 	// struct _stat64 (UCRT): st_dev u32 0, st_ino u16 4, st_mode u16 6,
 	// st_nlink i16 8, st_uid i16 10, st_gid i16 12, st_rdev u32 16, st_size
 	// 24, st_atime 32, st_mtime 40, st_ctime 48 (64-bit)
-	static inline function stMode(st:Ptr):Int
+	@:hxmc.unsafe(gc) static inline function stMode(st:Ptr):Int
 		return Mem.getU16(st, 6);
 
-	public static function fileContent(path:String):Dynamic {
+	@:hxmc.unsafe(gc) public static function fileContent(path:String):Dynamic {
 		var p = wide(path);
 		var fd = Win32._wopen(p, 0x8000 | 0x80, 0);
 		LibC.free(p);
@@ -377,7 +377,7 @@ class WinSys {
 		return b;
 	}
 
-	public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
+	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = wide(path);
 		var fd = Win32._wopen(p, 1 | 0x100 | 0x8000 | 0x80 | (append ? 8 : 0x200), 0x180);
 		LibC.free(p);
@@ -392,7 +392,7 @@ class WinSys {
 	@:hxmc.unsafe static function pathStat(p:Ptr, st:Ptr):Int
 		return Win32._wstat64(p, st);
 
-	public static function exists(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function exists(path:String):Bool {
 		var p = wide(path);
 		var st = Mem.stack(64);
 		var r = pathStat(p, st) == 0;
@@ -400,7 +400,7 @@ class WinSys {
 		return r;
 	}
 
-	public static function isDirectory(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function isDirectory(path:String):Bool {
 		var p = wide(path);
 		var st = Mem.stack(64);
 		var r = pathStat(p, st) == 0 && (stMode(st) & 0xF000) == 0x4000;
@@ -408,7 +408,7 @@ class WinSys {
 		return r;
 	}
 
-	public static function createDirectory(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function createDirectory(path:String):Bool {
 		var p = wide(path);
 		var r = Win32._wmkdir(p) == 0;
 		LibC.free(p);
@@ -416,7 +416,7 @@ class WinSys {
 	}
 
 	// caml_win32_unlink: a read-only file is made writable, then removed
-	public static function deleteFile(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function deleteFile(path:String):Bool {
 		var p = wide(path);
 		var r = deleteW(p);
 		LibC.free(p);
@@ -435,7 +435,7 @@ class WinSys {
 		return r;
 	}
 
-	public static function deleteDirectory(path:String):Bool {
+	@:hxmc.unsafe(gc) public static function deleteDirectory(path:String):Bool {
 		var p = wide(path);
 		var r = Win32._wrmdir(p) == 0;
 		LibC.free(p);
@@ -444,7 +444,7 @@ class WinSys {
 
 	// caml_win32_rename: MoveFileEx replacing the target, a directory over an
 	// empty directory, never a directory over a file
-	public static function rename(path:String, newPath:String):Bool {
+	@:hxmc.unsafe(gc) public static function rename(path:String, newPath:String):Bool {
 		var a = wide(path), b = wide(newPath);
 		var ok = renameW(a, b);
 		LibC.free(a);
@@ -473,7 +473,7 @@ class WinSys {
 	static inline var FIND_NAME = 44;
 
 	// Sys.readdir (caml_read_directory: FindFirstFile over dir\*)
-	public static function readDirectory(path:String):Array<String> {
+	@:hxmc.unsafe(gc) public static function readDirectory(path:String):Array<String> {
 		var n = Str.len(path);
 		var last = n > 0 ? Str.unit(path, n - 1) : 0;
 		var pat = n > 0 && last != "/".code && last != "\\".code && last != ":".code ? Str.concat(path, "\\*") : Str.concat(path, "*");
@@ -498,7 +498,7 @@ class WinSys {
 	}
 
 	// Extc.get_full_path: GetFullPathName (the file need not exist)
-	public static function fullPath(path:String):String {
+	@:hxmc.unsafe(gc) public static function fullPath(path:String):String {
 		var p = wide(path);
 		var n = Win32.GetFullPathNameW(p, 0, Ptr.nil(), Ptr.nil());
 		if (n == 0) {
@@ -515,7 +515,7 @@ class WinSys {
 
 	// Extc.get_real_path: the full path with the drive letter upper-cased and
 	// each existing component as the file system spells it
-	public static function realPath(path:String):String {
+	@:hxmc.unsafe(gc) public static function realPath(path:String):String {
 		var p = wide(path);
 		var out = realPathW(p);
 		LibC.free(p);
@@ -573,7 +573,7 @@ class WinSys {
 
 	// Unix.stat as Windows' C runtime fills it (uid, gid, ino: 0)
 	// gid uid atime mtime ctime dev ino nlink rdev size mode
-	public static function stat(path:String):Array<Float> {
+	@:hxmc.unsafe(gc) public static function stat(path:String):Array<Float> {
 		var p = wide(path);
 		var st = Mem.stack(64);
 		var r = pathStat(p, st);
@@ -591,7 +591,7 @@ class WinSys {
 
 	// GetFileTime's FILETIMEs (100 ns units from 1601) of the file or
 	// directory (FILE_FLAG_BACKUP_SEMANTICS) the path names, links followed
-	public static function statTimes(path:String):Array<Float> {
+	@:hxmc.unsafe(gc) public static function statTimes(path:String):Array<Float> {
 		var p = wide(path);
 		// FILE_READ_ATTRIBUTES, FILE_SHARE_READ | WRITE | DELETE, OPEN_EXISTING
 		var h = Win32.CreateFileW(p, 0x80, 7, Ptr.nil(), 3, 0x02000000, Ptr.nil());
@@ -698,7 +698,7 @@ class WinSys {
 
 	// cwd: CreateProcess's lpCurrentDirectory; env ("name=value", sorted):
 	// its lpEnvironment, a UTF-16 block (CREATE_UNICODE_ENVIRONMENT)
-	public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
+	@:hxmc.unsafe(gc) public static function processRun(cmd:String, args:Array<String>, fds:Array<Int>, cwd:String, env:Array<String>):Int {
 		var line:String;
 		var exe:Ptr;
 		var ext = wide(".exe");
@@ -839,7 +839,7 @@ class WinSys {
 
 	// the exit code (Windows exit codes are 32 bits: a negative Int for codes
 	// such as 0xC0000005), or -1 while the process runs
-	public static function processWait(pid:Int, block:Bool):Int {
+	@:hxmc.unsafe(gc) public static function processWait(pid:Int, block:Bool):Int {
 		var h = procHandle(pid);
 		if (h.isNull()) return -1;
 		var region = Leaf.rt_blocking_enter();

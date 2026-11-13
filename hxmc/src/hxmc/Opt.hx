@@ -20,8 +20,13 @@ using core.ds.VectorTools;
 //    loop writes it. A load of the address a dominating store wrote, in
 //    the version the store left, takes the stored value.
 //  - dead code: pure operations and loads nothing uses.
-//  - branches decided by a dominating branch on the same comparison, and
-//    a span's element checks a loop proves (inRange).
+//  - branches decided by a dominating branch on the same comparison, or by
+//    the cases of a switch that lead there, and a span's element checks a
+//    loop proves (inRange); then, once branches were decided, redundancy
+//    elimination again (a load in one of two ways that now dominates its
+//    repetition).
+//  - jump threading: a join's phi of a constant tested by a branch or a
+//    switch, the constant's edge straight to its target.
 //  - loop-invariant code motion: pure operations, and loads that cannot
 //    fault of memory the loop does not write, move to a block before the
 //    loop.
@@ -103,29 +108,11 @@ class Opt {
 		simplifyCfg();
 		var cfg = f.cfg();
 		if (cfg.size == 0) return;
-		repl = MFunc.iota(f.vals.length);
-		// copies are their operand
-		for (bb in f.blocks)
-			for (i in bb.ins)
-				if (i.op == Copy && !i.dead) {
-					repl[i.id] = i.a;
-					i.dead = true;
-				}
-		ver = MFunc.ints(f.vals.length, 0);
-		// (functions with a try: a handler block, reached by setjmp's second
-		// return, starts with new memory versions, so no load from before
-		// is reused there; values computed before setjmp are immutable and
-		// live across it in memory or callee-saved registers)
-		{
-			versions(cfg);
-			canonicalize();
-			gvn(cfg);
-			forwardStores();
-		}
-		rewrite();
-		dce();
-		// (branches on comparisons of constants: inlined arguments)
-		if (cmpFolded) {
+		redundancy(cfg);
+		// (branches on comparisons of constants: inlined arguments; and a join
+		// branching on a phi of a constant, threaded so that condProp reads
+		// the comparisons it joins)
+		if (cmpFolded || constJoin()) {
 			simplifyCfg();
 			pruneBlocks();
 			mergeBlocks();
@@ -141,6 +128,18 @@ class Opt {
 			simplifyCfg();
 			dce();
 		}
+		// (branches decided: a load in what was one of two ways may now
+		// dominate its repetition, a view's read after its caller's test
+		// of the same header, TypeView; once more, then the branches again)
+		if (rounds > 1) {
+			redundancy(f.cfg());
+			if (condProp()) {
+				pruneBlocks();
+				mergeBlocks();
+				simplifyCfg();
+				dce();
+			}
+		}
 		if (nullsDropped) dce();
 		if (licmOn)
 			for (_ in 0...3)
@@ -149,6 +148,29 @@ class Opt {
 			freshTargets();
 			loneBarrierOperands();
 		}
+	}
+
+	// redundancy elimination (gvn) and store forwarding, then the operands rewritten
+	function redundancy(cfg:Cfg<MBlock>) {
+		repl = MFunc.iota(f.vals.length);
+		// copies are their operand
+		for (bb in f.blocks)
+			for (i in bb.ins)
+				if (i.op == Copy && !i.dead) {
+					repl[i.id] = i.a;
+					i.dead = true;
+				}
+		ver = MFunc.ints(f.vals.length, 0);
+		// (functions with a try: a handler block, reached by setjmp's second
+		// return, starts with new memory versions, so no load from before
+		// is reused there; values computed before setjmp are immutable and
+		// live across it in memory or callee-saved registers)
+		versions(cfg);
+		canonicalize();
+		gvn(cfg);
+		forwardStores();
+		rewrite();
+		dce();
 	}
 
 	static var licmOn = true; // (the build's, Options.apply)
@@ -385,6 +407,7 @@ class Opt {
 		var vals = f.vals;
 		// the facts in force: comparison (cond, a, b) is `val`
 		var fc:Array<Int> = [], fa:Array<Int> = [], fb:Array<Int> = [], fv:Array<Bool> = [];
+		var sets:Array<Array<Int>> = []; // (SWITCH_IN facts' cases, by fb)
 		var changed = false;
 		var stack = [0], state = [0], depth:Array<Int> = [];
 		while (stack.length > 0) {
@@ -411,6 +434,16 @@ class Opt {
 							fb.push(-1);
 							fv.push(b == t.targets[0]);
 						}
+					} else if (t != null && t.op == Switch && t.targets[t.targets.length - 1] != b) {
+						// (a switch's cases: the value is one of those that come here)
+						var ks = [for (q in 0...t.cases.length) if (t.targets[q] == b) t.cases[q]];
+						if (ks.length > 0) {
+							fc.push(SWITCH_IN);
+							fa.push(t.a);
+							fb.push(sets.length);
+							fv.push(true);
+							sets.push(ks);
+						}
 					}
 				}
 				// (object-level: null tests already made or decided)
@@ -427,7 +460,8 @@ class Opt {
 						}
 					}
 				var t = b.term();
-				if (t != null && t.op == Br && t.targets[0] != t.targets[1] && fc.length > 0) {
+				// (a range check of all of a span holds with no fact: fits)
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1] && (fc.length > 0 || vals[t.a].op == Cmp && vals[t.a].imm == (CULt : Int))) {
 					var c = vals[t.a];
 					{
 						var known = 0; // 1 true, 2 false
@@ -437,6 +471,10 @@ class Opt {
 								// (a comparison of that value with null)
 								if (c.op == Cmp && isEqNe(c.imm) && (c.a == fa[k] && isZero(c.b) || c.b == fa[k] && isZero(c.a)))
 									known = c.imm == (CNe : Int) ? 1 : 2;
+								continue;
+							}
+							if (fc[k] == SWITCH_IN) {
+								if (c.op == Cmp && isEqNe(c.imm)) known = switchCase(c, k, sets[fb[k]], fc, fa, fb, fv);
 								continue;
 							}
 							if (fc[k] == -1 || c.op != Cmp) {
@@ -455,6 +493,8 @@ class Opt {
 						// (a span's element check a loop proves: Mem.spanUlt)
 						if (known == 0 && c.op == Cmp && c.imm2 == MIns.SPAN_CHECK && inRange(c, cfg, fc, fa, fb, fv))
 							known = c.imm == (CULt : Int) ? 1 : 2;
+						// (a range check FnLower made, of a sub, blit or fill)
+						if (known == 0 && c.op == Cmp && fits(c, cfg, fc, fa, fb, fv)) known = 2;
 						if (known != 0) {
 							var keep = known == 1 ? t.targets[0] : t.targets[1];
 							var drop = known == 1 ? t.targets[1] : t.targets[0];
@@ -490,6 +530,41 @@ class Opt {
 		}
 		if (changed) f.edited();
 		return changed;
+	}
+
+	// a comparison c of a switch's value with a constant (x == q, x != q)
+	// decided by the switch's cases that lead here, ks (fact k), less those
+	// a later fact excludes (x != y on the way: `t == 2 || t == 4` in the
+	// case of 2 and 4): 1 true, 2 false, 0 unknown
+	function switchCase(c:MIns, k:Int, ks:Array<Int>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Int {
+		var s = fa[k];
+		var q = sameVal(c.a, s) ? intConst(c.b) : sameVal(c.b, s) ? intConst(c.a) : null;
+		if (q == null) return 0;
+		var left = [];
+		for (x in ks) {
+			var out = false;
+			for (j in k + 1...fc.length)
+				if ((fc[j] == (CEq : Int) && !fv[j] || fc[j] == (CNe : Int) && fv[j])
+					&& (sameVal(fa[j], s) && intConst(fb[j]) == x || sameVal(fb[j], s) && intConst(fa[j]) == x))
+					out = true;
+			if (!out) left.push(x);
+		}
+		var eq = left.indexOf(Std.int(q)) < 0 ? 2 : left.length == 1 ? 1 : 0;
+		return eq == 0 ? 0 : (eq == 1) == (c.imm == (CEq : Int)) ? 1 : 2;
+	}
+
+	// Whether a join branches on a phi with a constant operand: `a || b`,
+	// whose `true` the first simplifyCfg saw as a copy
+	function constJoin():Bool {
+		for (b in f.blocks) {
+			var n = b.ins.length;
+			if (n < 2 || n > 4 || b.ins[0].op != Phi || b.ins[n - 1].op != Br) continue;
+			for (a in b.ins[0].args) {
+				var x = f.vals[a];
+				if (x.op == Const && x.sym == null) return true;
+			}
+		}
+		return false;
 	}
 
 	var nullsDropped = false;
@@ -597,26 +672,8 @@ class Opt {
 		if (c.imm != (CULt : Int) && c.imm != (CUGe : Int)) return false;
 		var i = c.a, n = c.b;
 		if (f.vals[i].ty != I32) return false;
-		// (the facts as x < y (lt) or x <= y)
-		var lx:Array<Int> = [], ly:Array<Int> = [], strict:Array<Bool> = [];
-		inline function rel(x:Int, y:Int, lt:Bool) {
-			lx.push(x);
-			ly.push(y);
-			strict.push(lt);
-		}
-		for (k in 0...fc.length) {
-			var a = fa[k], b = fb[k], v = fv[k];
-			switch fc[k] {
-				case CLt: if (v) rel(a, b, true) else rel(b, a, false);
-				case CLe: if (v) rel(a, b, false) else rel(b, a, true);
-				case CGt: if (v) rel(b, a, true) else rel(a, b, false);
-				case CGe: if (v) rel(b, a, false) else rel(a, b, true);
-				case CEq | CNe if (v == (fc[k] == (CEq : Int))):
-					rel(a, b, false);
-					rel(b, a, false);
-				case _:
-			}
-		}
+		var r = relations(fc, fa, fb, fv);
+		var lx = r.lx, ly = r.ly, strict = r.strict;
 		var lt = false;
 		for (k in 0...lx.length) {
 			if (lx[k] != i) continue;
@@ -625,8 +682,9 @@ class Opt {
 				if (lx[j] == ly[k] && ly[j] == n && (strict[k] || strict[j])) lt = true;
 			if (lt) break;
 		}
-		if (lt && nonNeg(i, cfg, 0)) return true;
+		if (lt && (nonNeg(i, cfg, 0) || stepped(i, n, cfg))) return true;
 		if (strided(i, n, lx, ly, strict, cfg)) return true;
+		if (window(i, n, lx, ly, strict, cfg)) return true;
 		// (a small block's index: x * s + k with constants s, k >= 0, x never
 		// negative and below a constant, against a length of a constant or
 		// tested against one: `if (s.length < 64) return; for (c in 0...8)
@@ -646,6 +704,180 @@ class Opt {
 		if (constOf(n) > m) return true;
 		for (k in 0...lx.length)
 			if (ly[k] == n && constOf(lx[k]) >= 0 && (strict[k] ? constOf(lx[k]) >= m : constOf(lx[k]) > m)) return true;
+		return false;
+	}
+
+	// the signed facts in force as x < y (strict) or x <= y
+	static function relations(fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):{lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>} {
+		var lx:Array<Int> = [], ly:Array<Int> = [], strict:Array<Bool> = [];
+		inline function rel(x:Int, y:Int, lt:Bool) {
+			lx.push(x);
+			ly.push(y);
+			strict.push(lt);
+		}
+		for (k in 0...fc.length) {
+			var a = fa[k], b = fb[k], v = fv[k];
+			switch fc[k] {
+				case CLt: if (v) rel(a, b, true) else rel(b, a, false);
+				case CLe: if (v) rel(a, b, false) else rel(b, a, true);
+				case CGt: if (v) rel(b, a, true) else rel(a, b, false);
+				case CGe: if (v) rel(b, a, false) else rel(a, b, true);
+				case CEq | CNe if (v == (fc[k] == (CEq : Int))):
+					rel(a, b, false);
+					rel(b, a, false);
+				case _:
+			}
+		}
+		return {lx: lx, ly: ly, strict: strict};
+	}
+
+	// Whether c is a range check FnLower made, ult(sext(n), zext(p) +
+	// zext(q)) (p + q > n: a span's sub, blit, fill), that cannot fail where
+	// it is: for a constant q = k, p <u n - j with n >= j and j >= k - 1
+	// (haxe.io.Bytes' test of a k-byte access, then a view's sub(p, k)), or
+	// p < n - j (signed) with p never negative; for any q, p <= n - q with p
+	// and q never negative (`pos > length - len` tested); p + q a constant
+	// at most n's least value (`if (b.length < 16) return`), or 0 + n (all of
+	// it); p = n - j for a constant q = k <= j, n at least j (`if (n >= 8)
+	// s.getI64(n - 8)`). p is never negative also as a loop's counter stepping
+	// up by s where p < n - c, c >= s - 1, held (`while (i < n - 8) { ...; i +=
+	// 8; }`: stepped); p = x + d for a constant d if x < n - j, j >= d + k - 1,
+	// holds (a step's second word). A negative n passes it too (sext(n) is at
+	// least 2^63), so n - j may wrap there.
+	function fits(c:MIns, cfg:Cfg<MBlock>, fc:Array<Int>, fa:Array<Int>, fb:Array<Int>, fv:Array<Bool>):Bool {
+		if (c.imm != (CULt : Int)) return false;
+		var sn = f.vals[c.a], e = f.vals[c.b];
+		if (sn.op != SExt || sn.ty != I64 || f.vals[sn.a].ty != I32) return false;
+		var n = sn.a;
+		var r = relations(fc, fa, fb, fv);
+		// (p + q a constant: n at least that)
+		if (e.op == Const && e.ty == I64 && e.sym == null) return e.imm2 == 0 && e.imm >= 0 && lowerBound(n, r.lx, r.ly, r.strict) >= e.imm;
+		// (0 + n, all of it: sext(n) < zext(n) never holds, `s.sub(0, s.length)`)
+		if (e.op == ZExt && sameVal(e.a, n)) return true;
+		if (e.op != Add || e.ty != I64) return false;
+		function zextOf(v:Int):Int {
+			var x = f.vals[v];
+			return x.op == ZExt && f.vals[x.a].ty == I32 ? x.a : -1;
+		}
+		function konst(v:Int):Int {
+			var x = f.vals[v];
+			if (x.op == Const && x.ty == I64 && x.sym == null) return x.imm2 == 0 && x.imm >= 0 ? x.imm : -1;
+			var z = zextOf(v);
+			return z >= 0 ? constOf(z) : -1;
+		}
+		var p = zextOf(e.a), qv = e.b;
+		if (p < 0) {
+			p = zextOf(e.b);
+			qv = e.a;
+		}
+		if (p < 0) return false;
+		var k = konst(qv), q = zextOf(qv);
+		if (k < 0 && q < 0) return false;
+		if (constOf(p) == 0 && q >= 0 && sameVal(q, n)) return true;
+		function atLeast0(v:Int):Bool
+			return nonNeg(v, cfg, 0) || lowerBound(v, r.lx, r.ly, r.strict) >= 0 || stepped(v, n, cfg);
+		if (k >= 0) {
+			var px = f.vals[p];
+			if (px.op == Sub && px.ty == I32 && px.a == n && constOf(px.b) >= k && lowerBound(n, r.lx, r.ly, r.strict) >= constOf(px.b)) return true;
+		}
+		// (s = n - j, or n: j)
+		function less(s:Int):Int {
+			if (s == n) return 0;
+			var x = f.vals[s];
+			return x.op == Sub && x.ty == I32 && x.a == n ? constOf(x.b) : -1;
+		}
+		if (k >= 0)
+			for (i in 0...fc.length) {
+				var lt = switch [fc[i], fv[i]] {
+					case [CULt, true] | [CUGe, false]: true;
+					case [CULe, true] | [CUGt, false]: false;
+					case _: continue;
+				}
+				var j = less(fb[i]);
+				if (sameVal(fa[i], p) && j >= (lt ? k - 1 : k) && (j == 0 || lowerBound(n, r.lx, r.ly, r.strict) >= j)) return true;
+			}
+		// (p = x + d, a constant d >= 0: x < n - j with j >= d + k - 1, the
+		// second word of a loop's step)
+		var px = f.vals[p], d = 0, base = p;
+		if (k >= 0 && px.op == Add && px.ty == I32 && constOf(px.b) >= 0 && constOf(px.b) <= 1 << 16) {
+			base = px.a;
+			d = constOf(px.b);
+		}
+		for (i in 0...r.lx.length) {
+			if (!sameVal(r.lx[i], p) && !(d > 0 && sameVal(r.lx[i], base))) continue;
+			var s = r.ly[i];
+			if (k >= 0) {
+				var j = less(s), dd = sameVal(r.lx[i], p) ? 0 : d;
+				if (j >= (r.strict[i] ? k + dd - 1 : k + dd) && atLeast0(dd == 0 ? p : base)) return true;
+			} else {
+				var x = f.vals[s];
+				if (x.op == Sub && x.ty == I32 && x.a == n && x.b == q && atLeast0(p) && atLeast0(q)) return true;
+			}
+		}
+		return false;
+	}
+
+	// whether v (an I32) is never negative as nonNeg finds it, or as a
+	// loop's counter stepping by a constant s > 0: v + s computed where a
+	// dominating branch found v < n - c with c >= s - 1 (or v <= n - c, c >=
+	// s), so v + s <= n, no wrap (n a span's length, never negative); a phi
+	// of such counters too (a word loop's end, a byte loop's start)
+	function stepped(v:Int, n:Int, cfg:Cfg<MBlock>, depth = 0):Bool {
+		var x = f.vals[v];
+		if (x.ty != I32 || depth > 4) return false;
+		if (x.op == Const) return x.sym == null && x.imm >= 0;
+		if (x.op != Phi) return false;
+		for (a in x.args) {
+			if (a == v) continue;
+			var y = f.vals[a];
+			var s = y.op == Add && y.ty == I32 ? (y.a == v ? constOf(y.b) : y.b == v ? constOf(y.a) : -1) : -1;
+			if (s == 1) {
+				if (!belowSome(v, y.block, cfg)) return false;
+			} else if (s > 1 && s <= 1 << 16) {
+				if (!belowLength(v, y.block, n, s, cfg)) return false;
+			} else if (!stepped(a, n, cfg, depth + 1)) return false;
+		}
+		return true;
+	}
+
+	// whether a branch dominating block b found v < n - c (c >= s - 1) or v <= n - c (c >= s)
+	function belowLength(v:Int, b:MBlock, n:Int, s:Int, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		inline function less(y:Int):Int {
+			var z = f.vals[y];
+			return z.op == Sub && z.ty == I32 && z.a == n ? constOf(z.b) : -1;
+		}
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead) {
+						// (v < y or v <= y, as the branch found it)
+						var y = -1, strict = false;
+						switch c.imm {
+							case CLt if (taken && c.a == v): y = c.b; strict = true;
+							case CGe if (!taken && c.a == v): y = c.b; strict = true;
+							case CLe if (taken && c.a == v): y = c.b;
+							case CGt if (!taken && c.a == v): y = c.b;
+							case CGt if (taken && c.b == v): y = c.a; strict = true;
+							case CLe if (!taken && c.b == v): y = c.a; strict = true;
+							case CGe if (taken && c.b == v): y = c.a;
+							case CLt if (!taken && c.b == v): y = c.a;
+							case _:
+						}
+						if (y >= 0) {
+							var j = less(y);
+							if (j >= 0 && j >= (strict ? s - 1 : s)) return true;
+						}
+					}
+				}
+			}
+			k = idom[k];
+		}
 		return false;
 	}
 
@@ -685,6 +917,83 @@ class Opt {
 				if (y.op == Sar && y.ty == I32 && y.a == m && constOf(y.b) == j) return true;
 			}
 		return false;
+	}
+
+	// (a window's index: p + k, or p, against n, where 0 <= p <= n - m,
+	// 0 <= k < m (0 < m for p alone) and m <= n: then n - m cannot wrap, and
+	// p + k <= n - 1; m units compared from each p, Str.find's `c[i + k]`.
+	// p may be a counter: up from values never negative, or down from
+	// values at most n - m)
+	function window(i:Int, n:Int, lx:Array<Int>, ly:Array<Int>, strict:Array<Bool>, cfg:Cfg<MBlock>):Bool {
+		function holds(x:Int, y:Int, lt:Bool):Bool {
+			for (q in 0...lx.length)
+				if (sameVal(lx[q], x) && ly[q] == y && (strict[q] || !lt)) return true;
+			return false;
+		}
+		// (tested against a constant >= 0)
+		function tested(v:Int):Bool {
+			for (q in 0...lx.length)
+				if (ly[q] == v && constOf(lx[q]) >= 0) return true;
+			return false;
+		}
+		function nonNegHere(v:Int):Bool {
+			if (nonNeg(v, cfg, 0) || tested(v)) return true;
+			var x = f.vals[v];
+			if (x.op != Phi || x.ty != I32) return false;
+			// (an operand as its edge brings it: tested where it leaves its block,
+			// not here, which tests this iteration's values)
+			for (j in 0...x.args.length) {
+				var a = x.args[j];
+				if (a == v) continue;
+				var y = f.vals[a];
+				var up = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
+				if (up ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, 0) && !nonNegAt(a, x.block.preds[j], cfg)) return false;
+			}
+			return true;
+		}
+		// (v <= s, or v < s + 1: no wrap, s = n - m <= n - 1)
+		function atMost(v:Int, s:Int):Bool {
+			if (holds(v, s, false)) return true;
+			for (q in 0...lx.length) {
+				var y = f.vals[ly[q]];
+				if (lx[q] == v && strict[q] && y.op == Add && (y.a == s && isOne(y.b) || y.b == s && isOne(y.a))) return true;
+			}
+			var x = f.vals[v];
+			if (x.op != Phi || x.ty != I32) return false;
+			// (s = n - m the same in every iteration: n and m defined before the
+			// phi's block, which a loop's header dominates; each operand at most s
+			// where its edge leaves, not where this iteration tests its own; 0
+			// is, as m <= n)
+			var pb = cfg.index(x.block), sv = f.vals[s];
+			inline function before(w:Int):Bool {
+				var wb = cfg.index(f.vals[w].block);
+				return wb != pb && cfg.dominates(wb, pb);
+			}
+			if (!before(sv.a) || !before(sv.b)) return false;
+			for (j in 0...x.args.length) {
+				var a = x.args[j];
+				if (a == v) continue;
+				var y = f.vals[a];
+				var down = y.op == Sub && y.a == v && isOne(y.b) || y.op == Add && (y.a == v && isConst(y.b, -1) || y.b == v && isConst(y.a, -1));
+				if (down ? !aboveSome(v, y.block, cfg) : !isConst(a, 0) && !atMostAt(a, s, x.block.preds[j], cfg)) return false;
+			}
+			return true;
+		}
+		function at(p:Int, k:Int):Bool {
+			if (!nonNegHere(p) || k >= 0 && !nonNegHere(k)) return false;
+			for (q in 0...lx.length) {
+				var s = f.vals[ly[q]];
+				if (s.op == Add && s.ty == I32) s = f.vals[isOne(s.b) ? s.a : s.b];
+				if (s.op != Sub || s.ty != I32 || s.a != n || !atMost(p, s.id)) continue;
+				var m = s.b;
+				if (!holds(m, n, false)) continue;
+				if (k >= 0 ? holds(k, m, true) : lowerBound(m, lx, ly, strict) >= 1) return true;
+			}
+			return false;
+		}
+		var x = f.vals[i];
+		if (x.op == Add && x.ty == I32) return at(x.a, x.b) || at(x.b, x.a);
+		return at(i, -1);
 	}
 
 	// the least value n (an I32) has where the facts hold: a constant, or a
@@ -754,7 +1063,13 @@ class Opt {
 	function sameVal(a:Int, b:Int):Bool {
 		if (a == b) return true;
 		if (a < 0 || b < 0) return false;
+		// (through copies: a merged block's phis)
 		var x = f.vals[a], y = f.vals[b];
+		while (x.op == Copy && x.a >= 0)
+			x = f.vals[x.a];
+		while (y.op == Copy && y.a >= 0)
+			y = f.vals[y.a];
+		if (x == y) return true;
 		return x.op == Const && y.op == Const && x.ty == y.ty && x.sym == null && y.sym == null && x.imm == y.imm && x.imm2 == y.imm2;
 	}
 
@@ -818,6 +1133,95 @@ class Opt {
 		return false;
 	}
 
+	// whether a branch dominating block b found v <= s or v < s
+	function atMostAt(v:Int, s:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CLe | CLt if (taken && c.a == v && c.b == s): return true;
+							case CGt | CGe if (!taken && c.a == v && c.b == s): return true;
+							case CGe | CGt if (taken && c.a == s && c.b == v): return true;
+							case CLt | CLe if (!taken && c.a == s && c.b == v): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	// whether a branch dominating block b found k <= v for a constant k >= 0
+	function nonNegAt(v:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CGe | CGt if (taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLt | CLe if (!taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLe | CLt if (taken && c.b == v && constOf(c.a) >= 0): return true;
+							case CGt | CGe if (!taken && c.b == v && constOf(c.a) >= 0): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	// whether a branch dominating block b found v above some value: v > y,
+	// or v >= k for a constant k >= 0 (a counter's decrement there cannot
+	// wrap)
+	function aboveSome(v:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CGt if (taken && c.a == v): return true;
+							case CLe if (!taken && c.a == v): return true;
+							case CLt if (taken && c.b == v): return true;
+							case CGe if (!taken && c.b == v): return true;
+							case CGe if (taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLt if (!taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLe if (taken && c.b == v && constOf(c.a) >= 0): return true;
+							case CGt if (!taken && c.b == v && constOf(c.a) >= 0): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	inline function isConst(v:Int, k:Int):Bool {
+		var c = f.vals[v];
+		return c.op == Const && c.ty == I32 && c.sym == null && c.imm == k;
+	}
+
 	static inline function isEqNe(c:Int):Bool
 		return c == (CEq : Int) || c == (CNe : Int);
 
@@ -863,11 +1267,13 @@ class Opt {
 			b.succs = [keep];
 		}
 		knownPhiArgs();
+		// (a join's phi and the switch on it in the block it jumps to: one block)
+		mergeBlocks();
 		// (the blocks that may be threaded: a phi first, a branch last)
 		var any = false;
 		for (b in f.blocks) {
 			var n = b.ins.length;
-			if (n >= 2 && n <= 4 && b.ins[0].op == Phi && b.ins[n - 1].op == Br) {
+			if (n >= 2 && n <= 4 && b.ins[0].op == Phi && (b.ins[n - 1].op == Br || n <= 3 && b.ins[n - 1].op == Switch)) {
 				any = true;
 				break;
 			}
@@ -899,6 +1305,38 @@ class Opt {
 			var n = ins.length;
 			if (n < 2 || n > 4) continue;
 			var phi = ins[0], br = ins[n - 1];
+			// (a switch on a phi, or on its copy: a constant operand's edge to
+			// its case, as TypeView.of's of null)
+			if (n <= 3 && phi.op == Phi && br.op == Switch && uses[phi.id] == 1
+				&& (n == 2 && br.a == phi.id || n == 3 && ins[1].op == Copy && ins[1].a == phi.id && br.a == ins[1].id && uses[ins[1].id] == 1)) {
+				var k = 0;
+				while (k < b.preds.length) {
+					var p = b.preds[k], x = vals[phi.args[k]];
+					var to = br.targets[br.targets.length - 1];
+					if (x.op == Const && x.sym == null && x.ty == I32)
+						for (q in 0...br.cases.length)
+							if (br.cases[q] == x.imm) {
+								to = br.targets[q];
+								break;
+							}
+					if (x.op != Const || x.sym != null || x.ty != I32 || to == b || hasPhi(to) && to.preds.indexOf(p) >= 0) {
+						k++;
+						continue;
+					}
+					var j = to.preds.indexOf(b);
+					for (i in to.ins)
+						if (i.op == Phi) {
+							i.addArg(i.args[j]);
+							uses[i.args[j]]++;
+						}
+					retarget(p, b, to);
+					b.preds.splice(k, 1);
+					phi.removeArg(k);
+					uses[x.id]--;
+					threaded = true;
+				}
+				continue;
+			}
 			if (phi.op != Phi || br.op != Br || uses[phi.id] != 1) continue;
 			var onZero:MBlock, onSet:MBlock;
 			if (n == 2) {
@@ -1365,8 +1803,11 @@ class Opt {
 				}
 			case TlsStore: 1 << tlsClass(i.sym);
 			// (one during which nothing collects leaves the shadow-stack slots as they are)
+			// (a kernel that writes no static: scalar and thread-local statics
+			// as they were, FuncInfo.writesStatics)
 			case Call if (i.returnsTwice || i.sym == null || !readOnly.exists(i.sym)):
-				EVERY & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1);
+				EVERY & ~(1 << MConst) & (i.keepsFrame && !i.returnsTwice ? ~((1 << MFrame) | FRAME_BITS) : -1)
+					& (i.keepsStatics && !i.returnsTwice ? ~((1 << MScalar) | (1 << MTls)) : -1);
 			case _: 0;
 		};
 	}
@@ -1467,6 +1908,7 @@ class Opt {
 	}
 
 	static inline var NONNULL = -2; // (condProp: a fact that fa is not null)
+	static inline var SWITCH_IN = -3; // (condProp: fa is one of the cases sets[fb])
 
 	inline function isZero(v:Int):Bool {
 		var x = f.vals[v];
@@ -1682,7 +2124,25 @@ class Opt {
 					any = true;
 				}
 		if (any) o.rewrite();
+		o.indexed();
 		o.dce();
+	}
+
+	// an access at x + y, of no index: at base x, index y (as Mem's raw
+	// accesses make it, which the back ends encode in the access; a span's
+	// element at a sub's start, hxmc.rt.Bytes' accessors)
+	function indexed() {
+		for (b in f.blocks)
+			for (i in b.ins)
+				if ((i.op == Load || i.op == Store) && !i.dead && i.b < 0 && i.sym == null) {
+					var x = f.vals[i.a];
+					if (x.op != Add || x.ty != I64 || x.dead) continue;
+					var l = f.vals[x.a], r = f.vals[x.b];
+					if (l.op == Const || r.op == Const || l.ty != I64 || r.ty != I64) continue;
+					i.a = x.a;
+					i.b = x.b;
+					i.imm2 = 1;
+				}
 	}
 
 	// ---- if-conversion
@@ -2010,6 +2470,8 @@ class Opt {
 						if (fold(i)) cmpFolded = true;
 						continue;
 					}
+					// (a division may trap: not pure, but of constants folded)
+					if ((op == UDiv || op == URem) && fold(i)) continue;
 					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0)) continue;
 					// (a vector constant folded is still numbered: one for its copies)
 					if (fold(i) && i.op != VConst) continue;
@@ -2110,6 +2572,14 @@ class Opt {
 					case _: a >>> n;
 				};
 				return set(r.low, r.high);
+			// (a span reinterpreted: its length times one size over the other;
+			// of words below 2^31 or 2^63, where unsigned is signed)
+			case UDiv | URem if (plain(x) && plain(y) && x.ty == i.ty && y.ty == i.ty):
+				var a = i.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);
+				var b = i.ty == I64 ? haxe.Int64.make(y.imm2, y.imm) : haxe.Int64.ofInt(y.imm);
+				if (a < 0 || b <= 0) return false;
+				var r = i.op == UDiv ? a / b : a % b;
+				return set(r.low, i.ty == I64 ? r.high : 0);
 			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
 				// (signed and unsigned order of two words, 32 or 64 bits)
 				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);

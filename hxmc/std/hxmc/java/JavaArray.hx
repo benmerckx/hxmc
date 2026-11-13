@@ -46,10 +46,10 @@ abstract JavaArray<T>(Dynamic) {
 	// the elements [pos, pos + n) of a primitive array (type code t: 1
 	// boolean, 2 byte, 3 char, 4 short, 5 int, 6 long, 7 float, 8 double)
 	// copied to or from memory at p (Get/Set<Type>ArrayRegion)
-	public inline function getRegion(t:Int, pos:Int, n:Int, p:Ptr):Void
+	@:hxmc.unsafe(gc) public inline function getRegion(t:Int, pos:Int, n:Int, p:Ptr):Void
 		Impl.region(this, t, pos, n, p, false);
 
-	public inline function setRegion(t:Int, pos:Int, n:Int, p:Ptr):Void
+	@:hxmc.unsafe(gc) public inline function setRegion(t:Int, pos:Int, n:Int, p:Ptr):Void
 		Impl.region(this, t, pos, n, p, true);
 }
 
@@ -84,7 +84,7 @@ private class Impl {
 		if (JavaException.available()) hxmc.rt.JniKind.arrayCritical(a, f);
 	}
 
-	public static function region(a:Dynamic, t:Int, pos:Int, n:Int, p:Ptr, write:Bool):Void {
+	@:hxmc.unsafe(gc) public static function region(a:Dynamic, t:Int, pos:Int, n:Int, p:Ptr, write:Bool):Void {
 		check();
 		if (JavaException.available()) hxmc.rt.JniKind.arrayRegion(a, t, pos, n, p, write);
 	}

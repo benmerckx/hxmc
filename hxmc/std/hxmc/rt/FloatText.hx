@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
@@ -29,13 +30,13 @@ class FloatText {
 
 	// ---- big integers: int32 length at 0, limbs (little-endian) from 8
 
-	static inline function blen(b:Ptr):Int
+	@:hxmc.unsafe(gc) static inline function blen(b:Ptr):Int
 		return Mem.getI32(b, 0);
 
-	static inline function limb(b:Ptr, i:Int):I64
+	@:hxmc.unsafe(gc) static inline function limb(b:Ptr, i:Int):I64
 		return (Mem.getI32(b, 8 + 4 * i) : I64) & m32();
 
-	static inline function setLimb(b:Ptr, i:Int, v:I64)
+	@:hxmc.unsafe(gc) static inline function setLimb(b:Ptr, i:Int, v:I64)
 		Mem.setI32(b, 8 + 4 * i, v.toInt());
 
 	@:hxmc.unsafe static function bset(b:Ptr, v:I64) {
@@ -78,7 +79,7 @@ class FloatText {
 		var p = Mem.stack(64);
 		for (i in 0...msg.length)
 			Mem.setI8(p, i, StringTools.fastCodeAt(msg, i));
-		if (Mem.os() == 2) {
+		if (Platform.os() == 2) {
 			hxmc.unsafe.Win32._write(2, p, msg.length);
 			hxmc.unsafe.Win32.exit(70);
 		} else {
@@ -161,19 +162,13 @@ class FloatText {
 
 	// ---- doubles
 
-	@:hxmc.unsafe static function bits(v:Float):I64 {
-		var t = Mem.stack(8);
-		Mem.setF64(t, 0, v);
-		return Mem.getI64(t, 0);
-	}
+	@:hxmc.kernel static function bits(v:Float):I64
+		return Mem.f64Bits(v);
 
-	@:hxmc.unsafe static function ofBits(b:I64):Float {
-		var t = Mem.stack(8);
-		Mem.setI64(t, 0, b);
-		return Mem.getF64(t, 0);
-	}
+	@:hxmc.kernel static function ofBits(b:I64):Float
+		return Mem.bitsF64(b);
 
-	@:hxmc.unsafe static inline function inf():Float
+	static inline function inf():Float
 		return ofBits((0x7FF : I64) << 52);
 
 	// is X (dig: decimal digits, nd of them, value 0.d1d2... * 10^e10... as D * 10^k) vs b * 2^f

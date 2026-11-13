@@ -19,7 +19,7 @@ import hxmc.unsafe.Winsock;
 // non-blocking (setBlocking) are remembered here (a malloc'ed table under
 // a spin lock, Names.spin[3]).
 class WinNet {
-	static inline function threads():Int
+	@:hxmc.unsafe(gc) static inline function threads():Int
 		return Mem.getI32(Mem.sym("rt_nthreads"), 0);
 
 	static inline var SOL_SOCKET = 0xffff;
@@ -58,10 +58,10 @@ class WinNet {
 	static inline function sock(fd:Int):I64
 		return fd;
 
-	@:hxmc.unsafe public static function getErrno():Int
+	@:hxmc.kernel public static function getErrno():Int
 		return lastErrno();
 
-	public static function strerror(err:Int):String {
+	@:hxmc.unsafe(gc) public static function strerror(err:Int):String {
 		var s = Winsock.strerror(err);
 		return Str.ofUtf8(s, LibC.strlen(s).toInt());
 	}
@@ -148,7 +148,7 @@ class WinNet {
 		return ret(Winsock.closesocket(sock(fd)));
 	}
 
-	public static function accept(fd:Int):Int {
+	@:hxmc.unsafe(gc) public static function accept(fd:Int):Int {
 		var s = sock(fd);
 		if (cooperative(s) && !waitSock(s, false)) return -1;
 		var a = Mem.stack(128), n = Mem.stack(8);
@@ -177,7 +177,7 @@ class WinNet {
 		return ret(Winsock.bind(sock(fd), a, 16));
 	}
 
-	public static function connect(fd:Int, ip:Int, port:Int):Int {
+	@:hxmc.unsafe(gc) public static function connect(fd:Int, ip:Int, port:Int):Int {
 		var s = sock(fd);
 		if (cooperative(s)) { // a non-blocking connect, then wait until it completes
 			var arg = Mem.stack(8);
@@ -212,7 +212,7 @@ class WinNet {
 	@:hxmc.unsafe public static function listen(fd:Int, n:Int):Int
 		return ret(Winsock.listen(sock(fd), n));
 
-	public static function sockName(fd:Int, peer:Bool):Array<Int> {
+	@:hxmc.unsafe(gc) public static function sockName(fd:Int, peer:Bool):Array<Int> {
 		var s = Mem.stack(128), n = Mem.stack(8);
 		Mem.setI32(n, 0, 128);
 		var r = peer ? Winsock.getpeername(sock(fd), s, n) : Winsock.getsockname(sock(fd), s, n);
@@ -256,7 +256,7 @@ class WinNet {
 	// Winsock's fd_set: u32 fd_count, then the SOCKETs (FD_SETSIZE 64)
 	public static inline var FD_SETSIZE = 64;
 
-	static function toFdset(a:Array<Int>, s:Ptr) {
+	@:hxmc.unsafe(gc) static function toFdset(a:Array<Int>, s:Ptr) {
 		Mem.setI32(s, 0, 0);
 		if (Str.isNull(a)) return;
 		for (i in 0...a.length) {
@@ -272,7 +272,7 @@ class WinNet {
 		}
 	}
 
-	static function fromFdset(a:Array<Int>, s:Ptr) {
+	@:hxmc.unsafe(gc) static function fromFdset(a:Array<Int>, s:Ptr) {
 		if (Str.isNull(a)) return;
 		for (i in 0...a.length) {
 			var fd = sock(a[i]);
@@ -285,7 +285,7 @@ class WinNet {
 
 	// Unix.select: a negative timeout waits forever; Winsock's select fails
 	// without sockets, then the timeout is slept as select would
-	public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
+	@:hxmc.unsafe(gc) public static function select(r:Array<Int>, w:Array<Int>, o:Array<Int>, timeout:Float):Int {
 		var nr = Str.isNull(r) ? 0 : r.length, nw = Str.isNull(w) ? 0 : w.length, no = Str.isNull(o) ? 0 : o.length;
 		if (nr > FD_SETSIZE || nw > FD_SETSIZE || no > FD_SETSIZE) {
 			setLast(EINVAL);
@@ -327,7 +327,7 @@ class WinNet {
 	// differs (wine fails with WSAENOTSOCK, Windows does not), so each entry
 	// is asked first (getsockopt SO_TYPE): one that is not a socket fails as
 	// WSAENOTSOCK does (ENOTSOCK, 128)
-	public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
+	@:hxmc.unsafe(gc) public static function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
 		for (i in 0...n)
 			if (fds[i] >= 0 && !isSocket(fds[i])) {
 				setLast(128);
@@ -382,12 +382,12 @@ class WinNet {
 		return 0;
 	}
 
-	@:hxmc.unsafe public static function blocked():Bool
+	@:hxmc.kernel public static function blocked():Bool
 		return lastErrno() == EAGAIN || lastErrno() == EWOULDBLOCK;
 
 	// a non-blocking connect in progress: WSAEWOULDBLOCK, WSAEINPROGRESS, or
 	// WSAEALREADY for a second one
-	@:hxmc.unsafe public static function inProgress():Bool
+	@:hxmc.kernel public static function inProgress():Bool
 		return lastErrno() == EWOULDBLOCK || lastErrno() == EINPROGRESS || lastErrno() == EALREADY;
 
 	// whether fd is a socket: getsockopt SO_TYPE succeeds
@@ -407,7 +407,7 @@ class WinNet {
 		return x == 0 ? 0 : Winsock.rt_win_sock_errno(x);
 	}
 
-	public static function gethostname():String {
+	@:hxmc.unsafe(gc) public static function gethostname():String {
 		Winsock.rt_win_sockets_init();
 		var buf = Mem.stack(4096);
 		if (Winsock.gethostname(buf, 4095) != 0) {
@@ -425,7 +425,7 @@ class WinNet {
 	@:hxmc.unsafe static function unlockResolver()
 		NetCore.unlockResolver();
 
-	public static function resolve(name:String):Array<Int> {
+	@:hxmc.unsafe(gc) public static function resolve(name:String):Array<Int> {
 		Winsock.rt_win_sockets_init();
 		var n = Str.toUtf8(name);
 		var ip = lookup(n);
@@ -440,7 +440,7 @@ class WinNet {
 	@:hxmc.unsafe static function lookup(n:Ptr):I64
 		return NetCore.lookup(n);
 
-	public static function reverse(ip:Int):String {
+	@:hxmc.unsafe(gc) public static function reverse(ip:Int):String {
 		Winsock.rt_win_sockets_init();
 		var name = reverseLookup(ip);
 		setLast(0);

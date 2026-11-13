@@ -170,10 +170,30 @@ class Com {
 		return raw ? RAW : direct ? DIRECT : CHECKED;
 	}
 
+	// the COM interface of an hxmc.Out<IFoo> (hxmc.com.Out), or null
+	public static function outOf(t:T):Null<TClass> {
+		var p = CInterop.outParam(t);
+		return p == null ? null : ifaceOf(p);
+	}
+
+	// whether @:hxmc.len names the parameter `name` of cf (its address alone then)
+	public static function lenNamed(cf:TClassField, name:String):Bool {
+		for (m in cf.cfMeta)
+			if (core.Meta.metaEq(Custom(":hxmc.len"), m.meta) && m.exprs.length == 2)
+				switch m.exprs[0].expr {
+					case EConst(Ident(n)) if (n == name): return true;
+					case _:
+				}
+		return false;
+	}
+
 	// a value's C form in a COM signature
 	public static function value(t:T):ComValue {
 		var i = ifaceOf(t);
 		if (i != null) return VIface(i);
+		if (KernelCheck.spanOf(t) != null) return VSpan;
+		var o = outOf(t);
+		if (o != null) return VOut(o);
 		switch TFunctions.follow(t) {
 			case TAbstract(a, [p]) if (a.aPath.name == "Null" && a.aPath.pack.length == 0):
 				return value(p);
@@ -192,7 +212,7 @@ class Com {
 	// the C type of a value's form
 	public static function ctypeOf(v:ComValue):CTy
 		return switch v {
-			case VIface(_) | VWStr | VBStr: CPtr;
+			case VIface(_) | VWStr | VBStr | VSpan | VOut(_): CPtr;
 			case VC(ct): ct;
 			case VNone: CNone;
 		}
@@ -210,6 +230,8 @@ class Com {
 				case _:
 			}
 			args.push(ctypeOf(v));
+			// (a span's length after its address, unless @:hxmc.len names another parameter or a minimum)
+			if (v == VSpan && !lenNamed(cf, a.name)) args.push(CPtr);
 		}
 		var r = value(s.ret);
 		var isVoid = switch TFunctions.follow(s.ret) {
@@ -327,5 +349,7 @@ enum ComValue {
 	VWStr; // a String as an LPCWSTR (an [out] one: an LPWSTR of CoTaskMemAlloc)
 	VBStr; // hxmc.com.BStr: a BSTR
 	VC(ct:CTy); // a C value as C interop passes it
+	VSpan; // a span: its address, then its length (a size_t) unless @:hxmc.len gives it
+	VOut(c:TClass); // hxmc.com.Out<IFoo>: the address of a slot C stores an IFoo * in, adopted after the call
 	VNone;
 }

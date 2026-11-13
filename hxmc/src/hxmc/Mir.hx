@@ -283,6 +283,7 @@ enum abstract Cond(Int) to Int from Int {
 	public var noReturn(get, set):Bool; // Call
 	public var returnsTwice(get, set):Bool; // Call (setjmp)
 	public var keepsFrame(get, set):Bool; // Call: nothing collects meanwhile (Opt: the frame's shadow-stack slots keep their values)
+	public var keepsStatics(get, set):Bool; // Call of a kernel that writes no static (FuncInfo.writesStatics: Opt keeps scalar statics' loads)
 	public var variadic = -1; // Call: the first variadic argument of a C function (-1: none)
 	public var argTys:Vector<MTy> = vector(); // Call: the C types of the arguments (I32 stays 32-bit in the ABI)
 	// Call of a C function (MirBuild.cCall), not of the runtime or a Haxe function
@@ -336,6 +337,8 @@ enum abstract Cond(Int) to Int from Int {
 	inline function set_dead(v:Bool):Bool return flag(64, v);
 	inline function get_release():Bool return flags & 128 != 0;
 	inline function set_release(v:Bool):Bool return flag(128, v);
+	inline function get_keepsStatics():Bool return flags & 256 != 0;
+	inline function set_keepsStatics(v:Bool):Bool return flag(256, v);
 
 	public function new(op, ty) {
 		this.op = op;

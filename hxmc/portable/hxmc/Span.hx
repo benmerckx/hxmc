@@ -32,6 +32,14 @@ abstract Span<T>(SpanData) {
 	public inline function sub(pos:Int, len:Int):Span<T>
 		return cast this.sub(pos, len);
 
+	// the 8 or 4 bytes from element i on as one integer (little-endian),
+	// checked as sub(i, 8 / size(T)) is (hxmc.Span.getI64)
+	public inline function getI64(i:Int):I64
+		return this.getI64(i);
+
+	public inline function getI32(i:Int):Int
+		return this.getI32(i);
+
 	// the same bytes as elements of U, the type the result is given:
 	// `var words:Span<Int> = bytes.reinterpret();`
 	public macro function reinterpret(self:Expr):Expr
@@ -52,6 +60,16 @@ abstract Span<T>(SpanData) {
 
 	public inline function compareExchange(i:Int, expected:T, replacement:T):T
 		return this.compareExchange(i, expected, replacement);
+
+	public inline function add(i:Int, v:T):T
+		return this.add(i, v);
+
+	public inline function exchange(i:Int, v:T):T
+		return this.exchange(i, v);
+
+	// (a Bytes of its own: no frame here)
+	public static macro function stack(n:Expr):Expr
+		return SpanData.stackOf(n);
 
 	@:to inline function toReadOnly():ReadOnlySpan<T>
 		return cast this;
@@ -159,6 +177,21 @@ class SpanError extends haxe.Exception {}
 			case _: copy(objs[at + i], v);
 		}
 
+	// (a word of bytes elements: of elements of 1, 2, 4 or 8 bytes, a whole number of them)
+	function words(i:Int, bytes:Int):Int {
+		if (kind == STRUCT || bytes % size != 0) throw new SpanError('a word of $bytes bytes over elements of $size');
+		checkRange(i, Std.int(bytes / size));
+		return off + i * size;
+	}
+
+	public function getI32(i:Int):Int
+		return b.getInt32(words(i, 4));
+
+	public function getI64(i:Int):I64 {
+		var p = words(i, 8);
+		return haxe.Int64.make(b.getInt32(p + 4), b.getInt32(p));
+	}
+
 	public function sub(pos:Int, len:Int):SpanData {
 		checkRange(pos, len);
 		return view(off + pos * size, len, at + pos);
@@ -213,6 +246,22 @@ class SpanError extends haxe.Exception {}
 		return old;
 	}
 
+	public function add(i:Int, v:Dynamic):Dynamic {
+		var old:Dynamic = get(i);
+		switch kind {
+			case I64: set(i, haxe.Int64.add(old, v));
+			case I32 | U8 | I8 | U16 | I16: set(i, (old : Int) + (v : Int));
+			case _: throw new SpanError("add: atomic accesses are of Int, UInt and Int64 elements");
+		}
+		return old;
+	}
+
+	public function exchange(i:Int, v:Dynamic):Dynamic {
+		var old:Dynamic = get(i);
+		set(i, v);
+		return old;
+	}
+
 	// the same bytes as elements of another kind (a struct's: objects of
 	// their own, zeroed, which the bytes do not see)
 	public static function reinterpret(s:SpanData, kind:Int, size:Int, make:() -> Dynamic, copy:(Dynamic, Dynamic) -> Void):SpanData {
@@ -228,6 +277,19 @@ class SpanError extends haxe.Exception {}
 	#if macro
 	public static function hxmcOnly(what:String):Expr
 		return Context.error('$what is hxmc\'s only: an IoBuffer or a Ptr is hxmc.unsafe\'s, which ${Context.definedValue("target.name")} does not have; lend a Bytes (ofBytes)', Context.currentPos());
+
+	// `Span.stack(n)`: n zeroed elements of the type the result is given
+	public static function stackOf(n:Expr):Expr {
+		var pos = Context.currentPos();
+		var want = Context.getExpectedType();
+		var elem = want == null ? null : switch Context.follow(want) {
+			case TAbstract(_.get() => a, [t]) if (a.pack.join(".") == "hxmc" && (a.name == "Span" || a.name == "ReadOnlySpan")): t;
+			case _: null;
+		}
+		if (elem == null) return Context.error("Span.stack: give the result a span type (var t:Span<Int> = Span.stack(8))", pos);
+		var e = element(elem, pos);
+		return macro @:pos(pos) cast hxmc.Span.SpanData.reinterpret(hxmc.Span.SpanData.ofBytes(haxe.io.Bytes.alloc($n * $v{e.size}), 0, -1), $v{e.kind}, $v{e.size}, ${e.make}, ${e.copy});
+	}
 
 	// `self.reinterpret()`: the element type from the type the result is given
 	public static function reinterpretOf(self:Expr):Expr {

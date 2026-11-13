@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.rt.Os.Report;
@@ -20,7 +21,7 @@ class Start {
 	public static var environ:Ptr;
 
 	@:hxmc.export("rt_init") @:hxmc.unsafe static function init(ng:Int, ac:Int, av:Ptr):Void {
-		if (Mem.os() == 2) {
+		if (Platform.os() == 2) {
 			WinRt.init();
 			// the arguments as UTF-8, from the UTF-16 command line (OCaml's
 			// runtime on Windows does the same; main's argv is in the ANSI code
@@ -44,7 +45,7 @@ class Start {
 		}
 		argc = ac;
 		argv = av;
-		if (Mem.target() >= 9) environ = Mem.sym("environ");
+		if (Platform.target() >= 9) environ = Mem.sym("environ");
 		var sbase = Gc.init(ng);
 		Threads.init(sbase);
 		var cap = ng + (Mem.mirHost() == 1 ? Gc.SPARE_GLOBALS : 0);
@@ -66,14 +67,14 @@ class Start {
 		// function to call that is gone, and glibc's dlclose runs a library's
 		// __cxa_atexit functions only through its crtbegin's __cxa_finalize)
 		#if hxmc.shared
-		if (Mem.target() >= 9) U.__cxa_atexit(Callback.addr(Gc.report), Ptr.nil(), Mem.sym("__dso_handle"));
+		if (Platform.target() >= 9) U.__cxa_atexit(Callback.addr(Gc.report), Ptr.nil(), Mem.sym("__dso_handle"));
 		#else
-		if (Mem.target() >= 9) U.__cxa_atexit(Callback.addr(Gc.report), Ptr.nil(), Mem.sym("__dso_handle")) else U.atexit(Callback.addr(Gc.report));
+		if (Platform.target() >= 9) U.__cxa_atexit(Callback.addr(Gc.report), Ptr.nil(), Mem.sym("__dso_handle")) else U.atexit(Callback.addr(Gc.report));
 		#end
 		Faults.init(); // (null accesses throw)
 		// (Linux: the profile of an instrumented program, written at exit)
 		#if (hxmc.llvm_pgo == "gen")
-		if (Mem.os() == 0 && Mem.target() < 9) Pgo.init();
+		if (Platform.os() == 0 && Platform.target() < 9) Pgo.init();
 		#end
 	}
 
@@ -92,9 +93,9 @@ class Start {
 	static var mainFiber:Ptr;
 	static var mainBody:Ptr;
 
-	@:hxmc.export("rt_run_main") static function runMain(body:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_run_main") static function runMain(body:Ptr):Void {
 		var bytes:I64 = (Os.envInt("RT_STACK_MB", Mem.sym("hxmc_stack_flags").toI64().toInt() & 4 != 0 ? 0 : 1024) : I64) << 20;
-		if (Mem.os() == 2) {
+		if (Platform.os() == 2) {
 			var fiber = Ptr.nil();
 			if (!(bytes == 0)) {
 				mainBody = body;
@@ -153,7 +154,7 @@ class Start {
 
 	// the main fiber's entry (Windows): the body, then back to the thread's
 	// own fiber (the program's main returns)
-	@:hxmc.callback static function fiberMain(arg:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.callback static function fiberMain(arg:Ptr):Void {
 		Mem.call0(mainBody);
 		K.SwitchToFiber(mainFiber);
 	}
@@ -169,7 +170,7 @@ class Start {
 	// (objcSuperInit): sets it, the previous value the result
 	@:hxmc.threadLocal static var adopting:Ptr;
 
-	@:hxmc.export("rt_objc_adopt") static function objcAdopt(id:Ptr):Ptr {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_adopt") static function objcAdopt(id:Ptr):Ptr {
 		var prev = adopting;
 		adopting = id;
 		return prev;
@@ -186,13 +187,13 @@ class Start {
 	static function objcDealloc(o:Dynamic):Void
 		Reflect.callMethod(o, Reflect.field(o, "dealloc"), []);
 
-	@:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_objc_unpaired") static function objcUnpaired(what:Ptr):Void {
 		Gc.uncaught("", Str.ofUtf8(what, LibC.strlen(what).toInt()));
 		Stacks.report();
 		Os.exit(1);
 	}
 
-	@:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
 		Gc.exn = Mem.addr(v);
 		var h = Gc.hcur;
 		// (the thrower's stack up to the catch, when exception stacks are read: Stacks)
@@ -205,7 +206,7 @@ class Start {
 		}
 		// the C library's longjmp without the signal mask (as the try's setjmp:
 		// Abi.setjmp); MinGW's setjmp and longjmp without SEH unwinding
-		if (Mem.target() == 5) J.__mingw_longjmp(h, 1) else if (Mem.os() == 2) J.longjmp(h, 1) else J._longjmp(h, 1);
+		if (Platform.target() == 5) J.__mingw_longjmp(h, 1) else if (Platform.os() == 2) J.longjmp(h, 1) else J._longjmp(h, 1);
 	}
 }
 

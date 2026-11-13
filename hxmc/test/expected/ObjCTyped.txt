@@ -1,0 +1,10 @@
+exit 0
+ObjCTyped.hx:97: 21, 21, true, abc
+ObjCTyped.hx:101: 13, 21, 21
+ObjCTyped.hx:104: 3, 4, {_NSRange=QQ}
+ObjCTyped.hx:113: 4, ABC, 0
+ObjCTyped.hx:116: true, 260, NSCocoaErrorDomain
+ObjCTyped.hx:119: true, true, 21
+ObjCTyped.hx:123: true, true
+ObjCTyped.hx:127: [7,5,2]
+ObjCTyped.hx:130: 260

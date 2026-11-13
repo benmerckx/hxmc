@@ -18,13 +18,13 @@ import hxmc.unsafe.*;
 class ThreadApi {
 	// a mutex: the OS mutex, the owner's record (atomic: compared with the
 	// running thread's without the lock), the depth
-	static inline function owner(m:Ptr):Ptr
+	@:hxmc.unsafe(gc) static inline function owner(m:Ptr):Ptr
 		return Ptr.ofI64(Atomic.load64(m.add(Os.MUTEX_BYTES)));
 
-	static inline function setOwner(m:Ptr, t:Ptr)
+	@:hxmc.unsafe(gc) static inline function setOwner(m:Ptr, t:Ptr)
 		Atomic.store64(m.add(Os.MUTEX_BYTES), t.toI64());
 
-	static inline function depthAt(m:Ptr):Ptr
+	@:hxmc.unsafe(gc) static inline function depthAt(m:Ptr):Ptr
 		return m.add(Os.MUTEX_BYTES + 8);
 
 	// a handle's C resource (slot 0)
@@ -49,7 +49,7 @@ class ThreadApi {
 		return Atomic.load32(Mem.sym("rt_nthreads"));
 
 	// threads run in parallel (1:1 build)
-	@:hxmc.unsafe public static function parallel():Bool
+	@:hxmc.kernel public static function parallel():Bool
 		return true;
 
 	@:hxmc.collects public static function yield():Void
@@ -106,14 +106,14 @@ class ThreadApi {
 		LibC.free(p);
 	}
 
-	public static function mutexNew():Dynamic {
+	@:hxmc.unsafe(gc) public static function mutexNew():Dynamic {
 		var m = LibC.malloc(Os.MUTEX_BYTES + 16);
 		LibC.memset(m, 0, Os.MUTEX_BYTES + 16);
 		Os.mutexInit(m);
 		return Gc.nativeNew(m, Callback.addr(freeMutex), 0);
 	}
 
-	@:hxmc.collects public static function mutexAcquire(mo:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.collects public static function mutexAcquire(mo:Dynamic):Void {
 		var m = res(mo);
 		var me:Ptr = Threads.self;
 		if (owner(m) == me) {
@@ -172,7 +172,7 @@ class ThreadApi {
 		LibC.free(p);
 	}
 
-	public static function condNew():Dynamic {
+	@:hxmc.unsafe(gc) public static function condNew():Dynamic {
 		var c = LibC.malloc(Os.COND_BYTES);
 		Os.condInit(c, true);
 		return Gc.nativeNew(c, Callback.addr(freeCond), 0);
@@ -182,7 +182,7 @@ class ThreadApi {
 	// timeout); the calling thread holds mutex mo, which is released meanwhile
 	// (fully) and taken back at the same depth. May wake spuriously (as
 	// pthread conditions).
-	@:hxmc.collects public static function condWait(co:Dynamic, mo:Dynamic, timeout:Float):Bool {
+	@:hxmc.unsafe(gc) @:hxmc.collects public static function condWait(co:Dynamic, mo:Dynamic, timeout:Float):Bool {
 		var c = res(co), m = res(mo);
 		var me:Ptr = Threads.self;
 		if (owner(m) != me) Rt.rt_throw("Condition.wait: the mutex is not held");
@@ -213,7 +213,7 @@ class ThreadApi {
 		LibC.free(p);
 	}
 
-	public static function semNew(value:Int):Dynamic {
+	@:hxmc.unsafe(gc) public static function semNew(value:Int):Dynamic {
 		var s = LibC.malloc(Os.MUTEX_BYTES + Os.COND_BYTES + 8);
 		Os.mutexInit(s);
 		Os.condInit(s.add(Os.MUTEX_BYTES), true);
@@ -222,7 +222,7 @@ class ThreadApi {
 	}
 
 	// takes a unit (true), or times out (false) after timeout seconds (0: just try; < 0: no timeout)
-	@:hxmc.collects public static function semAcquire(so:Dynamic, timeout:Float):Bool {
+	@:hxmc.unsafe(gc) @:hxmc.collects public static function semAcquire(so:Dynamic, timeout:Float):Bool {
 		var s = res(so);
 		var root = Gc.pushRoot(so);
 		var r = semAcquireSafe(s, timeout);
@@ -250,7 +250,7 @@ class ThreadApi {
 		return r;
 	}
 
-	@:hxmc.collects public static function semRelease(so:Dynamic):Void {
+	@:hxmc.unsafe(gc) @:hxmc.collects public static function semRelease(so:Dynamic):Void {
 		var s = res(so);
 		var root = Gc.pushRoot(so);
 		Threads.lockSafe(s);
@@ -273,7 +273,7 @@ class ThreadApi {
 		return !a.isNull() && id >= 0 && id < Mem.getI32(a, -4) ? Mem.getRef(a, 8 * id) : null;
 	}
 
-	public static function tlsSet(id:Int, v:Dynamic):Void {
+	@:hxmc.unsafe(gc) public static function tlsSet(id:Int, v:Dynamic):Void {
 		if (id < 0) return;
 		var a = Threads.self.value.tls;
 		if (a.isNull() || id >= Mem.getI32(a, -4)) {

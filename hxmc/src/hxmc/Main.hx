@@ -235,6 +235,9 @@ class Main {
 		// the runtime's symbols generated code may call by name, defined by the
 		// modules hxmc.rt.Runtime imports for the target, whatever this program calls
 		hxmc.ir.RuntimeSymbols.check(com, abi.wasm ? hxmc.ir.RuntimeSymbols.WASM32 : hxmc.ir.RuntimeSymbols.NATIVE, abi.name);
+		// -D hxmc.header-check=<file>: the declarations checked against C's headers (HeaderCheck)
+		var headerCheck = Options.flag("hxmc.header-check", com.defines);
+		hxmc.ir.HeaderCheck.start(headerCheck);
 		var t0 = haxe.Timer.stamp();
 		// resident: bodies of the fields the server kept are reused (LowerCache)
 		var useCache = Driver.resident && Options.on("hxmc.lower-cache", true, com.defines);
@@ -245,12 +248,15 @@ class Main {
 				lowerSign = sign;
 			}
 		}
+		hxmc.ir.KernelCheck.seconds = 0;
 		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
+			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms');
 			if (useCache)
 				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
+		if (headerCheck != null) hxmc.ir.HeaderCheck.write(headerCheck, abi.name);
 		if (Options.on("hxmc.lower-only", false, com.defines)) return; // (profiling the lowering)
 		if (beforeCodegen != null) {
 			beforeCodegen(com, prog);

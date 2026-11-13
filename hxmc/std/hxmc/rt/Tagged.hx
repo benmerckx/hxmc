@@ -1,6 +1,7 @@
 package hxmc.rt;
 
 import hxmc.I64;
+import hxmc.rt.TypeView;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
 
@@ -81,33 +82,33 @@ class Tagged {
 	// ---- the slow paths of MemLower's Untag: a word of another kind, or a
 	// reference (null, a box: Dynamic's conversions)
 
-	@:hxmc.export("hx_tag_int") @:hxmc.unsafe static function toInt(w:I64):Int {
+	@:hxmc.export("hx_tag_int") @:hxmc.kernel static function toInt(w:Word):Int {
 		if (isInt(w)) return intOf(w);
 		if (isScalar(w)) return Boxes.f2i(floatOf(w));
-		return Boxes.unboxInt(Mem.obj(new Ptr(w)));
+		return Boxes.unboxInt(TypeView.ref(w));
 	}
 
-	@:hxmc.export("hx_tag_float") @:hxmc.unsafe static function toFloat(w:I64):Float {
+	@:hxmc.export("hx_tag_float") @:hxmc.kernel static function toFloat(w:Word):Float {
 		if (isInt(w)) return intOf(w);
 		if (isScalar(w)) return floatOf(w);
-		return Boxes.unboxFloat(Mem.obj(new Ptr(w)));
+		return Boxes.unboxFloat(TypeView.ref(w));
 	}
 
-	@:hxmc.export("hx_tag_bool") @:hxmc.unsafe static function toBool(w:I64):Int {
+	@:hxmc.export("hx_tag_bool") @:hxmc.kernel static function toBool(w:Word):Int {
 		if (isInt(w)) return intOf(w) != 0 ? 1 : 0;
 		if (isScalar(w)) return floatOf(w) != 0 ? 1 : 0;
-		return Boxes.unboxBool(Mem.obj(new Ptr(w)));
+		return Boxes.unboxBool(TypeView.ref(w));
 	}
 
-	@:hxmc.export("hx_tag_i64") @:hxmc.unsafe static function toI64(w:I64):I64 {
+	@:hxmc.export("hx_tag_i64") @:hxmc.kernel static function toI64(w:Word):I64 {
 		if (isInt(w)) return (intOf(w) : I64);
 		if (isScalar(w)) return Boxes.f2l(floatOf(w));
-		return Boxes.unboxI64(Mem.obj(new Ptr(w)));
+		return Boxes.unboxI64(TypeView.ref(w));
 	}
 
 	// the word as Dynamic: a scalar boxed (Boxes: small Ints static), a
 	// reference as it is
-	@:hxmc.export("hx_tag_box") static function box(w:I64):Dynamic {
+	@:hxmc.unsafe(gc) @:hxmc.export("hx_tag_box") static function box(w:I64):Dynamic {
 		if (!isScalar(w)) return Mem.obj(new Ptr(w));
 		if (isInt(w)) return Boxes.boxInt(intOf(w));
 		return Boxes.boxFloat(floatOf(w));
@@ -115,7 +116,7 @@ class Tagged {
 
 	// the value of a word read from a field of kind 't' (a type parameter's:
 	// Dyn.boxSlot), as Dynamic
-	public static inline function dyn(w:I64):Dynamic
+	@:hxmc.unsafe(gc) public static inline function dyn(w:I64):Dynamic
 		return isScalar(w) ? box(w) : Mem.obj(new Ptr(w));
 
 	// a == b of two type parameters' words, as Dynamic's == has them
@@ -124,18 +125,20 @@ class Tagged {
 	// words are equal values but a NaN's; a number's word equals a number
 	// of the other kind, or a box of one, of its value (an Int's an Int64
 	// box of it); references compare as Dynamic's
-	@:hxmc.export("hx_tag_eq_slow") @:hxmc.unsafe public static function eq(a:I64, b:I64):Bool {
+	@:hxmc.export("hx_tag_eq_slow") @:hxmc.unsafe @:hxmc.kernel public static function eq(a:I64, b:I64):Bool
+		return eqWords(cast a, cast b);
+
+	@:hxmc.kernel static function eqWords(a:Word, b:Word):Bool {
 		if (a == b) return a != nanWord();
-		if (isRef(a) && isRef(b)) return Dyn.dynEq(Mem.obj(new Ptr(a)), Mem.obj(new Ptr(b)));
+		if (isRef(a) && isRef(b)) return Dyn.dynEq(TypeView.ref(a), TypeView.ref(b));
 		var s = isRef(a) ? b : a, r = isRef(a) ? a : b;
 		if (isScalar(r)) return numOf(s) == numOf(r);
 		// (a scalar's word and a reference: null, a box, anything else)
-		if (r == (0 : I64)) return false;
-		var o:Dynamic = Mem.obj(new Ptr(r));
-		return switch Types.tindex(o) {
-			case Types.T_BOXINT: numOf(s) == Mem.getI32(Mem.addr(o), 0);
-			case Types.T_BOXFLOAT: numOf(s) == Mem.getF64(Mem.addr(o), 0);
-			case Types.T_BOXI64: isInt(s) && (intOf(s) : I64) == Mem.getI64(Mem.addr(o), 0);
+		var o = TypeView.ref(r);
+		return switch (TypeView.of(o) : Int) {
+			case Types.T_BOXINT: numOf(s) == TypeView.int(o);
+			case Types.T_BOXFLOAT: numOf(s) == TypeView.float(o);
+			case Types.T_BOXI64: isInt(s) && (intOf(s) : I64) == TypeView.i64(o);
 			case _: false;
 		}
 	}
@@ -143,10 +146,10 @@ class Tagged {
 	// Std.isOfType(w, type) of a type parameter's word (FnLower: no box made
 	// for a number's): a reference's as Dyn.isOf tests it, a number's as it
 	// tests the number's box
-	@:hxmc.host("hx_tag_is") @:hxmc.unsafe static function isOf(w:I64, type:Dynamic):Bool {
-		if (isRef(w)) return Dyn.isOf(Mem.obj(new Ptr(w)), type);
-		if (Str.isNull(type)) return false;
-		return switch Types.described(type) {
+	@:hxmc.host("hx_tag_is") @:hxmc.kernel static function isOf(w:Word, type:Dynamic):Bool {
+		if (isRef(w)) return Dyn.isOf(TypeView.ref(w), type);
+		if (TypeView.of(type) != Types.T_TYPEOBJ) return false;
+		return switch (TypeView.described(type) : Int) {
 			case Types.T_NONE | Types.T_BOXFLOAT: true;
 			case Types.T_BOXINT if (isInt(w)): true;
 			case Types.T_BOXINT:
@@ -162,17 +165,10 @@ class Tagged {
 
 	// -D hxmc.verify-tags: a scalar's word reached code that reads it as a
 	// reference (MemLower's operations on objects, Mem.addr in the runtime)
-	@:hxmc.export("rt_tagged_access") @:hxmc.unsafe static function access():Void {
-		#if (hxmc.target == "wasm32-wasi")
-		hxmc.rt.wasm.Wasi.writeLit(2, MSG);
-		hxmc.rt.wasm.Wasi.exit(2);
-		#else
-		var r = new Os.Report(Mem.stack(Os.Report.BYTES));
-		r.str(MSG);
-		r.flush();
-		Os.exit(2);
-		#end
+	@:hxmc.export("rt_tagged_access") @:hxmc.kernel static function access():Void {
+		var b:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(128);
+		Text.fatal(b, Text.lit(b, 0, MSG), 2);
 	}
 
-	static inline var MSG = "hxmc: a tagged word (the value of a type parameter) was read as a reference (-D hxmc.verify-tags)\n";
+	static inline var MSG = "hxmc: a tagged word (the value of a type parameter) was read as a reference (-D hxmc.verify-tags)";
 }

@@ -1,5 +1,6 @@
 package hxmc.rt;
 
+import hxmc.Platform;
 import hxmc.I64;
 import hxmc.rt.C;
 import hxmc.rt.Repr;
@@ -15,7 +16,7 @@ import hxmc.unsafe.Ptr;
 @:keep
 class Date {
 	static inline function windows():Bool
-		return Mem.os() == 2;
+		return Platform.os() == 2;
 
 	// toString, for Std.string of a value of any type (hxmc.rt.Dyn.stdString):
 	// set by `of`, which makes every date (a copy aside: Reflect.copy), so that
@@ -35,7 +36,7 @@ class Date {
 		return windows() ? LibC._mktime64(tm) : LibC.mktime(tm);
 
 	// the broken-down time of `ms` into tm (local or UTC)
-	@:hxmc.unsafe static function breakDown(ms:Float, utc:Bool, tm:Ptr) {
+	@:hxmc.unsafe @:hxmc.kernel static function breakDown(ms:Float, utc:Bool, tm:Ptr) {
 		var t = Mem.stack(8);
 		var s:I64 = cast Math.ffloor(ms / 1000.0);
 		Mem.setI64(t, 0, s);
@@ -86,56 +87,66 @@ class Date {
 	@:hxmc.host("Date_getTime") @:hxmc.unsafe static function getTime(d:Dynamic):Float
 		return ms(d);
 
-	@:hxmc.unsafe static function field(d:Dynamic, utc:Bool, f:Int):Int
-		return Repr.dateField(d, utc, f);
+	// (struct tm in the frame, filled by the C library: breakDownInto)
+	@:hxmc.kernel static function field(d:Dynamic, utc:Bool, f:Int):Int {
+		var tm:hxmc.Span<Int> = hxmc.Span.stack(16);
+		breakDownInto(TypeView.time(d), utc, tm);
+		return tm[f >> 2];
+	}
 
-	@:hxmc.host("Date_getFullYear") @:hxmc.unsafe static function getFullYear(d:Dynamic):Int
+	// breakDown into a span of struct tm's ints (at least 11 of them)
+	@:hxmc.unsafe @:hxmc.kernel static function breakDownInto(ms:Float, utc:Bool, tm:hxmc.Span<Int>) {
+		if (tm.length < 16) return;
+		breakDown(ms, utc, (cast tm : hxmc.Span.SpanData).ptr);
+	}
+
+	@:hxmc.host("Date_getFullYear") @:hxmc.kernel static function getFullYear(d:Dynamic):Int
 		return field(d, false, Repr.F_YEAR) + Repr.YEAR_BASE;
 
-	@:hxmc.host("Date_getMonth") @:hxmc.unsafe static function getMonth(d:Dynamic):Int
+	@:hxmc.host("Date_getMonth") @:hxmc.kernel static function getMonth(d:Dynamic):Int
 		return field(d, false, Repr.F_MON);
 
-	@:hxmc.host("Date_getDate") @:hxmc.unsafe static function getDate(d:Dynamic):Int
+	@:hxmc.host("Date_getDate") @:hxmc.kernel static function getDate(d:Dynamic):Int
 		return field(d, false, Repr.F_MDAY);
 
-	@:hxmc.host("Date_getDay") @:hxmc.unsafe static function getDay(d:Dynamic):Int
+	@:hxmc.host("Date_getDay") @:hxmc.kernel static function getDay(d:Dynamic):Int
 		return field(d, false, Repr.F_WDAY);
 
-	@:hxmc.host("Date_getHours") @:hxmc.unsafe static function getHours(d:Dynamic):Int
+	@:hxmc.host("Date_getHours") @:hxmc.kernel static function getHours(d:Dynamic):Int
 		return field(d, false, Repr.F_HOUR);
 
-	@:hxmc.host("Date_getMinutes") @:hxmc.unsafe static function getMinutes(d:Dynamic):Int
+	@:hxmc.host("Date_getMinutes") @:hxmc.kernel static function getMinutes(d:Dynamic):Int
 		return field(d, false, Repr.F_MIN);
 
-	@:hxmc.host("Date_getSeconds") @:hxmc.unsafe static function getSeconds(d:Dynamic):Int
+	@:hxmc.host("Date_getSeconds") @:hxmc.kernel static function getSeconds(d:Dynamic):Int
 		return field(d, false, Repr.F_SEC);
 
-	@:hxmc.host("Date_getUTCFullYear") @:hxmc.unsafe static function getUTCFullYear(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCFullYear") @:hxmc.kernel static function getUTCFullYear(d:Dynamic):Int
 		return field(d, true, Repr.F_YEAR) + Repr.YEAR_BASE;
 
-	@:hxmc.host("Date_getUTCMonth") @:hxmc.unsafe static function getUTCMonth(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCMonth") @:hxmc.kernel static function getUTCMonth(d:Dynamic):Int
 		return field(d, true, Repr.F_MON);
 
-	@:hxmc.host("Date_getUTCDate") @:hxmc.unsafe static function getUTCDate(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCDate") @:hxmc.kernel static function getUTCDate(d:Dynamic):Int
 		return field(d, true, Repr.F_MDAY);
 
-	@:hxmc.host("Date_getUTCDay") @:hxmc.unsafe static function getUTCDay(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCDay") @:hxmc.kernel static function getUTCDay(d:Dynamic):Int
 		return field(d, true, Repr.F_WDAY);
 
-	@:hxmc.host("Date_getUTCHours") @:hxmc.unsafe static function getUTCHours(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCHours") @:hxmc.kernel static function getUTCHours(d:Dynamic):Int
 		return field(d, true, Repr.F_HOUR);
 
-	@:hxmc.host("Date_getUTCMinutes") @:hxmc.unsafe static function getUTCMinutes(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCMinutes") @:hxmc.kernel static function getUTCMinutes(d:Dynamic):Int
 		return field(d, true, Repr.F_MIN);
 
-	@:hxmc.host("Date_getUTCSeconds") @:hxmc.unsafe static function getUTCSeconds(d:Dynamic):Int
+	@:hxmc.host("Date_getUTCSeconds") @:hxmc.kernel static function getUTCSeconds(d:Dynamic):Int
 		return field(d, true, Repr.F_SEC);
 
 	@:hxmc.host("Date_getTimezoneOffset") @:hxmc.unsafe static function getTimezoneOffset(d:Dynamic):Int
 		return Repr.timezoneOffset(d);
 
 	// "%04d-%02d-%02d %02d:%02d:%02d" of the local time
-	@:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
+	@:hxmc.unsafe(gc) @:hxmc.host("Date_toString") static function toString(d:Dynamic):String {
 		var tm = Repr.dateFields(d);
 		var b = new StringBuf();
 		inline function pad(v:Int, w:Int) {

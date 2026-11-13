@@ -10,7 +10,7 @@ import hxmc.unsafe.UInt8;
 // rest). Bytes: OutsideBounds unless 0 <= pos <= length - n. Spans: checked
 // as their accesses are (a kernel's failure ends the program).
 @:noCompletion class Mem128 {
-	public static inline function loadBytes(b:Bytes, pos:Int):V128 {
+	@:hxmc.unsafe(gc) public static inline function loadBytes(b:Bytes, pos:Int):V128 {
 		if (pos < 0 || pos > b.length - 16) throw haxe.io.Error.OutsideBounds;
 		#if (target.name == "hxmc" && !hxmc.interp)
 		return Simd.load("v128.load", hxmc.unsafe.Mem.addr(@:privateAccess b.b), pos);
@@ -19,7 +19,7 @@ import hxmc.unsafe.UInt8;
 		#end
 	}
 
-	public static inline function loadBytes64(b:Bytes, pos:Int):V128 {
+	@:hxmc.unsafe(gc) public static inline function loadBytes64(b:Bytes, pos:Int):V128 {
 		if (pos < 0 || pos > b.length - 8) throw haxe.io.Error.OutsideBounds;
 		#if (target.name == "hxmc" && !hxmc.interp)
 		return Simd.load("v128.load64_zero", hxmc.unsafe.Mem.addr(@:privateAccess b.b), pos);
@@ -28,7 +28,7 @@ import hxmc.unsafe.UInt8;
 		#end
 	}
 
-	public static inline function loadBytes32(b:Bytes, pos:Int):V128 {
+	@:hxmc.unsafe(gc) public static inline function loadBytes32(b:Bytes, pos:Int):V128 {
 		if (pos < 0 || pos > b.length - 4) throw haxe.io.Error.OutsideBounds;
 		#if (target.name == "hxmc" && !hxmc.interp)
 		return Simd.load("v128.load32_zero", hxmc.unsafe.Mem.addr(@:privateAccess b.b), pos);
@@ -37,7 +37,7 @@ import hxmc.unsafe.UInt8;
 		#end
 	}
 
-	public static inline function storeBytes(b:Bytes, pos:Int, v:V128):Void {
+	@:hxmc.unsafe(gc) public static inline function storeBytes(b:Bytes, pos:Int, v:V128):Void {
 		if (pos < 0 || pos > b.length - 16) throw haxe.io.Error.OutsideBounds;
 		#if (target.name == "hxmc" && !hxmc.interp)
 		Simd.store("v128.store", hxmc.unsafe.Mem.addr(@:privateAccess b.b), pos, v);
@@ -49,7 +49,7 @@ import hxmc.unsafe.UInt8;
 		#end
 	}
 
-	public static inline function storeBytes64(b:Bytes, pos:Int, v:V128):Void {
+	@:hxmc.unsafe(gc) public static inline function storeBytes64(b:Bytes, pos:Int, v:V128):Void {
 		if (pos < 0 || pos > b.length - 8) throw haxe.io.Error.OutsideBounds;
 		#if (target.name == "hxmc" && !hxmc.interp)
 		Simd.store("v128.store64_lane", hxmc.unsafe.Mem.addr(@:privateAccess b.b), pos, v);
@@ -59,7 +59,7 @@ import hxmc.unsafe.UInt8;
 		#end
 	}
 
-	public static inline function storeBytes32(b:Bytes, pos:Int, v:V128):Void {
+	@:hxmc.unsafe(gc) public static inline function storeBytes32(b:Bytes, pos:Int, v:V128):Void {
 		if (pos < 0 || pos > b.length - 4) throw haxe.io.Error.OutsideBounds;
 		#if (target.name == "hxmc" && !hxmc.interp)
 		Simd.store("v128.store32_lane", hxmc.unsafe.Mem.addr(@:privateAccess b.b), pos, v);

@@ -8,7 +8,7 @@ import hxmc.unsafe.Ptr;
 // event; code outside it (a loop of many messages, a thread hxmc started)
 // drains its own with run.
 class AutoreleasePool {
-	public static function run(f:() -> Void) {
+	@:hxmc.unsafe(gc) public static function run(f:() -> Void) {
 		var pool = Libobjc.objc_autoreleasePoolPush();
 		try {
 			f();

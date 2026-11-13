@@ -3,6 +3,7 @@ package hxmc.rt.wasm;
 import hxmc.I64;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Ptr;
+import hxmc.rt.wasm.WasiApi;
 
 // The runtime's view of WASI: the arguments and the environment (read once),
 // the preopened directories and path resolution, buffered standard output.
@@ -21,10 +22,10 @@ class Wasi {
 	static var dot:Ptr; // "."
 	static var outLen:Int;
 
-	public static inline function a32(p:Ptr):Int
+	@:hxmc.unsafe(gc) public static inline function a32(p:Ptr):Int
 		return p.toI64().toInt();
 
-	public static inline function ofA32(x:Int):Ptr
+	@:hxmc.unsafe(gc) public static inline function ofA32(x:Int):Ptr
 		return new Ptr((x : I64) & ((((1 : I64) << 32) - 1)));
 
 	@:hxmc.unsafe public static function init() {
@@ -138,13 +139,13 @@ class Wasi {
 		return n;
 	}
 
-	@:hxmc.unsafe public static function argCount():Int
+	@:hxmc.kernel public static function argCount():Int
 		return argc;
 
 	@:hxmc.unsafe public static function arg(i:Int):Ptr
 		return Mem.getPtr(argv, 8 * i);
 
-	@:hxmc.unsafe public static function envCount():Int
+	@:hxmc.kernel public static function envCount():Int
 		return nenv;
 
 	@:hxmc.unsafe public static function envAt(i:Int):Ptr
@@ -158,7 +159,7 @@ class Wasi {
 
 	// ---- output (fd 1 buffered)
 
-	@:hxmc.unsafe public static function writeRaw(fd:Int, p:Ptr, n:Int) {
+	@:hxmc.unsafe @:hxmc.kernel public static function writeRaw(fd:Int, p:Ptr, n:Int) {
 		var io = Mem.stack(16);
 		while (n > 0) {
 			Mem.setI32(io, 0, a32(p));
@@ -175,13 +176,13 @@ class Wasi {
 	// site's browser glue) and its exception crosses the try blocks of the
 	// frames below: with no current handler, none of their pads takes it for
 	// a Haxe exception (WasmGen: a pad handles its own handler only)
-	@:hxmc.unsafe public static function exit(code:Int):Void {
+	@:hxmc.unsafe @:hxmc.kernel public static function exit(code:Int):Void {
 		flush();
 		Mem.tlsSet("rt_hcur", Ptr.nil());
 		WasiApi.proc_exit(code);
 	}
 
-	@:hxmc.unsafe public static function flush() {
+	@:hxmc.unsafe @:hxmc.kernel public static function flush() {
 		if (outLen > 0) {
 			var n = outLen;
 			outLen = 0;
@@ -189,7 +190,11 @@ class Wasi {
 		}
 	}
 
-	@:hxmc.unsafe public static function write(fd:Int, p:Ptr, n:Int) {
+	// b to fd (the kernels' writes: writeLit, writeInt)
+	@:hxmc.unsafe @:hxmc.kernel public static function writeSpan(fd:Int, b:hxmc.ReadOnlySpan<hxmc.unsafe.UInt8>)
+		write(fd, (cast b : hxmc.Span.SpanData).ptr, b.length);
+
+	@:hxmc.unsafe @:hxmc.kernel public static function write(fd:Int, p:Ptr, n:Int) {
 		if (fd != 1) {
 			flush();
 			writeRaw(fd, p, n);
@@ -207,18 +212,19 @@ class Wasi {
 	}
 
 	// a string literal (Latin-1) without allocating
-	@:hxmc.unsafe public static function writeLit(fd:Int, lit:String) {
-		var len = hxmc.rt.Str.len(lit);
-		var b = Mem.stack(128);
+	@:hxmc.kernel public static function writeLit(fd:Int, lit:String) {
+		var b:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(128);
+		var len = hxmc.rt.StrView.length(lit), one = hxmc.rt.StrView.isOne(lit);
+		var u1 = hxmc.rt.StrView.units1(lit), u2 = hxmc.rt.StrView.units2(lit);
 		var i = 0;
 		while (i < len) {
 			var k = 0;
 			while (k < 128 && i < len) {
-				Mem.setI8(b, k, hxmc.rt.Str.unit(lit, i));
+				b[k] = one ? u1[i] : (u2[i] : Int) & 0xFF;
 				k++;
 				i++;
 			}
-			write(fd, b, k);
+			writeSpan(fd, b.sub(0, k));
 		}
 	}
 
@@ -228,23 +234,23 @@ class Wasi {
 		Heap.free(u);
 	}
 
-	@:hxmc.unsafe public static function writeInt(fd:Int, v:Int) {
-		var b = Mem.stack(16);
+	@:hxmc.kernel public static function writeInt(fd:Int, v:Int) {
+		var b:hxmc.Span<hxmc.unsafe.UInt8> = hxmc.Span.stack(16);
 		var k = 16;
 		if (v == 0) {
 			k--;
-			Mem.setI8(b, k, "0".code);
+			b[k] = "0".code;
 		}
-		while (v > 0) {
+		while (v > 0 && k > 0) {
 			k--;
-			Mem.setI8(b, k, "0".code + v % 10);
+			b[k] = "0".code + v % 10;
 			v = Std.int(v / 10);
 		}
-		write(fd, b.add(k), 16 - k);
+		writeSpan(fd, b.sub(k, 16 - k));
 	}
 
 	// "gc: major <n>: <a> MB live, limit <b> MB, memory <m> MB" (RT_STATS)
-	@:hxmc.unsafe public static function statLine(lit:String, n:Int, a:Int, b:Int, m:Int) {
+	@:hxmc.kernel public static function statLine(lit:String, n:Int, a:Int, b:Int, m:Int) {
 		writeLit(2, lit);
 		writeInt(2, n);
 		writeLit(2, ": ");
@@ -263,10 +269,10 @@ class Wasi {
 
 	// ---- clocks
 
-	@:hxmc.unsafe public static function clockNs(id:Int):I64 {
-		var t = Mem.stack(8);
-		if (WasiApi.clock_time_get(id, 1000, a32(t)) != 0) return 0;
-		return Mem.getI64(t, 0);
+	@:hxmc.kernel public static function clockNs(id:Int):I64 {
+		var t:hxmc.Span<I64> = hxmc.Span.stack(1);
+		if (WasiCalls.clock_time_get(id, 1000, t) != 0) return 0;
+		return t[0];
 	}
 
 	// ---- paths: (preopened fd, relative path) for a path; null when no preopen covers it

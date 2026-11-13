@@ -290,6 +290,17 @@ const frontendCases = {
 		{ 'Main.hx': 'class Main {\n\tstatic var last:Array<Int>;\n\n\tstatic function extra():Int\n\t\treturn 5;\n\n\tstatic function main() {\n\t\tvar n = Lib.alloc();\n\t\tvar keep = [extra() + n];\n\t\tvar r = Lib.g(2);\n\t\tlast = keep;\n\t\ttrace(keep[0] + r);\n\t}\n}\n' },
 		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.g(3) + Lib.alloc());\n\t}\n}\n' },
 	],
+	// (two C functions of one extern with one @:native name: the class keys
+	// both by it, the HXB build's class too, and a reused body calls each;
+	// sched_yield, as the glibc mode links only what the runtime imports)
+	"a body that calls two C functions of one name": [
+		{
+			'Lib.hx': '@:hxmc.c extern class Yield {\n\t@:native("sched_yield") static function now():Int;\n\tstatic function sched_yield():Int;\n}\n\nclass Lib {\n\tpublic static function f(x:Int):Int\n\t\treturn x + Yield.now() + Yield.sched_yield();\n}\n',
+			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(-2));\n\t}\n}\n',
+		},
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(-3));\n\t}\n}\n' },
+		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.f(4) + 1);\n\t}\n}\n' },
+	],
 };
 
 // the cases built for this machine and run (their arguments), the server's

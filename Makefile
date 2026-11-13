@@ -126,7 +126,7 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
-.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
+.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check header-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
 	shared-check jni-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
 	bench bench-compile bench-micro bench-simd measure quick check full clean distclean
@@ -168,6 +168,8 @@ help:
 ##               native tool (hxmc/test/Crosshost.hx; CROSSHOST_ARGS)
 ##   portable-check  hxmc's spans on Eval and JavaScript, built by the reference (make reference),
 ##               print what hxmc's builds print (hxmc/test/PortableCheck.hx)
+##   header-check  the C declarations that name their headers against each target's headers, with
+##               zig; a declaration that disagrees must fail (hxmc/test/HeaderCheck.hx; HEADER_TARGETS)
 ##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
 ##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
 ##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
@@ -317,6 +319,12 @@ crosshost: $(TOOL) $(STD) $(HOST_RT)
 # hxmc's spans on Eval and JavaScript (MkStd's hxmc-portable) against hxmc's
 # golden files, with the reference compiler (hxmc/test/PortableCheck.hx;
 # make reference first)
+# the typed C declarations against the headers, with zig, for each target
+# (hxmc/test/HeaderCheck.hx; docs/interop.md, "Checking declarations against
+# the headers"); without zig, skipped
+header-check: $(TOOL) $(STD)
+	$(SCRIPT) HeaderCheck $(HEADER_TARGETS)
+
 portable-check: $(TOOL) $(STD)
 	export HAXE_REFERENCE=$(abspath $(REFERENCE)); $(SCRIPT) PortableCheck
 
