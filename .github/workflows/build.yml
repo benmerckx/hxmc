@@ -445,8 +445,9 @@ jobs:
         run: make corpus-verify VERIFY_TARGET=wasm32-wasi
 
   # hxmc's corpus for every target (make corpus-stage; run by the test and
-  # wasm jobs on the targets' machines), in five groups of about the same
-  # time (Windows' targets take twice as long, a job each); with the WebAssembly ones the port as a WebAssembly module (the wasm
+  # wasm jobs on the targets' machines), in six groups of about the same
+  # time (Windows' targets take twice as long, a job each; Linux a job per
+  # architecture, its musl and glibc builds); with the WebAssembly ones the port as a WebAssembly module (the wasm
   # job) and the reference's self-compile (the test and wasm jobs compare
   # with it)
   corpus:
@@ -457,7 +458,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {group: linux, targets: linux-x86_64 linux-arm64 linux-x86_64-glibc linux-arm64-glibc}
+          - {group: linux-x86_64, targets: linux-x86_64 linux-x86_64-glibc}
+          - {group: linux-arm64, targets: linux-arm64 linux-arm64-glibc}
           - {group: macos, targets: macos-x86_64 macos-arm64}
           - {group: windows-x86_64, targets: windows-x86_64}
           - {group: windows-arm64, targets: windows-arm64}
@@ -895,8 +897,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {target: linux-x86_64, pkg: linux-x86_64, corpus: linux, os: ubuntu-24.04}
-          - {target: linux-arm64, pkg: linux-aarch64, corpus: linux, os: ubuntu-24.04-arm}
+          - {target: linux-x86_64, pkg: linux-x86_64, corpus: linux-x86_64, os: ubuntu-24.04}
+          - {target: linux-arm64, pkg: linux-aarch64, corpus: linux-arm64, os: ubuntu-24.04-arm}
           - {target: windows-x86_64, pkg: windows-x86_64, corpus: windows-x86_64, os: windows-2025}
           - {target: windows-arm64, pkg: windows-aarch64, corpus: windows-arm64, os: windows-11-arm}
           - {target: macos-x86_64, pkg: macos-x86_64, corpus: macos, os: macos-15-intel}
