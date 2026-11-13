@@ -160,9 +160,10 @@ class RawCheck {
 	// closure's made in it, transitively)
 	static function machines(types:Array<ModuleType>):Map<TClass, Bool> {
 		var made = new Map<TClass, Bool>(), work:Array<TClass> = [];
+		var from:Null<core.TType.ModuleDef> = null;
 		function walk(e:TExpr) {
 			switch e.eexpr {
-				case TNew(k, _, _) if (!made.exists(k) && machine(k)):
+				case TNew(k, _, _) if (!made.exists(k) && k.clModule == from && machine(k)):
 					made.set(k, true);
 					work.push(k);
 				case _:
@@ -170,6 +171,7 @@ class RawCheck {
 			core.Texpr.iter(walk, e);
 		}
 		function fields(c:TClass, all:Bool) {
+			from = c.clModule;
 			var fs = c.clConstructor == null ? [] : [c.clConstructor];
 			for (cf in fs.concat(c.clOrderedStatics).concat(c.clOrderedFields))
 				if (cf.cfExpr != null && (all || trusted(c, cf))) walk(cf.cfExpr);
@@ -184,8 +186,11 @@ class RawCheck {
 		return made;
 	}
 
-	// (a coroutine's state machine: haxe.coro.BaseContinuation's subclass)
+	// (a coroutine's state machine: the class the transform made, HxCoro_..., a
+	// haxe.coro.BaseContinuation in its function's module; not a continuation
+	// the program declares)
 	static function machine(c:TClass):Bool {
+		if (!StringTools.startsWith(c.clPath.name, "HxCoro_")) return false;
 		var s = c.clSuper;
 		while (s != null) {
 			var p = s.cls.clPath;

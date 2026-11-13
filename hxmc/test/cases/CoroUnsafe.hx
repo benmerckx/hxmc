@@ -3,8 +3,11 @@
 // class of its own (its state machine), which keeps none of the function's
 // metadata; RawCheck trusts that class with the function that makes it, and
 // a coroutine closure's made in a trusted function the same. Built
-// -D hxmc.strict: raw memory outside trusted code is an error there.
+// -D hxmc.strict: raw memory outside trusted code is an error there. Built
+// without the module cache: the hoisted fields are in the order of their
+// variables' ids, see CoroCatch.
 // define: hxmc.strict
+// define: hxmc.no-module-cache
 import haxe.coro.*;
 import haxe.coro.continuations.FunctionContinuation;
 import haxe.coro.context.Context;

@@ -22,11 +22,19 @@ class BufferHandover {
 		return v;
 	}
 
+	// a null IoBuffer refused
+	@:hxmc.unsafe(gc) static function nothing():String
+		return try {
+			Buffer.adopt(cast hxmc.unsafe.Ptr.nil());
+			"adopted";
+		} catch (e:String) e;
+
 	static function main() {
 		var b = made();
 		Sys.println("adopted: " + b.length + " bytes, " + b.get(0) + " " + b.get(3));
 		b.set(0, 10);
 		Sys.println("detached: " + given(b) + ", closed " + b.closed + ", length " + b.length);
+		Sys.println("null: " + nothing());
 		Sys.println("again: " + (try {
 			given(b);
 			"detached";

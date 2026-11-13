@@ -48,6 +48,7 @@ final class Buffer {
 	// copied: a job's result, a decoder's pixels); io is raw, so only
 	// @:hxmc.unsafe code calls it
 	public static function adopt(io:IoBuffer):Buffer {
+		if ((cast io : hxmc.unsafe.Ptr).isNull()) throw "Buffer.adopt: no buffer";
 		var b = new Buffer(0);
 		b.io.free();
 		b.io = io;
@@ -61,6 +62,7 @@ final class Buffer {
 	public function detach():IoBuffer {
 		if (lends.compareExchange(0, -1) != 0) throw lends.load() < 0 ? "Buffer: closed" : "Buffer.detach: a span of it is lent to a running call";
 		var r = io;
+		io = cast hxmc.unsafe.Ptr.nil();
 		size = 0;
 		return r;
 	}
