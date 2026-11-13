@@ -1,8 +1,10 @@
 // Raw memory outside @:hxmc.unsafe code is a warning in a program's own code
 // (-D hxmc.strict: an error), naming the function and its first raw use. A
-// trusted inline helper is trusted where it lands; scalars' C calls are not raw.
+// trusted inline helper is trusted where it lands; scalars' C calls are not raw;
+// an unmarked coroutine's state machine is checked (CoroUnsafe: a marked one's not).
 // warns: RawWarn.peek: a call of hxmc.unsafe.Mem.getI32 (raw memory needs @:hxmc.unsafe)
 // warns: RawWarn.main: the local p of the raw type hxmc.unsafe.Ptr<Void> and 1 more (raw memory needs @:hxmc.unsafe)
+// warns: unmarked.invokeResume: the local p of the raw type hxmc.unsafe.Ptr<Void>
 import hxmc.unsafe.*;
 
 class RawWarn {
@@ -14,6 +16,13 @@ class RawWarn {
 		var p = LibC.malloc(n);
 		LibC.free(p);
 		return [n].length;
+	}
+
+	// a coroutine without the mark: its state machine checked as any code
+	@:coroutine static function unmarked():Int {
+		var p = LibC.malloc(4);
+		LibC.free(p);
+		return 0;
 	}
 
 	@:hxmc.unsafe static inline function units(s:String):Int

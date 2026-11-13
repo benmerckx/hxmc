@@ -27,7 +27,9 @@ using core.TFunctions;
 // the next GC point); and hxmc.unsafe's own modules, the raw API. An inline
 // function's @:hxmc.unsafe goes with the copies Haxe inlines (the typer
 // keeps it there: TargetFlags), so a trusted helper is trusted where it
-// lands; an extern class's inline functions are checked as any. Kernels are
+// lands; an extern class's inline functions are checked as any. A trusted
+// coroutine's state machine, the class its body moved to, is trusted with
+// it (machines). Kernels are
 // checked by KernelCheck (stricter); declarations of C functions and fields
 // not at all, only their uses.
 //
@@ -71,6 +73,7 @@ class RawCheck {
 		// (HXMC_RAW_LIST=<file>: the violations listed there instead, to annotate them)
 		var listFile = Sys.getEnv("HXMC_RAW_LIST");
 		var list = [];
+		var made = machines(types);
 		for (t in types)
 			switch t {
 				// (a module typed in this build: one restored from a cache, the server's or
@@ -78,7 +81,7 @@ class RawCheck {
 				case TClassDecl(c) if (c.clModule.mExtra.mProcessed == 0 && !rawApi(c)):
 					var std = inStd(c, roots);
 					function field(cf:TClassField) {
-						if (cf.cfExpr == null || trusted(c, cf)) return;
+						if (cf.cfExpr == null || trusted(c, cf) || made.exists(c)) return;
 						var r = new RawCheck(c, cf);
 						r.expr(cf.cfExpr);
 						if (r.count == 0) return;
@@ -147,6 +150,49 @@ class RawCheck {
 		for (m in ml)
 			if (m.length > 0 && (Lower.isUnsafe(m) || has(m, ":hxmc.kernel"))) return true;
 		return has(cf.cfMeta, ":hxmc.blocking");
+	}
+
+	// the state machines of trusted coroutines: the coroutine transform moves a
+	// coroutine's body into a class of its own (a haxe.coro.BaseContinuation),
+	// made by the function, or the closure, it was, which keeps none of the
+	// function's metadata; it is trusted as the function that makes it is, so
+	// @:hxmc.unsafe on a coroutine covers its whole body (and a coroutine
+	// closure's made in it, transitively)
+	static function machines(types:Array<ModuleType>):Map<TClass, Bool> {
+		var made = new Map<TClass, Bool>(), work:Array<TClass> = [];
+		function walk(e:TExpr) {
+			switch e.eexpr {
+				case TNew(k, _, _) if (!made.exists(k) && machine(k)):
+					made.set(k, true);
+					work.push(k);
+				case _:
+			}
+			core.Texpr.iter(walk, e);
+		}
+		function fields(c:TClass, all:Bool) {
+			var fs = c.clConstructor == null ? [] : [c.clConstructor];
+			for (cf in fs.concat(c.clOrderedStatics).concat(c.clOrderedFields))
+				if (cf.cfExpr != null && (all || trusted(c, cf))) walk(cf.cfExpr);
+		}
+		for (t in types)
+			switch t {
+				case TClassDecl(c) if (c.clModule.mExtra.mProcessed == 0): fields(c, false);
+				case _:
+			}
+		while (work.length > 0)
+			fields(work.pop(), true);
+		return made;
+	}
+
+	// (a coroutine's state machine: haxe.coro.BaseContinuation's subclass)
+	static function machine(c:TClass):Bool {
+		var s = c.clSuper;
+		while (s != null) {
+			var p = s.cls.clPath;
+			if (p.name == "BaseContinuation" && p.pack.length == 2 && p.pack[0] == "haxe" && p.pack[1] == "coro") return true;
+			s = s.cls.clSuper;
+		}
+		return false;
 	}
 
 	function fail(p:core.Globals.Pos, what:String) {
