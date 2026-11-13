@@ -21,9 +21,9 @@
 #     declarations against the headers); apart from build, so the jobs that
 #     need it start sooner;
 #   - corpus-verify (after build): the corpus with its tagged words verified
-#     (x86-64 and wasm32-wasi); apart from corpus, which the test jobs wait
+#     (x86-64 and wasm32-wasi, a job each); apart from corpus, which the test jobs wait
 #     for;
-#   - corpus: hxmc's corpus for every target (in five jobs), the native
+#   - corpus: hxmc's corpus for every target (in six jobs), the native
 #     compiler (`haxe` with hxmc built in) for the six targets, the port as
 #     a WebAssembly module, the reference's self-compile (lix downloads the
 #     reference compiler, the nightly of the pinned upstream commit, cached);
@@ -414,6 +414,10 @@ jobs:
     needs: [changes, rt, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.all == 'true' }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux-x86_64, wasm32-wasi]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -437,12 +441,9 @@ jobs:
           make hxmc
       # the type parameters' tagged words tested before every read as a
       # reference (-D hxmc.verify-tags, RT_VERIFY=1: docs/hxmc.md), on the
-      # runner: x86-64 natively, WebAssembly under node
-      - name: Corpus, tagged words verified (x86-64)
-        run: make corpus-verify VERIFY_TARGET=linux-x86_64
-      - name: Corpus, tagged words verified (wasm32-wasi)
-        if: always()
-        run: make corpus-verify VERIFY_TARGET=wasm32-wasi
+      # runner: x86-64 natively, WebAssembly under node; a job each
+      - name: Corpus, tagged words verified
+        run: make corpus-verify VERIFY_TARGET=${{ matrix.target }}
 
   # hxmc's corpus for every target (make corpus-stage; run by the test and
   # wasm jobs on the targets' machines), in six groups of about the same

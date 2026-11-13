@@ -176,8 +176,8 @@ a release is published only when all of them pass.
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the release binaries and lix for the six targets |
 | `checks` | yes | `make units`, `make test-module-cache PORT=1`, `make dev-check`, `make native-check` on Linux (`SharedCheck`, `JniCheck` with the image's JDK 21, `MachOCheck`, `HeaderCheck`: [the contract](using.md#native-output-for-a-packager)); apart from `build`, which most jobs wait for |
-| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi; apart from `corpus`, which the test jobs wait for) |
-| `corpus` | yes | the corpus for every target (five jobs, Windows' a job per target), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
+| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi, a job each; apart from `corpus`, which the test jobs wait for) |
+| `corpus` | yes | the corpus for every target (six jobs: Windows a job per target, Linux a job per architecture), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
 | `crosshost` | yes | `make crosshost` (four jobs, the cases in shards: `--shard i/4`; the module's builds on node workers) |
 | `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
