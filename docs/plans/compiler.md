@@ -254,7 +254,7 @@ is left is typing and the collector. By estimated payoff:
 
 ## Mir macros
 
-Where Mir macros stand against Eval (MirBench, median of five, wall time):
+Where Mir macros stood against Eval (the former MirBench harness, median of five, wall time):
 
 | | Mir | Eval |
 | --- | --- | --- |

@@ -1233,13 +1233,11 @@ they are; x18, the platform's register on Apple and Windows, is never
 allocated. The macro context and `--run` take the compiler's own target.
 The native compiler is cross-built for linux-x86_64, linux-arm64,
 macos-x86_64, macos-arm64, windows-x86_64 and windows-arm64 (`make
-bin/npm/native/<target>/haxe`), and CI's test jobs run it on each target's
-machine (the Mir lane): the corpus in it (`Corpus --mir-run`, as `make
+bin/npm/native/<target>/haxe`), and CI's Linux x86-64 test job runs it
+(the Mir lane): the corpus in it (`Corpus --mir-run`, as `make
 mir-check`; the cases known to fail there: `Corpus.MIR_RUN_KNOWN`),
 the macro cases with Mir macros against the reference (as `make
-mir-check`: 66 of 67, Issue11631 uses Eval's `mbedtls`), and a
-benchmark macro and the formatter's build timed against Eval
-(`MirBench`). The compiler carries the table of its
+mir-check`: 66 of 67, Issue11631 uses Eval's `mbedtls`). The compiler carries the table of its
 symbols and its functions' fingerprints and flags as data
 (`macro.HostTable`, made at its link: 212 KB on linux-x86_64). Its
 symbols are the ones code loaded at run time can name: not the
@@ -1551,7 +1549,7 @@ macro and the server's edit unchanged. A loop in one call (mandelbrot,
 nbody) is not helped: that needs entering native code in the middle of a
 frame (plans/compiler.md, "Mir macros").
 
-Cost (MirBench, wall time, the median of five, Intel Xeon @ 2.10 GHz,
+Cost (measured with the former MirBench harness, wall time, the median of five, Intel Xeon @ 2.10 GHz,
 4 vCPUs, module cache off): a trivial macro (`macro 1` called from main,
 `--js`) 0.20 s (Eval 0.16 s; 0.28 s while every function reached was
 compiled and the std's bodies typed with their modules); the formatter

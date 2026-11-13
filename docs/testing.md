@@ -176,16 +176,16 @@ a release is published only when all of them pass.
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the release binaries and lix for the six targets |
 | `checks` | yes | `make units`, `make test-module-cache PORT=1`, `make dev-check`, `make native-check` on Linux (`SharedCheck`, `JniCheck` with the image's JDK 21, `MachOCheck`, `HeaderCheck`: [the contract](using.md#native-output-for-a-packager)); apart from `build`, which most jobs wait for |
-| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64 and wasm32-wasi, a job each; apart from `corpus`, which the test jobs wait for) |
+| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64; wasm32-wasi's `RT_VERIFY=1` run is the `wasm` job's; apart from `corpus`, which the test jobs wait for) |
 | `corpus` | yes | the corpus for every target (six jobs: Windows a job per target, Linux a job per architecture), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
-| `crosshost` | yes | `make crosshost` (four jobs, the cases in shards: `--shard i/4`; the module's builds on node workers) |
-| `fuzz-exec` | yes | the fuzzer's exec lanes; `PortableCheck` |
+| `crosshost` | yes | `make crosshost` for linux-x86_64, macos-arm64, windows-x86_64 and wasm32-wasi, one target of each format (two jobs, the cases in shards: `--shard i/2`; the module's builds on node workers) |
+| `fuzz-exec` | yes | full runs only: the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
-| `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical), the Eval debugger, the fuzzer's diff lanes |
-| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, except on the Intel Mac, the Mir lane (`MirCheck`, as `make mir-check`) and `MirBench` |
+| `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical); full runs only: the Eval debugger and the fuzzer's diff lanes |
+| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, on Linux x86-64 only, the Mir lane (`MirCheck`, as `make mir-check`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
-| `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine: native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on main, tags and nightly |
+| `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine (linux-x64 alone outside full runs): native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on full runs; the UIKit app on the Macs on full runs |
 | `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
 | `llvm` | no | the nightly and dispatches only: the corpus with the LLVM back end (`-D hxmc.llvm`) on linux-x86_64, linux-arm64 and macos-arm64 |
 | `upstream-tests` | no | the nightly and dispatches only: upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
@@ -193,8 +193,10 @@ a release is published only when all of them pass.
 | `release`, `pages` | | the nightly release or a tagged release; the website from main |
 
 **What runs when.** Main, tags, the nightly schedule (02:41 UTC) and
-dispatches run everything. On other branches a push runs only what its
-changes since the last green commit need: only `*.md`, nothing; `site/`,
+dispatches run everything (full runs). On other branches a push leaves out
+the slow lanes (the fuzzers, the debugger, the UIKit app, the npm checks
+beyond linux-x64) and runs only what its changes since the last green
+commit need: only `*.md`, nothing; `site/`,
 `site` and `playground`; anything else, everything. A newer push to a
 branch cancels its run; runs on main, `hxmc` and tags always finish.
 
