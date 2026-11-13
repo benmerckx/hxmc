@@ -8,7 +8,7 @@ Building is in [development.md](development.md).
 
 | Change | Run |
 | --- | --- |
-| hxmc (`hxmc/src`, `hxmc/std`) | `make quick` after every edit, `make check` before a commit, `make full` before a push |
+| hxmc (`hxmc/src`, `hxmc/std`) | `make quick` after every edit, `make check` before a commit; CI the rest |
 | typing or filters in the port | `make test LANES="hxb macro"` |
 | a generator in the port | `make test-fuzz LANE=diff:<target>`, `make test LANES=targets` |
 | display or the server | `make test LANES="display server jsonrpc"` |
@@ -20,7 +20,6 @@ The fixpoint and crosshost must stay byte-identical.
 | --- | --- |
 | `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the unit checks (`Units`; `CASES=` restricts the corpus) |
 | `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, CompactParGc x10, CompactEnums x10 and HeaderEnums x10 (parallel collections of compact objects), crosshost on three cases, debug info, the native output (`NativeCheck` shared, jni, macho; uikit on a Mac with Xcode), the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
-| `make full` | quick, plus every nursery size and `RT_VERIFY`, wasmtime, ThreadNatives x300, the port's self-compile natively and as a module, crosshost on everything, the fixpoint (`hxmc/test/Tiers.hx`) |
 
 ## The port against the reference
 
@@ -86,7 +85,7 @@ each lane on the kept cases and 400 random programs.
 
 | Check | Make target | What |
 | --- | --- | --- |
-| `Corpus` | `quick`, `check`, `full` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files; `hxmc/test/reject`'s programs the compiler must reject (each `// expect: ` line part of the error) and `hxmc/test/warn`'s it must build with warnings (each `// warns: ` line part of them) |
+| `Corpus` | `quick`, `check` | the programs of `hxmc/test/cases/` and the frozen fuzzer programs, run with a 64 KB nursery and compared with golden files; `hxmc/test/reject`'s programs the compiler must reject (each `// expect: ` line part of the error) and `hxmc/test/warn`'s it must build with warnings (each `// warns: ` line part of them) |
 | `Crosshost` | `crosshost` | the tool as a WebAssembly module writes the same bytes as the native tool, for every target, itself included |
 | `HeaderCheck` | `native-check` (`NATIVE=header`) | the C declarations that name their headers (the std's typed bindings, `CBindings*`) against each of the seven targets' headers, compiled by zig as C++ assertions; `hxmc/test/header/BadLayout.hx` must fail ([interop.md](interop.md#checking-declarations-against-the-headers)) |
 | `PortableCheck` | `portable-check` | hxmc's spans on other targets ([interop.md](interop.md#spans-on-other-targets)): `SpanInflate` and `SpanPortable`, and hxmc.simd's scalar implementation ([plans/simd.md](plans/simd.md#the-scalar-implementation)): `SimdOps`, `SimdValues` and `SimdExamples`, built by the reference for Eval and JavaScript (node), print the corpus's golden output; `hxmc/test/portable`'s failed checks and compile errors |

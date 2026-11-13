@@ -5,7 +5,7 @@
 #   make help                 the targets and variables below
 #   make hxmc                 bin/hxmc/hxmc, the tool (from the committed stage0 on first use)
 #   make port                 bin/port/haxe: the port with every generator (seconds after an edit)
-#   make quick|check|full     the tiered checks (hxmc/test/Tiers.hx)
+#   make quick|check          the tiered checks (hxmc/test/Tiers.hx)
 #   make release TARGET=macos-arm64   bin/release/<TARGET>/haxe[.exe]
 #
 # Outputs go to bin/ (ignored by Git). hxmc keeps the typed modules and an
@@ -54,7 +54,7 @@ N ?= 200
 EVAL ?= $(TOOL)
 FUZZ ?= bin/fuzz/fuzz
 SUMMARY ?=
-# `quick`, `check`, `full`: the corpus cases to restrict the corpus lanes to
+# `quick`, `check`: the corpus cases to restrict the corpus lanes to
 # (CASES="Int64Gc Bench"); PORT=1 adds the port's self-compile to `check`
 CASES ?=
 PORT ?=
@@ -129,7 +129,7 @@ endef
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
 	units native-check mir-check dev-check \
-	bench bench-compile bench-micro bench-simd measure quick check full clean distclean
+	bench bench-compile bench-micro bench-simd measure quick check clean distclean
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -154,8 +154,6 @@ help:
 ##   check       before a commit: quick + arm64 (qemu), wine, a 16 KB nursery, legacy exception handling,
 ##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, the native
 ##               output; PORT=1 adds the native port's self-compile
-##   full        before a push: quick + every nursery, RT_VERIFY, wasmtime, ThreadNatives x300, the
-##               port's self-compile natively and as a module, crosshost, the fixpoint
 ##   test        the port against the reference, the lanes of LANES (default hxb; CI's conformance jobs):
 ##               hxb, macro, hxblib (HXB of the three case lists, Conformance; CASES_FILE for hxb),
 ##               display, server, jsonrpc, interp (--interp runs), haxelib (-L, batch and server),
@@ -625,9 +623,6 @@ quick: $(TOOL) $(STD) $(HOST_RT)
 
 check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers check $(if $(PORT),--port) $(CASES)
-
-full: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) Tiers full $(CASES)
 
 clean:
 	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/dev bin/corpus \

@@ -82,7 +82,6 @@ downloaded by lix: `make reference`. Nothing builds OCaml.
 | `make port` | after an edit of the port |
 | `make quick` | after every edit of hxmc (`CASES="Int64Gc Bench"` restricts the corpus) |
 | `make check` | before a commit (`PORT=1` adds the port's self-compile) |
-| `make full` | before a push |
 | `make test LANES="..."` | after an edit of the port: conformance against the reference |
 
 What each runs, and which lanes a change needs: [testing.md](testing.md).
