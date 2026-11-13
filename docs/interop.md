@@ -200,7 +200,9 @@ does a string's (its length, its width, its units as a `ReadOnlySpan`).
 The views are the trusted part, `@:hxmc.unsafe`; what reads through them
 is checked. A view trusts its value's type, so a safe kernel passes no
 `Dynamic` and no type parameter's value where a typed GC value is expected
-(`StrView.length(d)` of a `d:Dynamic`: `reject/KernelViewDynamic`); one that
+(`StrView.length(d)` of a `d:Dynamic`: `reject/KernelViewDynamic`), nor
+the result of a kernel declared to return a type parameter, whatever the
+type it is called with (its body may have made it of a `Dynamic`); one that
 takes `Dynamic` tests the type itself, as `TypeView` does (`TypeView.string`
 gives a tested string as a `String`). A view's functions are inlined where they are called, as the
 inline representation calls they stand for were, and a kernel called at
@@ -547,7 +549,7 @@ trace(Lib.lib_upper("abc"));                                   // no Arena, no f
 
 **Out-parameters from GC code.** `Span.of(x)` passes a variable (a local,
 a static, a field of `this` or of a local, which the call may write: not
-final, `(default, null)` only in its class) as a span of one: x is copied into a slot of the frame
+final, `(default, null)` only in its class or through `this` in a subclass) as a span of one: x is copied into a slot of the frame
 for the call and back after it, so an out-struct or an out-scalar needs no
 `Mem.stack`. `ReadOnlySpan.of(v)` passes a value as `const T *`, copied in
 only. Both are a call's arguments (`reject/SpanOfValue`, `SpanOfOutside`,
@@ -629,7 +631,8 @@ thread), `close()` throws instead of freeing the memory under it. A closed
 buffer is empty: its length is 0, its accessors (`get`, `set`, `fill`,
 `getBytes`, `blitFromBytes`, `blitToBytes`) and its spans throw. Each
 accessor lends it for the access as a span is lent (`BufferClose`: closed
-by another thread meanwhile). Nothing
+by another thread meanwhile): two atomic operations an access, so many
+bytes are read and written through a span or a blit. Nothing
 else frees it (hxmc has no finalizers): `Buffer.scoped(n, b -> ...)` closes
 it on every path, and inlines (no closure).
 
@@ -759,10 +762,14 @@ Each function is checked for its number of parameters (and `...` for
 integer of 4 bytes, a float, a pointer, a `size_t`, a struct by its name;
 a span's element against the pointee (a named struct, or any type of the
 element's size, `void` or a struct of it for scalars: C reads one per
-element the length counts; any struct for bytes counted by a parameter, or
-for a constant minimum, checked against the pointee's size). Every
-declaration is checked, also a second one of the same function. The C++ is only for its type traits (clang's
-builtins, no C++ library): the declarations are C's.
+element the length counts; a `struct sockaddr` for bytes, whose length
+counts bytes; any struct for a constant minimum, checked against the
+pointee's size). Every declaration is checked, also a second one of the
+same function. What no header says stays the declaration's word: that C
+reads no more of a span than its length or minimum (a count passed as a
+plain parameter beside a constant minimum is not tied to the span), and
+that a `struct sockaddr`'s length is its bytes. The C++ is only for its
+type traits (clang's builtins, no C++ library): the declarations are C's.
 
 ```
 HeaderCheck.hx:23: QR.q: q is an integer of 8 bytes

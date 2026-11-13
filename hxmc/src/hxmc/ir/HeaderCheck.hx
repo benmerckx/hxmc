@@ -89,13 +89,9 @@ class HeaderCheck {
 							out.push('static_assert(hxmc_check::fits<${A()}, ' + bytes + '>(), "$what: ' + pn + ' (' + bytes + ' bytes) holds what C writes there");');
 						case _:
 					}
-					// (C reads a struct per element the length counts: of the element's size,
-					// but bytes counted as bytes, or one struct in a constant minimum, fits)
-					var exact = switch p.args[i] {
-						case ASpanPtr(-1, min) if (min > 0): false;
-						case ASpanPtr(_): CInterop.sizeOf(et) != 1;
-						case _: true;
-					};
+					// (C reads a struct per element the length counts: of the element's
+					// size; a constant minimum holds one, as fits checks)
+					var exact = !p.args[i].match(ASpanPtr(-1, _ > 0 => true));
 					arg('hxmc_check::span<${A()}, ${element(et, exact)}>()', "a pointer to " + described(et));
 					switch p.args[i] {
 						case ASpan: arg('hxmc_check::word<${A()}>()', "a size_t (the length of " + pn + ")");
@@ -148,7 +144,8 @@ class HeaderCheck {
 			case _:
 		}
 
-	// exact: a struct pointee has the scalar's size (C reads the span's count of them)
+	// exact: a struct pointee has the scalar's size (C reads the span's count
+	// of them), or is a struct sockaddr of a span of bytes
 	static function element(ct:CTy, exact:Bool):String
 		return switch ct {
 			case CStruct(c) if (cname(c) != null): cname(c);
@@ -190,6 +187,7 @@ class HeaderCheck {
 	}
 
 	static final PRELUDE = "
+struct sockaddr;
 namespace hxmc_check {
 template<class F> struct fn;
 template<class R, class... A> struct fn<R(A...)> {
@@ -211,7 +209,7 @@ template<class T> constexpr bool word() { return __is_integral(T) && size<T>() =
 template<int N, bool exact> struct scalar {};
 template<class P, class E> struct pointee { static constexpr bool ok = __is_void(P) || __is_same(P, E); };
 template<class P, int N, bool exact> struct pointee<P, scalar<N, exact>> {
-	static constexpr bool ok = __is_void(P) || ((__is_class(P) || __is_union(P)) && (!exact || size<P>() == N || size<P>() < 0))
+	static constexpr bool ok = __is_void(P) || ((__is_class(P) || __is_union(P)) && (!exact || size<P>() == N || size<P>() < 0 || N == 1 && __is_same(P, ::sockaddr)))
 		|| ((__is_arithmetic(P) || __is_enum(P) || __is_pointer(P)) && size<P>() == N);
 };
 template<class T, class E> constexpr bool span() { return __is_pointer(T) && pointee<__remove_cv(__remove_pointer(T)), E>::ok; }

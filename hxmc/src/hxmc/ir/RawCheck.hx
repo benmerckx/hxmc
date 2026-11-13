@@ -17,7 +17,8 @@ using core.TFunctions;
 //   - a call of Mem but its functions of values (KernelCheck.PURE_MEM and
 //     the tag conversions of scalars), of Atomic, Blocking and Callback, of
 //     the raw types' own functions, and Linux.syscall, whose arguments may
-//     be addresses. A C function of hxmc.unsafe (LibC, Posix, ...) or of
+//     be addresses; such a function as a value too (Mem.setRefBarrier in
+//     a local, then called). A C function of hxmc.unsafe (LibC, Posix, ...) or of
 //     the program is raw through its types only: one of scalars is not.
 //
 // Trusted (unchecked) code is a function or class declared @:hxmc.unsafe,
@@ -148,8 +149,10 @@ class RawCheck {
 	static function typeName(t:T):String
 		return core.TPrinting.Printer.sType(t);
 
-	// a call of f that is raw by the function alone (its types are checked as values)
-	static function rawCall(f:TExpr):Null<String> {
+	// a call of f that is raw by the function alone (its types are checked as
+	// values); also f as a value, which its calls then are (a closure of Mem
+	// has no raw type)
+	static function rawCall(f:TExpr, call = "a call of "):Null<String> {
 		switch f.eexpr {
 			case TField(_, FStatic(c, cf)):
 				var owner = switch c.clKind {
@@ -159,10 +162,10 @@ class RawCheck {
 				if (!unsafePack(owner.pack)) return null;
 				var n = owner.name;
 				var full = "hxmc.unsafe." + n + "." + cf.cfName;
-				if (n == "Mem") return KernelCheck.PURE_MEM.indexOf(cf.cfName) >= 0 || VALUES.indexOf(cf.cfName) >= 0 ? null : "a call of " + full;
-				if (n == "Linux" && cf.cfName == "syscall") return "a call of " + full;
+				if (n == "Mem") return KernelCheck.PURE_MEM.indexOf(cf.cfName) >= 0 || VALUES.indexOf(cf.cfName) >= 0 ? null : call + full;
+				if (n == "Linux" && cf.cfName == "syscall") return call + full;
 				if (C_CLASSES.indexOf(n) >= 0 || n == "Struct" || KernelCheck.isScalar(n)) return null;
-				return "a call of " + full;
+				return call + full;
 			case _:
 				return null;
 		}
@@ -183,11 +186,31 @@ class RawCheck {
 				if (why != null) return fail(e.epos, why);
 			case TVar(v, _) if (KernelCheck.isRaw(v.vType)):
 				return fail(e.epos, "the local " + v.vName + " of the raw type " + typeName(v.vType));
-			case TTypeExpr(_):
+			case TField(_, FStatic(_, {cfKind: Method(_)})):
+				var why = rawCall(e, "the function ");
+				if (why != null) return fail(e.epos, why + " as a value");
+			case TTypeExpr(m):
+				// (a class of the raw API as a value: Dynamic reaches its
+				// functions, `var p:Dynamic = BytesPtr; p.copyIn(...)`)
+				var path = unsafeType(m);
+				if (path != null) fail(e.epos, "the type " + path + " as a value");
 				return;
 			case _:
 		}
 		if (KernelCheck.isRaw(e.etype)) return fail(e.epos, "a value of the raw type " + typeName(e.etype));
+		switch e.eexpr {
+			case TField({eexpr: TTypeExpr(_)}, _):
+				return; // (a static's owner, no value)
+			case _:
+		}
 		core.Texpr.iter(expr, e);
+	}
+
+	static function unsafeType(m:ModuleType):Null<String> {
+		var path = switch m {
+			case TClassDecl({clKind: KAbstractImpl(a)}): a.aPath;
+			case _: m.tPath();
+		};
+		return unsafePack(path.pack) ? core.Globals.sTypePath(path) : null;
 	}
 }

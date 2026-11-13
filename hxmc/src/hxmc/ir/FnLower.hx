@@ -3729,12 +3729,14 @@ class FnLower {
 		return where(e) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
 
 	// a field this function may assign: not final, written as a plain variable
-	// (default, null) only in its own class
-	function writable(c:TClass, cf:TClassField):Bool {
+	// (default, null) only in its class or, through this, a subclass
+	function writable(o:Null<TExpr>, c:TClass, cf:TClassField):Bool {
 		if (cf.hasClassFieldFlag(CfFinal)) return false;
 		return switch cf.cfKind {
 			case Var({vWrite: AccNormal}): true;
-			case Var({vWrite: AccNo}): fi.display != null && StringTools.startsWith(fi.display, core.Globals.sTypePath(c.clPath) + ".");
+			case Var({vWrite: AccNo}):
+				o != null && strip(o).eexpr.match(TConst(TThis))
+					|| fi.display != null && StringTools.startsWith(fi.display, core.Globals.sTypePath(c.clPath) + ".");
 			case _: false;
 		}
 	}
@@ -3883,7 +3885,9 @@ class FnLower {
 				switch strip(cargs[0]).eexpr {
 					case TLocal(v) if (v.hasVarFlag(VFinal)):
 						spanFail(e, "Span.of(x) of the final " + v.vName, "C writes the span: x is copied back after the call (ReadOnlySpan.of for a value)");
-					case TField(_, FInstance(c, _, cf) | FStatic(c, cf)) if (!writable(c, cf)):
+					case TField(o, FInstance(c, _, cf)) if (!writable(o, c, cf)):
+						spanFail(e, "Span.of(x) of " + cf.cfName + ", which is not writable here", "C writes the span: x is copied back after the call (ReadOnlySpan.of for a value)");
+					case TField(_, FStatic(c, cf)) if (!writable(null, c, cf)):
 						spanFail(e, "Span.of(x) of " + cf.cfName + ", which is not writable here", "C writes the span: x is copied back after the call (ReadOnlySpan.of for a value)");
 					case TLocal(_) | TField({eexpr: TConst(TThis) | TLocal(_)}, FInstance(_)) | TField(_, FStatic(_)):
 						boundary.releases.push(() -> {
