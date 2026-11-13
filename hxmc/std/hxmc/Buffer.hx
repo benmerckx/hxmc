@@ -44,6 +44,27 @@ final class Buffer {
 		}
 	}
 
+	// a buffer owning io, which raw code made and gives up (its bytes not
+	// copied: a job's result, a decoder's pixels); io is raw, so only
+	// @:hxmc.unsafe code calls it
+	public static function adopt(io:IoBuffer):Buffer {
+		var b = new Buffer(0);
+		b.io.free();
+		b.io = io;
+		b.size = io.length;
+		return b;
+	}
+
+	// its memory given up to raw code, which frees it (not copied: a job's
+	// input moved to another thread); the buffer closed. Throws while a span
+	// is lent, or once closed
+	public function detach():IoBuffer {
+		if (lends.compareExchange(0, -1) != 0) throw lends.load() < 0 ? "Buffer: closed" : "Buffer.detach: a span of it is lent to a running call";
+		var r = io;
+		size = 0;
+		return r;
+	}
+
 	inline function get_length():Int
 		return lends.load() < 0 ? 0 : size;
 
