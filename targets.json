@@ -1,21 +1,21 @@
 {
  "meta": {
-  "date": "2026-11-13T11:11:22",
-  "commit": "cec25c4",
-  "cpu": "AMD EPYC 9V74 80-Core Processor / Intel(R) Xeon(R) 6975P-C",
+  "date": "2026-11-14T10:37:40",
+  "commit": "9ea9e87",
+  "cpu": "AMD EPYC 9V45 96-Core Processor / Intel(R) Xeon(R) 6975P-C",
   "cores": 4,
   "runs": 3,
   "modes": ["seq","par"],
   "port": "bin/port/haxe",
   "reference": "5.0.0-preview.1",
   "platform": "Linux-7.0.0-1017-azure-x86_64",
-  "runner": "ubuntu24 20261101.360.1",
-  "run_url": "https://github.com/benmerckx/hxmc/actions/runs/43414437983",
+  "runner": "ubuntu24 20261111.370.1",
+  "run_url": "https://github.com/benmerckx/hxmc/actions/runs/43585918262",
   "machines": [{
     "shard": 0,
-    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
     "cores": 4,
-    "runner": "ubuntu24 20261101.360.1",
+    "runner": "ubuntu24 20261111.370.1",
     "rows": ["formatter/jvm","formatter/js","self/jvm","self/js"]
    }, {
     "shard": 1,
@@ -42,16 +42,16 @@
    "project": "formatter",
    "target": "hxb",
    "reference": {
-    "cpu": 0.56,
-    "wall": 0.581254,
-    "rss_mb": 136.039063,
+    "cpu": 0.55,
+    "wall": 0.567115,
+    "rss_mb": 136.109375,
     "status": "ok",
     "members": 312,
     "bytes": 2355596
    },
    "port": {
-    "cpu": 0.42,
-    "wall": 0.423196,
+    "cpu": 0.41,
+    "wall": 0.417492,
     "rss_mb": 90.152344,
     "status": "ok",
     "members": 312,
@@ -60,17 +60,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.72,
-     "wall": 0.516463,
-     "rss_mb": 155.613281,
+     "cpu": 0.71,
+     "wall": 0.506585,
+     "rss_mb": 156.507813,
      "status": "ok",
      "members": 312,
      "bytes": 2355596
     },
     "port": {
-     "cpu": 0.54,
-     "wall": 0.398641,
-     "rss_mb": 139.027344,
+     "cpu": 0.53,
+     "wall": 0.395199,
+     "rss_mb": 138.28125,
      "status": "ok",
      "members": 312,
      "bytes": 2355596
@@ -89,17 +89,17 @@
    "project": "formatter",
    "target": "js",
    "reference": {
-    "cpu": 0.75,
-    "wall": 0.772557,
-    "rss_mb": 159.78125,
+    "cpu": 0.5,
+    "wall": 0.519902,
+    "rss_mb": 159.722656,
     "status": "ok",
     "members": 1,
     "bytes": 622936
    },
    "port": {
-    "cpu": 0.7,
-    "wall": 0.56036,
-    "rss_mb": 110.527344,
+    "cpu": 0.5,
+    "wall": 0.413971,
+    "rss_mb": 110.402344,
     "status": "ok",
     "members": 1,
     "bytes": 622936
@@ -107,17 +107,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.84,
-     "wall": 0.664015,
-     "rss_mb": 170.554688,
+     "cpu": 0.61,
+     "wall": 0.473733,
+     "rss_mb": 171.234375,
      "status": "ok",
      "members": 1,
      "bytes": 622936
     },
     "port": {
-     "cpu": 0.82,
-     "wall": 0.543286,
-     "rss_mb": 150.277344,
+     "cpu": 0.59,
+     "wall": 0.391069,
+     "rss_mb": 150.335938,
      "status": "ok",
      "members": 1,
      "bytes": 622936
@@ -131,15 +131,15 @@
    "target": "lua",
    "reference": {
     "cpu": 0.56,
-    "wall": 0.582708,
-    "rss_mb": 150.066406,
+    "wall": 0.574159,
+    "rss_mb": 150.128906,
     "status": "ok",
     "members": 1,
     "bytes": 879271
    },
    "port": {
-    "cpu": 0.43,
-    "wall": 0.430737,
+    "cpu": 0.42,
+    "wall": 0.427458,
     "rss_mb": 95.777344,
     "status": "ok",
     "members": 1,
@@ -148,17 +148,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.68,
-     "wall": 0.5147,
-     "rss_mb": 161.691406,
+     "cpu": 0.7,
+     "wall": 0.541151,
+     "rss_mb": 161.589844,
      "status": "ok",
      "members": 1,
      "bytes": 879271
     },
     "port": {
      "cpu": 0.54,
-     "wall": 0.401962,
-     "rss_mb": 140.027344,
+     "wall": 0.399224,
+     "rss_mb": 139.652344,
      "status": "ok",
      "members": 1,
      "bytes": 879271
@@ -171,16 +171,16 @@
    "project": "formatter",
    "target": "python",
    "reference": {
-    "cpu": 0.58,
-    "wall": 0.599324,
-    "rss_mb": 157.042969,
+    "cpu": 0.61,
+    "wall": 0.617894,
+    "rss_mb": 157.101563,
     "status": "ok",
     "members": 1,
     "bytes": 875549
    },
    "port": {
-    "cpu": 0.46,
-    "wall": 0.459174,
+    "cpu": 0.47,
+    "wall": 0.465734,
     "rss_mb": 100.402344,
     "status": "ok",
     "members": 1,
@@ -189,16 +189,16 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.73,
-     "wall": 0.537254,
-     "rss_mb": 168.460938,
+     "cpu": 0.74,
+     "wall": 0.557087,
+     "rss_mb": 169.125,
      "status": "ok",
      "members": 1,
      "bytes": 875549
     },
     "port": {
      "cpu": 0.59,
-     "wall": 0.428572,
+     "wall": 0.42968,
      "rss_mb": 151.777344,
      "status": "ok",
      "members": 1,
@@ -213,15 +213,15 @@
    "target": "php",
    "reference": {
     "cpu": 0.58,
-    "wall": 0.586901,
-    "rss_mb": 150.246094,
+    "wall": 0.598424,
+    "rss_mb": 150.441406,
     "status": "ok",
     "members": 212,
     "bytes": 1983883
    },
    "port": {
-    "cpu": 0.44,
-    "wall": 0.4468,
+    "cpu": 0.45,
+    "wall": 0.449069,
     "rss_mb": 97.460938,
     "status": "ok",
     "members": 212,
@@ -230,17 +230,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.71,
-     "wall": 0.527814,
-     "rss_mb": 163.117188,
+     "cpu": 0.73,
+     "wall": 0.538414,
+     "rss_mb": 163.425781,
      "status": "ok",
      "members": 212,
      "bytes": 1983883
     },
     "port": {
-     "cpu": 0.56,
-     "wall": 0.411582,
-     "rss_mb": 148.527344,
+     "cpu": 0.59,
+     "wall": 0.433612,
+     "rss_mb": 148.402344,
      "status": "ok",
      "members": 212,
      "bytes": 1983883
@@ -253,16 +253,16 @@
    "project": "formatter",
    "target": "neko",
    "reference": {
-    "cpu": 0.55,
-    "wall": 0.56486,
-    "rss_mb": 153.394531,
+    "cpu": 0.61,
+    "wall": 0.618211,
+    "rss_mb": 153.167969,
     "status": "ok",
     "members": 1,
     "bytes": 421061
    },
    "port": {
-    "cpu": 0.42,
-    "wall": 0.418137,
+    "cpu": 0.48,
+    "wall": 0.472601,
     "rss_mb": 116.085938,
     "status": "ok",
     "members": 1,
@@ -271,17 +271,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.67,
-     "wall": 0.542287,
-     "rss_mb": 163.859375,
+     "cpu": 0.74,
+     "wall": 0.589308,
+     "rss_mb": 163.925781,
      "status": "ok",
      "members": 1,
      "bytes": 421061
     },
     "port": {
-     "cpu": 0.49,
-     "wall": 0.384609,
-     "rss_mb": 139.085938,
+     "cpu": 0.58,
+     "wall": 0.464681,
+     "rss_mb": 162.460938,
      "status": "ok",
      "members": 1,
      "bytes": 421061
@@ -294,16 +294,16 @@
    "project": "formatter",
    "target": "hl",
    "reference": {
-    "cpu": 0.64,
-    "wall": 0.654658,
-    "rss_mb": 159.167969,
+    "cpu": 0.68,
+    "wall": 0.697706,
+    "rss_mb": 158.9375,
     "status": "ok",
     "members": 1,
     "bytes": 352959
    },
    "port": {
-    "cpu": 0.5,
-    "wall": 0.496485,
+    "cpu": 0.53,
+    "wall": 0.522856,
     "rss_mb": 105.835938,
     "status": "ok",
     "members": 1,
@@ -313,16 +313,16 @@
    "parallel": {
     "reference": {
      "cpu": 0.87,
-     "wall": 0.623038,
-     "rss_mb": 178.96875,
+     "wall": 0.627225,
+     "rss_mb": 179.796875,
      "status": "ok",
      "members": 1,
      "bytes": 352959
     },
     "port": {
-     "cpu": 0.67,
-     "wall": 0.473285,
-     "rss_mb": 160.152344,
+     "cpu": 0.7,
+     "wall": 0.489561,
+     "rss_mb": 160.027344,
      "status": "ok",
      "members": 1,
      "bytes": 352959
@@ -335,17 +335,17 @@
    "project": "formatter",
    "target": "hlc",
    "reference": {
-    "cpu": 0.74,
-    "wall": 0.751131,
-    "rss_mb": 171.496094,
+    "cpu": 0.72,
+    "wall": 0.735657,
+    "rss_mb": 171.433594,
     "status": "ok",
     "members": 465,
     "bytes": 4501006
    },
    "port": {
-    "cpu": 0.59,
-    "wall": 0.585415,
-    "rss_mb": 110.296875,
+    "cpu": 0.57,
+    "wall": 0.564163,
+    "rss_mb": 110.367188,
     "status": "ok",
     "members": 465,
     "bytes": 4501006
@@ -353,17 +353,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 1.01,
-     "wall": 0.677862,
-     "rss_mb": 192.203125,
+     "cpu": 0.98,
+     "wall": 0.648976,
+     "rss_mb": 191.617188,
      "status": "ok",
      "members": 465,
      "bytes": 4500975
     },
     "port": {
      "cpu": 0.75,
-     "wall": 0.540265,
-     "rss_mb": 167.414063,
+     "wall": 0.54172,
+     "rss_mb": 165.167969,
      "status": "ok",
      "members": 465,
      "bytes": 4500975
@@ -376,17 +376,17 @@
    "project": "formatter",
    "target": "cpp",
    "reference": {
-    "cpu": 0.61,
-    "wall": 0.624037,
-    "rss_mb": 147.5,
+    "cpu": 0.66,
+    "wall": 0.672902,
+    "rss_mb": 147.308594,
     "status": "ok",
     "members": 399,
     "bytes": 3965850
    },
    "port": {
-    "cpu": 0.52,
-    "wall": 0.517262,
-    "rss_mb": 97.398438,
+    "cpu": 0.58,
+    "wall": 0.583248,
+    "rss_mb": 97.460938,
     "status": "ok",
     "members": 399,
     "bytes": 3965850
@@ -394,17 +394,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 0.73,
-     "wall": 0.565664,
-     "rss_mb": 155.449219,
+     "cpu": 0.8,
+     "wall": 0.622989,
+     "rss_mb": 164.804688,
      "status": "ok",
      "members": 399,
      "bytes": 3965828
     },
     "port": {
-     "cpu": 0.64,
-     "wall": 0.502721,
-     "rss_mb": 146.777344,
+     "cpu": 0.69,
+     "wall": 0.549709,
+     "rss_mb": 146.710938,
      "status": "ok",
      "members": 399,
      "bytes": 3965828
@@ -417,17 +417,17 @@
    "project": "formatter",
    "target": "jvm",
    "reference": {
-    "cpu": 1.2,
-    "wall": 1.215436,
-    "rss_mb": 209.195313,
+    "cpu": 0.78,
+    "wall": 0.79281,
+    "rss_mb": 209.171875,
     "status": "ok",
     "members": 727,
     "bytes": 1709594
    },
    "port": {
-    "cpu": 1.18,
-    "wall": 0.977988,
-    "rss_mb": 137.035156,
+    "cpu": 0.82,
+    "wall": 0.689266,
+    "rss_mb": 136.804688,
     "status": "ok",
     "members": 727,
     "bytes": 1709594
@@ -435,23 +435,23 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 1.48,
-     "wall": 1.038166,
-     "rss_mb": 235.347656,
+     "cpu": 1,
+     "wall": 0.68363,
+     "rss_mb": 232.734375,
      "status": "ok",
      "members": 727,
      "bytes": 1709594
     },
     "port": {
-     "cpu": 1.45,
-     "wall": 0.867299,
-     "rss_mb": 186.019531,
+     "cpu": 1.03,
+     "wall": 0.620017,
+     "rss_mb": 186.199219,
      "status": "ok",
      "members": 727,
      "bytes": 1709647
     },
     "identical": false,
-    "diff": "58 of 728 differ: formatter/Formatter.class, formatter/codedata/ParsedCode.class, formatter/marker/MarkEmptyLines.class",
+    "diff": "47 of 728 differ: formatter/codedata/ParsedCode.class, formatter/marker/MarkEmptyLines.class, formatter/marker/MarkTokenText.class",
     "reference_stable": false,
     "port_stable": false,
     "reference_repeats": false,
@@ -474,17 +474,17 @@
    "project": "self",
    "target": "hxb",
    "reference": {
-    "cpu": 6.65,
-    "wall": 6.677091,
-    "rss_mb": 1564.261719,
+    "cpu": 6.58,
+    "wall": 6.609869,
+    "rss_mb": 1564.308594,
     "status": "ok",
     "members": 521,
     "bytes": 16918107
    },
    "port": {
-    "cpu": 4.27,
-    "wall": 4.160426,
-    "rss_mb": 490.132813,
+    "cpu": 4.14,
+    "wall": 4.028533,
+    "rss_mb": 490.269531,
     "status": "ok",
     "members": 521,
     "bytes": 16918107
@@ -492,16 +492,16 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 8.9,
-     "wall": 5.091912,
-     "rss_mb": 1816.519531,
+     "cpu": 8.85,
+     "wall": 5.03106,
+     "rss_mb": 1806.53125,
      "status": "ok",
      "members": 521,
      "bytes": 16918107
     },
     "port": {
-     "cpu": 5.48,
-     "wall": 3.074892,
+     "cpu": 5.28,
+     "wall": 2.995271,
      "rss_mb": 540.851563,
      "status": "ok",
      "members": 521,
@@ -541,17 +541,17 @@
    "project": "self",
    "target": "python",
    "reference": {
-    "cpu": 7.51,
-    "wall": 7.531125,
-    "rss_mb": 2057.464844,
+    "cpu": 7.69,
+    "wall": 7.704684,
+    "rss_mb": 2057.445313,
     "status": "ok",
     "members": 1,
     "bytes": 19066716
    },
    "port": {
-    "cpu": 4.97,
-    "wall": 4.805138,
-    "rss_mb": 741.105469,
+    "cpu": 5.01,
+    "wall": 4.853583,
+    "rss_mb": 740.976563,
     "status": "ok",
     "members": 1,
     "bytes": 19066716
@@ -559,17 +559,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 9.86,
-     "wall": 6.113802,
-     "rss_mb": 100.903071,
+     "cpu": 10.01,
+     "wall": 6.208338,
+     "rss_mb": 98.457758,
      "status": "ok",
      "members": 1,
      "bytes": 19066716
     },
     "port": {
-     "cpu": 6.08,
-     "wall": 3.787968,
-     "rss_mb": 727.871094,
+     "cpu": 6.12,
+     "wall": 3.848068,
+     "rss_mb": 726.847656,
      "status": "ok",
      "members": 1,
      "bytes": 19066716
@@ -592,17 +592,17 @@
    "project": "self",
    "target": "neko",
    "reference": {
-    "cpu": 7.6,
-    "wall": 7.632038,
-    "rss_mb": 1806.640625,
+    "cpu": 8.05,
+    "wall": 8.084656,
+    "rss_mb": 1806.59375,
     "status": "ok",
     "members": 1,
     "bytes": 7605078
    },
    "port": {
-    "cpu": 5.04,
-    "wall": 4.831414,
-    "rss_mb": 1042.546875,
+    "cpu": 5.58,
+    "wall": 5.36247,
+    "rss_mb": 1042.484375,
     "status": "ok",
     "members": 1,
     "bytes": 7605078
@@ -610,17 +610,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 9.84,
-     "wall": 6.385263,
-     "rss_mb": 1952.597656,
+     "cpu": 9.99,
+     "wall": 6.479453,
+     "rss_mb": 1955.269531,
      "status": "ok",
      "members": 1,
      "bytes": 7605078
     },
     "port": {
-     "cpu": 6.71,
-     "wall": 3.957242,
-     "rss_mb": 1065.410156,
+     "cpu": 6.7,
+     "wall": 3.958977,
+     "rss_mb": 1071.34375,
      "status": "ok",
      "members": 1,
      "bytes": 7605078
@@ -633,17 +633,17 @@
    "project": "self",
    "target": "hl",
    "reference": {
-    "cpu": 8.81,
-    "wall": 8.848692,
-    "rss_mb": 1939.351563,
+    "cpu": 9.17,
+    "wall": 9.181033,
+    "rss_mb": 1939.441406,
     "status": "ok",
     "members": 1,
     "bytes": 6555623
    },
    "port": {
-    "cpu": 5.95,
-    "wall": 5.687897,
-    "rss_mb": 979.039063,
+    "cpu": 6.21,
+    "wall": 5.957353,
+    "rss_mb": 979.027344,
     "status": "ok",
     "members": 1,
     "bytes": 6555623
@@ -651,17 +651,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 15.57,
-     "wall": 8.220529,
-     "rss_mb": 2062.382813,
+     "cpu": 14.57,
+     "wall": 7.859364,
+     "rss_mb": 2023.433594,
      "status": "ok",
      "members": 1,
      "bytes": 6555623
     },
     "port": {
-     "cpu": 7.93,
-     "wall": 4.522151,
-     "rss_mb": 1041.023438,
+     "cpu": 8.41,
+     "wall": 4.753843,
+     "rss_mb": 1047.597656,
      "status": "ok",
      "members": 1,
      "bytes": 6555623
@@ -674,17 +674,17 @@
    "project": "self",
    "target": "hlc",
    "reference": {
-    "cpu": 10.63,
-    "wall": 10.65886,
-    "rss_mb": 1974.824219,
+    "cpu": 10.54,
+    "wall": 10.589355,
+    "rss_mb": 1974.863281,
     "status": "ok",
     "members": 3091,
     "bytes": 72187145
    },
    "port": {
-    "cpu": 7.29,
-    "wall": 6.987687,
-    "rss_mb": 1170.496094,
+    "cpu": 7.23,
+    "wall": 6.926531,
+    "rss_mb": 1170.628906,
     "status": "ok",
     "members": 3091,
     "bytes": 72187145
@@ -692,17 +692,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 17.68,
-     "wall": 9.293285,
-     "rss_mb": 103.653071,
+     "cpu": 17.56,
+     "wall": 9.201385,
+     "rss_mb": 99.754633,
      "status": "ok",
      "members": 3091,
      "bytes": 72187114
     },
     "port": {
-     "cpu": 9.8,
-     "wall": 5.948833,
-     "rss_mb": 1134.402344,
+     "cpu": 9.44,
+     "wall": 5.763481,
+     "rss_mb": 1106.113281,
      "status": "ok",
      "members": 3091,
      "bytes": 72187114
@@ -715,17 +715,17 @@
    "project": "self",
    "target": "cpp",
    "reference": {
-    "cpu": 8.55,
-    "wall": 8.585983,
-    "rss_mb": 1661.882813,
+    "cpu": 8.81,
+    "wall": 8.833402,
+    "rss_mb": 1661.757813,
     "status": "ok",
     "members": 3109,
     "bytes": 64729397
    },
    "port": {
-    "cpu": 6.27,
-    "wall": 6.10408,
-    "rss_mb": 664.265625,
+    "cpu": 6.92,
+    "wall": 6.745561,
+    "rss_mb": 664.179688,
     "status": "ok",
     "members": 3109,
     "bytes": 64729397
@@ -733,17 +733,17 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 11.11,
-     "wall": 7.195862,
-     "rss_mb": 1844.589844,
+     "cpu": 11.68,
+     "wall": 7.601781,
+     "rss_mb": 1843.714844,
      "status": "ok",
      "members": 3109,
      "bytes": 64729375
     },
     "port": {
-     "cpu": 7.46,
-     "wall": 5.216515,
-     "rss_mb": 658.050781,
+     "cpu": 8.57,
+     "wall": 5.932485,
+     "rss_mb": 668.746094,
      "status": "ok",
      "members": 3109,
      "bytes": 64729375
@@ -756,17 +756,17 @@
    "project": "self",
    "target": "jvm",
    "reference": {
-    "cpu": 14.08,
-    "wall": 14.166008,
-    "rss_mb": 1864.460938,
+    "cpu": 10.08,
+    "wall": 10.101447,
+    "rss_mb": 1864.46875,
     "status": "ok",
     "members": 13802,
     "bytes": 30468881
    },
    "port": {
-    "cpu": 13.92,
-    "wall": 11.80426,
-    "rss_mb": 955.277344,
+    "cpu": 9.78,
+    "wall": 8.363919,
+    "rss_mb": 955.019531,
     "status": "ok",
     "members": 13802,
     "bytes": 30468881
@@ -774,23 +774,23 @@
    "identical": true,
    "parallel": {
     "reference": {
-     "cpu": 18.37,
-     "wall": 10.373659,
-     "rss_mb": 2056.382813,
+     "cpu": 13.98,
+     "wall": 7.826958,
+     "rss_mb": 2053.574219,
      "status": "ok",
      "members": 13802,
-     "bytes": 30471189
+     "bytes": 30471887
     },
     "port": {
-     "cpu": 17.15,
-     "wall": 9.09984,
-     "rss_mb": 984.582031,
+     "cpu": 12.49,
+     "wall": 6.500126,
+     "rss_mb": 981.335938,
      "status": "ok",
      "members": 13802,
-     "bytes": 30468932
+     "bytes": 30468593
     },
     "identical": false,
-    "diff": "1850 of 13824 differ: codegen/Codegen.class, codegen/Converter$Closure_convertField_extractLocalNames_0$Closure_invoke_loop_0.class, codegen/Converter$Closure_convertField_extractLocalNames_0$Closure_invoke_use_0.class",
+    "diff": "1866 of 13826 differ: codegen/Codegen.class, codegen/Converter$Closure_convertField_extractLocalNames_0$Closure_invoke_loop_0.class, codegen/Converter$Closure_convertField_extractLocalNames_0$Closure_invoke_use_0.class",
     "reference_stable": false,
     "port_stable": false,
     "reference_repeats": false,
