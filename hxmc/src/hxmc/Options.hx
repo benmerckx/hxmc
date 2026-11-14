@@ -19,6 +19,11 @@ class Options {
 	// the same in the bundle's MinimumOSVersion), 15.0 and the floor; as
 	// LinkMachO writes it
 	public var iosMinos = LinkMachO.IOS_MIN;
+	// -D hxmc.ios-sdk-version=<major.minor>: the SDK an iOS or Mac Catalyst
+	// output declares it was built against (LC_BUILD_VERSION's sdk,
+	// LinkMachO.sdk; the packager's Info.plist names the same), 26.0 by
+	// default
+	public var iosSdk = LinkMachO.IOS_SDK;
 	// a Mach-O output's code signature (CodeSign), for a packager that writes
 	// the bundle around it: -D hxmc.codesign-id=<identifier>, -D
 	// hxmc.codesign-info-plist=<file> (slot 1), -D
@@ -341,6 +346,13 @@ class Options {
 			if (!v.match(min) || Std.parseInt(v.matched(1)) < 15 || Std.parseInt(v.matched(2)) > 255)
 				throw "hxmc: iOS: -D hxmc.ios-min-version=" + min + ": major.minor, 15.0 or later";
 			o.iosMinos = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
+		}
+		var sdk = def("hxmc.ios_sdk_version");
+		if (sdk != null) {
+			var v = ~/^([0-9]+)\.([0-9]+)$/;
+			if (!v.match(sdk) || Std.parseInt(v.matched(1)) < 15 || Std.parseInt(v.matched(1)) > 255 || Std.parseInt(v.matched(2)) > 255)
+				throw "hxmc: iOS: -D hxmc.ios-sdk-version=" + sdk + ": major.minor, 15.0 or later";
+			o.iosSdk = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
 		}
 		o.codesignId = def("hxmc.codesign_id");
 		o.codesignInfoPlist = def("hxmc.codesign_info_plist");

@@ -1664,8 +1664,18 @@ program's thread, where the runtime starts.
 `ios-arm64` and `ios-sim-arm64` share macOS arm64's libSystem, layouts and
 runtime objects (`Platform.os()` 1, `Platform.target()` 3; `Platform.apple()` 1 or 2
 tells iOS from the simulator). The Mach-O carries the platform in
-`LC_BUILD_VERSION` (minimum 15.0, SDK 18.0). iOS 15 is the floor because
-`UILaunchScreen` is iOS 14's and current Xcodes start at 15.
+`LC_BUILD_VERSION` (minimum 15.0, SDK 26.0: `-D hxmc.ios-min-version`,
+`-D hxmc.ios-sdk-version`). iOS 15 is the floor because `UILaunchScreen` is
+iOS 14's and current Xcodes start at 15. The SDK is 26.0 because App Store
+Connect takes uploads built with the iOS 26 SDK alone since 2026-04-28; a
+packager's `Info.plist` (`DTSDKName`, `DTPlatformVersion`) should name the
+same, as Xcode's always do.
+
+A device's executable has what ld64 and lld write beside the code:
+`LC_ENCRYPTION_INFO_64` (`cryptoff` one page, `__text` from there,
+`cryptid` 0; App Store Connect refuses a binary without it, ITMS-90125),
+`LC_FUNCTION_STARTS` (crash reports and profilers find functions by it in
+a stripped binary) and an empty `LC_DATA_IN_CODE`.
 
 **The bundle**: a packager writes it (`Info.plist`,
 `_CodeSignature/CodeResources`, the `.ipa`) around a plain executable.
@@ -1688,7 +1698,7 @@ Device signing goes into `CodeSign.Identity`:
 libSystem and runtime objects (`Mem.target()` 3 or 2, `Mem.platform()`
 3); only the platform differs (`Abi.uikit()`). `LC_BUILD_VERSION` says
 `PLATFORM_MACCATALYST` (6) with iOS's versions, as clang's
-`-target arm64-apple-ios<v>-macabi` writes them (minimum 15.0, SDK 18.0).
+`-target arm64-apple-ios<v>-macabi` writes them (minimum 15.0, SDK 26.0).
 `hxmc_ui_main` applies as on iOS.
 
 **Frameworks**: the frameworks of iOS that macOS has a twin of, or none,
