@@ -913,12 +913,16 @@ class Driver {
 				l.minos = o.iosMinos;
 				l.sdk = o.iosSdk;
 			}
+			l.fixupChains = o.fixupChains;
+			l.wantDsym = o.dsym;
 			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;
 				l.sign = CodeSign.adhoc(o.codesignId ?? haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(out)), file(o.codesignInfoPlist),
 					file(o.codesignResources), file(o.codesignEntitlements));
 			}
-			l.link("main");
+			var exe = l.link("main");
+			if (l.dsym != null) writeDsym(out, l.dsym);
+			exe;
 		} : {
 			var l = if (abi.linksDynamically()) {
 				var d = new LinkDyn(all, abi);
@@ -975,6 +979,35 @@ class Driver {
 	// ld64 does, the new file goes next to it and replaces it (a rename). On
 	// Windows (a running .exe cannot be replaced; rename does not overwrite)
 	// and WASI in place
+	// <output>.dSYM, as dsymutil writes the bundle: Contents/Info.plist,
+	// Contents/Resources/DWARF/<output's name> (LinkMachO.dsymFile)
+	static function writeDsym(out:String, bytes:haxe.io.Bytes) {
+		var name = haxe.io.Path.withoutDirectory(out), dir = out + ".dSYM/Contents";
+		sys.FileSystem.createDirectory(dir + "/Resources/DWARF");
+		sys.io.File.saveContent(dir + "/Info.plist", '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.xcode.dsym.$name</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>dSYM</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+</dict>
+</plist>
+');
+		sys.io.File.saveBytes(dir + "/Resources/DWARF/" + name, bytes);
+	}
+
 	public static function writeExecutable(path:String, bytes:haxe.io.Bytes) {
 		var host = Sys.systemName();
 		if (host == "Windows" || host == "Wasi" || !sys.FileSystem.exists(path)) {

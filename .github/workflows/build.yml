@@ -984,6 +984,17 @@ jobs:
         run: |
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           SMOKE_DIR="$RUNNER_TEMP/smoke" sh hxmc/test/smoke.sh "${{ steps.unpack.outputs.bin }}"
+      # a Mach-O with chained fixups (an iPhone's by default: LinkMachO.fixupChains)
+      # run on the Mac, its exception unwound through __unwind_info
+      - name: Chained fixups and __unwind_info, run
+        if: runner.os == 'macOS'
+        run: |
+          set -ex
+          export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
+          "${{ steps.unpack.outputs.bin }}" -cp hxmc/test/ios -main IosHello --custom-target hxmc="$RUNNER_TEMP/chains" -D hxmc.fixup-chains
+          out=$("$RUNNER_TEMP/chains")
+          echo "$out"
+          [ "$out" = "hello from hxmc on Mac: 998001 6 boom" ]
       - name: Smoke test (PowerShell, Windows paths)
         if: runner.os == 'Windows'
         shell: pwsh

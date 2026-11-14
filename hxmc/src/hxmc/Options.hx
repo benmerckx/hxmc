@@ -24,6 +24,14 @@ class Options {
 	// LinkMachO.sdk; the packager's Info.plist names the same), 26.0 by
 	// default
 	public var iosSdk = LinkMachO.IOS_SDK;
+	// -D hxmc.fixup-chains[=0]: a Mach-O output's fixups as chains
+	// (LC_DYLD_CHAINED_FIXUPS) or not, whatever its platform (by default an
+	// iPhone's alone: LinkMachO.fixupChains)
+	public var fixupChains:Null<Bool> = null;
+	// -D hxmc.dsym: a Mach-O output's debug symbols beside it, <output>.dSYM
+	// (LinkMachO.dsymFile; the symbol table of its functions, with -debug
+	// the DWARF sections), as dsymutil writes them
+	public var dsym = false;
 	// a Mach-O output's code signature (CodeSign), for a packager that writes
 	// the bundle around it: -D hxmc.codesign-id=<identifier>, -D
 	// hxmc.codesign-info-plist=<file> (slot 1), -D
@@ -347,6 +355,9 @@ class Options {
 				throw "hxmc: iOS: -D hxmc.ios-min-version=" + min + ": major.minor, 15.0 or later";
 			o.iosMinos = (Std.parseInt(v.matched(1)) << 16) | (Std.parseInt(v.matched(2)) << 8);
 		}
+		o.dsym = def("hxmc.dsym") != null;
+		var chains = def("hxmc.fixup_chains");
+		if (chains != null) o.fixupChains = chains != "0" && chains != "false";
 		var sdk = def("hxmc.ios_sdk_version");
 		if (sdk != null) {
 			var v = ~/^([0-9]+)\.([0-9]+)$/;
