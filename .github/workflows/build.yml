@@ -984,17 +984,6 @@ jobs:
         run: |
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
           SMOKE_DIR="$RUNNER_TEMP/smoke" sh hxmc/test/smoke.sh "${{ steps.unpack.outputs.bin }}"
-      # a Mach-O with chained fixups (an iPhone's by default: LinkMachO.fixupChains)
-      # run on the Mac, its exception unwound through __unwind_info
-      - name: Chained fixups and __unwind_info, run
-        if: runner.os == 'macOS'
-        run: |
-          set -ex
-          export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
-          "${{ steps.unpack.outputs.bin }}" -cp hxmc/test/ios -main IosHello --custom-target hxmc="$RUNNER_TEMP/chains" -D hxmc.fixup-chains
-          out=$("$RUNNER_TEMP/chains")
-          echo "$out"
-          [ "$out" = "hello from hxmc on Mac: 998001 6 boom" ]
       - name: Smoke test (PowerShell, Windows paths)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -1393,6 +1382,30 @@ jobs:
           ls node_modules/@hxmc/${{ matrix.plat }}/*/rt.o
           # Unix: the postinstall put the native compiler where npm's link points
           if [ "$RUNNER_OS" != Windows ]; then head -c 4 node_modules/.bin/haxe | od -An -tx1 | tee magic.txt; ! grep -q "23 21" magic.txt; fi
+      # a Mach-O with chained fixups (an iPhone's by default: LinkMachO.fixupChains)
+      # run on the Mac, its exception unwound through __unwind_info (the
+      # package's compiler: the test job's release builds no native output)
+      - name: Chained fixups and __unwind_info, run
+        if: runner.os == 'macOS'
+        run: |
+          set -ex
+          cd "$RUNNER_TEMP/app"
+          mkdir -p chains
+          cat > chains/Chains.hx <<'EOF'
+          class Chains {
+          	static function main() {
+          		var squares = [for (i in 0...1000) Std.string(i * i)];
+          		var m = new Map<String, Int>();
+          		for (s in squares) m[s] = s.length;
+          		var caught = try throw "boom" catch (e:String) e;
+          		Sys.println("chains " + squares[999] + " " + m["998001"] + " " + caught);
+          	}
+          }
+          EOF
+          node_modules/.bin/haxe -cp chains -main Chains --custom-target hxmc=bin/chains -D hxmc.fixup-chains
+          out=$(bin/chains)
+          echo "$out"
+          [ "$out" = "chains 998001 6 boom" ]
       - name: Native at once
         run: |
           set -ex
