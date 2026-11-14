@@ -5,11 +5,11 @@
 // (the default); each build's output must be the bytes a one-shot build of
 // the same sources makes (and on macOS, an Objective-C program built for the
 // machine runs as the fresh one does). What it checks is an edit that makes
-// the program use code it did not use before while hxmc's LowerCache replays
-// the bodies of the modules not typed again, what a macro's callback
-// defines while modules are reused, and a macro's persistent state while
-// the builds alternate between two signatures (a step's '-D': a define of
-// its build and the fresh one's, not a file), also after an error in a macro
+// the program use code it did not use before in the modules not typed
+// again, what a macro's callback defines while modules are reused, and a
+// macro's persistent state while the builds alternate between two
+// signatures (a step's '-D': a define of its build and the fresh one's, not
+// a file), also after an error in a macro
 // (a step's '!': a build that fails, as the fresh one does), and two
 // programs built in turn under a cap (hxmc.server-mb) that drops the other
 // one's each time.
@@ -42,57 +42,11 @@ const cases = {
 		},
 		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.c("y"));\n\t\ttrace(Lib.b(2) + Lib.a(1));\n\t}\n}\n', '#compiled': ['Main'] },
 	],
-	// what Facts found in a body (FuncInfo.gcScan: its callees, its GC
-	// points) is kept with the body's LowerCache entry and handed to its
-	// replays, but only to a build that reads stacks as the one that
-	// scanned it did (Reach drops the calls recording a stack otherwise):
-	// haxe.Exception's body, replayed, as the program starts and stops
-	// reading stacks
-	"a replayed body's facts as the program starts reading stacks": [
-		{
-			'Lib.hx': 'class Lib {\n\tpublic static function check(x:Int):Int {\n\t\tif (x < 0) throw new haxe.Exception("negative " + x);\n\t\treturn [for (i in 0...x) i].length;\n\t}\n}\n',
-			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-1)) catch (e:haxe.Exception) trace(e.message);\n\t\ttrace(Lib.check(3));\n\t}\n}\n',
-		},
-		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-1)) catch (e:haxe.Exception) trace(e.message + " " + (e.stack.length > 0));\n\t\ttrace(Lib.check(3));\n\t}\n}\n' },
-		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttry trace(Lib.check(-2)) catch (e:haxe.Exception) trace(e.message);\n\t\ttrace(Lib.check(4));\n\t}\n}\n' },
-	],
-	// a replayed body logs a type once (LowerCache: the types whose objects a
-	// type before them in its log bound are not logged): Lib's body names
-	// Point, arrays of it, nullable ints and a function type many times
-	// over; Main's edit makes the program use a class Lib's types name
-	// that it did not before
-	"a replayed body's many types": [
-		{
-			'Lib.hx': 'class Point {\n\tpublic var x:Int;\n\tpublic var y:Null<Int>;\n\n\tpublic function new(x, y) {\n\t\tthis.x = x;\n\t\tthis.y = y;\n\t}\n}\n\nclass Box {\n\tpublic var p:Point;\n\n\tpublic function new(p) this.p = p;\n}\n\nclass Lib {\n\tpublic static function sum(ps:Array<Point>, f:Point->Int):Int {\n\t\tvar t = 0;\n\t\tfor (p in ps) {\n\t\t\tvar q:Point = p;\n\t\t\tvar n:Null<Int> = q.y;\n\t\t\tt += f(q) + (n == null ? 0 : n);\n\t\t}\n\t\tvar more:Array<Point> = ps.copy();\n\t\tvar g:Point->Int = p -> p.x;\n\t\treturn t + more.length + g(ps[0]);\n\t}\n\n\tpublic static function boxed(b:Box):Int\n\t\treturn b.p.x;\n}\n',
-			'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(1, 2), new Point(3, null)], p -> p.x * 10));\n\t}\n}\n',
-		},
-		{ 'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(1, 2)], p -> p.x) + Lib.boxed(new Box(new Point(5, 6))));\n\t}\n}\n' },
-		{ 'Main.hx': 'import Lib;\n\nclass Main {\n\tstatic function main() {\n\t\ttrace(Lib.sum([new Point(7, null)], p -> p.x - 1));\n\t}\n}\n' },
-	],
-	// a Dynamic called as a function goes through an adapter per signature
-	// (Lower.dynAdapter): Lib's body, replayed, asks for the one of Int->Int,
-	// and Main's, lowered anew, for the same one, which the program has once
-	'a Dynamic as a function, in a replayed body and a new one': [
-		{
-			'Lib.hx': 'class Lib {\n\tpublic static function call(d:Dynamic):Int {\n\t\tvar f:Int->Int = d;\n\t\treturn f(1);\n\t}\n}\n',
-			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.call((x:Int) -> x + 1));\n\t}\n}\n',
-		},
-		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\tvar d:Dynamic = (x:Int) -> x * 2;\n\t\tvar g:Int->Int = d;\n\t\ttrace(Lib.call((x:Int) -> x + 1) + g(3));\n\t}\n}\n' },
-		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.call((x:Int) -> x + 1));\n\t}\n}\n' },
-	],
-	// (and a closure converted to another signature: Lower.adapter)
-	'a function as one of another signature, in a replayed body and a new one': [
-		{
-			'Lib.hx': 'class Lib {\n\tpublic static function call(f:Int->Int):Null<Int> {\n\t\tvar g:Int->Null<Int> = f;\n\t\treturn g(1);\n\t}\n}\n',
-			'Main.hx': 'class Main {\n\tstatic function main() {\n\t\ttrace(Lib.call(x -> x + 1));\n\t}\n}\n',
-		},
-		{ 'Main.hx': 'class Main {\n\tstatic function main() {\n\t\tvar f:Int->Int = x -> x * 2;\n\t\tvar g:Int->Null<Int> = f;\n\t\ttrace(Lib.call(x -> x + 1) + g(3));\n\t}\n}\n' },
-	],
 	// a dispatched call leaving out an argument gets the default of the
-	// override the receiver runs (FnLower.receiverDefault): Lib's body,
-	// replayed (Lib does not depend on Sub, so it is not typed again), has
-	// Sub's default value, which the edit of Sub changes (LowerQueries.fieldDefaults)
-	"an override's default value, in a replayed dispatched call": [
+	// override the receiver runs (FnLower.receiverDefault): Lib (which
+	// does not depend on Sub, so it is not typed again) has Sub's default
+	// value, which the edit of Sub changes (Lower.fieldDefaults)
+	"an override's default value, in a reused dispatched call": [
 		{
 			'Lib.hx': 'class Base {\n\tpublic function new() {}\n\tpublic function f(x:Int = 1):Int\n\t\treturn x;\n}\n\nclass Lib {\n\tpublic static function call(b:Base):Int\n\t\treturn b.f();\n}\n',
 			'Sub.hx': 'class Sub extends Lib.Base {\n\tpublic function new() {\n\t\tsuper();\n\t}\n\n\toverride public function f(x:Int = 2):Int\n\t\treturn x * 10;\n}\n',
@@ -103,8 +57,8 @@ const cases = {
 	// a C function's declaration (CInterop.declare: its signature, whether
 	// its calls stay outside the safe region) is the program's: an edit of
 	// it is the new one, not checked against the previous build's, and a
-	// replayed body calling it declares it again (LowerQueries.cExtern)
-	'a C function declared again, @:hxmc.fast, called by a replayed body': [
+	// reused module calling it declares it again (Lower.cExtern)
+	'a C function declared again, @:hxmc.fast, called by a reused module': [
 		{
 			'CLib.hx': 'extern class CLib {\n\t@:hxmc.c("getpid") static function getpid():Int;\n}\n',
 			'Lib.hx': 'class Lib {\n\tpublic static function pid():Int\n\t\treturn CLib.getpid();\n}\n',
@@ -308,11 +262,11 @@ const frontendCases = {
 const runs = new Map();
 // Objective-C (macOS only): what Lib's bodies declare for the link (a
 // message's C function, libobjc's functions, a class's framework, a
-// category's: LowerQueries.objcDeclare) and read of a Haxe class extending
-// an Objective-C one (its registration, its id fields: LowerQueries.objcPeer
-// and idFields), replayed after an edit of Main alone
+// category's: Lower.objcDeclare) and read of a Haxe class extending
+// an Objective-C one (its registration, its id fields: Lower.objcPeer
+// and idFields), after an edit of Main alone
 if (process.platform === 'darwin' && !web) {
-	const name = 'Objective-C messages and a Haxe subclass, in replayed bodies';
+	const name = 'Objective-C messages and a Haxe subclass, in reused modules';
 	runs.set(name, ['-D', 'hxmc.target=macos-' + (process.arch === 'arm64' ? 'arm64' : 'x86_64')]);
 	cases[name] = [
 		{
@@ -488,13 +442,7 @@ for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
 				// (the modules whose objects the build compiled: HXMC_STATS, the
 				// server's output, or the answer's, after the request)
 				const expect = steps[i]['#compiled'];
-				let compiled = null, counted = false, restarted = null;
-				// (a frontend's: Lib's bodies reused, the lowering not done again)
-				if (frontend && same && i > 0) {
-					await new Promise((r) => setTimeout(r, 100));
-					restarted = /lowered again: ([^)\n]*)/.exec(since(from) + answer)?.[1] ?? null;
-					if (restarted != null) same = false;
-				}
+				let compiled = null, counted = false;
 				if (expect && same) {
 					counted = true;
 					await new Promise((r) => setTimeout(r, 100));
@@ -508,7 +456,7 @@ for (const [hxb, connected] of [[false, false], [true, false], [false, true]])
 				if (!same) {
 					failures++;
 					console.log(answer.includes('\x02') ? answer + serverOutput() : fresh.status !== 0 ? fresh.stdout + fresh.stderr : ran ? `the run: exit ${ran[0].status}\n${ran[0].stdout}${ran[0].stderr}`
-						: restarted != null ? `the lowering was done again (${restarted})` : counted ? `compiled ${compiled == null ? '(no stats)' : '[' + compiled.join(', ') + ']'}, expected [${expect.join(', ')}]` : 'the outputs differ');
+						: counted ? `compiled ${compiled == null ? '(no stats)' : '[' + compiled.join(', ') + ']'}, expected [${expect.join(', ')}]` : 'the outputs differ');
 				}
 			}
 		});

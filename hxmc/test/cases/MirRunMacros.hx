@@ -1,6 +1,6 @@
 // A program and its macros with types of the same name that differ (`#if
 // macro`: Point has another field in the macro context, MacroOnly is there
-// alone). With -D hxmc.macros=mir and --run on Mir (mir-run-check) both are
+// alone). With -D hxmc.macros=mir and --run on Mir (mir-check) both are
 // bundles loaded into the compiler: the program's was linked against the
 // macro context's, and failed with "type Point differs from the compiler's:
 // slots 2 vs 1" (also for std types: haxe.iterators.ArrayKeyValueIterator).

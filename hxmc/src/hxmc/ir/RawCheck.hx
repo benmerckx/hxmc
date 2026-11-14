@@ -70,9 +70,6 @@ class RawCheck {
 	static function check(com:context.Common.CommonContext, types:Array<ModuleType>) {
 		var roots = stdRoots([for (cp in com.classPaths.asList()) cp.path]);
 		var strict = core.Define.rawDefined(com.defines, "hxmc.strict");
-		// (HXMC_RAW_LIST=<file>: the violations listed there instead, to annotate them)
-		var listFile = Sys.getEnv("HXMC_RAW_LIST");
-		var list = [];
 		var made = machines(types);
 		for (t in types)
 			switch t {
@@ -85,10 +82,7 @@ class RawCheck {
 						var r = new RawCheck(c, cf);
 						r.expr(cf.cfExpr);
 						if (r.count == 0) return;
-						if (listFile != null) {
-							var kind = cf.cfKind.match(Method(MethInline)) ? "inline" : cf.cfKind.match(Var(_)) ? "var" : "method";
-							list.push([cf.cfPos.pfile, "" + CInterop.lineOf(cf.cfPos.pfile, cf.cfPos.pmin), cf.cfName, kind, r.what()].join("\t"));
-						} else if (std || strict) com.error(r.what(), r.firstPos) else context.Common.moduleWarning(com, c.clModule, WUser, com.warningOptions, r.what(), r.firstPos);
+						if (std || strict) com.error(r.what(), r.firstPos) else context.Common.moduleWarning(com, c.clModule, WUser, com.warningOptions, r.what(), r.firstPos);
 					}
 					if (c.clConstructor != null) field(c.clConstructor);
 					for (cf in c.clOrderedStatics)
@@ -97,10 +91,6 @@ class RawCheck {
 						field(cf);
 				case _:
 			}
-		if (list.length == 0) return;
-		var o = sys.io.File.append(listFile);
-		o.writeString(list.join("\n") + "\n");
-		o.close();
 	}
 
 	// hxmc.unsafe's own modules (and their abstracts' implementations): the raw API

@@ -418,26 +418,8 @@ class Str {
 		return hi != (0 : I64) ? hashMix(h, hi) : h;
 	}
 
-	#if !hxmc.strhash
-	// (FNV-1a over the units, as a tool without hxmc.strhash computes literals'
-	// hashes: TargetFlags)
-	@:hxmc.kernel static function hashSlow(s:String):Int {
-		var x = 0x811C9DC5;
-		if (StrView.isOne(s)) {
-			var c = StrView.units1(s);
-			for (i in 0...c.length)
-				x = (x ^ c[i]) * 16777619;
-		} else {
-			var c = StrView.units2(s);
-			for (i in 0...c.length)
-				x = (x ^ c[i]) * 16777619;
-		}
-		if (x == 0) x = 1;
-		StrView.storeHash(s, x);
-		return x;
-	}
-	#else
-	// (the mark the compiler reads: Lower.strWordHash)
+	// (@:hxmc.wordHash: the mark by which the committed stage0 hashes literals
+	// as this does)
 	@:hxmc.wordHash @:hxmc.kernel static function hashSlow(s:String):Int {
 		var n = StrView.length(s);
 		var h = hashMix(k64(0x243F6A88, 0x85A308D3), (n : I64));
@@ -478,7 +460,6 @@ class Str {
 		StrView.storeHash(s, x);
 		return x;
 	}
-	#end
 
 	// StringMap's hash: null is a key like any other (inline: the cached one
 	// read where the map looks it up)

@@ -16,11 +16,12 @@ the bootstrap works, and the everyday edit-test loop. Tests and CI are in
 | `hxmc/std/` | hxmc's std: overrides of upstream modules and the runtime (`hxmc.rt`), merged with the Eval originals by `MkStd.hx` |
 | `hxmc/portable/` | hxmc's spans on the other targets (over `Bytes`), which `MkStd.hx` copies into the std as `hxmc-portable` with the C scalars ([interop.md](interop.md#spans-on-other-targets)) |
 | `hxmc/deps/` | the third-party C: `deps.sh` (mbedtls, libuv), `mkrt.sh` (the runtime objects), `Layouts.hx` (struct layouts per target, checked against the C headers), `probe.c`, `zig-version` |
-| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the native-output checks (SharedCheck, MachOCheck, with the smallest Android and iOS programs), the dev loop's tests, the benchmarks |
+| `hxmc/test/` | hxmc's corpus (`cases/`, golden outputs in `expected/`, frozen fuzzer programs), the scripts that run it, the native-output checks (NativeCheck, with the smallest Android and iOS programs), the dev loop's tests, the benchmarks |
 | `hxmc/bootstrap/` | the committed stage0 (`stage0.wasm.br`), node's WASI runner (`wasi.mjs`), the runtime objects by hash (`rt.mjs`) |
 | `packages/` | the npm packages, one folder each, packed by `packages/pack.mjs`: `cli` (`@hxmc/cli`: the launcher, `dist/` for lix, upstream's and hxmc's std), `platform` (template of the six `@hxmc/<os>-<cpu>`: the native compiler and that machine's runtime objects), `source` (`@hxmc/source`: the compiler's sources, `hxmc-rebuild`) |
 | `site/` | the website: plain HTML pages, their scripts (`client/`: the playground, the benchmark tables), measured data (`data/`), browser tests (`tools/`) |
 | `tools/lix/` | lix (client and haxeshim), built with hxmc |
+| `tools/hxmc/` | maintainers' tools: `EncCheck` (the encoders against llvm-mc), `MkCaseMap` (writes the std's `CaseMap.hx`) |
 
 ## Building
 
@@ -81,7 +82,6 @@ downloaded by lix: `make reference`. Nothing builds OCaml.
 | `make port` | after an edit of the port |
 | `make quick` | after every edit of hxmc (`CASES="Int64Gc Bench"` restricts the corpus) |
 | `make check` | before a commit (`PORT=1` adds the port's self-compile) |
-| `make full` | before a push |
 | `make test LANES="..."` | after an edit of the port: conformance against the reference |
 
 What each runs, and which lanes a change needs: [testing.md](testing.md).

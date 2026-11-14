@@ -27,8 +27,6 @@ using core.ds.VectorTools;
 // continuation (OInfo.cont: the phis there, a reference a cold site reloads
 // after its slow path, get the value each edge's path has).
 class MemLower extends MirWriter {
-	static var noShadow = false; // (the build's, Options.apply)
-
 	var icSym:String;
 
 	public var icaches = 0; // inline caches made (bss: <name>__ic, IC_SIZE each)
@@ -891,12 +889,6 @@ class MemLower extends MirWriter {
 	// slot, or its place in the cold site's spill area)
 	function arrSlot(o:OInfo, av:Int, sp:Int):Int {
 		if (o.rootSlot >= 0) return op2(Add, I64, fr, lconst32(8 * o.rootSlot));
-		if (noShadow && (sp < 0 || o.listIndex < 0)) {
-			// (measurement: a frame slot holding the array; nothing collects)
-			var addr = stackAddr(frameSlot(8, 8));
-			store(8, addr, 0, av);
-			return addr;
-		}
 		if (sp < 0 || o.listIndex < 0) throw new MirBuild.Unsupported("array local neither rooted nor spilled");
 		return op2(Add, I64, sp, lconst32(8 * o.listIndex));
 	}

@@ -120,20 +120,17 @@ class LFunc {
 	// the target's jump). The instructions that emit nothing (isNop: a move
 	// of a register to itself, once registers are allocated) go first, and
 	// the blocks no branch reaches any more after (the entry is reached).
-	// (HXMC_DUP_DISPATCH=0: off) a small block ending with a jump table (a
+	// A small block ending with a jump table (a
 	// switch's dispatch: an interpreter's loop) copied into each block that
 	// jumps to it, after the allocation: each copy's own indirect jump, no
 	// jump to it first (isJump: an unconditional jump, isTable: a jump
 	// table's jump; the copies of a table's address share its table)
-	public static var dupDispatch = true; // (the build's, Options.apply)
-
-	public static var minTable = 64;
+	static inline var MIN_TABLE = 64;
 
 	public function duplicateDispatch(isJump:LIns->Bool, isTable:LIns->Bool, maxIns:Int) {
-		if (!dupDispatch) return;
 		for (d in blocks) {
 			var n = d.ins.length;
-			if (n == 0 || n > maxIns || !isTable(d.ins[n - 1]) || d.ins[n - 1].table.length < minTable) continue;
+			if (n == 0 || n > maxIns || !isTable(d.ins[n - 1]) || d.ins[n - 1].table.length < MIN_TABLE) continue;
 			for (b in blocks) {
 				if (b == d || b.ins.length == 0) continue;
 				var j = b.ins[b.ins.length - 1];

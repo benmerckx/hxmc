@@ -70,7 +70,7 @@ class CacheCheck {
 	static function backdate(path:String, ago:String)
 		exec(["touch", "-d", ago, path]);
 
-	static function main() {
+	public static function run():Int {
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/cache";
 		rmrf(dir);
 		mkdirs(dir + "/hello");
@@ -85,7 +85,7 @@ class CacheCheck {
 		check("first build", build(a, std, cache));
 		var ta = tools(cache);
 		check("one tool directory, an index, its last use", ta.length == 1 && packs(ta[0]).length > 0 && FileSystem.exists(ta[0] + "/used"));
-		if (ta.length != 1) Sys.exit(1);
+		if (ta.length != 1) return 1;
 		check("the trim stamp", FileSystem.exists(cache + "/modules/trim.txt"));
 
 		// a warm build leaves the packs as they were
@@ -231,6 +231,6 @@ class CacheCheck {
 
 		Sys.println(failures == 0 ? "module cache store: all checks passed" : 'module cache store: $failures failed');
 		if (failures == 0) rmrf(dir);
-		Sys.exit(failures == 0 ? 0 : 1);
+		return failures == 0 ? 0 : 1;
 	}
 }

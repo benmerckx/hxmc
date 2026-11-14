@@ -23,8 +23,8 @@ package hxmc;
 //                                   a Mach-O output signed ad hoc as `codesign -s -` signs, binding a
 //                                   bundle's files a packager wrote (default: linker-signed; CodeSign)
 //   -D hxmc.output=<path>           the output, instead of --custom-target's
-//   -D hxmc.no-frame-pointers       x86-64: no frame record in functions (the default keeps one, for
-//                                   perf -g and debuggers; HXMC_FRAME_POINTERS=0 off; arm64 always)
+//   -D hxmc.frame-pointers=0        x86-64: no frame record in functions (the default keeps one, for
+//                                   perf -g and debuggers; arm64 always)
 //   -debug                          source lines for debuggers (DWARF on ELF and Mach-O), symbols
 //   -D hxmc.no-stacks               no call stacks (haxe.CallStack, exception stacks: empty); by
 //                                   default a program that reads them gets its table of functions and
@@ -40,27 +40,12 @@ package hxmc;
 //   -D hxmc.gc-prefault             Linux: the collector faults in the old space's pages on a helper
 //                                   thread: less wall time for more CPU time (the compilers' builds)
 //   -D hxmc.compact=0               @:hxmc.compact changes nothing: reference fields 8 bytes everywhere
-//                                   (HXMC_COMPACT=0 too; docs/hxmc.md, "Compressed references")
+//                                   (docs/hxmc.md, "Compressed references")
 //   HXMC_RT_OBJ                     the runtime object (default: <target>/rt.o where Options.rtSearch finds it)
 //   HXMC_RT_DIR                     directories of runtime objects, searched first (added to the search)
 //   HXMC_STATS=1                    print what the build did and how long it took
 class Main {
 	static var start = haxe.Timer.stamp();
-	static var lowerCache = new LowerCache();
-	// the signature of the program whose bodies lowerCache holds: a body is
-	// reused for the same field object, or for its module read back from that
-	// signature's context, so another signature's program finds none, and
-	// the bodies kept of the last one only add to the build's peak
-	static var lowerSign:Null<String> = null;
-
-	// the lowered bodies dropped when they are one of signs' (ServerMemory)
-	public static function forgetLowered(signs:Array<String>) {
-		if (lowerSign != null && signs.indexOf(lowerSign) >= 0) {
-			lowerCache = new LowerCache();
-			lowerSign = null;
-		}
-	}
-
 	static function main() {
 		Defines.install();
 		var args = Sys.args();
@@ -86,7 +71,7 @@ class Main {
 			// every six builds, peak 6.7 GB; 4 GB and 150%, three, peak 5.8 GB
 			// (the first major collection's, at the first limit); 2 GB and 150%,
 			// five, peak 4.8 GB)
-			if ((Sys.getEnv("RT_OLD_MB") == null || Sys.getEnv("RT_OLD_GROWTH") == null) && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
+			if ((Sys.getEnv("RT_OLD_MB") == null || Sys.getEnv("RT_OLD_GROWTH") == null) && Sys.systemName() != "Wasi") {
 				if (Sys.getEnv("RT_OLD_MB") == null) Sys.putEnv("RT_OLD_MB", "2048");
 				if (Sys.getEnv("RT_OLD_GROWTH") == null) Sys.putEnv("RT_OLD_GROWTH", "150");
 				Sys.exit(Sys.command(Sys.programPath(), ["--server"].concat(args)));
@@ -135,7 +120,7 @@ class Main {
 		// fixed 256 MB would triple a small build's peak memory). The runtime
 		// reads the limit at startup, so the tool runs itself again with it set
 		// (not under WASI: no processes).
-		if (Sys.getEnv("RT_OLD_MB") == null && Sys.getEnv("HXMC_GC_DEFAULTS") != "0" && Sys.systemName() != "Wasi") {
+		if (Sys.getEnv("RT_OLD_MB") == null && Sys.systemName() != "Wasi") {
 			Sys.putEnv("RT_OLD_MB", "768");
 			Sys.exit(Sys.command(Sys.programPath(), [out].concat(args)));
 		}
@@ -240,39 +225,17 @@ class Main {
 		var headerCheck = Options.flag("hxmc.header-check", com.defines);
 		hxmc.ir.HeaderCheck.start(headerCheck);
 		var t0 = haxe.Timer.stamp();
-		// resident: bodies of the fields the server kept are reused (LowerCache)
-		var useCache = Driver.resident && Options.on("hxmc.lower-cache", true, com.defines);
-		if (useCache) {
-			var sign = core.Define.getSignature(com.defines);
-			if (sign != lowerSign) {
-				if (lowerSign != null) lowerCache = new LowerCache();
-				lowerSign = sign;
-			}
-		}
 		hxmc.ir.KernelCheck.seconds = 0;
-		var prog = useCache ? lowerCache.lower(mainClass, com.types, com.basic) : hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+		var prog = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
 			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms');
-			if (useCache)
-				Sys.println('hxmc: bodies ${lowerCache.hits} reused (${lowerCache.keyed} by key), ${lowerCache.misses} lowered' + (lowerCache.why != null ? ' (lowered again: ${lowerCache.why})' : ''));
 		}
 		if (headerCheck != null) hxmc.ir.HeaderCheck.write(headerCheck, abi.name);
 		if (Options.on("hxmc.lower-only", false, com.defines)) return; // (profiling the lowering)
-		if (beforeCodegen != null) {
-			beforeCodegen(com, prog);
-			if (useCache) lowerCache.hooked(prog);
-		}
+		if (beforeCodegen != null) beforeCodegen(com, prog);
 		// (a Mir host: the std's types)
 		Driver.hostIdents = opts.mirHost ? hxmc.macro.HostTable.idents(com) : null;
 		Driver.run(prog, out, opts);
-		// HXMC_LOWER_CHECK=1: the same program lowered from scratch must give the same executable
-		if (useCache && Options.on("hxmc.lower-check", false, com.defines)) {
-			var fresh = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
-			if (beforeCodegen != null) beforeCodegen(com, fresh);
-			Driver.run(fresh, out + ".check", opts);
-			var same = sys.io.File.getBytes(out).compare(sys.io.File.getBytes(out + ".check")) == 0;
-			Sys.println("hxmc: lowering check: " + (same ? "same executable" : "DIFFERENT executable"));
-		}
 	}
 }

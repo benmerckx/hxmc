@@ -9,7 +9,7 @@ using StringTools;
 // the libraries expected, every symbol version a glibc 2.17 has (the floor),
 // BIND_NOW and no text relocations (DT_TEXTREL, or a relocation in a
 // segment that is not writable).
-//   <haxe> -cp hxmc/test -cp haxe/test --run ElfCheck <dir> [--summary <file>]
+//   <haxe> -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck elf <dir> [--summary <file>]
 // <dir>: the corpus's outputs (bin/hxmc-t: <case>/m*-glibc) or a staged
 // corpus (<case>/m), as Corpus --libc glibc writes them.
 class ElfCheck {
@@ -82,8 +82,8 @@ class ElfCheck {
 		return bad;
 	}
 
-	static function main() {
-		var a = parseArgs(Sys.args(), ["--summary"]);
+	public static function run(args:Array<String>):Int {
+		var a = parseArgs(args, ["--summary"]);
 		if (a.rest.length != 1) fail("usage: ElfCheck <dir> [--summary <file>]");
 		var dir = a.rest[0];
 		var files = [];
@@ -106,6 +106,6 @@ class ElfCheck {
 		}
 		Sys.println('${files.length - failed}/${files.length} executables ok');
 		summary(a.get("--summary"), '### readelf, the glibc mode: ${files.length - failed}/${files.length} executables ok\n');
-		Sys.exit(failed > 0 || files.length == 0 ? 1 : 0);
+		return failed > 0 || files.length == 0 ? 1 : 0;
 	}
 }

@@ -5,7 +5,7 @@ using StringTools;
 
 // Shared libraries written by hxmc (-D hxmc.shared, LinkDyn; Android's
 // lib<name>.so is one):
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run SharedCheck
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck shared
 // - in the dynamic glibc mode for x86-64 (and arm64 under qemu with the
 //   cross C library, when there): hxmc/test/shared/Lib.hx as a library,
 //   loaded by hxmc/test/shared/Host.hx (an executable of the same mode) with
@@ -34,7 +34,7 @@ class SharedCheck {
 	static function has(tool:String):Bool
 		return exec(["sh", "-c", "command -v " + tool]).code == 0;
 
-	static function main() {
+	public static function run(args:Array<String>):Int {
 		var tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
 		function build(out:String, main:String, args:Array<String>, cp = "hxmc/test/shared"):Bool {
 			var r = exec([tool, out, "-cp", cp, "-cp", "bin/hxmc/std", "-main", main, "--custom-target", "hxmc", "-D", "disable-parallelism"].concat(args),
@@ -77,9 +77,10 @@ class SharedCheck {
 		}
 		if (failures.length > 0) {
 			Sys.println("SharedCheck: " + failures.length + " failed");
-			Sys.exit(1);
+			return 1;
 		}
 		Sys.println("SharedCheck: all passed");
+		return 0;
 	}
 
 	static function readelf(args:Array<String>, file:String):String

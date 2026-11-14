@@ -258,7 +258,7 @@ class Com {
 	// the indirect C function a call of these C types goes through (the
 	// function's address and `this` first), named by its types; in a safe
 	// region unless @:hxmc.fast
-	public static function declare(l:LowerQueries, args:Array<CTy>, ret:CTy, fast:Bool):String {
+	public static function declare(l:Lower, args:Array<CTy>, ret:CTy, fast:Bool):String {
 		var cargs = [CPtr, CPtr].concat(args);
 		var key = CInterop.INDIRECT + "com(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret) + (fast ? "!fast" : "");
 		l.objcDeclare(fast ? FastFunc(key, {args: cargs, ret: ret}) : Func(key, {args: cargs, ret: ret}));

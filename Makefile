@@ -5,7 +5,7 @@
 #   make help                 the targets and variables below
 #   make hxmc                 bin/hxmc/hxmc, the tool (from the committed stage0 on first use)
 #   make port                 bin/port/haxe: the port with every generator (seconds after an edit)
-#   make quick|check|full     the tiered checks (hxmc/test/Tiers.hx)
+#   make quick|check          the tiered checks (hxmc/test/Tiers.hx)
 #   make release TARGET=macos-arm64   bin/release/<TARGET>/haxe[.exe]
 #
 # Outputs go to bin/ (ignored by Git). hxmc keeps the typed modules and an
@@ -54,7 +54,7 @@ N ?= 200
 EVAL ?= $(TOOL)
 FUZZ ?= bin/fuzz/fuzz
 SUMMARY ?=
-# `quick`, `check`, `full`: the corpus cases to restrict the corpus lanes to
+# `quick`, `check`: the corpus cases to restrict the corpus lanes to
 # (CASES="Int64Gc Bench"); PORT=1 adds the port's self-compile to `check`
 CASES ?=
 PORT ?=
@@ -96,7 +96,7 @@ WASI := ulimit -s unlimited 2>/dev/null || true; $(NODE) --stack-size=65500 hxmc
 # a Haxe script on Eval: the tool when there is one, else the stage0 module
 RUN = $(if $(wildcard $(TOOL)),ulimit -s unlimited 2>/dev/null || true; $(TOOL),$(WASI) $(STAGE0))
 # the test scripts (haxe/test, hxmc/test), on Eval with the tool
-SCRIPT := ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test --run
+SCRIPT := ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run
 # the hxmc target: bin/hxmc/std (hxmc/std merged with the Eval originals for
 # macros), given last
 HXMC_ARGS := -cp bin/hxmc/std --custom-target hxmc
@@ -115,7 +115,7 @@ PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(COMPILER_ARGS
 PKG_ARGS := -cp haxe/src -cp hxmc/src -main hxmc.HaxeMain -D disable-parallelism $(COMPILER_ARGS) $(HXMC_ARGS)
 EXE = $(if $(findstring windows,$(1)),.exe)
 RELEASE_BIN := bin/release/$(TARGET)/haxe$(call EXE,$(TARGET))
-# the native compiler for the host (the npm package's: Mir macros and --run, mir-run-check)
+# the native compiler for the host (the npm package's: Mir macros and --run, mir-check)
 HOST_HAXE := bin/npm/native/$(HOST)/haxe
 
 # $(call hxmc,<out>,<args>): a build by the tool, its log next to the output
@@ -126,10 +126,10 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
-.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check header-check port release npm site site-check \
+.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
 	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
-	shared-check jni-check macho-check uikit-check native-check mir-run-check mir-macros-check mir-cache-check mir-server-check dev-check \
-	bench bench-compile bench-micro bench-simd measure quick check full clean distclean
+	units native-check mir-check dev-check \
+	bench bench-compile bench-micro bench-simd measure quick check clean distclean
 
 help:
 	@sed -n '/^# --- Targets/,$$p' $(MAKEFILE_LIST) | sed -n 's/^## \{0,1\}//p'
@@ -147,15 +147,13 @@ help:
 ##               hxmc/deps> (hxmc/bootstrap/rt.mjs), else rt-build: zig, mbedtls and libuv (hxmc/deps);
 ##               rt-target: RT_TARGET's alone, rt-layouts: the committed layouts checked (CI's rt jobs)
 ##
-## Test (docs/testing.md)
+## Test (docs/testing.md; the tiers: hxmc/test/Tiers.hx)
 ##   quick       after every edit of hxmc: the tool, the x64 corpus, again with RT_VERIFY=1 and
-##               -D hxmc.verify-tags, the wasm corpus under node, the module cache's store, the lowering's queries (CASES restricts
+##               -D hxmc.verify-tags, the wasm corpus under node, the unit checks (CASES restricts
 ##               the corpus)
 ##   check       before a commit: quick + arm64 (qemu), wine, a 16 KB nursery, legacy exception handling,
-##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, shared
-##               libraries, iOS's Mach-O; PORT=1 adds the native port's self-compile
-##   full        before a push: every nursery, RT_VERIFY, wasmtime, ThreadNatives x300, the port's
-##               self-compile natively and as a module, crosshost, the fixpoint (hxmc/test/Tiers.hx)
+##               the glibc mode, ThreadNatives x30, crosshost on three cases, debug info, the native
+##               output; PORT=1 adds the native port's self-compile
 ##   test        the port against the reference, the lanes of LANES (default hxb; CI's conformance jobs):
 ##               hxb, macro, hxblib (HXB of the three case lists, Conformance; CASES_FILE for hxb),
 ##               display, server, jsonrpc, interp (--interp runs), haxelib (-L, batch and server),
@@ -166,36 +164,22 @@ help:
 ##   fixpoint    the tool rebuilds itself byte-identical (the module cache cold, warm and off)
 ##   crosshost   the tool as a WebAssembly module builds the corpus and itself byte-identical to the
 ##               native tool (hxmc/test/Crosshost.hx; CROSSHOST_ARGS)
+##   units       root facts, the module cache's store, the runtime objects' search, the frontends'
+##               seam (hxmc/test/Units.hx)
+##   native-check  the native output a packager builds on (hxmc/test/NativeCheck.hx): shared
+##               libraries and Android's .so, Java through JNI, iOS's Mach-O, a UIKit app (a Mac
+##               with Xcode), the C declarations against each target's headers (zig); NATIVE: one part
+##   mir-check   the Mir lane (hxmc/test/MirCheck.hx): bin/npm/native/HOST/haxe running the corpus
+##               in itself, the macro cases with Mir macros against the reference, its compiled
+##               functions kept across builds, its statics in the compilation server
 ##   portable-check  hxmc's spans on Eval and JavaScript, built by the reference (make reference),
 ##               print what hxmc's builds print (hxmc/test/PortableCheck.hx)
-##   header-check  the C declarations that name their headers against each target's headers, with
-##               zig; a declaration that disagrees must fail (hxmc/test/HeaderCheck.hx; HEADER_TARGETS)
 ##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
 ##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
 ##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
 ##               JS (hxmc/test/ModuleCacheCheck.hx; PORT=1 adds the port itself)
 ##   dev-check   the dev loop: `hxmc dev` through edits and a compile error, the compilation server's
 ##               builds against fresh ones (hxmc/test/dev)
-##   mir-run-check  --interp and --run on the Mir interpreter inside the compiler (-D hxmc.run=mir,
-##               hxmc/src/hxmc/interp/MirRun.hx): bin/npm/native/HOST/haxe, the corpus run in it
-##               (each bundle without native code: HXMC_MACRO_STATS; the cases known to fail there:
-##               Corpus.MIR_RUN_KNOWN)
-##   mir-macros-check  the macro cases with Mir macros (-D hxmc.macros=mir, bin/npm/native/HOST/haxe as for
-##               mir-run-check) against the reference (Conformance --target-only --parallel 1;
-##               MIR_MACROS_KNOWN: Eval's own packages)
-##   mir-cache-check  Mir macros' compiled functions kept across builds (interp/BundleCache.hx): what
-##               invalidates them, each build against Eval's macros (hxmc/test/MirCacheCheck.hx)
-##   mir-server-check  Mir macros' statics in the compilation server through edits, against the
-##               reference's server (hxmc/test/MirServerCheck.hx)
-##   shared-check, macho-check, native-check  the native output a packager builds on
-##               (docs/using.md): shared libraries of the glibc mode and Android's .so
-##               (hxmc/test/SharedCheck.hx), iOS's plain Mach-O executables and dylibs, minimum and code
-##               signature (hxmc/test/MachOCheck.hx); native-check: these and jni-check
-##   jni-check   Java through JNI (hxmc/test/JniCheck.hx): the corpus's JNI cases (an embedded
-##               JVM, the glibc mode), a library java loads (JNI_OnLoad), Android's builds; a JDK
-##               (JAVA_HOME or javac), else the runs are skipped
-##   uikit-check  a UIKit app in its bundle (hxmc/test/UIKitCheck.hx): Mac Catalyst, the iOS
-##               simulator's iPhone and iPad; a Mac with Xcode
 ##   corpus-stage, test-libraries  CI's: the corpus cross-built for CORPUS_TARGETS (bin/corpus),
 ##               -lib (lix's scopes, node_modules, haxelib) with the npm package's compiler
 ##   corpus-verify  the corpus with -D hxmc.verify-tags and RT_VERIFY=1 for VERIFY_TARGET (the host's,
@@ -319,12 +303,6 @@ crosshost: $(TOOL) $(STD) $(HOST_RT)
 # hxmc's spans on Eval and JavaScript (MkStd's hxmc-portable) against hxmc's
 # golden files, with the reference compiler (hxmc/test/PortableCheck.hx;
 # make reference first)
-# the typed C declarations against the headers, with zig, for each target
-# (hxmc/test/HeaderCheck.hx; docs/interop.md, "Checking declarations against
-# the headers"); without zig, skipped
-header-check: $(TOOL) $(STD)
-	$(SCRIPT) HeaderCheck $(HEADER_TARGETS)
-
 portable-check: $(TOOL) $(STD)
 	export HAXE_REFERENCE=$(abspath $(REFERENCE)); $(SCRIPT) PortableCheck
 
@@ -521,12 +499,10 @@ test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 SUITES ?=
 SUITES_TARGET ?=
 upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
-ifneq ($(SUITES_TARGET),wasm32-wasi)
-	$(SCRIPT) UpstreamSuites $(SUITES)
-endif
-ifneq ($(SUITES_TARGET),native)
-	$(SCRIPT) UpstreamSuites --target wasm32-wasi $(or $(SUITES),unit)
-endif
+	@failed=; \
+	$(if $(filter wasm32-wasi,$(SUITES_TARGET)),,$(SCRIPT) UpstreamSuites $(SUITES) || failed="$$failed native";) \
+	$(if $(filter native,$(SUITES_TARGET)),,$(SCRIPT) UpstreamSuites --target wasm32-wasi $(or $(SUITES),unit) || failed="$$failed wasm32-wasi";) \
+	if [ -n "$$failed" ]; then echo "upstream-suites: failed:$$failed"; exit 1; fi
 
 corpus-stage: $(TOOL) $(STD) $(HOST_RT)
 	for t in $(CORPUS_TARGETS); do \
@@ -537,7 +513,7 @@ corpus-stage: $(TOOL) $(STD) $(HOST_RT)
 		esac; \
 		rm -rf bin/corpus/$$t; \
 		$(SCRIPT) Corpus -v $$a --stage bin/corpus/$$t || exit 1; \
-		case $$t in *-glibc) $(SCRIPT) ElfCheck bin/corpus/$$t || exit 1 ;; \
+		case $$t in *-glibc) $(SCRIPT) NativeCheck elf bin/corpus/$$t || exit 1 ;; \
 			wasm*) ;; \
 			*) $(SCRIPT) DebugCheck --target $$t --stage bin/corpus/$$t/_debug || exit 1 ;; esac; \
 	done
@@ -549,27 +525,18 @@ VERIFY_TARGET ?= $(HOST)
 corpus-verify: $(TOOL) $(STD) $(HOST_RT)
 	export RT_VERIFY=1; $(SCRIPT) Corpus -v --target $(VERIFY_TARGET) --verify-tags $(CASES)
 
-# shared libraries of the glibc mode loaded by an hxmc program (hxmc/test/SharedCheck.hx), Android's built
-shared-check: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) SharedCheck
-# Java through JNI (hxmc/test/JniCheck.hx): the corpus's JNI cases in the glibc
-# mode (an embedded JVM, also with RT_VERIFY=1), hxmc/test/jni/JniLib.hx as a
-# library java loads (JNI_OnLoad), it and the cases built for Android
-jni-check: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) JniCheck
-# iOS's native output without a bundle (hxmc/test/MachOCheck.hx: IosHello as an
-# executable and a dylib, -D hxmc.ios-min-version, the code signature,
-# linker-signed or with -D hxmc.codesign-*'s files)
-macho-check: $(TOOL) $(STD) $(HOST_RT)
-	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
-# a UIKit app in its bundle (hxmc/test/UIKitCheck.hx: UIKitHello, its own
-# hxmc_ui_main): Mac Catalyst, and the iOS simulator's iPhone and iPad; a
-# Mac with Xcode, else skipped
-uikit-check: $(TOOL) $(STD) $(HOST_RT)
-	ulimit -s unlimited 2>/dev/null || true; $(TOOL) -cp hxmc/test -cp haxe/test --run UIKitCheck
-# the native-output contract a packager builds on (docs/using.md, "Native
-# output for a packager"; CI's native-output job): Android's .so, iOS's Mach-O
-native-check: shared-check jni-check macho-check
+# the native output a packager builds on (docs/using.md, "Native output for
+# a packager"; hxmc/test/NativeCheck.hx): shared libraries of the glibc mode
+# and Android's .so, Java through JNI, iOS's Mach-O, a UIKit app, the C
+# declarations against each target's headers; each part skips itself where it
+# cannot run (no JDK, Xcode or zig); NATIVE: one part (shared, jni, macho, uikit, header)
+NATIVE ?=
+native-check: $(TOOL) $(STD) $(HOST_RT)
+	$(SCRIPT) NativeCheck $(NATIVE)
+# the checks of single parts of the tool (hxmc/test/Units.hx): root facts, the
+# module cache's store, the runtime objects' search, the frontends' seam
+units: $(TOOL) $(STD) $(HOST_RT)
+	$(SCRIPT) Units
 # the dev loop (docs/dev.md): `hxmc dev` on a console program through edits
 # and a compile error (dev-console.mjs), then the compilation server's builds
 # through edits against fresh ones (server-verify.mjs), the tool's and a
@@ -581,25 +548,12 @@ dev-check: $(TOOL) $(STD) $(HOST_RT)
 		&& $(TOOL) bin/dev/hook -cp haxe/src -cp hxmc/src -cp hxmc/test/frontend -main Hook -D disable-parallelism -D hih_no_generators -cp bin/hxmc/std --custom-target hxmc \
 		&& $(NODE) hxmc/test/dev/server-verify.mjs bin/dev/hook frontend
 
-# (each case typed, compiled for the Mir interpreter and run in the native compiler's process)
-mir-run-check: $(TOOL) $(STD) $(HOST_RT) $(HOST_HAXE)
-	HXMC_HAXE=$(abspath $(HOST_HAXE)) $(SCRIPT) Corpus --mir-run $(CASES)
-
-# (Mir macros: the macro context typed against hxmc's std, its modules not
-# compared; Issue11631 uses Eval's own mbedtls package; CI's test jobs run the
-# same on each target's machine)
-MIR_MACROS_KNOWN := eval-Issue11631-compile
-mir-macros-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
-	export HXMC_STD=$(abspath bin/hxmc/std) HAXE_REFERENCE=$(abspath $(REFERENCE)) HAXE_IN_HAXE_PORT="$(abspath $(HOST_HAXE)) -D hxmc.macros=mir"; $(SCRIPT) Conformance -j $(JOBS) --cases haxe/test/conformance-macro-cases.txt --target-only --parallel 1 --known $(MIR_MACROS_KNOWN)
-
-# (Mir macros' compiled functions kept across builds, interp/BundleCache.hx: what
-# invalidates them, against Eval's macros)
-mir-cache-check: $(TOOL) $(STD) $(HOST_RT) $(HOST_HAXE)
-	export HXMC_HAXE=$(abspath $(HOST_HAXE)) HXMC_STD=$(abspath bin/hxmc/std); $(SCRIPT) MirCacheCheck
-
-# (Mir macros' statics in the compilation server through edits, against the reference's server)
-mir-server-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
-	export HXMC_HAXE=$(abspath $(HOST_HAXE)) HXMC_STD=$(abspath bin/hxmc/std) HAXE_REFERENCE=$(abspath $(REFERENCE)); $(SCRIPT) MirServerCheck
+# the Mir lane (hxmc/test/MirCheck.hx; CI's test jobs run it on each machine):
+# the corpus run in the native compiler on the Mir interpreter, the macro
+# cases with Mir macros against the reference, the compiled functions kept
+# across builds, statics in the compilation server (CASES restricts the corpus)
+mir-check: $(TOOL) $(STD) $(HOST_RT) $(REFERENCE) $(HOST_HAXE)
+	export HXMC_STD=$(abspath bin/hxmc/std); $(SCRIPT) MirCheck --eval $(TOOL) --haxe $(HOST_HAXE) --reference $(REFERENCE) -j $(JOBS) $(CASES)
 
 bench: $(TOOL) $(STD) $(HOST_RT) $(PORT_BIN) bin/lix/lix
 	$(SCRIPT) Bench $(BENCH_ARGS)
@@ -669,9 +623,6 @@ quick: $(TOOL) $(STD) $(HOST_RT)
 
 check: $(TOOL) $(STD) $(HOST_RT)
 	$(SCRIPT) Tiers check $(if $(PORT),--port) $(CASES)
-
-full: $(TOOL) $(STD) $(HOST_RT)
-	$(SCRIPT) Tiers full $(CASES)
 
 clean:
 	rm -rf bin/port bin/release bin/lix-dist bin/site bin/wasm bin/fuzz bin/lix bin/npm bin/stage0 bin/test bin/dev bin/corpus \

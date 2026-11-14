@@ -25,7 +25,7 @@ using core.TFunctions;
 //
 // What a body needs of the link beyond its own code (a message's C function,
 // libobjc's functions, a class's library, a category's) it declares through
-// LowerQueries.objcDeclare (a Decl), which the compilation server replays
+// Lower.objcDeclare (a Decl), which the compilation server replays
 // when it reuses the body.
 @:access(hxmc.ir.Lower)
 class ObjC {
@@ -437,7 +437,7 @@ class ObjC {
 		return SELREF + haxe.io.Bytes.ofString(sel).toHex();
 
 	// the classref of c, or null (library: no library declared)
-	public static function classRef(l:LowerQueries, c:TClass):Null<String> {
+	public static function classRef(l:Lower, c:TClass):Null<String> {
 		var lib = library(c);
 		if (lib == null) return null;
 		var name = className(c);
@@ -489,7 +489,7 @@ class ObjC {
 	// named by its C types so that every message of the same types shares
 	// it; called in a safe region (Cocoa calls back into Haxe from inside
 	// many messages)
-	public static function declare(l:LowerQueries, cf:Null<TClassField>, types:Array<T>, result:Null<T>, ?variadic:Int):String {
+	public static function declare(l:Lower, cf:Null<TClassField>, types:Array<T>, result:Null<T>, ?variadic:Int):String {
 		var where = cf != null ? CInterop.posOf(cf.cfPos) : "";
 		var name = cf != null ? cf.cfName : "init";
 		var args = [CPtr, CPtr, CPtr];
@@ -511,7 +511,7 @@ class ObjC {
 	// the function a message of typed parameters (CInterop.plan) is sent
 	// through: its C words as a typed C call passes them, a String result
 	// a pointer; setter: a property's, which returns nothing
-	public static function declareTyped(l:LowerQueries, cf:TClassField, s:TSignature, p:CInterop.CPlan, setter:Bool):String {
+	public static function declareTyped(l:Lower, cf:TClassField, s:TSignature, p:CInterop.CPlan, setter:Bool):String {
 		var where = CInterop.posOf(cf.cfPos);
 		var args = [];
 		for (i in 0...s.args.length)
@@ -538,7 +538,7 @@ class ObjC {
 	// the same of a message of C types (args after the receiver and selector);
 	// variadic: the number of its fixed ones (the others passed as a variadic
 	// function's: on Apple's arm64, on the stack)
-	public static function declareC(l:LowerQueries, args:Array<CTy>, ret:CTy, ?variadic:Int, fast = false):String {
+	public static function declareC(l:Lower, args:Array<CTy>, ret:CTy, ?variadic:Int, fast = false):String {
 		var cargs = [CPtr, CPtr, CPtr].concat(args);
 		var key = CInterop.INDIRECT + "objc_msgSend(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret)
 			+ (variadic != null ? "..." + variadic : "") + (fast ? "!fast" : "");
@@ -559,13 +559,13 @@ class ObjC {
 
 	// libobjc's functions the lowering calls, declared once per program as an
 	// extern without @:hxmc.fast would be (the program may declare them so too)
-	public static function runtime(l:LowerQueries, name:String, args:Array<CTy>, ret:CTy):String {
+	public static function runtime(l:Lower, name:String, args:Array<CTy>, ret:CTy):String {
 		l.objcDeclare(Func(name, {args: args, ret: ret}));
 		return symbol(l, name);
 	}
 
 	// a symbol of libobjc (a function only its address is taken of)
-	public static function symbol(l:LowerQueries, name:String):String {
+	public static function symbol(l:Lower, name:String):String {
 		l.objcDeclare(Symbol(name, LIB));
 		return name;
 	}
@@ -887,7 +887,7 @@ class ObjC {
 	// (the descriptor's signature: @? the block itself), and the blocks of its
 	// parameters and result of function type (a pointer in C: a block taking
 	// or returning a block converts them as a method does)
-	public static function blockSig(l:LowerQueries, ft:T, where:String):BlockSig {
+	public static function blockSig(l:Lower, ft:T, where:String):BlockSig {
 		var s = switch TFunctions.follow(ft) {
 			case TFun(s): s;
 			case _: throw new LowerError("a block of a type that is no function", where);
@@ -1009,7 +1009,7 @@ class ObjC {
 	// released in the collection, hxmc.rt.Gc.sweeping): Haxe code cannot run
 	// there, so it is put off first (rt_objc_dealloc_defer: called again
 	// after the collection, when the thread allocates)
-	public static function entry(l:LowerQueries, name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig, dealloc = false):FuncInfo {
+	public static function entry(l:Lower, name:String, symbol:String, module:String, f:FuncInfo, nargs:Int, abi:CSig, dealloc = false):FuncInfo {
 		var w = new FuncInfo(name, module);
 		w.cSymbol = symbol;
 		w.display = f.display;
@@ -1055,7 +1055,7 @@ class ObjC {
 
 	// a heap block calling closure c (not null) of the block's signature b:
 	// autoreleased, as every id a value is
-	public static function blockNew(l:LowerQueries, c:Ex, b:BlockSig):Ex {
+	public static function blockNew(l:Lower, c:Ex, b:BlockSig):Ex {
 		var sym = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(s)), TI64);
 		var flags = BLOCK_HAS_SIGNATURE;
 		// (x86-64: a struct result over 16 bytes comes back through memory)
@@ -1077,7 +1077,7 @@ class ObjC {
 	// closure dies). A block on its caller's stack (neither a heap block nor
 	// a global one: an argument, which the callee copies to keep) is copied
 	// first (heap: objc_retainBlock's copy, autoreleased)
-	public static function blockFunction(l:LowerQueries, id:Ex, b:BlockSig, heap:Local, same:Local, box:Local, r:Local):Stmt {
+	public static function blockFunction(l:Lower, id:Ex, b:BlockSig, heap:Local, same:Local, box:Local, r:Local):Stmt {
 		var fn = (s:String) -> ECallHost("hxmc_unsafe_Mem_sym", vector(EStr(symbol(l, s))), TI64);
 		var flags = ECallHost("hxmc_unsafe_Mem_getI32", vector(ELocal(heap), EInt(8)), TI32);
 		var copy = ECallHost(runtime(l, "objc_retainBlock", [CPtr], CPtr), vector(ELocal(heap)), TId);
@@ -1097,7 +1097,7 @@ class ObjC {
 	// the indirect C function a block of C types (args, ret) is called
 	// through (FnLower.blockCall): (its invoke's address, the block, arguments...),
 	// in a safe region as a message
-	public static function declareBlockCall(l:LowerQueries, args:Array<CTy>, ret:CTy):String {
+	public static function declareBlockCall(l:Lower, args:Array<CTy>, ret:CTy):String {
 		var cargs = [CPtr, CPtr].concat(args);
 		var key = CInterop.INDIRECT + "block(" + [for (a in cargs) CInterop.shape(a)].join(",") + ")" + CInterop.shape(ret);
 		l.objcDeclare(Func(key, {args: cargs, ret: ret}));
@@ -1174,7 +1174,7 @@ typedef ObjCMode = {
 	register:FuncInfo
 };
 
-// what a body declares for the program's link (LowerQueries.objcDeclare)
+// what a body declares for the program's link (Lower.objcDeclare)
 enum Decl {
 	// C function sym (a message's, ObjC.declare; libobjc's, runtime), called in a safe region
 	Func(sym:String, sig:CSig);

@@ -96,8 +96,7 @@ class HaxeMain {
 		// (the port calls the hook with --no-output too: e.g. writing HXB only)
 		var noOutput = args.contains("--no-output");
 		// a compilation server keeps what it can between builds (as `hxmc
-		// --server`): the lowered bodies of the fields it kept (LowerCache) and
-		// the compiled modules in memory
+		// --server`): the compiled modules in memory
 		if (isServer(args)) Driver.resident = true;
 		// (and gives a request for hxmc its std as the command line above does:
 		// an editor's client, VS Code's Haxe extension through --server-connect,

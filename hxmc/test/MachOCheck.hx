@@ -7,8 +7,8 @@ import sys.io.File;
 using StringTools;
 
 // iOS's native output without a bundle (docs/using.md, "Native output for
-// a packager"; make macho-check), checked without a Mac:
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
+// a packager"; make native-check NATIVE=macho), checked without a Mac:
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck macho
 // hxmc/test/ios/IosHello.hx for ios-arm64, ios-sim-arm64 and Mac Catalyst
 // (macos-catalyst-arm64, -x86_64) as a plain executable and as a dylib
 // (-D hxmc.shared), each:
@@ -55,7 +55,7 @@ class MachOCheck {
 		return {ok: r.code == 0, out: r.out};
 	}
 
-	static function main() {
+	public static function run(args:Array<String>):Int {
 		tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
 		for (t in ["ios-arm64", "ios-sim-arm64", "macos-catalyst-arm64", "macos-catalyst-x86_64"]) {
 			var dir = '$OUT/$t';
@@ -115,9 +115,10 @@ class MachOCheck {
 		check("hxmc.codesign-id on an ELF output: an error", !r.ok && r.out.contains("hxmc.codesign"), r.ok ? "built" : "");
 		if (failures.length > 0) {
 			Sys.println("MachOCheck: " + failures.length + " failed");
-			Sys.exit(1);
+			return 1;
 		}
 		Sys.println("MachOCheck: all passed");
+		return 0;
 	}
 
 	static function be32(b:Bytes, at:Int):Int

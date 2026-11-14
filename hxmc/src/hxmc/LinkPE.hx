@@ -43,7 +43,7 @@ class LinkPE extends LinkCore {
 
 	public function new(objs:Array<Obj>, arm:Bool) {
 		super(objs, arm);
-		if (arm && !diag("lowbase")) {
+		if (arm) {
 			BASE = 0;
 			imgLo = 0x40000000;
 			imgHi = 1;
@@ -62,15 +62,6 @@ class LinkPE extends LinkCore {
 				} else keep.push(s);
 			o.sections = keep;
 		}
-	}
-
-	// HXMC_PE_DIAG=<flag,...>: variants of the output for bisecting a loader's
-	// refusal (development)
-	static var diags:Null<Array<String>>; // (the build's, Options.apply; and mapFile)
-	static var mapFile:Null<String>;
-
-	static function diag(f:String):Bool {
-		return diags != null && diags.indexOf(f) >= 0;
 	}
 
 	public function link(entry:String):Bytes {
@@ -169,17 +160,6 @@ class LinkPE extends LinkCore {
 				b.b.blit(strAt[k], strings[k], 0, strings[k].length);
 			extra.sections.push(edata);
 		}
-		// (diagnostics: an entry point that returns 42 at once)
-		var retEntry = new Section(".text$hxmc_ret42", Text, 16);
-		if (arm) {
-			retEntry.buf.u32(0x52800540); // mov w0, #42
-			retEntry.buf.u32(0xD65F03C0); // ret
-		} else {
-			retEntry.buf.u8(0xb8); // mov eax, 42
-			retEntry.buf.u32(42);
-			retEntry.buf.u8(0xc3);
-		}
-		if (diag("ret42")) extra.sections.push(retEntry);
 		var listHead = new Map<String, Section>();
 		for (l in ["ctor", "dtor"]) {
 			var head = new Section(".data$hxmc_" + l + "0", Data, 8);
@@ -220,7 +200,7 @@ class LinkPE extends LinkCore {
 					case RoData: StringTools.startsWith(s.name, ".pdata") ? 2 : 1;
 					case Data | InitArray | FiniArray: 3;
 					case Tdata | Tbss: 4;
-					case Bss: diag("bssdata") ? 3 : 6;
+					case Bss: 6;
 				};
 				groups[g].secs.push(s);
 			}
@@ -257,7 +237,7 @@ class LinkPE extends LinkCore {
 			rva = LinkCore.align(pos, SECT);
 		}
 		var imageSize = rva;
-		relocatable = (arm || dll) && !diag("fixed");
+		relocatable = arm || dll;
 		var defined = new Map<String, Int>();
 		defined.set("__CTOR_LIST__", addr.get(listHead.get("ctor")));
 		defined.set("__DTOR_LIST__", addr.get(listHead.get("dtor")));
@@ -277,17 +257,6 @@ class LinkPE extends LinkCore {
 			if (t.abs) return t.offset;
 			return addr.get(t.section) + t.offset;
 		};
-		// HXMC_MAP=<file>: the address of every symbol (debugging; no
-		// symbol table is written in PE files)
-		var mapFile = LinkPE.mapFile;
-		if (mapFile != null) {
-			var m = new StringBuf();
-			for (o in objs)
-				for (s in o.symbols)
-					if (s.section != null && addr.exists(s.section))
-						m.add(StringTools.hex(addr.get(s.section) + s.offset, 8) + " " + s.name + "\n");
-			sys.io.File.saveContent(mapFile, m.toString());
-		}
 		// the thunks: jmp [rip + IAT slot] (arm64: adrp, ldr, br)
 		for (k => off in thunkOf)
 			LinkCore.patchStub(thunks.buf, off, arm, iatAddr(k), addr.get(thunks) + off);
@@ -401,7 +370,7 @@ class LinkPE extends LinkCore {
 		h.u32(sizes[6]); // SizeOfUninitializedData
 		var e = dll ? null : globals.get(entry);
 		if (e == null && !dll) throw "hxmc: link: no entry point " + entry;
-		h.u32(dll ? 0 : diag("ret42") ? addr.get(retEntry) - BASE : symAddr(e) - BASE); // (a DLL: none)
+		h.u32(dll ? 0 : symAddr(e) - BASE); // (a DLL: none)
 		h.u32(starts[0]); // BaseOfCode
 		h.u64(BASE + imgLo, imgHi); // ImageBase
 		h.u32(SECT);
@@ -435,10 +404,10 @@ class LinkPE extends LinkCore {
 			dirs[1] = [starts[5] + idataLayout.dir, 20 * (dlls.length + 1)];
 			dirs[12] = [starts[5] + idataLayout.iatStart, idataLayout.iatSize];
 		}
-		if (sizes[2] > 0 && !diag("nopdata")) dirs[3] = [starts[2], sizes[2]];
+		if (sizes[2] > 0) dirs[3] = [starts[2], sizes[2]];
 		if (sizes[7] > 0) dirs[5] = [starts[7], sizes[7]];
 		var tlsUsed = globals.get("_tls_used");
-		if (tlsUsed != null && !diag("notls")) dirs[9] = [symAddr(tlsUsed) - BASE, 40];
+		if (tlsUsed != null) dirs[9] = [symAddr(tlsUsed) - BASE, 40];
 		for (d in dirs) {
 			h.u32(d[0]);
 			h.u32(d[1]);

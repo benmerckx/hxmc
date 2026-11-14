@@ -406,15 +406,7 @@ class InterpGen {
 						case _:
 					}
 		var nc = consts.length;
-		if (coalesce) nregs = allocate(blocks, nc, uses) else {
-			nregs = nc + mf.params.length;
-			for (b in blocks)
-				for (i in b.ins)
-					if (i.op == Param && !i.dead) reg[i.id] = nc + i.imm;
-			for (b in blocks)
-				for (i in b.ins)
-					if (!i.dead && reg[i.id] < 0 && i.ty != Void && fused[i.id] == 0) reg[i.id] = nregs++;
-		}
+		nregs = allocate(blocks, nc, uses);
 		// (a parameter of type Void, or one never read, still has its register: calls pass it, DataGen.boundTrampoline)
 		for (b in blocks)
 			for (i in b.ins)
@@ -577,9 +569,6 @@ class InterpGen {
 		}
 		return k;
 	}
-
-	// (HXMC_INTERP_COALESCE=0: a register per value)
-	static var coalesce = true; // (the build's, Options.apply)
 
 	// the registers of the values (after the constants): SSA coloring in
 	// dominator-tree preorder, a value taking a register no value live at its
