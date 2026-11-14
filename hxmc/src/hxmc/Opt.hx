@@ -2125,16 +2125,28 @@ class Opt {
 				}
 		if (any) o.rewrite();
 		o.indexed();
+		o.sinkCold();
 		o.dce();
 	}
 
 	// an access at x + y, of no index: at base x, index y (as Mem's raw
 	// accesses make it, which the back ends encode in the access; a span's
-	// element at a sub's start, hxmc.rt.Bytes' accessors)
+	// element at a sub's start, hxmc.rt.Bytes' accessors); an index y << k
+	// (k of 1 to 3) at scale 1: index y at scale 2^k (a reference store's
+	// element, whose shifted index its barrier's address shares)
 	function indexed() {
 		for (b in f.blocks)
 			for (i in b.ins)
-				if ((i.op == Load || i.op == Store) && !i.dead && i.b < 0 && i.sym == null) {
+				if ((i.op == Load || i.op == Store) && !i.dead && i.sym == null) {
+					if (i.b >= 0) {
+						var s = f.vals[i.b];
+						if (i.imm2 != 1 || s.op != Shl || s.ty != I64 || f.vals[s.a].ty != I64) continue;
+						var k = f.vals[s.b];
+						if (k.op != Const || k.sym != null || k.imm < 1 || k.imm > 3) continue;
+						i.b = s.a;
+						i.imm2 = 1 << k.imm;
+						continue;
+					}
 					var x = f.vals[i.a];
 					if (x.op != Add || x.ty != I64 || x.dead) continue;
 					var l = f.vals[x.a], r = f.vals[x.b];
@@ -2144,6 +2156,49 @@ class Opt {
 					i.imm2 = 1;
 				}
 	}
+
+	// A cheap pure value whose uses are all in one slow-path block, other than
+	// its own, moves there (before its first use): a reference store's slot
+	// address, which only the barrier's slow call reads, is computed there
+	// and holds no register across the fast path. Rounds: what only the
+	// moved value used follows it.
+	function sinkCold() {
+		for (_ in 0...4) {
+			var useBlock = new Vector<MBlock>(f.vals.length), many = new Vector<Bool>(f.vals.length);
+			for (b in f.blocks)
+				for (i in b.ins) {
+					inline function use(x:Int)
+						if (x >= 0) {
+							if (i.op == Phi || useBlock[x] != null && useBlock[x] != b) many[x] = true;
+							useBlock[x] = b;
+						}
+					use(i.a);
+					use(i.b);
+					use(i.c);
+					for (x in i.args)
+						use(x);
+				}
+			var moved = false;
+			for (b in f.blocks) {
+				if (b.cold) continue;
+				var k = b.ins.length;
+				while (k-- > 0) {
+					var i = b.ins[k], to = useBlock[i.id];
+					if (many[i.id] || to == null || !to.cold || to.handler || to == b || i.op == Const || !speculable(i)) continue;
+					b.ins.splice(k, 1);
+					var at = 0;
+					while (!usesVal(to.ins[at], i.id)) at++;
+					to.ins.insert(at, i);
+					i.block = to;
+					moved = true;
+				}
+			}
+			if (!moved) break;
+		}
+	}
+
+	static function usesVal(i:MIns, v:Int):Bool
+		return i.a == v || i.b == v || i.c == v || i.args.indexOf(v) >= 0;
 
 	// ---- if-conversion
 
