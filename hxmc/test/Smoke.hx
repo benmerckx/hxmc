@@ -139,8 +139,10 @@ class Extra {
 			Sys.exit(2);
 		}
 		bin = FileSystem.fullPath(args[0]);
-		dir = FileSystem.fullPath(args.length > 1 ? args[1] : "bin/smoke");
-		FileSystem.createDirectory(dir);
+		// (made first: fullPath is realpath on Unix, which fails on a missing directory)
+		var d = args.length > 1 ? args[1] : "bin/smoke";
+		FileSystem.createDirectory(d);
+		dir = FileSystem.fullPath(d);
 		File.saveContent('$dir/Main.hx', MAIN);
 		File.saveContent('$dir/Natives.hx', NATIVES);
 		File.saveContent('$dir/Extra.hx', EXTRA);
