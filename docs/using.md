@@ -137,7 +137,9 @@ builds on two outputs, checked by `make native-check`:
   `-D hxmc.ios-min-version=<major.minor>` sets its `LC_BUILD_VERSION`
   minimum (15.0, the floor), `-D hxmc.ios-sdk-version=<major.minor>` the
   SDK it declares (26.0, the App Store's minimum; the bundle's `Info.plist`
-  should name the same). The linker signs it ad hoc, as
+  should name the same). `-D hxmc.dsym` writes `<output>.dSYM` beside it
+  (the symbols crash reports are symbolicated with; with `-debug` the
+  DWARF too). The linker signs it ad hoc, as
   linker-signed. With any of the defines below it is signed as `codesign
   -s -` signs a bundle's executable instead. The packager writes
   `Info.plist` and `CodeResources` first, then links, then puts the files

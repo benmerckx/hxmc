@@ -1653,7 +1653,19 @@ A device's executable has what ld64 and lld write beside the code:
 `LC_ENCRYPTION_INFO_64` (`cryptoff` one page, `__text` from there,
 `cryptid` 0; App Store Connect refuses a binary without it, ITMS-90125),
 `LC_FUNCTION_STARTS` (crash reports and profilers find functions by it in
-a stripped binary) and an empty `LC_DATA_IN_CODE`.
+a stripped binary) and an empty `LC_DATA_IN_CODE`. Its fixups are chains
+(`LC_DYLD_CHAINED_FIXUPS`, `DYLD_CHAINED_PTR_64`, and
+`LC_DYLD_EXPORTS_TRIE`), as ld64 and lld write them for iOS 13.4 and later;
+the other Mach-O outputs keep `LC_DYLD_INFO_ONLY`'s opcodes, and `-D
+hxmc.fixup-chains[=0]` makes either the other.
+
+Every Mach-O output has `__unwind_info` beside `__eh_frame`, as ld64
+writes it of functions without a compact encoding: each function's entry
+names its FDE (DWARF mode), which the system's unwinder, the crash reporter
+and lldb read first. `-D hxmc.dsym` writes `<output>.dSYM` beside the
+output, as dsymutil does: the output's UUID, its functions' symbol table
+and, with `-debug`, the DWARF sections; crash reports are symbolicated with
+it (atos, Xcode).
 
 **The bundle**: a packager writes it (`Info.plist`,
 `_CodeSignature/CodeResources`, the `.ipa`) around a plain executable.
