@@ -17,7 +17,7 @@ using StringTools;
 // one (Windows: D:\...) identical once each root is replaced by the same
 // placeholder. A WebAssembly port runs under --runner.
 //
-// Here (`make check PORT=1`): --local builds bin/hxmc-t/port/s with the tool
+// Here (`node make.mjs check PORT=1`): --local builds bin/hxmc-t/port/s with the tool
 // and compares its self-compile with the reference's (bin/reference/haxe,
 // written once and again when haxe/src is newer); --small also runs it with
 // a 256 KB nursery.
@@ -60,7 +60,7 @@ class Selfcheck {
 	static function local(a:Harness.Args):Int {
 		var tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
 		var reference = a.get("--reference", "bin/reference/haxe");
-		if (!FileSystem.exists(reference)) return fail('Selfcheck: no reference compiler at $reference (make reference)');
+		if (!FileSystem.exists(reference)) return fail('Selfcheck: no reference compiler at $reference (node make.mjs reference)');
 		mkdirs("bin/hxmc-t/port");
 		var ref = "bin/hxmc-t/self-ref.hxb";
 		if (!FileSystem.exists(ref) || mtime(ref) < newest(["haxe/src"])) {

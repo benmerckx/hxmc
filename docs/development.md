@@ -27,19 +27,29 @@ the bootstrap works, and the everyday edit-test loop. Tests and CI are in
 
 ```sh
 git submodule update --init
-make hxmc           # bin/hxmc/hxmc, the tool
-make port           # bin/port/haxe: the port with every generator
-make release TARGET=macos-arm64   # bin/release/<target>/haxe[.exe]
-make lix            # bin/lix/lix
-make npm            # bin/npm/*.tgz: the npm packages
-make site           # bin/site: the website
-make reference      # bin/reference/haxe: the reference compiler
-make help           # everything else
+node make.mjs hxmc           # bin/hxmc/hxmc, the tool
+node make.mjs port           # bin/port/haxe: the port with every generator
+node make.mjs release TARGET=macos-arm64   # bin/release/<target>/haxe[.exe]
+node make.mjs lix            # bin/lix/lix
+node make.mjs npm            # bin/npm/*.tgz: the npm packages
+node make.mjs site           # bin/site: the website
+node make.mjs reference      # bin/reference/haxe: the reference compiler
+node make.mjs help           # everything else
 ```
 
-The [Makefile](../Makefile) needs GNU make, node 22 and git. zig is needed
-only to build the runtime objects. Everything cross-builds from Linux or
-macOS.
+This needs node 22 and git, on Linux, macOS and Windows alike: no make, no
+shell. zig (with a POSIX shell, for `hxmc/deps`' scripts) is needed only to
+build the runtime objects. Everything cross-builds from any of the three.
+
+`make.mjs` runs the build's driver, `tools/make/Make.hx`, on the tool's
+Eval; without a tool yet, it first builds the stage-1 compiler from the
+committed stage0 under node (below). The targets build in order, each
+output only when a prerequisite is newer, as make did; `NAME=value` sets a
+variable (else the environment's, else its default: `node make.mjs
+help`), and `-o <file>` takes a file as up to date whatever its
+prerequisites (CI's downloaded binaries). Commands run without a shell
+(libuv, `Harness.spawn`); on Linux and macOS with the stack limit lifted,
+as the Makefile's recipes had it.
 
 Scripts are Haxe run on the tool's Eval: `bin/hxmc/hxmc -cp ... --run X`.
 A first argument starting with `-` makes the tool the compiler's command
@@ -49,22 +59,25 @@ line. There is no Python.
 
 As Zig does: `hxmc/bootstrap/stage0.wasm.br` is the tool built for
 wasm32-wasi (brotli), committed and replaced only when the sources need a
-newer one (`make stage0`).
+newer one (`node make.mjs stage0`).
 
 1. node runs the stage0 to build the first native tool from source
-   (`bin/hxmc/boot/hxmc1`).
+   (`bin/hxmc/boot/hxmc1`; `node make.mjs --stage1` alone: the runtime
+   objects, the std, then that). `hxmc/bootstrap/wasi.mjs` runs a module
+   given `--stack-size` on a worker thread with a stack of that size, so
+   the compiler's recursion needs no `ulimit -s`.
 2. That builds `bin/hxmc/hxmc`.
-3. `bin/hxmc/hxmc` rebuilds itself byte-identically (`make fixpoint`).
+3. `bin/hxmc/hxmc` rebuilds itself byte-identically (`node make.mjs fixpoint`).
 
-`make bootstrap` does all three.
+`node make.mjs bootstrap` does all three.
 
 ### Runtime objects
 
 `rt.o`, `ssl.o` and `uv.o` per target are built by zig from `hxmc/deps`.
 They are keyed by a hash of `hxmc/deps` (scripts, versions, flags, zig's
 version) and published as the GitHub release `rt-<hash>`
-(`node hxmc/bootstrap/rt.mjs hash|fetch|pack`). `make rt` downloads them
-and falls back to `make rt-build` (zig) when the release is missing. CI
+(`node hxmc/bootstrap/rt.mjs hash|fetch|pack`). `node make.mjs rt` downloads them
+and falls back to `node make.mjs rt-build` (zig) when the release is missing. CI
 builds them only then: `fetch` retries a failed download and exits 2 only
 for a missing release (an HTTP 404), 3 for a network failure, which fails
 the run instead of rebuilding.
@@ -72,25 +85,25 @@ the run instead of rebuilding.
 ### The reference compiler
 
 The official nightly of the pinned upstream commit (build.haxe.org),
-downloaded by lix: `make reference`. Nothing builds OCaml.
+downloaded by lix: `node make.mjs reference`. Nothing builds OCaml.
 
 ## The edit-test loop
 
 | | When |
 | --- | --- |
-| `make hxmc` | after an edit of hxmc or the port: rebuilds the tool (unchanged modules come from the cache) |
-| `make port` | after an edit of the port |
-| `make quick` | after every edit of hxmc (`CASES="Int64Gc Bench"` restricts the corpus) |
-| `make check` | before a commit (`PORT=1` adds the port's self-compile) |
-| `make test LANES="..."` | after an edit of the port: conformance against the reference |
+| `node make.mjs hxmc` | after an edit of hxmc or the port: rebuilds the tool (unchanged modules come from the cache) |
+| `node make.mjs port` | after an edit of the port |
+| `node make.mjs quick` | after every edit of hxmc (`CASES="Int64Gc Bench"` restricts the corpus) |
+| `node make.mjs check` | before a commit (`PORT=1` adds the port's self-compile) |
+| `node make.mjs test LANES="..."` | after an edit of the port: conformance against the reference |
 
 What each runs, and which lanes a change needs: [testing.md](testing.md).
 Never commit `bin/`.
 
 ## The site
 
-`make site` builds `bin/site`; any static server shows it (`npx http-server
-bin/site`). `make site-check` tests it in headless Chromium, Firefox and
+`node make.mjs site` builds `bin/site`; any static server shows it (`npx http-server
+bin/site`). `node make.mjs site-check` tests it in headless Chromium, Firefox and
 WebKit (Playwright; `BROWSERS=chromium` for one).
 
 The pages are plain HTML (`site/index.html`, `benchmarks.html`,

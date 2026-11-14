@@ -69,7 +69,7 @@ code, with one invalidation rule, in place of `ModuleCache`,
 `ObjectStore` and `interp/BundleCache`, with `Fingerprint` and `CacheDir`
 folded in (with `WatchedCallbacks`, `CheckingHxbWriter`, `Skeletons` and
 `UpToDate`: 6,500 lines; 41 files of `hxmc/src` and `haxe/src` refer to
-them). What it must keep: the gate (`make test-module-cache`, with the
+them). What it must keep: the gate (`node make.mjs test-module-cache`, with the
 macro-defined cases), the fixpoint cold, warm and off, the variants per
 define, nondeterministic macros, the cap and trim, the off switch, Mir's
 compiled functions.
@@ -224,7 +224,7 @@ it instead:
 - **Server builds from `--hxb-lib`** re-decode HXB-library modules every
   build, or lose their bodies with `-D disable-hxb-cache`. Check against
   the reference: a port bug.
-- **Quieter builds**: the Makefile's build rule writes `<out>.log`; logs
+- **Quieter builds**: the build driver's rule (tools/make/Make.hx) writes `<out>.log`; logs
   only on request. `-D hxmc.cache=<dir>` beside `HXMC_CACHE`.
 
 ## Macro-heavy builds

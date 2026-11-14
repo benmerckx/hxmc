@@ -13,7 +13,7 @@ using StringTools;
 // (portable/SpanThrows, its `// expect:` lines), and ofIoBuffer and unsafeOf
 // are compile errors naming why (portable/Span*, `// error:`). Private
 // structs as elements: portable/SpanPrivate (its kernel's in spanprivate/).
-//   make portable-check (HAXE_REFERENCE: the reference compiler, default
+//   node make.mjs portable-check (HAXE_REFERENCE: the reference compiler, default
 //   bin/reference/haxe; the outputs in bin/test/portable)
 class PortableCheck {
 	static final CASES = "hxmc/test/cases";
@@ -62,8 +62,8 @@ class PortableCheck {
 	static function main() {
 		haxe = Sys.getEnv("HAXE_REFERENCE");
 		if (haxe == null) haxe = "bin/reference/haxe";
-		if (!FileSystem.exists(haxe)) fail("PortableCheck: no reference compiler at " + haxe + " (make reference)");
-		if (!FileSystem.exists("bin/hxmc/std/hxmc-portable")) fail("PortableCheck: bin/hxmc/std/hxmc-portable is missing (make hxmc)");
+		if (!FileSystem.exists(haxe)) fail("PortableCheck: no reference compiler at " + haxe + " (node make.mjs reference)");
+		if (!FileSystem.exists("bin/hxmc/std/hxmc-portable")) fail("PortableCheck: bin/hxmc/std/hxmc-portable is missing (node make.mjs hxmc)");
 		mkdirs(OUT);
 		for (name in ["SpanInflate", "SpanPortable", "SimdOps", "SimdValues", "SimdExamples", "SimdPatterns"]) {
 			var skip = HXMC_ONLY[name];

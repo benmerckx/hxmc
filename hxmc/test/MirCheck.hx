@@ -2,7 +2,7 @@ import Harness.*;
 import haxe.io.Path;
 import sys.FileSystem;
 
-// The Mir lane (make mir-check; CI's test jobs, on each machine but Intel
+// The Mir lane (node make.mjs mir-check; CI's test jobs, on each machine but Intel
 // Macs): the native compiler with Mir macros and --run (bin/npm/native/<host>/haxe)
 //   <eval> -cp hxmc/test -cp haxe/test --run MirCheck --eval <eval> --haxe <haxe> --reference <haxe> [-j N] [--summary <file>] [case ...]
 // - the corpus run inside the compiler on the Mir interpreter (Corpus

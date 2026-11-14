@@ -1,4 +1,4 @@
-// `hxmc dev` on a program without a window or a library (make dev-check;
+// `hxmc dev` on a program without a window or a library (node make.mjs dev-check;
 // docs/dev.md): the dev server builds a console program that prints a line
 // and keeps running, then on each save builds it again and starts the new
 // build in place of the old one (a cold start: the program never talks to

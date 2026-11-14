@@ -1,4 +1,4 @@
-// The site's build (`make site` passes -D site_version=<commit>): the files the
+// The site's build (`node make.mjs site` passes -D site_version=<commit>): the files the
 // pages fetch carry it in their address, so a deploy reaches browsers at once
 // instead of after their caches expire
 class Version {

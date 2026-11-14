@@ -11,16 +11,18 @@
 #   the six targets, Linux's glibc mode and Android (hxmc/deps with mbedtls and libuv,
 #   built by zig), one job per target, then assembled, their layouts checked,
 #   published as the release from pushes to main and hxmc and passed on as an
-#   artifact (the jobs below otherwise download the release: make rt).
+#   artifact (the jobs below otherwise download the release: node make.mjs rt).
 # - build: the committed stage0 module under node builds the tool, which
 #   rebuilds itself (the fixpoint: with the module cache cold, warm and off);
 #   then the port's release binaries and lix for the six targets.
-#   Next to it, each with its own tool from the stage0 (make hxmc):
-#   - checks: the unit checks (make units), the module cache's gate, the dev
-#     loop (make dev-check), the native output a packager builds on (make
+#   Next to it, each with its own tool from the stage0 (node make.mjs hxmc):
+#   - checks: the unit checks (node make.mjs units), the module cache's gate, the dev
+#     loop (node make.mjs dev-check), the native output a packager builds on (make
 #     native-check: Android's .so, Java through JNI, iOS's plain Mach-O, the
 #     declarations against the headers); apart from build, so the jobs that
 #     need it start sooner;
+#   - windows: the bootstrap on Windows with node alone (node make.mjs
+#     bootstrap), iOS's Mach-O, the port and its smoke test;
 #   - corpus-verify (after build): the corpus with its tagged words verified
 #     (x86-64); apart from corpus, which the test jobs wait
 #     for;
@@ -35,7 +37,7 @@
 #     built with the module cache off);
 #   - site: the website (site/: plain pages, their scripts, the playground's
 #     compiler, lix, the benchmark history);
-# - conformance: the port against the reference (make test LANES=..., make
+# - conformance: the port against the reference (node make.mjs test LANES=..., make
 #   test-fuzz LANE=..., on the release binary's Eval): HXB of the upstream
 #   suites, macro and library cases (and hxmc's -lib resolution against
 #   haxelib and lix), the port's unit tests, display requests,
@@ -48,17 +50,17 @@
 #   Eval and JavaScript against hxmc's output (PortableCheck).
 # - upstream-suites: upstream's runtime suites (tests/unit, sys, threads)
 #   built by hxmc and run, natively and (unit) as a wasm32-wasi module under
-#   node (with its own tool from the stage0; make upstream-suites).
+#   node (with its own tool from the stage0; node make.mjs upstream-suites).
 # - test: on each target's machine, the release binary's smoke test (with a
 #   TLS handshake and libuv), lix, hxmc's corpus and the port's self-compile;
-#   then on Linux x86-64 the Mir lane (MirCheck, as make mir-check: the
+#   then on Linux x86-64 the Mir lane (MirCheck, as node make.mjs mir-check: the
 #   compiler with Mir macros and --run running the corpus in itself, the
 #   macro cases against the reference).
 # - llvm (experimental, continue-on-error; the nightly and dispatches only):
 #   hxmc's corpus with the LLVM back end (-D hxmc.llvm, the runner's clang)
 #   on linux-x86_64, linux-arm64 and macos-arm64 machines.
 # - wasm: the corpus and the port's self-compile under node and wasmtime;
-#   playground: the website in Chromium, Firefox and WebKit (make site-check).
+#   playground: the website in Chromium, Firefox and WebKit (node make.mjs site-check).
 # - npm: the eight packages (@hxmc/cli and its six platform packages, each
 #   with the compiler and the runtime objects of its machine; @hxmc/source,
 #   the compiler's sources) installed from their tarballs in fresh projects
@@ -190,7 +192,7 @@ jobs:
           path: bin/hxmc/deps
           key: hxmc-deps-zig-${{ steps.zig.outputs.version }}-${{ hashFiles('hxmc/deps/deps.sh') }}-${{ matrix.target }}
       - name: Build the runtime objects with zig
-        run: make rt-target RT_TARGET=${{ matrix.target }}
+        run: node make.mjs rt-target RT_TARGET=${{ matrix.target }}
       - uses: actions/upload-artifact@v7
         with:
           name: rt-${{ matrix.target }}
@@ -240,7 +242,7 @@ jobs:
           set -ex
           touch bin/hxmc/deps/*/VERSIONS bin/hxmc/rt/*/*.o
           ls -l bin/hxmc/rt/*
-          make rt-layouts
+          node make.mjs rt-layouts
       # idempotent: the hash names the content, so a release that exists
       # (published by another run, or found missing by a fetch that failed)
       # is kept as it is; only the assets it lacks (an interrupted upload)
@@ -294,18 +296,16 @@ jobs:
       - uses: actions/download-artifact@v8
         if: needs.changes.outputs.rt_hit != 'true'
         with: {name: rt, path: bin/hxmc/rt}
-      - name: Runtime objects
-        run: make rt && touch bin/hxmc/rt/*/*.o && ls -l bin/hxmc/rt/*
       - name: Bootstrap from the stage0
-        run: make bootstrap
+        run: node make.mjs bootstrap
 
       - name: The port's release binaries
         run: |
           set -ex
-          for t in $TARGETS; do make release TARGET=$t; done
+          for t in $TARGETS; do node make.mjs release TARGET=$t; done
           ls -l bin/release/*
       - name: lix for the six targets
-        run: make lix-dist
+        run: node make.mjs lix-dist
 
       - name: Package the release binaries
         run: |
@@ -381,22 +381,21 @@ jobs:
       - name: Runtime objects and the tool
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc
+          node make.mjs hxmc
       # root facts, the module cache's store, the runtime objects' search in
       # npm's layout, the frontends' seam (hxmc/test/Units.hx)
       - name: Units
-        run: make units
+        run: node make.mjs units
       # the persistent module cache: the same outputs with and without it
       # (hxmc/src/hxmc/ModuleCache.hx, hxmc/test/ModuleCacheCheck.hx)
       - name: Module cache
         if: always()
-        run: make test-module-cache PORT=1
+        run: node make.mjs test-module-cache PORT=1
       # `hxmc dev` on a console program, the compilation server's builds
       # against fresh ones (hxmc/test/dev)
       - name: The dev loop
         if: always()
-        run: make dev-check
+        run: node make.mjs dev-check
       # the native output a packager builds on (hxmc/test/NativeCheck.hx),
       # Linux, no device, simulator or Mac: the glibc mode's libraries and
       # Android's .so, Java through JNI (the image's JDK 21: its javac and
@@ -407,7 +406,36 @@ jobs:
           set -ex
           export JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}"
           "$JAVA_HOME/bin/java" -version || true
-          make native-check
+          node make.mjs native-check
+
+  # the tool from source on Windows, with node and git alone (node make.mjs:
+  # no make, no shell): the bootstrap from the stage0 (the stage-1 compiler,
+  # the tool, the fixpoint), iOS's Mach-O (NativeCheck macho), the port and
+  # its smoke test (hxmc/test/Smoke.hx)
+  windows:
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Bootstrap from the stage0
+        run: node make.mjs bootstrap
+      - name: iOS's Mach-O
+        run: node make.mjs native-check NATIVE=macho
+      - name: The port, its smoke test
+        run: node make.mjs port smoke
 
   # the corpus with its tagged words verified, which nothing waits for but
   # publish-npm and release (in the corpus jobs, they held back the test
@@ -435,15 +463,14 @@ jobs:
       - name: Runtime objects and the tool
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc
+          node make.mjs hxmc
       # the type parameters' tagged words tested before every read as a
       # reference (-D hxmc.verify-tags, RT_VERIFY=1: docs/hxmc.md), on the
       # runner, x86-64 (wasm32-wasi's RT_VERIFY=1 run: the wasm job)
       - name: Corpus, tagged words verified
-        run: make corpus-verify VERIFY_TARGET=linux-x86_64
+        run: node make.mjs corpus-verify VERIFY_TARGET=linux-x86_64
 
-  # hxmc's corpus for every target (make corpus-stage; run by the test and
+  # hxmc's corpus for every target (node make.mjs corpus-stage; run by the test and
   # wasm jobs on the targets' machines), in six groups of about the same
   # time (Windows' targets take twice as long, a job each; Linux a job per
   # architecture, its musl and glibc builds); with the WebAssembly ones the port as a WebAssembly module (the wasm
@@ -482,10 +509,9 @@ jobs:
       - name: Runtime objects and the tool
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc
+          node make.mjs hxmc
       - name: Cross-build hxmc's corpus
-        run: make corpus-stage CORPUS_TARGETS="${{ matrix.targets }}"
+        run: node make.mjs corpus-stage CORPUS_TARGETS="${{ matrix.targets }}"
       # the native compiler (the npm package's: Mir macros and --run) for each
       # target of the group (the test jobs run its Mir lane on the targets' machines)
       - name: Cross-build the native compiler
@@ -494,7 +520,7 @@ jobs:
           set -ex
           for t in ${{ matrix.targets }}; do
             exe=haxe; case $t in *-glibc) continue ;; windows-*) exe=haxe.exe ;; esac
-            make bin/npm/native/$t/$exe
+            node make.mjs bin/npm/native/$t/$exe
           done
 
       - name: The port as a WebAssembly module
@@ -520,8 +546,8 @@ jobs:
         if: matrix.group == 'wasm'
         run: |
           set -ex
-          make lix
-          if [ ! -x bin/reference/haxe ]; then make reference; fi
+          node make.mjs lix
+          if [ ! -x bin/reference/haxe ]; then node make.mjs reference; fi
           bin/reference/haxe -version
           sudo mkdir -p "$SELF_ROOT" && sudo chown "$USER" "$SELF_ROOT"
           cp -r haxe/src "$SELF_ROOT/src"
@@ -603,8 +629,7 @@ jobs:
       - name: Runtime objects and the tool
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc std
+          node make.mjs hxmc std
       - name: clang
         run: clang --version
       - name: Corpus with LLVM
@@ -615,7 +640,7 @@ jobs:
 
   # hxmc's output does not depend on the host: the tool as a WebAssembly
   # module (under node) builds the corpus for every target, and the tool
-  # itself, byte-identical to the native tool (make crosshost; the cases in
+  # itself, byte-identical to the native tool (node make.mjs crosshost; the cases in
   # two shards, for one target of each format: ELF, Mach-O, PE, wasm; the
   # tool in the first; locally every target)
   crosshost:
@@ -644,10 +669,9 @@ jobs:
       - name: Runtime objects and the tool
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc
+          node make.mjs hxmc
       - name: hxmc as a WebAssembly module, byte-identical output
-        run: make crosshost CROSSHOST_ARGS="--tool --shard ${{ matrix.shard }}/2 --targets linux-x86_64,macos-arm64,windows-x86_64,wasm32-wasi"
+        run: node make.mjs crosshost CROSSHOST_ARGS="--tool --shard ${{ matrix.shard }}/2 --targets linux-x86_64,macos-arm64,windows-x86_64,wasm32-wasi"
 
   # the npm packages (packages/): @hxmc/cli, its six platform packages and
   # @hxmc/source, at one version: the tag's (v*), a nightly prerelease on main,
@@ -669,8 +693,7 @@ jobs:
       - name: Runtime objects and the tool
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc
+          node make.mjs hxmc
       # (with the module cache off: the compilers of the packages typed from
       # source, the path the other jobs' builds no longer take)
       - name: The npm packages
@@ -683,10 +706,10 @@ jobs:
             refs/tags/v*) v=${GITHUB_REF_NAME#v} ;;
             refs/heads/main) v=$v-nightly.$(date -u +%Y%m%d).$(git rev-parse --short=7 HEAD) ;;
           esac
-          make npm NPM_VERSION=$v
+          node make.mjs npm NPM_VERSION=$v
           echo "$v" > bin/npm/VERSION
           # -lib: lix's scopes, node_modules, haxelib (and the npm job's copy of the test)
-          make test-libraries
+          node make.mjs test-libraries
           cp hxmc/test/Libraries.hx bin/npm/
           # (the npm job's frontend, built from @hxmc/source: hxmc/test/frontend)
           rm -rf bin/npm/frontend && cp -r hxmc/test/frontend bin/npm/frontend
@@ -694,7 +717,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with: {name: npm, path: "bin/npm/*.tgz\nbin/npm/Libraries.hx\nbin/npm/frontend/\nbin/npm/VERSION\nbin/npm/sizes.md", retention-days: 7}
 
-  # the website (site/, make site): its pages, their JavaScript, the
+  # the website (site/, node make.mjs site): its pages, their JavaScript, the
   # playground's WebAssembly, lix under tools/, the benchmark history and the
   # target generators' table from the bench-data branch (bench.yml)
   site:
@@ -712,7 +735,7 @@ jobs:
         if: needs.changes.outputs.rt_hit != 'true'
         with: {name: rt, path: bin/hxmc/rt}
       - name: Runtime objects
-        run: make rt && touch bin/hxmc/rt/*/*.o
+        run: node make.mjs rt
       - name: The website
         # (off main and tags, the modules with their function names: a trap's
         # stack in the browser tests names its frames; the code is the same,
@@ -721,10 +744,10 @@ jobs:
           HXMC_SYMBOLS: ${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) && '1' || '' }}
         run: |
           set -ex
-          make lix-dist
+          node make.mjs lix-dist
           mkdir -p bin/bench-data
           if git fetch --depth 1 origin bench-data; then git archive FETCH_HEAD | tar -x -C bin/bench-data; fi
-          make site LIX_DIR=bin/lix-dist BENCH_DATA=bin/bench-data
+          node make.mjs site LIX_DIR=bin/lix-dist BENCH_DATA=bin/bench-data
           ls -l bin/site bin/site/tools
       - uses: actions/upload-artifact@v7
         with: {name: site, path: bin/site/, retention-days: 7}
@@ -732,8 +755,8 @@ jobs:
         with:
           path: bin/site
 
-  # the port against the reference compiler (docs/testing.md): make test
-  # LANES=<suite> and make test-fuzz LANE=<lane>, as locally, on the release
+  # the port against the reference compiler (docs/testing.md): node make.mjs test
+  # LANES=<suite> and node make.mjs test-fuzz LANE=<lane>, as locally, on the release
   # binary's Eval (EVAL, FUZZ: the job has no tool); the fuzzer's
   # diff lanes (the targets that need no library) in one job
   conformance:
@@ -773,15 +796,14 @@ jobs:
           cp dl/hxmc-haxe-linux-x86_64/haxe bin/port/haxe
           cp dl/lix/lix-linux-x86_64 bin/lix/lix && chmod +x bin/lix/lix bin/port/haxe
           for cmd in haxe haxelib neko; do ln -sf lix bin/lix/$cmd; done
-          touch -d '2000-01-01' bin/lix/lix
-          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          if [ ! -x bin/reference/haxe ]; then node make.mjs -o bin/lix/lix reference; fi
           bin/reference/haxe -version
           bin/port/haxe -version
       - name: ${{ matrix.suite }}
         run: |
           set -x
           # (the port, the reference and lix are in place: -o, not rebuilt)
-          M="make -o bin/port/haxe -o bin/reference/haxe -o bin/lix/lix JOBS=4 EVAL=bin/port/haxe"
+          M="node make.mjs -o bin/port/haxe -o bin/reference/haxe -o bin/lix/lix JOBS=4 EVAL=bin/port/haxe"
           failed=
           $M test LANES="${{ matrix.suite }}" SUMMARY="$GITHUB_STEP_SUMMARY" || failed=" ${{ matrix.suite }}"
           for lane in ${{ matrix.fuzz }}; do
@@ -828,9 +850,8 @@ jobs:
       - name: Runtime objects, the tool and the reference
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc
-          if [ ! -x bin/reference/haxe ]; then make lix reference; fi
+          node make.mjs hxmc
+          if [ ! -x bin/reference/haxe ]; then node make.mjs lix reference; fi
           bin/reference/haxe -version
       - name: exec:interp,hxmc and exec:interp,hxmc-wasm
         run: |
@@ -847,12 +868,12 @@ jobs:
       # hxmc's spans on Eval and JavaScript (over Bytes) print what hxmc's builds print
       - name: Spans on other targets
         if: always()
-        run: make portable-check
+        run: node make.mjs portable-check
       - uses: actions/upload-artifact@v7
         if: failure()
         with: {name: fuzz, path: "bin/test/fuzz/failures/", retention-days: 7, if-no-files-found: ignore}
 
-  # upstream's runtime suites built by hxmc and run (make upstream-suites,
+  # upstream's runtime suites built by hxmc and run (node make.mjs upstream-suites,
   # hxmc/test/UpstreamSuites.hx): unit, sys and threads natively, unit as a
   # wasm32-wasi module under node; the counts in the job summary
   upstream-suites:
@@ -872,10 +893,9 @@ jobs:
       - name: Runtime objects, the tool and lix
         run: |
           set -ex
-          make rt && touch bin/hxmc/rt/*/*.o
-          make hxmc lix
+          node make.mjs hxmc lix
       - name: Upstream's suites, natively and as wasm32-wasi
-        run: make upstream-suites
+        run: node make.mjs upstream-suites
         timeout-minutes: 40
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -938,30 +958,12 @@ jobs:
           tar xzf dl/std.tar.gz -C std-x
           tar xzf dl/src.tar.gz -C std-x
           ls -l t/*
+      # (hxmc/test/Smoke.hx: --interp, HXB, JS, TLS, libuv; on Windows also
+      # the binary and the std by their backslashed names)
       - name: Smoke test
         run: |
           export HAXE_STD_PATH="${{ steps.unpack.outputs.std }}"
-          SMOKE_DIR="$RUNNER_TEMP/smoke" sh hxmc/test/smoke.sh "${{ steps.unpack.outputs.bin }}"
-      - name: Smoke test (PowerShell, Windows paths)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:HAXE_STD_PATH = (Resolve-Path "t/hxmc-haxe-${{ matrix.pkg }}/std").Path
-          $exe = (Resolve-Path "t/hxmc-haxe-${{ matrix.pkg }}/haxe.exe").Path
-          New-Item -ItemType Directory -Force ps | Out-Null
-          Set-Location ps
-          Set-Content Main.hx 'class Main { static function main() { trace("hello from " + #if sys Sys.systemName() + " in " + Sys.getCwd() #else "js" #end); } }'
-          $out = & $exe -main Main --interp
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $out
-          # the native build's Eval host: Windows, with a drive letter
-          if (-not ($out -match "hello from Windows in [A-Z]:\\")) { exit 1 }
-          & $exe -main Main --js out.js
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          node out.js
-          & $exe -cp . -main Main --hxb out.hxb
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          Get-Item out.hxb
+          "${{ steps.unpack.outputs.bin }}" -cp hxmc/test -cp haxe/test --run Smoke "${{ steps.unpack.outputs.bin }}" "$RUNNER_TEMP/smoke"
       - name: lix
         run: |
           set -ex
@@ -1081,7 +1083,7 @@ jobs:
       # The native compiler with Mir macros and --run (cross-built by the
       # corpus job) on this machine (docs/hxmc.md, "Macros on the Mir
       # interpreter"), in mir/ (the corpus job's files, Unix line ends): MirCheck
-      # (as make mir-check: the corpus run in it, the macro cases with Mir
+      # (as node make.mjs mir-check: the corpus run in it, the macro cases with Mir
       # macros against the reference, the compiled functions kept across
       # builds, statics in the compilation server); four processes at a
       # time. On Linux x86-64 only: the interpreter's code is the same on
@@ -1202,7 +1204,7 @@ jobs:
         if: always()
         run: $H -cp hxmc/test -cp haxe/test --run Selfcheck --runner "wasmtime run -W exceptions=y -W max-wasm-stack=67108864 --dir / --env HAXE_STD_PATH --env PWD" --port port/haxe.wasm --src std-x/src --std std-x/std --ref dl/self-ref.hxb --ref-root "$SELF_ROOT" --root "$SELF_ROOT" --summary "$GITHUB_STEP_SUMMARY"
 
-  # the website in the browsers' engines (make site-check,
+  # the website in the browsers' engines (node make.mjs site-check,
   # site/tools/browser-test.mjs): links; every page in Chromium, Firefox
   # and WebKit, at a desktop's and a phone's width (no errors, no horizontal
   # scrolling); the playground's worker (--interp, HXB, diagnostics,
@@ -1510,8 +1512,8 @@ jobs:
   # nightly, dist-tag next); never from other branches.
   # After every check (the full npm set on all six machines: a full run).
   publish-npm:
-    needs: [changes, build, checks, corpus-verify, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.checks.result == 'success' && needs.corpus-verify.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, checks, windows, corpus-verify, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.checks.result == 'success' && needs.windows.result == 'success' && needs.corpus-verify.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1568,8 +1570,8 @@ jobs:
 
   # nightly on main, a release on v* tags
   release:
-    needs: [changes, build, checks, corpus-verify, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.checks.result == 'success' && needs.corpus-verify.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs: [changes, build, checks, windows, corpus-verify, corpus, crosshost, npm-pack, site, conformance, fuzz-exec, upstream-suites, test, wasm, playground, npm]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.checks.result == 'success' && needs.windows.result == 'success' && needs.corpus-verify.result == 'success' && needs.corpus.result == 'success' && needs.crosshost.result == 'success' && needs.npm-pack.result == 'success' && needs.site.result == 'success' && needs.conformance.result == 'success' && needs.fuzz-exec.result == 'success' && needs.upstream-suites.result == 'success' && needs.test.result == 'success' && needs.wasm.result == 'success' && needs.playground.result == 'success' && needs.npm.result == 'success' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

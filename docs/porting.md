@@ -120,7 +120,7 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   generations of a generated class (a fresh build has one; 4.3's server
   restored no such definition). The defined module still depends on that
   module (`MDepFromMacro`) (`typing.MacroContext.defineType`; server-verify's
-  `a class a callback defines, in the next compilations`, `make dev-check`).
+  `a class a callback defines, in the next compilations`, `node make.mjs dev-check`).
 - A macro class's `@:persistent` statics are kept, per signature, when the
   macro interpreter is handed the class from another module and drops its
   prototype: the values go back when that same module (its id) is handed
@@ -136,7 +136,7 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   is not cached). 4.3.7's server builds the same sequence
   (`macros.eval.EvalPrototype.addTypes`; server-verify's `a build macro's
   persistent state, in builds of two signatures` and its case without an
-  initializer, `make dev-check`). Mir macros (`-D hxmc.macros=mir`) keep
+  initializer, `node make.mjs dev-check`). Mir macros (`-D hxmc.macros=mir`) keep
   upstream's behaviour here ([hxmc.md](hxmc.md#macros-on-the-mir-interpreter)).
 - An error reported in the macro context discards the macro interpreter
   (upstream's `create_macro_interp`), its statics with it; the server's
@@ -150,7 +150,7 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   (`compiler.CompilationCache.Cache.taintMacroModules`, called from
   `ServerCache.cleanup`, taint reason `MacroInterpreterReset`;
   server-verify's `a build macro's persistent state, after an error in a
-  macro`, `make dev-check`).
+  macro`, `node make.mjs dev-check`).
 
 ## The one exception to byte identity
 

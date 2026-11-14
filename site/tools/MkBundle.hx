@@ -3,7 +3,7 @@ import haxe.io.BytesOutput;
 import sys.FileSystem;
 import sys.io.File;
 
-// Writes the std the playground's compiler reads (`make site`): the std's
+// Writes the std the playground's compiler reads (`node make.mjs site`): the std's
 // top-level modules and its haxe/, sys/ and eval/ packages (what --interp,
 // macros and HXB need), as one file the page's worker unpacks into its file
 // system at /lib/haxe/std (site/client/Worker.hx):

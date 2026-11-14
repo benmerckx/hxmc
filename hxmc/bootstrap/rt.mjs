@@ -127,7 +127,7 @@ async function fetchAll(dir) {
 	for (const [file, asset] of assets()) {
 		const r = await download(base + asset, asset);
 		if (r.missing) {
-			console.error(`rt: no release rt-${h} in ${repo} (${asset}: HTTP 404): build them with zig (make rt-build)`);
+			console.error(`rt: no release rt-${h} in ${repo} (${asset}: HTTP 404): build them with zig (node make.mjs rt-build)`);
 			return MISSING;
 		}
 		if (r.error) {

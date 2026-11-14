@@ -4,7 +4,7 @@ import sys.io.File;
 
 using StringTools;
 
-// Tiered checks of hxmc (`make quick|check`, which rebuild the tool
+// Tiered checks of hxmc (`node make.mjs quick|check`, which rebuild the tool
 // first): one line per lane with its result and time, a summary at the end,
 // exit 1 if any lane failed. Each tier runs quick's checks.
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run Tiers quick|check [--port] [case ...]

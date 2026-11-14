@@ -3,7 +3,7 @@
 /.claude/worktrees/
 *.o
 *.tgz
-# generated for the npm package @hxmc/cli (make npm)
+# generated for the npm package @hxmc/cli (node make.mjs npm)
 /packages/cli/hxmc/bootstrap/hxmc-std/
 # written on first use of @hxmc/cli (lix installation)
 /packages/cli/dist/std

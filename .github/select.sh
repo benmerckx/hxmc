@@ -3,7 +3,7 @@
 # that changed since the last commit CI checked (docs/testing.md, "CI"):
 #   all       everything: anything outside the cases below (haxe/, hxmc/src,
 #             hxmc/std, hxmc/deps, hxmc/test, packages/, the workflows, the
-#             Makefile, ...); always on main, on tags, nightly (schedule) and on
+#             make.mjs, tools/, ...); always on main, on tags, nightly (schedule) and on
 #             dispatch
 #   web       site/: the website and the playground in the browsers
 # (Markdown alone: neither, nothing to build)

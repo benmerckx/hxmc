@@ -1,4 +1,4 @@
-// The npm packages (docs/using.md; `make npm`, CI). Each folder of
+// The npm packages (docs/using.md; `node make.mjs npm`, CI). Each folder of
 // packages/ is one package, or for `platform` the template of six:
 //   node packages/pack.mjs <version> <natives dir> <out dir> [<rt dir>]
 // <natives dir>/<target>/haxe[.exe] are the native compilers, <rt dir>/<target>/
@@ -13,7 +13,7 @@
 //                                  the glibc mode's), with the licenses of
 //                                  mbedtls and libuv
 //   hxmc-cli-<version>.tgz         @hxmc/cli (packages/cli: the launcher, dist/
-//                                  for lix, hxmc's merged std that `make npm`
+//                                  for lix, hxmc's merged std that `node make.mjs npm`
 //                                  puts there): with upstream's std and its
 //                                  optional dependencies on the platform
 //                                  packages at this version; its package.json's
@@ -58,13 +58,13 @@ if (!version || !natives || !out) {
 fs.mkdirSync(out, { recursive: true });
 const outAbs = path.resolve(out);
 
-// the runtime objects' identity: <rt dir>/HASH (rt.mjs fetch, make rt-layouts),
+// the runtime objects' identity: <rt dir>/HASH (rt.mjs fetch, node make.mjs rt-layouts),
 // the hash of the hxmc/deps they were built from, which is this checkout's
 const stamp = path.join(rtDir, 'HASH');
 const rtHash = fs.existsSync(stamp) ? fs.readFileSync(stamp, 'utf8').trim() : null;
 const wantHash = execFileSync(process.execPath, [path.join(root, 'hxmc', 'bootstrap', 'rt.mjs'), 'hash']).toString().trim();
 if (rtHash !== wantHash) {
-	console.error(`pack: ${stamp} ${rtHash ? `says rt-${rtHash}` : 'is missing'}, hxmc/deps is rt-${wantHash} (make rt)`);
+	console.error(`pack: ${stamp} ${rtHash ? `says rt-${rtHash}` : 'is missing'}, hxmc/deps is rt-${wantHash} (node make.mjs rt)`);
 	process.exit(1);
 }
 

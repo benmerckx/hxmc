@@ -88,7 +88,7 @@ value, key, ...
 
 ## Tests
 
-`make dev-check` (CI's `build` job) runs `hxmc dev` on a console program
+`node make.mjs dev-check` (CI's `build` job) runs `hxmc dev` on a console program
 (`hxmc/test/dev/dev-console.mjs`): the first build runs with `HXMC_DEV`
 set, an edit replaces it, a compile error leaves it running, the fix runs.
 `server-verify.mjs` checks that a compilation server's builds through edits

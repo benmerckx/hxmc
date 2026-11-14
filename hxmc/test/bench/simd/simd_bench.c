@@ -1,7 +1,7 @@
 // The C side of SimdBench.hx (docs/plans/simd.md, "Benchmarks"): the
 // same three kernels, the same data and the same checksums, so that hxmc's
 // code can be compared with the system compiler's at -O2, at -O3 without the
-// vectorizers and at -O3 with them. `make bench-simd` builds and runs every
+// vectorizers and at -O3 with them. `node make.mjs bench-simd` builds and runs every
 // variant; by hand:
 //   cc -O2 -o simd_bench simd_bench.c && ./simd_bench [scale]
 // With -DSSE41 -msse4.1 it runs the SSE4.1 intrinsics versions instead

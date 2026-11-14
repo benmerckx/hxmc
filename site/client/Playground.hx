@@ -144,7 +144,7 @@ class Playground {
 		runButton.onclick = () -> start("run");
 		hxbButton.onclick = () -> start("hxb");
 
-		// build facts (sizes, date, commit) from build-info.json, written by `make site` (Makefile)
+		// build facts (sizes, date, commit) from build-info.json, written by `node make.mjs site` (tools/make/Make.hx)
 		Info.fill();
 
 		setupMaximize();

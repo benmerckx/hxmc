@@ -9,7 +9,7 @@ import js.html.Element;
 // .github/workflows/bench.yml). bench/history.json (every run: per case and
 // target the median, min, max, peak RSS, compile times) and bench/latest.json
 // (the newest CI run in full) come from the bench-data branch, copied by
-// `make site BENCH_DATA=<dir>`. hxmc's history as one chart per case
+// `node make.mjs site BENCH_DATA=<dir>`. hxmc's history as one chart per case
 // (HistoryChart); the other targets, which change only with their pinned
 // toolchains, in one table of the latest run (time, vs. hxmc, peak RSS, size,
 // compile time).
@@ -96,7 +96,7 @@ class BenchCharts {
 		});
 		get("bench/latest.json").then((latest:Null<Latest>) -> {
 			if (latest != null) renderLatest(root, latest)
-			else root.innerHTML = "<p class=\"note\">No results in this build of the site (<code>make site BENCH_DATA=&lt;bench-data checkout&gt;</code>).</p>";
+			else root.innerHTML = "<p class=\"note\">No results in this build of the site (<code>node make.mjs site BENCH_DATA=&lt;bench-data checkout&gt;</code>).</p>";
 		});
 	}
 
