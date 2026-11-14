@@ -12,7 +12,7 @@ using StringTools;
 // macOS SDK's, MinGW-w64's, wasi-libc). A declaration that disagrees fails
 // the run; BadLayout must fail, with the messages its `// expect:` lines
 // name. Without zig every check is skipped.
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run HeaderCheck [target ...]
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck header [target ...]
 class HeaderCheck {
 	static final OUT = "bin/hxmc-t/header";
 	static final TARGETS = [

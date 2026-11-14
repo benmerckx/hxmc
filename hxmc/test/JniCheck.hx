@@ -4,7 +4,7 @@ import sys.FileSystem;
 using StringTools;
 
 // Java through JNI (docs/interop.md, "Java (JNI)"):
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run JniCheck
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck jni
 // - the corpus's JNI cases (Corpus.JNI: an embedded JVM, libjvm opened at
 //   run time) in the dynamic glibc mode on linux-x86_64, and again with
 //   RT_VERIFY=1, and JniElsewhere (Java without a JVM);

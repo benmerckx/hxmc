@@ -647,6 +647,15 @@ GC code lends a Buffer, a kernel never makes a span of one
 (`reject/BufferKernel`): it is lent spans, as of any other memory.
 `CBindingsBuffer` checks it (a close refused during the call that holds it).
 
+Raw code hands memory over without a copy: `Buffer.adopt(io)` makes a
+Buffer own an `IoBuffer` that raw code made (a job's result, a decoder's
+pixels), and `b.detach()` gives the memory back as an `IoBuffer` for raw
+code to free (a job's input moved to another thread), closing the Buffer;
+it throws while a span is lent, as `close()` does. Both have a raw type,
+so only `@:hxmc.unsafe` code calls them, and an API can take and return
+Buffers while what is inside moves memory as it did. `BufferHandover`
+checks them.
+
 
 ### Typed callbacks
 
@@ -897,6 +906,11 @@ Two forms mark a function (or every function of a class) as trusted:
 
 An inline function's mark goes with the copies Haxe inlines, so a small
 trusted helper is trusted where it lands, and its callers stay checked.
+A coroutine's mark covers its whole body, which the coroutine transform
+moves into a class of its own (its state machine), and a coroutine
+closure's made in a marked function (`CoroUnsafe`). A mark on an
+expression inside a coroutine's body does not survive the transform: mark
+the function, or move the raw part into a function of its own.
 Each marked function is one place to audit; prefer small ones.
 
 ```haxe

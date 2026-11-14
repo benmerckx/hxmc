@@ -5,7 +5,7 @@ import sys.io.File;
 using StringTools;
 
 // A UIKit app in its bundle, run (make native-check NATIVE=uikit; a Mac with Xcode):
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run UIKitCheck
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck uikit
 // (CI: @hxmc/cli's compiler, HXMC_TOOL=<it>, on macOS arm64 and x86-64)
 // hxmc/test/ios/UIKitHello.hx (its own hxmc_ui_main: UIApplicationMain, a
 // Haxe delegate, the program's body once launched) bundled as a packager

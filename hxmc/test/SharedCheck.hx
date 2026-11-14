@@ -5,7 +5,7 @@ using StringTools;
 
 // Shared libraries written by hxmc (-D hxmc.shared, LinkDyn; Android's
 // lib<name>.so is one):
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run SharedCheck
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck shared
 // - in the dynamic glibc mode for x86-64 (and arm64 under qemu with the
 //   cross C library, when there): hxmc/test/shared/Lib.hx as a library,
 //   loaded by hxmc/test/shared/Host.hx (an executable of the same mode) with

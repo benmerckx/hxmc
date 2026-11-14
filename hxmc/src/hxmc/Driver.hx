@@ -888,7 +888,10 @@ class Driver {
 			l.dylibs = dylibs;
 			l.loads = [for (lib in hxmc.ir.CInterop.LOADS.keys()) LinkInputs.libFile(lib, abi)];
 			l.loads.sort(Reflect.compare);
-			if (abi.uikit()) l.minos = o.iosMinos;
+			if (abi.uikit()) {
+				l.minos = o.iosMinos;
+				l.sdk = o.iosSdk;
+			}
 			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;
 				l.sign = CodeSign.adhoc(o.codesignId ?? haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(out)), file(o.codesignInfoPlist),

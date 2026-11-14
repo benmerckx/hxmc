@@ -8,15 +8,20 @@ using StringTools;
 
 // iOS's native output without a bundle (docs/using.md, "Native output for
 // a packager"; make native-check NATIVE=macho), checked without a Mac:
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run MachOCheck
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck macho
 // hxmc/test/ios/IosHello.hx for ios-arm64, ios-sim-arm64 and Mac Catalyst
 // (macos-catalyst-arm64, -x86_64) as a plain executable and as a dylib
 // (-D hxmc.shared), each:
 // - the Mach-O (MachOReader.commands): 64-bit arm64 (x86-64), MH_EXECUTE (PIE,
 //   LC_MAIN, /usr/lib/dyld) or MH_DYLIB (LC_ID_DYLIB @rpath/<name>), the
 //   build version's platform (iOS, the simulator, Mac Catalyst), minimum (15.0, or -D
-//   hxmc.ios-min-version's) and SDK, only the system's dylibs,
-//   LC_CODE_SIGNATURE at the end of the file and of __LINKEDIT;
+//   hxmc.ios-min-version's) and SDK (26.0, or -D hxmc.ios-sdk-version's),
+//   only the system's dylibs, LC_CODE_SIGNATURE at the end of the file and
+//   of __LINKEDIT; what ld64 and lld write beside: a device's
+//   LC_ENCRYPTION_INFO_64 (cryptoff one page, __text from it, the rest of
+//   __TEXT, cryptid 0; none on the simulator and Mac Catalyst),
+//   LC_FUNCTION_STARTS (ascending, in __TEXT, the entry point's among
+//   them), an empty LC_DATA_IN_CODE;
 // - the code signature: the SuperBlob, the CodeDirectory (the page hashes
 //   recomputed, the code limit at the signature, __TEXT the executable
 //   segment, the main binary's flag only for an executable): linker-signed
@@ -27,7 +32,7 @@ using StringTools;
 // - UIKit's install name (hxmc/test/cases/ObjCUIKit.hx): iOS's
 //   /System/Library/Frameworks, Mac Catalyst's /System/iOSSupport, a
 //   framework both share macOS's there;
-// - the defines' errors: a minimum below 15.0, codesign-* on an ELF output;
+// - the defines' errors: a minimum or SDK below 15.0, codesign-* on an ELF output;
 // - llvm-objdump's view of the load commands, when there.
 // Exits non-zero on a failure; a missing tool is skipped.
 class MachOCheck {
@@ -74,6 +79,7 @@ class MachOCheck {
 				{name: "IosHello", args: [], dylib: false, minos: 0x000F0000, sign: linker},
 				{name: "libIosHello.dylib", args: ["-D", "hxmc.shared"], dylib: true, minos: 0x000F0000, sign: linker},
 				{name: "IosHello164", args: ["-D", "hxmc.ios-min-version=16.4"], dylib: false, minos: 0x00100400, sign: linker},
+				{name: "IosHelloSdk184", args: ["-D", "hxmc.ios-sdk-version=18.4"], dylib: false, minos: 0x000F0000, sign: linker},
 				{name: "IosHelloSigned", args: signed, dylib: false, minos: 0x000F0000, sign: bundled},
 				{name: "libIosHelloSigned.dylib", args: signed.concat(["-D", "hxmc.shared", "-D", "hxmc.ios-min-version=17.0"]), dylib: true, minos: 0x00110000, sign: bundled},
 				{name: "IosHelloId", args: ["-D", "hxmc.codesign-id=org.hxmc.id"], dylib: false, minos: 0x000F0000, sign: {id: "org.hxmc.id", info: null, res: null, ent: null}}
@@ -83,7 +89,7 @@ class MachOCheck {
 				var r = build(out, c.args.concat(["-D", 'hxmc.target=$t']));
 				check('$t ${c.name}: builds', r.ok, r.ok ? "" : tail(r.out, 600));
 				if (!r.ok) continue;
-				macho('$t ${c.name}', File.getBytes(out), out, t, c.dylib, c.minos, c.sign);
+				macho('$t ${c.name}', File.getBytes(out), out, t, c.dylib, c.minos, c.args.contains("hxmc.ios-sdk-version=18.4") ? 0x00120400 : 0x001A0000, c.sign);
 			}
 		}
 		// UIKit's install name, and Foundation's beside it
@@ -103,6 +109,8 @@ class MachOCheck {
 		// the defines' errors
 		var r = build('$OUT/bad', ["-D", "hxmc.target=ios-arm64", "-D", "hxmc.ios-min-version=14.0"]);
 		check("hxmc.ios-min-version=14.0: an error (15.0 is the floor)", !r.ok && r.out.contains("hxmc.ios-min-version"), r.ok ? "built" : "");
+		var r = build('$OUT/bad', ["-D", "hxmc.target=ios-arm64", "-D", "hxmc.ios-sdk-version=26"]);
+		check("hxmc.ios-sdk-version=26: an error (major.minor)", !r.ok && r.out.contains("hxmc.ios-sdk-version"), r.ok ? "built" : "");
 		var r = build('$OUT/bad', ["-D", "hxmc.target=linux-x86_64", "-D", "hxmc.codesign-id=org.hxmc.x"]);
 		check("hxmc.codesign-id on an ELF output: an error", !r.ok && r.out.contains("hxmc.codesign"), r.ok ? "built" : "");
 		if (failures.length > 0) {
@@ -123,7 +131,7 @@ class MachOCheck {
 		return b.getString(at, e - at);
 	}
 
-	static function macho(what:String, b:Bytes, path:String, target:String, dylib:Bool, wantMinos:Int, want:Expect) {
+	static function macho(what:String, b:Bytes, path:String, target:String, dylib:Bool, wantMinos:Int, wantSdk:Int, want:Expect) {
 		// (PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACCATALYST; llvm-objdump's names)
 		var plat = target == "ios-arm64" ? {n: 2, name: "iOS", objdump: "ios"} : target == "ios-sim-arm64" ? {n: 7, name: "iOS simulator", objdump: "iossimulator"} : {
 			n: 6, name: "Mac Catalyst", objdump: "macCatalyst"};
@@ -133,7 +141,8 @@ class MachOCheck {
 		var flags = b.getInt32(24);
 		check('$what: two-level, dyld' + (dylib ? "" : ", PIE"), flags & 0x84 == 0x84 && (dylib || flags & 0x200000 != 0));
 		var platform = -1, minos = -1, sdk = -1, main = false, dyld = "", id = "", libs = [], sigOff = -1, sigSize = 0;
-		var textFileSize = 0, leEnd = 0;
+		var textFileSize = 0, leEnd = 0, textSect = -1, entry = -1;
+		var crypt:Null<{off:Int, size:Int, id:Int}> = null, starts:Null<{off:Int, size:Int}> = null, dic:Null<{off:Int, size:Int}> = null;
 		for (c in MachOReader.commands(b)) {
 			var at = c.at;
 			switch c.cmd {
@@ -141,7 +150,12 @@ class MachOCheck {
 					platform = b.getInt32(at + 8);
 					minos = b.getInt32(at + 12);
 					sdk = b.getInt32(at + 16);
-				case 0x80000028: main = true;
+				case 0x80000028:
+					main = true;
+					entry = b.getInt32(at + 8);
+				case 0x2c: crypt = {off: b.getInt32(at + 8), size: b.getInt32(at + 12), id: b.getInt32(at + 16)};
+				case 0x26: starts = {off: b.getInt32(at + 8), size: b.getInt32(at + 12)};
+				case 0x29: dic = {off: b.getInt32(at + 8), size: b.getInt32(at + 12)};
 				case 0xe: dyld = cstr(b, at + b.getInt32(at + 8), c.size);
 				case 0xd: id = cstr(b, at + b.getInt32(at + 8), c.size);
 				case 0xc: libs.push(cstr(b, at + b.getInt32(at + 8), c.size));
@@ -151,13 +165,40 @@ class MachOCheck {
 				case 0x19:
 					var name = cstr(b, at + 8, 16);
 					var fileoff = b.getInt32(at + 40), filesize = b.getInt32(at + 48);
-					if (name == "__TEXT") textFileSize = filesize;
+					if (name == "__TEXT") {
+						textFileSize = filesize;
+						for (k in 0...b.getInt32(at + 64))
+							if (cstr(b, at + 72 + 80 * k, 16) == "__text") textSect = b.getInt32(at + 72 + 80 * k + 48);
+					}
 					if (name == "__LINKEDIT") leEnd = fileoff + filesize;
 				case _:
 			}
 		}
-		check('$what: the build version: ${plat.name} (${plat.n}), SDK 18.0', platform == plat.n && sdk == 0x00120000,
+		check('$what: the build version: ${plat.name} (${plat.n}), SDK ' + (wantSdk >> 16) + "." + ((wantSdk >> 8) & 0xff), platform == plat.n && sdk == wantSdk,
 			platform + " " + StringTools.hex(sdk));
+		if (target == "ios-arm64")
+			check('$what: LC_ENCRYPTION_INFO_64: __TEXT after its first page, __text from there, cryptid 0',
+				crypt != null && crypt.off == 0x4000 && crypt.size == textFileSize - 0x4000 && crypt.id == 0 && textSect == 0x4000,
+				crypt == null ? "none" : StringTools.hex(crypt.off) + " " + StringTools.hex(crypt.size) + " __text at " + StringTools.hex(textSect));
+		else check('$what: no LC_ENCRYPTION_INFO_64', crypt == null);
+		var fs = [];
+		if (starts != null) {
+			var k = starts.off, a = 0;
+			while (k < starts.off + starts.size && b.get(k) != 0) {
+				var v = 0, sh = 0, byte;
+				do {
+					byte = b.get(k++);
+					v |= (byte & 0x7f) << sh;
+					sh += 7;
+				} while (byte & 0x80 != 0);
+				a += v;
+				fs.push(a);
+			}
+		}
+		check('$what: LC_FUNCTION_STARTS: ascending, in __TEXT' + (dylib ? "" : ", the entry point among them"),
+			starts != null && fs.length > 0 && fs[0] >= textSect && fs[fs.length - 1] < textFileSize && (dylib || fs.contains(entry)),
+			starts == null ? "none" : fs.length + " functions");
+		check('$what: LC_DATA_IN_CODE, empty', dic != null && dic.size == 0);
 		check('$what: the build version\'s minimum ' + (wantMinos >> 16) + "." + ((wantMinos >> 8) & 0xff), minos == wantMinos, StringTools.hex(minos));
 		if (dylib) check('$what: LC_ID_DYLIB @rpath/<name>, no LC_MAIN', !main && id == "@rpath/" + haxe.io.Path.withoutDirectory(path), id);
 		else check('$what: LC_MAIN, /usr/lib/dyld', main && dyld == "/usr/lib/dyld");
