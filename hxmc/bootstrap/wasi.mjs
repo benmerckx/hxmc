@@ -220,7 +220,10 @@ if (command && isMainThread) {
 		process.exit(2);
 	}
 	const stackKb = requestedStackKb();
-	if (!(stackKb > 984)) {
+	// (a program with a JS host, HXMC_WASM_IMPORTS, on this thread: the host's
+	// console and timers are the process's, its output in order with the
+	// module's and its callbacks after _start returned)
+	if (!(stackKb > 984) || process.env.HXMC_WASM_IMPORTS) {
 		if (argv[0] === '--serve') await serveWasm(argv[1]);
 		else process.exitCode = runWasm(argv[0], argv.slice(1));
 	} else {
@@ -238,11 +241,13 @@ if (command && isMainThread) {
 	}
 } else if (!isMainThread && Array.isArray(workerData)) {
 	const argv = workerData;
-	if (argv[0] !== '--serve') process.exit(runWasm(argv[0], argv.slice(1)));
+	if (argv[0] !== '--serve') process.exitCode = runWasm(argv[0], argv.slice(1));
+	else {
 	const module = argv[1], mod = compileWasm(module);
 	parentPort.on('message', (line) => {
 		if (line === null) return parentPort.close();
 		if (line.trim() === '') return;
 		parentPort.postMessage(serveOne(module, mod, JSON.parse(line)));
 	});
+	}
 }
