@@ -136,7 +136,9 @@ builds on two outputs, checked by `make native-check`:
   `ANativeActivity_onCreate` is exported when the program defines it.
 - **iOS**: a plain Mach-O executable, or a dylib with `-D hxmc.shared`.
   `-D hxmc.ios-min-version=<major.minor>` sets its `LC_BUILD_VERSION`
-  minimum (15.0, the floor). The linker signs it ad hoc, as
+  minimum (15.0, the floor), `-D hxmc.ios-sdk-version=<major.minor>` the
+  SDK it declares (26.0, the App Store's minimum; the bundle's `Info.plist`
+  should name the same). The linker signs it ad hoc, as
   linker-signed. With any of the defines below it is signed as `codesign
   -s -` signs a bundle's executable instead. The packager writes
   `Info.plist` and `CodeResources` first, then links, then puts the files

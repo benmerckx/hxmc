@@ -45,11 +45,15 @@ class LinkMachO extends LinkCore {
 	public var sign = new CodeSign();
 	// iOS: the oldest version the output runs on (15.0: UILaunchScreen is
 	// 14's, and 15 is the floor of current Xcodes and the App Store's
-	// devices: A9 and later), and the SDK version it declares (18.0: the
-	// App Store's minimum since 2025; a later one would ask for UIScene)
+	// devices: A9 and later), and the SDK version it declares (26.0: App
+	// Store Connect takes uploads built with the iOS 26 SDK alone since
+	// 2026-04-28; the packager's Info.plist (DTSDKName, DTPlatformVersion)
+	// names the same, as Xcode's always match; UIKit asks for UIScene of an
+	// SDK after 26's)
 	public static inline var IOS_MIN = 0x000F0000;
-	public static inline var IOS_SDK = 0x00120000;
+	public static inline var IOS_SDK = 0x001A0000;
 	public var minos = IOS_MIN; // (iOS, Mac Catalyst: -D hxmc.ios-min-version, Options.iosMinos)
+	public var sdk = IOS_SDK; // (iOS, Mac Catalyst: -D hxmc.ios-sdk-version, Options.iosSdk)
 	// imports from other dylibs than libSystem (@:hxmc.lib): symbol -> install name
 	public var dylibs = new Map<String, String>();
 	// dylibs loaded whatever the program imports from them (an Objective-C
@@ -473,6 +477,25 @@ class LinkMachO extends LinkCore {
 		}
 		le.align(8);
 		var exportSize = le.len - exportOff;
+		// the functions' starts (LC_FUNCTION_STARTS: ULEB deltas from the
+		// header's address, ascending, 0-terminated), as ld64 and lld write
+		// them: what crash reports, symbolication and profilers find
+		// functions by in a stripped binary
+		var starts = [];
+		codeSymbols(s -> starts.push(addr.get(s.section) + s.offset));
+		starts.sort((a, b) -> a - b);
+		var startsOff = le.len, prev = 0;
+		for (a in starts)
+			if (a != prev) {
+				uleb(le, a - prev);
+				prev = a;
+			}
+		le.u8(0);
+		le.align(8);
+		var startsSize = le.len - startsOff;
+		// (LC_DATA_IN_CODE: no data among the code: empty, as ld64 and lld
+		// write it then)
+		var dataInCodeOff = le.len;
 		// the symbol table: (with `symbols`) the functions as locals, then the
 		// imports (undefined, from ordinal 1)
 		var strtab = new Buf(4096);
@@ -682,7 +705,7 @@ class LinkMachO extends LinkCore {
 		h.zeros(16);
 		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64); iOS,
 		// its simulator and Mac Catalyst (abi.platform), minimum IOS_MIN,
-		// built against IOS_SDK (what UIKit's linked-on-or-after behaviours
+		// built against sdk (IOS_SDK: what UIKit's linked-on-or-after behaviours
 		// go by; Catalyst's versions are iOS's, as clang's -target
 		// <arch>-apple-ios<v>-macabi writes them)
 		ncmds++;
@@ -692,7 +715,7 @@ class LinkMachO extends LinkCore {
 		// PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACCATALYST, PLATFORM_MACOS
 		h.u32(abi.platform == "ios" ? 2 : abi.platform == "ios-simulator" ? 7 : abi.platform == "maccatalyst" ? 6 : 1);
 		h.u32(minos);
-		h.u32(abi.uikit() ? IOS_SDK : minos); // sdk
+		h.u32(abi.uikit() ? sdk : minos); // sdk
 		h.u32(1);
 		h.u32(3); // TOOL_LD
 		h.u32(0x00010000);
@@ -754,6 +777,17 @@ class LinkMachO extends LinkCore {
 			h.u32(12);
 			fixed(h, r, rl - 12);
 		}
+		// the functions' starts, the data in code (none)
+		ncmds++;
+		h.u32(0x26); // LC_FUNCTION_STARTS
+		h.u32(16);
+		h.u32(leFileOff + startsOff);
+		h.u32(startsSize);
+		ncmds++;
+		h.u32(0x29); // LC_DATA_IN_CODE
+		h.u32(16);
+		h.u32(leFileOff + dataInCodeOff);
+		h.u32(0);
 		// the code signature
 		ncmds++;
 		h.u32(0x1d);
