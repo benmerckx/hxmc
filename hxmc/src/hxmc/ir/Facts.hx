@@ -58,6 +58,7 @@ class Facts {
 			if (f.cSymbol != null && StringTools.startsWith(f.module, "hxmc.rt.")) f.rtFamilies = RuntimeSymbols.familiesOf(f.cSymbol);
 		}
 		findNoGc();
+		if (p.safepoints) Safepoints.insert(p, takesAddr); // (before the raw-address check: a poll is a GC point)
 		checkHeapSpans();
 		checkRawAddresses();
 		assignTypes();

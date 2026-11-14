@@ -185,6 +185,9 @@ class Options {
 	// -D hxmc.stacks: the table, and the stacks recorded and reported (an
 	// uncaught exception's), whether or not the program reads stacks
 	public var stacksAlways = false;
+	// -D hxmc.safepoints: a poll at each loop's head and each calling function's entry, where
+	// a collection another thread asked for comes in (hxmc.ir.Safepoints; not on WebAssembly)
+	public var safepoints = false;
 	// a program that loads code for the Mir interpreter (Main: a compiler with
 	// Mir macros and --run, Mem.mirHost): the pools and the host table its
 	// code loaded crosses into native code through, spare type and signature
@@ -411,6 +414,7 @@ class Options {
 		o.debugLines = def("debug") != null || def("hxmc.lines") != null;
 		o.stacks = def("hxmc.no_stacks") == null;
 		o.stacksAlways = o.stacks && def("hxmc.stacks") != null;
+		o.safepoints = def("hxmc.safepoints") != null;
 		o.interp = def("hxmc.interp");
 		for (n in FLAGS) {
 			var v = flag(n, com.defines);

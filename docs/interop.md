@@ -716,6 +716,20 @@ for (row in 0...height) {
 }
 ```
 
+`-D hxmc.safepoints` has the compiler add them: a poll at the head of each
+loop and at the entry of each function that calls another (`hxmc.ir.Safepoints`:
+one load and a branch, the runtime's `rt_poll` when the flag is set), in the
+functions that reach a GC point already. A no-GC function (one a kernel may
+call), `@:hxmc.unsafe` code and the runtime's own get none. So a long loop in a
+function that reaches no GC point at all (pure arithmetic) still holds
+collections: it needs an explicit poll. The cost is more than the load in
+a loop over Bytes or an Array: after a poll (a GC point) the loop takes the
+data's address again, and a bounds test the compiler drops without one can
+stay (`BytesReadLoops` with the define: 1 or 2 in 4 of its functions). Measured: an
+HTTP server whose handler spends 100 ms in a loop that allocates nothing, on 1 request in
+10,000, 35,000 requests a second on one core: p99 61-70 ms without, 5-15 ms with
+(the unikernel, app threads: docs/unikernel.md); code 0.8% larger.
+
 ### Handles
 
 A `@:hxmc.handle` abstract is a value only C makes, as .NET's `SafeHandle`

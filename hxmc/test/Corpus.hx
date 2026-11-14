@@ -260,6 +260,9 @@ class Corpus {
 		if (native.links.length > 0) cmd = cmd.concat(["-D", "hxmc.link=" + native.links.join(",")]);
 		if (wasm && wasmEh != null) cmd = cmd.concat(["-D", "hxmc.wasm-eh=" + wasmEh]);
 		if (verifyTags) cmd = cmd.concat(["-D", "hxmc.verify-tags"]);
+		// (CORPUS_DEFINES="a b=c": more defines for every build, as -D a -D b=c)
+		var more = Sys.getEnv("CORPUS_DEFINES");
+		if (more != null) for (m in more.split(" ")) if (m != "") cmd = cmd.concat(["-D", m]);
 		// (its resources: caseResources; the defines: caseDefines, as when typing)
 		var src = c.cps[0] + "/" + c.main + ".hx";
 		cmd = cmd.concat(caseResources(src));

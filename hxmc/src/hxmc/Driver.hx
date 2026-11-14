@@ -25,8 +25,9 @@ class Driver {
 	function new(prog:Program, out:String, o:Options) {
 		this.o = o;
 		this.out = o.output != null ? o.output : out;
-		prep = new Prep(prog);
 		abi = Abi.get(o.target);
+		prog.safepoints = o.safepoints && !abi.wasm;
+		prep = new Prep(prog);
 		abi.setLibc(o.libc);
 		abi.framePointers = !abi.wasm && (abi.arm || o.framePointers);
 		if (o.shared && (abi.os == "macos" || abi.os == "windows")) {

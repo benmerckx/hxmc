@@ -103,6 +103,7 @@ class RuntimeSymbols {
 		{sym: "hxmc_interp_enter", kind: FUNC, families: NATIVE, by: "InterpGen: an interpreted function's entry stub", when: interp},
 		{sym: "hxmc_interp_pool_enter", kind: FUNC, families: NATIVE, by: "interp.InterpAbi: the entries' pools of a Mir host", when: interp},
 		{sym: "rt_stack_overflow", kind: FUNC, families: WASM32, by: "MirWriter.raiseHw: the shadow stack's end"},
+		{sym: "rt_poll", kind: FUNC, families: NATIVE, by: "Safepoints: a loop's or a function's poll (-D hxmc.safepoints)"},
 		{sym: "rt_cstack_overflow", kind: FUNC, families: WASM32, by: "WasmGen: a frame's prologue"},
 		{sym: "rt_blocking_enter", kind: FUNC, families: NATIVE, by: "MirBuild.cCall: a C call's safe region"},
 		{sym: "rt_blocking_leave", kind: FUNC, families: NATIVE, by: "Lower.callback: a callback's wrapper leaves the caller's safe region; DataGen.objcCaught: a message's, which an Objective-C exception left"},
