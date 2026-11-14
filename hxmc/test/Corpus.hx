@@ -130,7 +130,7 @@ class Corpus {
 		verifyTags = a.has("--verify-tags");
 		if (mirRun) OUT = "bin/hxmc-t-mir";
 		var verbose = a.has("-v");
-		if (!FileSystem.exists(STD + "/.stamp")) fail("Corpus: bin/hxmc/std is missing (make std)");
+		if (!FileSystem.exists(STD + "/.stamp")) fail("Corpus: bin/hxmc/std is missing (node make.mjs std)");
 		var cases = caseList(a.rest);
 		var t0 = now();
 		var bad = 0, excluded = 0, knownFailed = 0;

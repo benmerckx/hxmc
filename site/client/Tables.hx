@@ -9,7 +9,7 @@ import js.html.TableCellElement;
 // The benchmarks page (site/benchmarks.html). The compiler: hxmc's history
 // (compile-history.json: one chart per workload, HistoryChart) and the latest
 // run of every runner (bench.json's format); both from the bench-data branch
-// when the build has it (bench/compile-*.json, make site BENCH_DATA=...), else
+// when the build has it (bench/compile-*.json, node make.mjs site BENCH_DATA=...), else
 // the committed site/data files (hxmc/test/CompileBench.hx). Programs:
 // BenchCharts. Target generators: targets.json.
 typedef BenchRun = {

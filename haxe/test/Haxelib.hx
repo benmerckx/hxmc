@@ -39,7 +39,7 @@ class Haxelib {
 		var ref = [FileSystem.fullPath(Sys.getEnv("HAXE_REFERENCE") ?? "bin/reference/haxe")];
 		var port = shellSplit(Sys.getEnv("HAXE_IN_HAXE_PORT") ?? "bin/port/haxe");
 		if (FileSystem.exists(port[0])) port[0] = FileSystem.fullPath(port[0]);
-		if (!FileSystem.exists("bin/lix/lix")) fail("Haxelib: bin/lix/lix is missing (make lix)");
+		if (!FileSystem.exists("bin/lix/lix")) fail("Haxelib: bin/lix/lix is missing (node make.mjs lix)");
 		var lixDir = FileSystem.fullPath("bin/lix");
 		var std = root + "/haxe/upstream/std";
 		Sys.putEnv("HAXE_STD_PATH", std);

@@ -7,7 +7,7 @@ import sys.io.File;
 using StringTools;
 
 // The HaxeBenchmarks cases (github.com/HaxeBenchmarks/benchmark-runner, pinned)
-// on hxmc and the usual fast targets, side by side (`make bench`; the website's
+// on hxmc and the usual fast targets, side by side (`node make.mjs bench`; the website's
 // Benchmarks section, .github/workflows/bench.yml):
 //   hxmc        the tool (bin/hxmc/hxmc) with hxmc's std: a static linux-x86_64 executable
 //   hxmc-wasm   the same with -D hxmc.target=wasm32-wasi, run by node (hxmc/bootstrap/wasi.mjs)
@@ -278,7 +278,7 @@ class Bench {
 			scope = '$bench/scope';
 			mkdirs(scope);
 			var lix = FileSystem.fullPath("bin/lix/lix");
-			if (!FileSystem.exists(lix)) fail("bin/lix/lix is missing (make lix)");
+			if (!FileSystem.exists(lix)) fail("bin/lix/lix is missing (node make.mjs lix)");
 			var lixEnv:Map<String, Null<String>> = ["HAXESHIM_ROOT" => '$scope/lix-root'];
 			if (!FileSystem.exists('$scope/.haxerc')) exec([lix, "scope", "create"], {cwd: scope, env: lixEnv});
 			for (l in LIX_LIBS) {
@@ -388,7 +388,7 @@ class Bench {
 		var logFile = '$out/build.log';
 		var text = new StringBuf();
 		for (s in steps) {
-			// the tool and the port recurse deeply: an unlimited stack, as the Makefile runs them
+			// the tool and the port recurse deeply: an unlimited stack, as make.mjs runs them
 			var r = exec(["sh", "-c", 'ulimit -s unlimited 2>/dev/null; exec "$$@"', "sh"].concat(s.cmd), {cwd: s.cwd ?? cwd, env: env, merge: true, log: logFile});
 			seconds += r.seconds;
 			if (s.cc == true) cc = (cc ?? 0.0) + r.seconds else haxeSeconds += r.seconds;

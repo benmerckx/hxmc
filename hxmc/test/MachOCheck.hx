@@ -7,7 +7,7 @@ import sys.io.File;
 using StringTools;
 
 // iOS's native output without a bundle (docs/using.md, "Native output for
-// a packager"; make native-check NATIVE=macho), checked without a Mac:
+// a packager"; node make.mjs native-check NATIVE=macho), checked without a Mac:
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck macho
 // hxmc/test/ios/IosHello.hx for ios-arm64, ios-sim-arm64 and Mac Catalyst
 // (macos-catalyst-arm64, -x86_64) as a plain executable and as a dylib

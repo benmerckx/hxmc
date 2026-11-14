@@ -236,7 +236,7 @@ slot no longer gives it: `Type.enumParameters`, `Type.createEnum`,
 `Type.enumEq`, `Std.string` and `haxe.Serializer` read them through it.
 Where the target has no compressed references the arguments stay a slot
 each, as without the annotation. A constructor has at most 32 slots.
-The corpus' `CompactEnums` (`make check`'s lane `CompactEnums x10
+The corpus' `CompactEnums` (`node make.mjs check`'s lane `CompactEnums x10
 adaptive RT_VERIFY`) and `reject-CompactEnumSlots`.
 
 **Header constructors.** A constructor of a compact enum with one argument
@@ -258,7 +258,7 @@ through `Dyn.boxSlot`/`storeSlot` as any 4-byte field. `Dyn.objHash`
 and its argument's (a reference's own hash), which never change. Only
 where the program's runtime forwards in the header (`Lower.compactTypes`,
 `GcCore.fwdLow`); else such a constructor is packed in a slot. The
-corpus' `HeaderEnums` (`make check`'s lane `HeaderEnums x10 adaptive
+corpus' `HeaderEnums` (`node make.mjs check`'s lane `HeaderEnums x10 adaptive
 RT_VERIFY`).
 
 **The code.** A load zero-extends the 4 bytes and shifts them left by 3
@@ -384,7 +384,7 @@ Mir (`MemLower`'s 4-byte loads, shifts and the barrier's calls), without
 x86-64's folding of the shift into an address. `-D hxmc.interp`'s
 interpreted functions take their program's layouts likewise. The corpus'
 `CompactRefs`, `CompactEnums` and `CompactMacros` (Mir macros typing,
-storing and reading typed expressions and types; `make mir-check`).
+storing and reading typed expressions and types; `node make.mjs mir-check`).
 
 **Errors.** A compact class (with its superclasses' fields) has at most 32
 slots: the collector scans it with one word of each map (`Gc.SMALL_SLOTS`;
@@ -394,10 +394,10 @@ registrations are built: declare such a field in a class that is not
 compact). `@:hxmc.lengthOf` cannot name a compressed field. Interfaces,
 extern classes and subclasses of Objective-C classes or StringBuf cannot be
 compact. The corpus' `CompactRefs`, `CompactGc`, `CompactParGc` (four threads; in
-parallel with the adaptive nursery: `make check`'s lane `CompactParGc x10
+parallel with the adaptive nursery: `node make.mjs check`'s lane `CompactParGc x10
 adaptive RT_VERIFY`) and `reject-Compact*`.
 
-**Costs.** Memory: the port typing its own source to HXB (`make bench-compile`'s `self`) with twelve of its syntax and typed-tree classes compact (`Expr`, `TExpr`, `TVar`, `TClassField`, `TFunc`, `TMono`, `TAnon`, ...): 256 MB live at exit, 232 MB (-9.4%); peak RSS 624 MB, 561 MB (-10.1%); the same HXB, in 3.71 s and 3.73 s. tsc-haxe (the TypeScript checker ported to
+**Costs.** Memory: the port typing its own source to HXB (`node make.mjs bench-compile`'s `self`) with twelve of its syntax and typed-tree classes compact (`Expr`, `TExpr`, `TVar`, `TClassField`, `TFunc`, `TMono`, `TAnon`, ...): 256 MB live at exit, 232 MB (-9.4%); peak RSS 624 MB, 561 MB (-10.1%); the same HXB, in 3.71 s and 3.73 s. tsc-haxe (the TypeScript checker ported to
 Haxe, with its syntax nodes, symbols, types, signatures, flow nodes and link
 records compact) checking vscode: 3254 MB live at exit, 2723 MB compact
 (-16.3%), peak RSS 3654 MB, 3121 MB (-14.6%); t3code-server -16.0% live,
@@ -550,7 +550,7 @@ address mixed by splitmix64. So each run and each thread draws its own
 sequence; there is no way to seed it. `Math.random` has 53 random bits;
 `Std.random(n)` is unbiased (Lemire's multiply and reject), 0 for n <= 1
 as upstream specifies. The compiler's output never depends on them
-(`make fixpoint`); the identity hashes (`Dyn.objHash`) keep their fixed
+(`node make.mjs fixpoint`); the identity hashes (`Dyn.objHash`) keep their fixed
 per-thread seeds. `RandomRanges` checks the ranges, `RandomSeed` that runs
 and threads differ.
 
@@ -735,7 +735,7 @@ call between two accesses reloads the length, and the second one keeps its
 test. `BytesReadLoops` names the tests left (`// bytes-checks:`),
 `BytesBounds` the failures. A loop over 4-byte words
 (`for (i in 0...b.length >> 2) b.getInt32(i * 4)`) is proved too. Measured
-(`hxmc/test/micro/BytesReadBench.hx`, `make bench-simd`; the fastest of 5
+(`hxmc/test/micro/BytesReadBench.hx`, `node make.mjs bench-simd`; the fastest of 5
 runs): a byte sum, the word loop and a table of Doubles cost nothing
 measurable, natively or on wasm32; where nothing proves the index (a
 cursor over records, a resize's gathers, a loop to an `n` not tested
@@ -857,7 +857,7 @@ tag first, then through the box as Dynamic's conversions do.
   conversion every runtime function reading a Dynamic goes through. A
   missed conversion from a type parameter to Dynamic shows at the first such
   read, not as a crash later. The corpus's verify lanes build with it
-  (`Corpus --verify-tags`, with `RT_VERIFY=1`: `make quick`, CI's corpus
+  (`Corpus --verify-tags`, with `RT_VERIFY=1`: `node make.mjs quick`, CI's corpus
   job).
 
 ## Where struct values are boxed
@@ -985,7 +985,7 @@ reindexes them. After a major collection every entry is reindexed. A map
 shared by reading threads is updated by the first that finds it stale,
 under `hxmc_idhash_lock`. `Map<SomeEnum, V>` is upstream's
 `EnumValueMap`, not an identity map. `ObjectMapGc` checks maps across
-collections; `make bench-micro WHICH=maps` measures them.
+collections; `node make.mjs bench-micro WHICH=maps` measures them.
 
 ## Module cache
 
@@ -1121,8 +1121,8 @@ WASI. A callback registered outside a module's typing, or a macro setting
 a define, makes the build write nothing. A module whose types share a path
 (eval's `mbedtls.SslAuthmode`) is not kept.
 
-`make test-module-cache` checks that outputs are byte-identical with and
-without the cache; `make fixpoint` builds the tool cold, warm and off.
+`node make.mjs test-module-cache` checks that outputs are byte-identical with and
+without the cache; `node make.mjs fixpoint` builds the tool cold, warm and off.
 Open items: [plans/compiler.md](plans/compiler.md#cached-modules).
 
 ### What a compilation server keeps
@@ -1154,7 +1154,7 @@ interpreter and the rest 75 MB.
   (made again by the next compilation's first macro) and the filters of
   the last macro context; its next build is a cold one. What one group
   keeps is never dropped: the cap is no limit on one program. `hxmc.stats`
-  prints what is dropped; `make dev-check` builds two programs in turn
+  prints what is dropped; `node make.mjs dev-check` builds two programs in turn
   under a cap of 1 MB, each build against a fresh one.
 
 ## Macros on the Mir interpreter
@@ -1187,7 +1187,7 @@ never needs executable memory: its functions are descriptors
 (`InterpGen`), its data and dispatch rows are in memory of malloc's, only
 64-bit absolute relocations are applied, and nothing is mapped executable
 or below 2 GB (the Loader throws if a bundle for the interpreter has code;
-`HXMC_MACRO_STATS=1` reports its bytes, `make mir-check` checks them).
+`HXMC_MACRO_STATS=1` reports its bytes, `node make.mjs mir-check` checks them).
 Every crossing goes through a register image, a buffer of words the
 interpreter reads and writes, and functions of the compiler that move it
 in and out of the ABI's registers (`interp.InterpAbi`):
@@ -1429,7 +1429,7 @@ function's IR and key do not depend on what was lowered before it. Off with
 the module cache (`HXMC_MODULE_CACHE=0`, `-D hxmc.no-module-cache`);
 `HXMC_MIR_CACHE=0` turns it off alone, `HXMC_MIR_CACHE=1` on without the
 module cache; `HXMC_MACRO_STATS=1` reports the functions found and compiled.
-`make mir-check` (`hxmc/test/MirCacheCheck.hx`, in the Mir lane):
+`node make.mjs mir-check` (`hxmc/test/MirCacheCheck.hx`, in the Mir lane):
 every build prints what Eval's macros make it print, a warm build finds
 every function, and an edit of a dependency, of a function the inliner
 copies, a define and another build of the compiler compile again what they
@@ -1498,7 +1498,7 @@ uncaught-exception report keeps the frames of code loaded at run time,
 interpreted or not (`Stacks.loaded`). The tier compiles a function with the
 optimizer setting its interpreted code had, so the same calls are inlined,
 and does not inline the closures a function calls where it makes them
-(`Driver`: the interpreter keeps their frames). `make mir-check` runs
+(`Driver`: the interpreter keeps their frames). `node make.mjs mir-check` runs
 its uncaught exceptions and a `CallStack` on a server with
 `HXMC_MIR_TIER=native` too, against the interpreter's output.
 
@@ -1536,7 +1536,7 @@ hot code runs in a few long calls (mandelbrot as a macro, nbody), which
 the counting tier leaves interpreted until OSR, and costs where much code
 runs once (every function called is compiled, optimized).
 `HXMC_MIR_TIER=1` compiles every function at its second call, a stress
-test: `make mir-check` passes so with `RT_VERIFY=1` and nurseries of 16
+test: `node make.mjs mir-check` passes so with `RT_VERIFY=1` and nurseries of 16
 to 64 KB, but for FrameChain, whose chain then passes through the
 interpreter's frames between native ones; `mir-check` and
 `mir-check` pass so too.
@@ -1707,7 +1707,7 @@ its scene only from a bundle; a packager writes it.
 
 ### WebAssembly
 
-The playground runs the port as a wasm32-wasi module, and `make crosshost` checks that the tool built as one writes the same bytes as the native tool.
+The playground runs the port as a wasm32-wasi module, and `node make.mjs crosshost` checks that the tool built as one writes the same bytes as the native tool.
 
 #### Memory
 
@@ -1814,8 +1814,10 @@ The collector does not recurse (its stacks are in linear memory), so a
 collection needs no more of node's stack than the program's deepest
 frame. node's `--stack-size` beyond the system's stack (`ulimit -s`)
 crashes node with a segmentation fault on deep recursion instead of a
-RangeError (`wasi.mjs` takes the shadow stack's size from it); the
-Makefile runs node after `ulimit -s unlimited`.
+RangeError (`wasi.mjs` takes the shadow stack's size from it); as a
+command, `wasi.mjs` given a `--stack-size` beyond node's default runs the
+module on a worker thread with a stack of that size, which the system's
+limit does not bound.
 
 On every target an Array's storage holds at most 268,435,453 elements
 (`Boxes.MAX_CAP`, 2 GB of 8-byte elements); growing past that throws "out

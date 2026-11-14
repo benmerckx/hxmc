@@ -1,4 +1,4 @@
-# The site's JavaScript (`make site`): one file per page script, into
+# The site's JavaScript (`node make.mjs site`): one file per page script, into
 # bin/site, compiled by the port. Run from the repository root.
 -cp site/client
 -dce full

@@ -11,7 +11,7 @@ import hxmc.simd.*;
 // inverse DCT over many blocks, YCbCr to RGBA over a large image, a
 // bilinear resize, each as plain Haxe over Bytes and Vector (`bytes`) and as
 // a kernel over spans (`span`), and the same in C (simd_bench.c, the same
-// data and checksums). `make bench-simd` builds and runs every variant; by
+// data and checksums). `node make.mjs bench-simd` builds and runs every variant; by
 // hand:
 //   bin/hxmc/hxmc bin/simd-bench/m -cp hxmc/test/bench/simd -main SimdBench -cp bin/hxmc/std --custom-target hxmc [-D hxmc.span-checks=0]
 //   bin/simd-bench/m [scale]

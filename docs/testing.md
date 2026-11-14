@@ -8,24 +8,24 @@ Building is in [development.md](development.md).
 
 | Change | Run |
 | --- | --- |
-| hxmc (`hxmc/src`, `hxmc/std`) | `make quick` after every edit, `make check` before a commit; CI the rest |
-| typing or filters in the port | `make test LANES="hxb macro"` |
-| a generator in the port | `make test-fuzz LANE=diff:<target>`, `make test LANES=targets` |
-| display or the server | `make test LANES="display server jsonrpc"` |
-| anything broad | all of the above, `make fixpoint`, `make crosshost` |
+| hxmc (`hxmc/src`, `hxmc/std`) | `node make.mjs quick` after every edit, `node make.mjs check` before a commit; CI the rest |
+| typing or filters in the port | `node make.mjs test LANES="hxb macro"` |
+| a generator in the port | `node make.mjs test-fuzz LANE=diff:<target>`, `node make.mjs test LANES=targets` |
+| display or the server | `node make.mjs test LANES="display server jsonrpc"` |
+| anything broad | all of the above, `node make.mjs fixpoint`, `node make.mjs crosshost` |
 
 The fixpoint and crosshost must stay byte-identical.
 
 | Tier | What it runs |
 | --- | --- |
-| `make quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the unit checks (`Units`; `CASES=` restricts the corpus) |
-| `make check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, CompactParGc x10, CompactEnums x10 and HeaderEnums x10 (parallel collections of compact objects), crosshost on three cases, debug info, the native output (`NativeCheck` shared, jni, macho; uikit on a Mac with Xcode), the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
+| `node make.mjs quick` | the tool, the x64 corpus, again with `RT_VERIFY=1` and `-D hxmc.verify-tags` ([hxmc.md](hxmc.md#values-of-type-parameters)), the wasm corpus under node, again with `RT_VERIFY=1`, a 64 KB nursery, an old space of 1 MB at first and `RT_MAX_MB=64` (its major collections compact: [hxmc.md](hxmc.md#memory)), the unit checks (`Units`; `CASES=` restricts the corpus) |
+| `node make.mjs check` | quick, plus arm64 (qemu), x64 Windows (wine), a 16 KB nursery, legacy exception handling, the glibc mode, ThreadNatives x30, CompactParGc x10, CompactEnums x10 and HeaderEnums x10 (parallel collections of compact objects), crosshost on three cases, debug info, the native output (`NativeCheck` shared, jni, macho; uikit on a Mac with Xcode), the corpus in an iPhone simulator (macOS with Xcode's iOS runtime) and as Mac Catalyst (an arm64 Mac) (`PORT=1`: the port's self-compile) |
 
 ## The port against the reference
 
 Every harness compares the port (`PORT_BIN`, default `bin/port/haxe`)
-with the reference compiler (`bin/reference/haxe`, `make reference`).
-Outputs go to `bin/test/`. Run them with `make test LANES="<lane> ..."`
+with the reference compiler (`bin/reference/haxe`, `node make.mjs reference`).
+Outputs go to `bin/test/`. Run them with `node make.mjs test LANES="<lane> ..."`
 (default `hxb`; every lane runs and the failed ones are named at the end;
 `EVAL` picks the compiler whose Eval runs them, `SUMMARY` writes Markdown),
 or `bin/hxmc/hxmc -cp haxe/test --run <Name>` with the options at the top
@@ -43,7 +43,7 @@ of each file.
 | `LibResolution` | `libs` | hxmc's own `-lib` resolution against haxelib and lix's shims: repositories, versions, dependencies, every `resolveLibs` mode, errors | 130/130 |
 | `EvalDebugger` | `debugger` | scripted Eval debugger sessions (`SHARD=i/n`) | 6/6 |
 | `unit.hxml` | `unit` | unit tests of port modules, in-process | pass |
-| `fuzz/` | `make test-fuzz LANE=...` | random programs per target (`diff:<target>`) or by output (`exec:<a>,<b>`), reduced on failure; `--cases haxe/test/fuzz/cases` reruns the kept ones | CI: diff lanes of ten targets, two exec lanes |
+| `fuzz/` | `node make.mjs test-fuzz LANE=...` | random programs per target (`diff:<target>`) or by output (`exec:<a>,<b>`), reduced on failure; `--cases haxe/test/fuzz/cases` reruns the kept ones | CI: diff lanes of ten targets, two exec lanes |
 | `IpcStress` | (upstream-tests.yml) | multi-byte strings through Eval's `sys.io.Process`, with concurrent file reads | 86 checks per round |
 | `tools/hxmc/EncCheck` | | the x86-64 and AArch64 encoders against `llvm-mc` (not in CI) | |
 
@@ -143,7 +143,7 @@ checks them.
 
 ### Upstream's runtime suites
 
-`make upstream-suites` (`hxmc/test/UpstreamSuites.hx`) builds upstream's
+`node make.mjs upstream-suites` (`hxmc/test/UpstreamSuites.hx`) builds upstream's
 `tests/unit`, `tests/sys` and `tests/threads` with hxmc and runs them
 natively, and `tests/unit` as a wasm32-wasi module (`SUITES=`,
 `SUITES_TARGET=native|wasm32-wasi` narrow it). Each suite is copied to
@@ -174,18 +174,19 @@ a release is published only when all of them pass.
 | `changes` | yes | what the run needs (`.github/select.sh`); whether the runtime objects' release exists |
 | `rt-build`, `rt` | | the runtime objects, only when their release is missing |
 | `build` | yes | the bootstrap from the stage0, the fixpoint, the release binaries and lix for the six targets |
-| `checks` | yes | `make units`, `make test-module-cache PORT=1`, `make dev-check`, `make native-check` on Linux (`SharedCheck`, `JniCheck` with the image's JDK 21, `MachOCheck`, `HeaderCheck`: [the contract](using.md#native-output-for-a-packager)); apart from `build`, which most jobs wait for |
-| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`make corpus-verify`: x86-64; wasm32-wasi's `RT_VERIFY=1` run is the `wasm` job's; apart from `corpus`, which the test jobs wait for) |
+| `checks` | yes | `node make.mjs units`, `node make.mjs test-module-cache PORT=1`, `node make.mjs dev-check`, `node make.mjs native-check` on Linux (`SharedCheck`, `JniCheck` with the image's JDK 21, `MachOCheck`, `HeaderCheck`: [the contract](using.md#native-output-for-a-packager)); apart from `build`, which most jobs wait for |
+| `windows` | yes | the tool from source on Windows with node alone: `node make.mjs bootstrap` (the stage-1 compiler from the stage0, the tool, the fixpoint), `NativeCheck macho`, the release binary and its smoke test (`node make.mjs smoke`) |
+| `corpus-verify` | yes | the corpus on the runner with `-D hxmc.verify-tags` and `RT_VERIFY=1` (`node make.mjs corpus-verify`: x86-64; wasm32-wasi's `RT_VERIFY=1` run is the `wasm` job's; apart from `corpus`, which the test jobs wait for) |
 | `corpus` | yes | the corpus for every target (six jobs: Windows a job per target, Linux a job per architecture), the native compilers with Mir macros, the port as a WebAssembly module, the reference's self-compile |
-| `crosshost` | yes | `make crosshost` for linux-x86_64, macos-arm64, windows-x86_64 and wasm32-wasi, one target of each format (two jobs, the cases in shards: `--shard i/2`; the module's builds on node workers) |
+| `crosshost` | yes | `node make.mjs crosshost` for linux-x86_64, macos-arm64, windows-x86_64 and wasm32-wasi, one target of each format (two jobs, the cases in shards: `--shard i/2`; the module's builds on node workers) |
 | `fuzz-exec` | yes | full runs only: the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
 | `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical); full runs only: the Eval debugger and the fuzzer's diff lanes |
-| `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, on Linux x86-64 only, the Mir lane (`MirCheck`, as `make mir-check`) |
+| `test` | yes | on each of the six machines: the release binary's smoke test (`hxmc/test/Smoke.hx`: --interp, HXB, JS, a TLS handshake, libuv; on Windows also by backslashed paths), lix, the corpus, the self-compile; then, on Linux x86-64 only, the Mir lane (`MirCheck`, as `node make.mjs mir-check`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
 | `npm-pack` | yes | the npm packages, built with the module cache off |
 | `npm` | yes | the seven packages installed from their tarballs in fresh projects on each machine (linux-x64 alone outside full runs): native at once through the platform package, js, `-lib` from lix, node_modules and haxelib, the platform package's compiler run directly without `HXMC_RT_DIR` (a build and a compilation server), `--ignore-scripts`; on linux-x64 a cross build for windows-x86_64 (first failing with the package to install, then with `@hxmc/win32-x64` installed with `--force`) and Android's message; lix with `dist/` on linux-x64, and on all six on full runs; the UIKit app on the Macs on full runs |
-| `site`, `playground` | yes | the website, and `make site-check` in Chromium, Firefox and WebKit |
+| `site`, `playground` | yes | the website, and `node make.mjs site-check` in Chromium, Firefox and WebKit |
 | `llvm` | no | the nightly and dispatches only: the corpus with the LLVM back end (`-D hxmc.llvm`) on linux-x86_64, linux-arm64 and macos-arm64 |
 | `upstream-tests` | no | the nightly and dispatches only: upstream's compiler-side suite (RunCi `macro`) and `IpcStress` |
 | `publish-npm` | | after every gate: the seven packages at one version (the six platform packages, then `@hxmc/cli`), names, versions and optional dependencies checked, with provenance through npm's trusted publishing; on `v*` tags as `latest`, from main as `<version>-nightly.<date>.<commit>` tagged `next` |

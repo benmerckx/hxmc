@@ -57,7 +57,7 @@ class RtSearchCheck {
 			case _: fail("RtSearchCheck: no platform package for " + uname);
 		}
 		for (t in [host.target, "windows-x86_64"])
-			if (!FileSystem.exists("bin/hxmc/rt/" + t + "/rt.o")) fail("RtSearchCheck: bin/hxmc/rt/" + t + " is missing (make rt)");
+			if (!FileSystem.exists("bin/hxmc/rt/" + t + "/rt.o")) fail("RtSearchCheck: bin/hxmc/rt/" + t + " is missing (node make.mjs rt)");
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/rtsearch";
 		rmrf(dir);
 		mkdirs(dir + "/src");

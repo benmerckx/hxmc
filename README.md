@@ -91,15 +91,15 @@ not depend on it.
 
 ```sh
 git submodule update --init
-make hxmc        # the tool (node runs the committed stage0 on first use)
-make port        # bin/port/haxe: the port with every generator
-make quick       # after every change to hxmc
-make help        # everything else
+node make.mjs hxmc        # the tool (node runs the committed stage0 on first use)
+node make.mjs port        # bin/port/haxe: the port with every generator
+node make.mjs quick       # after every change to hxmc
+node make.mjs help        # everything else
 ```
 
-This needs GNU make, node 22 and git. zig is needed only to rebuild the
-runtime objects, which are normally downloaded. See
-[docs/development.md](docs/development.md).
+This needs node 22 and git, on Linux, macOS and Windows alike (no make, no
+shell). zig is needed only to rebuild the runtime objects, which are
+normally downloaded. See [docs/development.md](docs/development.md).
 
 ## License
 

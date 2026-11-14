@@ -122,13 +122,13 @@ parameter not satisfying: bundleIdentifier", and one with only an
 embedded `__info_plist` gets no scene from the system. `hxmc_ui_main`
 works as on iOS. A packager writes the `.app` as for macOS
 (`Contents/MacOS/<name>`, `Contents/Info.plist`). `hxmc/test/ios/UIKitHello.hx` is such
-an app, with its own `hxmc_ui_main` (`make native-check NATIVE=uikit`).
+an app, with its own `hxmc_ui_main` (`node make.mjs native-check NATIVE=uikit`).
 
 ### Native output for a packager
 
 hxmc writes no APKs or app bundles: a packager writes them around hxmc's
 native output ([helder](https://github.com/benmerckx/helder) does). It
-builds on two outputs, checked by `make native-check`:
+builds on two outputs, checked by `node make.mjs native-check`:
 
 - **Android**: the `.so`. Its `DT_SONAME` is always the output's file
   name, so name it `libmain.so` for `NativeActivity`.
@@ -182,8 +182,9 @@ is live, the program prints "out of memory" and exits.
 
 node's `--stack-size` (deep recursion, as the compiler's) must stay within
 the stack the system gives node (`ulimit -s`): past it node crashes with a
-segmentation fault instead of a stack overflow. `ulimit -s unlimited`
-first, as the Makefile does.
+segmentation fault instead of a stack overflow. `node --stack-size=<kb>
+hxmc/bootstrap/wasi.mjs <module>` runs the module on a worker thread with a
+stack of that size, so no `ulimit -s` is needed there.
 
 ## The npm packages
 
@@ -219,7 +220,7 @@ these that has them:
    for macros and host tools. An empty `HXMC_RT_DIR` is the same as unset;
 2. the compiler's own directory: the platform package it is in
    (`node_modules/@hxmc/linux-x64/linux-x86_64/rt.o`);
-3. `rt/` beside the compiler: a checkout's `bin/hxmc/rt` (`make rt`);
+3. `rt/` beside the compiler: a checkout's `bin/hxmc/rt` (`node make.mjs rt`);
 4. the target's platform package beside the compiler's, of the same version
    (`node_modules/@hxmc/win32-x64/windows-x86_64/rt.o`).
 
@@ -241,7 +242,7 @@ package to install.
 
 Android's runtime objects (`android-arm64`, `android-x86_64`) are in no npm
 package. Take them from the runtime objects' GitHub release, or build them
-from source (`make rt`, [development.md](development.md)). Then name the
+from source (`node make.mjs rt`, [development.md](development.md)). Then name the
 directory in `HXMC_RT_DIR`. `@hxmc/cli`'s `package.json` names the
 release its packages were built with, `"hxmc": {"rt": "rt-<hash>"}` (the
 platform packages' runtime objects are that release's). Its assets are

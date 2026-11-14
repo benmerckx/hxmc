@@ -12,7 +12,7 @@ import sys.thread.Lock;
 	Differential fuzzer: generates random, well-typed Haxe programs and checks
 	that the port compiles them exactly like the pinned reference compiler.
 
-	Build with hxmc: `make fuzz`, run `bin/fuzz/fuzz --help`.
+	Build with hxmc: `node make.mjs fuzz`, run `bin/fuzz/fuzz --help`.
 	See docs/testing.md (the fuzzer).
 **/
 class Fuzz {

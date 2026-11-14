@@ -9,9 +9,10 @@ docs/testing.md (tests) and docs/porting.md (rules for every change of
   with upstream's comments; other comments in `haxe/src` start with `// port:`.
 - Reproduce OCaml semantics that reach the output; never stub with a silent
   success.
-- The reference compiler is the nightly of the pinned commit (`make
+- The reference compiler is the nightly of the pinned commit (`node make.mjs
   reference`). Before calling a change done, run the lanes it can affect
-  (docs/testing.md; `make quick`/`check` for hxmc) and keep the fixpoint
-  (`make fixpoint`) and crosshost (`make crosshost`) byte-identical.
-- Tooling is Haxe run with our own compiler (`bin/hxmc/hxmc -cp ... --run`)
-  and node; no Python. Never commit `bin/`.
+  (docs/testing.md; `node make.mjs quick`/`check` for hxmc) and keep the fixpoint
+  (`node make.mjs fixpoint`) and crosshost (`node make.mjs crosshost`) byte-identical.
+- The build is `node make.mjs <target>` (`tools/make/Make.hx`), on Linux,
+  macOS and Windows with node and git alone. Tooling is Haxe run with our
+  own compiler (`bin/hxmc/hxmc -cp ... --run`) and node; no Python, no make. Never commit `bin/`.

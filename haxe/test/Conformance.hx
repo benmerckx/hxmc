@@ -58,7 +58,7 @@ class Conformance {
 		var stale = [];
 		root = Harness.root;
 		reference = Sys.getEnv("HAXE_REFERENCE") ?? "bin/reference/haxe";
-		if (!FileSystem.exists(reference)) fail("Conformance: no reference compiler at " + reference + " (make reference, or HAXE_REFERENCE)");
+		if (!FileSystem.exists(reference)) fail("Conformance: no reference compiler at " + reference + " (node make.mjs reference, or HAXE_REFERENCE)");
 		reference = FileSystem.fullPath(reference);
 		port = shellSplit(Sys.getEnv("HAXE_IN_HAXE_PORT") ?? "bin/port/haxe");
 		if (FileSystem.exists(port[0])) port[0] = FileSystem.fullPath(port[0]);

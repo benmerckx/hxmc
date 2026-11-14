@@ -43,12 +43,14 @@ class Harness {
 		this file instead of being returned), `timeout` (seconds; then the process
 		and the ones it started are killed, as hxmc's tool runs itself again,
 		hxmc.Main: `timedOut` and code -1), `merge` (stderr into stdout), `stdin`
-		(a file). Windows: through libuv (execLuv; HARNESS_LUV=1 elsewhere too).
+		(a file), `inherit` (this process's stdin, stdout and stderr: nothing
+		captured). Windows, and with `inherit`: through libuv (spawn;
+		HARNESS_LUV=1 elsewhere too).
 	**/
 	public static function exec(cmd:Array<String>, ?o:ExecOptions):ExecResult {
 		if (o == null) o = {};
+		if (windows || o.inherit == true || Sys.getEnv("HARNESS_LUV") == "1") return spawn(cmd, o);
 		var t0 = now();
-		if (windows || Sys.getEnv("HARNESS_LUV") == "1") return execLuv(cmd, o, t0);
 		var tmp = o.log == null ? tempName() : null;
 		var outFile = o.log != null ? o.log : tmp + ".out";
 		var errFile = o.log != null || o.merge == true ? null : tmp + ".err";
@@ -86,14 +88,16 @@ class Harness {
 		return r;
 	}
 
-	// Windows has no /bin/sh: the process through libuv (eval.luv, on an
-	// event loop of this call's), which gives a child its own working
-	// directory and environment, so the harness's own stay as they are and
-	// threads start processes at once. stdout and stderr through pipes (with
+	// The process through libuv (eval.luv, on an event loop of this call's),
+	// without a shell (Windows has no /bin/sh), which gives a child its own
+	// working directory and environment, so the harness's own stay as they are
+	// and threads start processes at once. stdout and stderr through pipes (with
 	// merge, stderr after stdout), stdin a pipe the file is written to; the
 	// timeout ends the process (Windows: its tree, taskkill /T; elsewhere the
 	// process alone)
-	static function execLuv(cmd:Array<String>, o:ExecOptions, t0:Float):ExecResult {
+	public static function spawn(cmd:Array<String>, ?o:ExecOptions):ExecResult {
+		if (o == null) o = {};
+		var t0 = now();
 		var r:ExecResult = {code: -1, out: "", err: "", seconds: 0, timedOut: false};
 		var loop = eval.luv.Loop.init().resolve();
 		// (Windows: names in any case, PATH as Path)
@@ -106,12 +110,14 @@ class Harness {
 					if (e == k || (windows && e.toUpperCase() == k.toUpperCase())) env.remove(e);
 				if (v != null) env[k] = v;
 			}
-		var outPipe = eval.luv.Pipe.init(loop).resolve(), errPipe = eval.luv.Pipe.init(loop).resolve();
-		var inPipe = o.stdin == null ? null : eval.luv.Pipe.init(loop).resolve();
-		var redirect = [
+		var inherit = o.inherit == true;
+		var outPipe = inherit ? null : eval.luv.Pipe.init(loop).resolve(), errPipe = inherit ? null : eval.luv.Pipe.init(loop).resolve();
+		var inPipe = o.stdin == null || inherit ? null : eval.luv.Pipe.init(loop).resolve();
+		var redirect = inherit ? [for (fd in 0...3) eval.luv.Process.inheritFd(fd, fd)] : [
 			eval.luv.Process.toParentPipe(eval.luv.Process.stdout, outPipe, false, true, false),
 			eval.luv.Process.toParentPipe(eval.luv.Process.stderr, errPipe, false, true, false)
 		];
+		if (inherit) Sys.stdout().flush();
 		if (inPipe != null) redirect.push(eval.luv.Process.toParentPipe(eval.luv.Process.stdin, inPipe, true, false, false));
 		var done = false;
 		var timer:Null<eval.luv.Timer> = null;
@@ -131,7 +137,7 @@ class Harness {
 				p.close(() -> {});
 			}
 		});
-		var pipes:Array<eval.luv.Handle> = [outPipe, errPipe];
+		var pipes:Array<eval.luv.Handle> = inherit ? [] : [outPipe, errPipe];
 		if (inPipe != null) pipes.push(inPipe);
 		switch spawned {
 			case Error(e):
@@ -164,8 +170,10 @@ class Harness {
 				case Ok(b): to.add(b.toBytes());
 				case Error(_): pipe.close(() -> {});
 			});
-		read(outPipe, out);
-		read(errPipe, err);
+		if (!inherit) {
+			read(outPipe, out);
+			read(errPipe, err);
+		}
 		if (inPipe != null) {
 			var data = eval.luv.Buffer.fromBytes(File.getBytes(o.stdin));
 			eval.luv.Stream.write(inPipe, [data], (_, _) -> inPipe.close(() -> {}));
@@ -491,6 +499,7 @@ typedef ExecOptions = {
 	?timeout:Float,
 	?merge:Bool,
 	?stdin:String,
+	?inherit:Bool,
 }
 
 typedef ExecResult = {

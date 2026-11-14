@@ -186,7 +186,7 @@ JavaScript (`Bits`).
 
 `Ref` is the specification in code: written from wasm's semantics, not
 from any machine's output, and the corpus's golden files must match it on
-Eval and JavaScript (`make portable-check`) as they match the native
+Eval and JavaScript (`node make.mjs portable-check`) as they match the native
 targets. It is a `@:hxmc.kernel` class of small inline functions, so a
 build for the interpreter runs it without allocating. It is slow (tens of
 instructions an operation) and meant for tests, tooling and the targets
@@ -356,7 +356,7 @@ validate on an engine without it, even if the code never runs).
 
 `SimdOps`, `SimdValues`, `SimdExamples` and `SimdPatterns` run bit-exact on x86-64 Linux,
 arm64 Linux (qemu), x86-64 Windows (wine), wasm32-wasi (node), the
-interpreter build (`--interp`), and, by `make portable-check`, on Eval and
+interpreter build (`--interp`), and, by `node make.mjs portable-check`, on Eval and
 JavaScript against the same golden files; also with `-D hxmc.verify-tags`
 and `RT_VERIFY=1`. `SimdFfi` runs where there are C objects (x86-64 Linux
 and Windows, arm64). CI runs the corpus on each of the six targets' own
@@ -364,7 +364,7 @@ machines too (Linux, Windows and macOS on x86-64 and arm64).
 
 ## Benchmarks
 
-`make bench-simd` (`hxmc/test/bench/simd`): three image kernels, each as
+`node make.mjs bench-simd` (`hxmc/test/bench/simd`): three image kernels, each as
 plain Haxe over `Bytes` and `Vector` (`bytes`), as a kernel over spans
 (`span`), with `hxmc.simd` (`simd`), and in C (`simd_bench.c`: scalar, and
 with SSE4.1 intrinsics, the same data and checksums). Nanoseconds per unit

@@ -6,7 +6,7 @@ import sys.io.File;
 
 using StringTools;
 
-// The compiler benchmarks (`make bench-compile`; the website's "The compiler"
+// The compiler benchmarks (`node make.mjs bench-compile`; the website's "The compiler"
 // section, .github/workflows/bench.yml's compile job): the port built by hxmc
 // against the pinned reference compiler, compiling three workloads to HXB with
 // -D disable-parallelism:

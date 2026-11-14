@@ -3,7 +3,7 @@ import js.Browser.window;
 import js.html.Element;
 
 // The build facts on every page ([data-info] elements: date, commit, sizes)
-// from build-info.json, which `make site` writes (Makefile)
+// from build-info.json, which `node make.mjs site` writes (tools/make/Make.hx)
 class Info {
 	static function main() {
 		fill();

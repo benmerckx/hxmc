@@ -15,6 +15,7 @@ import readline from 'node:readline';
 import v8 from 'node:v8';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 // (node's WASI warns that it is experimental)
 const emitWarning = process.emitWarning;
 process.emitWarning = (w, ...rest) => {
@@ -78,8 +79,7 @@ export function runWasm(module, args, env = process.env, o = {}) {
 	delete e.NUMBER_OF_PROCESSORS;
 	// the runtime's shadow stack as large as node's stack (--stack-size, in KB:
 	// deep recursion, the compiler's) unless RT_STACK_MB says (default 4 MB)
-	const stackKb = [...process.execArgv, ...(process.env.NODE_OPTIONS ?? '').split(/\s+/)]
-		.map((a) => /^--stack[-_]size=(\d+)$/.exec(a)).filter(Boolean).map((m) => +m[1]).pop();
+	const stackKb = requestedStackKb();
 	if (e.RT_STACK_MB === undefined && stackKb > 4096) e.RT_STACK_MB = String(Math.ceil(stackKb / 1024));
 	for (const k of PATH_VARS) if (e[k]) e[k] = e[k].split(path.delimiter).map(wasiPath).join(':');
 	const pre = preopens();
@@ -111,6 +111,12 @@ export function runWasm(module, args, env = process.env, o = {}) {
 	return wasi.start(inst) ?? 0;
 }
 
+// node's --stack-size, in KB (undefined: not given)
+function requestedStackKb() {
+	return [...process.execArgv, ...(process.env.NODE_OPTIONS ?? '').split(/\s+/)]
+		.map((a) => /^--stack[-_]size=(\d+)$/.exec(a)).filter(Boolean).map((m) => +m[1]).pop();
+}
+
 export function compileWasm(module) {
 	let bytes = fs.readFileSync(module);
 	if (module.endsWith('.br')) bytes = zlib.brotliDecompressSync(bytes);
@@ -131,18 +137,21 @@ export async function serveWasm(module) {
 	const mod = compileWasm(module);
 	for await (const line of readline.createInterface({ input: process.stdin })) {
 		if (line.trim() === '') continue;
-		const j = JSON.parse(line);
-		const log = fs.openSync(j.log, 'w');
-		let code;
-		try {
-			code = runWasm(module, j.args, { ...process.env, ...j.env }, { mod, stdout: log, stderr: log });
-		} catch (e) {
-			fs.writeSync(log, `${e?.stack ?? e}\n`);
-			code = 70;
-		}
-		fs.closeSync(log);
-		process.stdout.write(`${code}\n`);
+		process.stdout.write(`${serveOne(module, mod, JSON.parse(line))}\n`);
 	}
+}
+
+function serveOne(module, mod, j) {
+	const log = fs.openSync(j.log, 'w');
+	let code;
+	try {
+		code = runWasm(module, j.args, { ...process.env, ...j.env }, { mod, stdout: log, stderr: log });
+	} catch (e) {
+		fs.writeSync(log, `${e?.stack ?? e}\n`);
+		code = 70;
+	}
+	fs.closeSync(log);
+	return code;
 }
 
 // node's WASI (uvwasi) has no fd_readdir on Windows (no seekdir/telldir
@@ -197,11 +206,43 @@ function readdirShim(w, pre, mem) {
 	};
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	if (process.argv.length < 3 || (process.argv[2] === '--serve' && process.argv.length !== 4)) {
+// As a command given a --stack-size beyond node's default (984 KB), the
+// module runs on a worker thread with a stack of that size: node's main
+// thread has the system's (ulimit -s: 8 MB on Linux and macOS, 1 MB on
+// Windows), past which deep recursion, the compiler's, crashes node with a
+// segmentation fault instead of a RangeError. --serve's lines go to the
+// worker, its exit codes come back.
+const command = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (command && isMainThread) {
+	const argv = process.argv.slice(2);
+	if (argv.length < 1 || (argv[0] === '--serve' && argv.length !== 2)) {
 		console.error('usage: node wasi.mjs <module.wasm[.br]> [args...] | --serve <module.wasm[.br]>');
 		process.exit(2);
 	}
-	if (process.argv[2] === '--serve') await serveWasm(process.argv[3]);
-	else process.exitCode = runWasm(process.argv[2], process.argv.slice(3));
+	const stackKb = requestedStackKb();
+	if (!(stackKb > 984)) {
+		if (argv[0] === '--serve') await serveWasm(argv[1]);
+		else process.exitCode = runWasm(argv[0], argv.slice(1));
+	} else {
+		const w = new Worker(fileURLToPath(import.meta.url), { workerData: argv, resourceLimits: { stackSizeMb: Math.ceil(stackKb / 1024) + 1 } });
+		if (argv[0] === '--serve')
+			readline.createInterface({ input: process.stdin }).on('line', (line) => w.postMessage(line)).on('close', () => w.postMessage(null));
+		w.on('message', (code) => process.stdout.write(`${code}\n`));
+		w.on('error', (e) => {
+			console.error(e?.stack ?? e);
+			process.exitCode = 70;
+		});
+		w.on('exit', (code) => {
+			if (process.exitCode === undefined) process.exitCode = code;
+		});
+	}
+} else if (!isMainThread && Array.isArray(workerData)) {
+	const argv = workerData;
+	if (argv[0] !== '--serve') process.exit(runWasm(argv[0], argv.slice(1)));
+	const module = argv[1], mod = compileWasm(module);
+	parentPort.on('message', (line) => {
+		if (line === null) return parentPort.close();
+		if (line.trim() === '') return;
+		parentPort.postMessage(serveOne(module, mod, JSON.parse(line)));
+	});
 }

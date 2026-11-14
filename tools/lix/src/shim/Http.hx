@@ -101,7 +101,7 @@ class Http {
 	static function caChain():Null<sys.ssl.Certificate> {
 		if (ca == null) {
 			ca = sys.ssl.Certificate.loadDefaults();
-			// node's bundled roots (Mozilla's, see the Makefile), as the npm package trusts
+			// node's bundled roots (Mozilla's, see tools/make/Make.hx), as the npm package trusts
 			ca.add(CaBundle.PEM);
 			var extra = Sys.getEnv('SSL_CERT_FILE');
 			if (extra != null && sys.FileSystem.exists(extra))

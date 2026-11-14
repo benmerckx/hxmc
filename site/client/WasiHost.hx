@@ -3,7 +3,7 @@ import js.lib.DataView;
 import js.lib.Uint8Array;
 
 // The browser's side of the playground's compiler: hxmc builds the port as a
-// wasm32-wasi module (`make wasm`), whose only imports are WASI preview 1's
+// wasm32-wasi module (`node make.mjs wasm`), whose only imports are WASI preview 1's
 // (`wasi_snapshot_preview1`, hxmc/std/hxmc/rt/wasm/WasiApi.hx). In node and
 // wasmtime the engine's WASI provides them; here this class does, from
 // JavaScript: the arguments and environment, stdout and stderr to callbacks,

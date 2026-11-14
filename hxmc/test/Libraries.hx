@@ -5,8 +5,8 @@ import sys.io.File;
 using StringTools;
 
 // -lib with the npm package's compiler (hxmc/src/hxmc/libs: lix's scopes,
-// node_modules, haxelib without a process; `make test-libraries`; CI: after
-// `make npm`, and in the npm job with the installed package's native
+// node_modules, haxelib without a process; `node make.mjs test-libraries`; CI: after
+// `node make.mjs npm`, and in the npm job with the installed package's native
 // compiler, run without node):
 //   <haxe> -cp hxmc/test --run Libraries [--haxe <compiler>] [--dir <scratch>]
 // (default: bin/npm/native/<this machine>/haxe[.exe], bin/test/libraries).

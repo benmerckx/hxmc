@@ -25,7 +25,7 @@ permissions:
 # not the pinned one. Each job serves it this revision instead, as master of a
 # local repository the clone's URL is redirected to: hxcoro's master when the
 # pinned commit landed (HaxeFoundation/hxcoro#242), which is also the
-# Makefile's HXCORO_REV. Move it with the submodule.
+# tools/make/Make.hx's HXCORO_REV. Move it with the submodule.
 env:
   HXCORO_REV: e8e26f8d374919d508d777f73b2fe51daa347184
 

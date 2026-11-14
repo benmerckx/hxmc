@@ -1,5 +1,5 @@
 // The site in real browsers (Playwright: chromium, firefox, webkit), after
-// `make site` (make site-check):
+// `node make.mjs site` (node make.mjs site-check):
 // - links: every page's links, scripts and stylesheets point at files of the
 //   site (or outside it), and every #anchor at an element of its page;
 // - pages: every page at a desktop's width and at a phone's (390 px): no

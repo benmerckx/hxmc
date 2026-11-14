@@ -7,7 +7,7 @@ import sys.io.File;
 using StringTools;
 
 // -lib's resolution (hxmc/src/hxmc/libs) against what it reproduces, on
-// the same files (`make test LANES=libs`):
+// the same files (`node make.mjs test LANES=libs`):
 //   <haxe> -cp hxmc/test -cp hxmc/src --run LibResolution --haxelib <haxelib> --lix <lix's haxe> [--dir <scratch>] [--summary <file>]
 // - Haxelib.run against haxelib itself (the reference's, 4.2.0): `haxelib
 //   path` on a repository of versions, dev paths, capitalized names,

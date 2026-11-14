@@ -1,6 +1,6 @@
 # The HaxeBenchmarks cases on hxmc (native, wasm under node), C++ (hxcpp), the
 # JVM, JS on node, HL/C and the HashLink JIT, every Haxe compilation by hxmc or
-# the port (hxmc/test/Bench.hx, `make bench`): times, peak RSS, sizes and
+# the port (hxmc/test/Bench.hx, `node make.mjs bench`): times, peak RSS, sizes and
 # build times, the targets' check outputs compared.
 #
 # Runs nightly on main (skipped when that commit is already measured) and on
@@ -25,7 +25,7 @@
 #
 # The target generators (haxe/test/Targets.hx, the website's Target generators
 # table): the reference compiler (the nightly of the pinned upstream commit,
-# `make reference`, cached as in build.yml) and the port compile haxe-formatter
+# `node make.mjs reference`, cached as in build.yml) and the port compile haxe-formatter
 # and the port itself to every target, sequential (-D disable-parallelism) and
 # with their default parallelism, best of 3, the outputs compared. One
 # `targets` job per group of targets (both projects, both compilers and both
@@ -36,13 +36,13 @@
 # that): about 5 minutes each. The dispatch input `targets` is `all`, `none`,
 # or Targets.hx's arguments (e.g. "-p self -t jvm"), run in one group.
 #
-# The compiler benchmarks (hxmc/test/CompileBench.hx, `make bench-compile`):
+# The compiler benchmarks (hxmc/test/CompileBench.hx, `node make.mjs bench-compile`):
 # one `compile` job, the port and the reference compiling hello, stdlib and the
 # port itself to HXB (5 runs each, interleaved on one runner: hxmc / reference
 # cancels most of a runner's speed), the wasm runners once, hxmc's cold builds
 # of the port once: about 10 minutes.
 #
-# Memory and time (haxe/test/Measure.hx, `make measure`): one `measure` job
+# Memory and time (haxe/test/Measure.hx, `node make.mjs measure`): one `measure` job
 # beside the compile job, on a runner of its own: the timed bootstrap from the
 # stage0, peak RSS, wall and CPU time of the self-compile (ours and the
 # reference), the cold native build of the port, the stage0 and the npm
@@ -56,7 +56,7 @@
 # targets.json and targets-history.json regenerated (Targets --history), and
 # the compiler's as compile/<date>-<commit>.json, with compile-history.json
 # and compile-latest.json regenerated (CompileBench --history), which
-# the website's next build copies (build.yml, `make site BENCH_DATA=...`; the
+# the website's next build copies (build.yml, `node make.mjs site BENCH_DATA=...`; the
 # committed site/data/targets.json where bench-data has none).
 name: bench
 
@@ -198,14 +198,14 @@ jobs:
           version: ${{ steps.rt.outputs.zig }}
       - name: Runtime objects with zig
         if: steps.rt.outputs.hit != 'true'
-        run: sudo apt-get install -qqy lld && make rt-build
+        run: sudo apt-get install -qqy lld && node make.mjs rt-build
       # (built here, in parallel on every shard: a job building them once
       # would put its own start, the upload and the downloads on the way)
       - name: The tool, the port and lix
         run: |
           set -ex
           touch bin/hxmc/rt/*/*.o
-          make hxmc port lix
+          node make.mjs hxmc port lix
       # the key: the pinned versions only (the runner and the cases' libraries,
       # HashLink, the lix libraries: Bench.hx's lines with a commit or the
       # HashLink tag), and the targets when args choose them (a scope set up
@@ -235,7 +235,7 @@ jobs:
         run: |
           set -ex
           ulimit -s unlimited
-          make bench BENCH_ARGS="-n ${{ inputs.runs || '5' }} --out bin/bench/results-${{ matrix.index }}.json --shard ${{ matrix.index }} $ARGS ${CASES:+-c $CASES}"
+          node make.mjs bench BENCH_ARGS="-n ${{ inputs.runs || '5' }} --out bin/bench/results-${{ matrix.index }}.json --shard ${{ matrix.index }} $ARGS ${CASES:+-c $CASES}"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -289,12 +289,12 @@ jobs:
           version: ${{ steps.rt.outputs.zig }}
       - name: Runtime objects with zig
         if: steps.rt.outputs.hit != 'true'
-        run: sudo apt-get install -qqy lld && make rt-build
+        run: sudo apt-get install -qqy lld && node make.mjs rt-build
       - name: The tool, the port and lix
         run: |
           set -ex
           touch bin/hxmc/rt/*/*.o
-          make hxmc port lix
+          node make.mjs hxmc port lix
       # the reference compiler: the nightly of the pinned upstream commit, as build.yml caches it
       - name: Reference compiler revision
         id: ref
@@ -307,7 +307,7 @@ jobs:
       - name: The reference compiler
         run: |
           set -ex
-          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          if [ ! -x bin/reference/haxe ]; then node make.mjs -o bin/lix/lix reference; fi
           touch bin/reference/haxe
           bin/reference/haxe -version
       # the shards' toolchains (the same key as theirs, restored only): the
@@ -380,12 +380,12 @@ jobs:
           version: ${{ steps.rt.outputs.zig }}
       - name: Runtime objects with zig
         if: steps.rt.outputs.hit != 'true'
-        run: sudo apt-get install -qqy lld && make rt-build
+        run: sudo apt-get install -qqy lld && node make.mjs rt-build
       - name: The tool and the port
         run: |
           set -ex
           touch bin/hxmc/rt/*/*.o
-          make hxmc port
+          node make.mjs hxmc port
       - name: Reference compiler revision
         id: ref
         run: echo "rev=$(git rev-parse --short=7 HEAD:haxe/upstream)" >> "$GITHUB_OUTPUT"
@@ -397,7 +397,7 @@ jobs:
       - name: The reference compiler
         run: |
           set -ex
-          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          if [ ! -x bin/reference/haxe ]; then node make.mjs -o bin/lix/lix reference; fi
           touch bin/reference/haxe
           bin/reference/haxe -version
       # (optional: without it the wasmtime runner is left out)
@@ -411,7 +411,7 @@ jobs:
           set -ex
           ulimit -s unlimited
           mkdir -p bin/bench-compile
-          make -o bin/reference/haxe bench-compile COMPILE_BENCH_ARGS="-n ${{ inputs.runs || '5' }} -r reference,hxmc --once hxmc-wasm-node,hxmc-wasm-wasmtime --build --build-runs 1 --out bin/bench-compile/compile.json"
+          node make.mjs -o bin/reference/haxe bench-compile COMPILE_BENCH_ARGS="-n ${{ inputs.runs || '5' }} -r reference,hxmc --once hxmc-wasm-node,hxmc-wasm-wasmtime --build --build-runs 1 --out bin/bench-compile/compile.json"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -426,7 +426,7 @@ jobs:
           path: bin/hxmc/hxmc
           retention-days: 1
 
-  # memory and time (make measure), in the job summary
+  # memory and time (node make.mjs measure), in the job summary
   measure:
     name: memory and time
     needs: plan
@@ -460,13 +460,13 @@ jobs:
           version: ${{ steps.rt.outputs.zig }}
       - name: Runtime objects with zig
         if: steps.rt.outputs.hit != 'true'
-        run: sudo apt-get install -qqy lld && make rt-build
+        run: sudo apt-get install -qqy lld && node make.mjs rt-build
       - name: Bootstrap from the stage0 (timed)
         run: |
           set -ex
           touch bin/hxmc/rt/*/*.o
           s=$(date +%s)
-          make bootstrap
+          node make.mjs bootstrap
           echo "BOOTSTRAP_SECONDS=$(( $(date +%s) - s ))" >> "$GITHUB_ENV"
       - name: Reference compiler revision
         id: ref
@@ -487,10 +487,10 @@ jobs:
             echo "| clean bootstrap from the stage0 (stage0 under node, the tool from source, the fixpoint) | ${BOOTSTRAP_SECONDS} s |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-          make lix
-          if [ ! -x bin/reference/haxe ]; then make -o bin/lix/lix reference; fi
+          node make.mjs lix
+          if [ ! -x bin/reference/haxe ]; then node make.mjs -o bin/lix/lix reference; fi
           touch bin/reference/haxe
-          make -o bin/reference/haxe measure
+          node make.mjs -o bin/reference/haxe measure
 
   # the shards' results as one, published
   results:
