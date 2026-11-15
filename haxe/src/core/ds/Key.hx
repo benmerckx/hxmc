@@ -82,7 +82,8 @@ class Key {
 	// (compareAtSurrogate). A code point host's own order is OCaml's
 	// (core.StringHelper.codePointHost).
 	public static function compareStrings(a:String, b:String):Int {
-		if (core.StringHelper.codePointHost) return a < b ? -1 : a > b ? 1 : 0;
+		// port: `==` first: a runtime compare at most once, and no compare for the same string
+		if (core.StringHelper.codePointHost) return a == b ? 0 : a < b ? -1 : 1;
 		var la = a.length, lb = b.length, n = la < lb ? la : lb;
 		for (i in 0...n) {
 			var ca = StringTools.fastCodeAt(a, i),
@@ -94,6 +95,10 @@ class Key {
 		}
 		return la == lb ? 0 : la < lb ? -1 : 1;
 	}
+
+	// port: compareStrings(a, b) < 0, one runtime compare on a code point host.
+	public static inline function lessStrings(a:String, b:String):Bool
+		return core.StringHelper.codePointHost ? a < b : compareStrings(a, b) < 0;
 
 	// port: a and b differ first at unit i, a surrogate on one side at least:
 	// the characters there decide (a pair by its code point, a lone surrogate

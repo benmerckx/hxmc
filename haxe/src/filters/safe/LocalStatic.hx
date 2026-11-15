@@ -83,7 +83,7 @@ class LocalStatic {
 		}
 		lsctx.addedFields.unshift(cf);
 		// Add to lookup early so that the duplication check works.
-		c.clStatics.set(cf.cfName, cf);
+		c.clStatics = c.clStatics.add(cf.cfName, cf);
 		lsctx.lut.set(v.vId, cf);
 	}
 

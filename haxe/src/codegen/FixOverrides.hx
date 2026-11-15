@@ -144,7 +144,7 @@ class FixOverrides {
 			if (hasClassFlag(c, CInterface)) c.clOrderedFields = c.clOrderedFields.filter(function(f) {
 				try {
 					if (findField(com, c, f) == f) throw "Not_found";
-					c.clFields.remove(f.cfName);
+					c.clFields = c.clFields.remove(f.cfName);
 					return false;
 				} catch (e:Dynamic) {
 					if (e != "Not_found") throw e;
@@ -170,7 +170,7 @@ class FixOverrides {
 					if (e != "Not_found") throw e;
 					false;
 				};
-				if (!b) c.clFields.remove(f.cfName);
+				if (!b) c.clFields = c.clFields.remove(f.cfName);
 				return b;
 			});
 		case _:

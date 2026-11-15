@@ -221,9 +221,9 @@ class ResolutionList {
 		return out;
 	}
 
-	public function extractFieldImports():core.ds.PersistentMap<String, {type:ModuleType, name:String, pos:Pos}> {
+	public function extractFieldImports():core.ds.PMap<{type:ModuleType, name:String, pos:Pos}> {
 		resolveLazies();
-		var out = core.ds.PersistentMap.empty();
+		var out = core.ds.PMap.empty();
 		for (res in list) switch res.rKind {
 			case RClassFieldImport(alias, c, cf):
 				out = out.add(alias, {type: TClassDecl(c), name: cf.cfName, pos: res.rPos});

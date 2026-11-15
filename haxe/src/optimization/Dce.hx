@@ -290,10 +290,7 @@ class Dce {
 			dce.usedMutex.release();
 			checkAndAddFeature(dce, "has_enum");
 			checkFeature(dce, Globals.sTypePath(en.ePath) + ".*");
-			for (key in sortedKeys(en.eConstrs)) {
-				var ef = en.eConstrs.get(key);
-				markT(dce, ef.efPos, ef.efType);
-			}
+			for (ef in en.eConstrs) markT(dce, ef.efPos, ef.efType);
 		} else dce.usedMutex.release();
 	}
 
@@ -931,7 +928,7 @@ class Dce {
 						if (dce.debug) Sys.println("[DCE] Removed field " + Globals.sTypePath(c.clPath) + "." + cf.cfName);
 						var stat = kind == CfrStatic;
 						checkProperty(cf, stat);
-						(stat ? c.clStatics : c.clFields).remove(cf.cfName);
+						if (stat) c.clStatics = c.clStatics.remove(cf.cfName) else c.clFields = c.clFields.remove(cf.cfName);
 					}
 					return b;
 				}

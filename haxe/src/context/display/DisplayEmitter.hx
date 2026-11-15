@@ -222,10 +222,10 @@ class DisplayEmitter {
 				displayField(ctx, Parent(TClassDecl(c.clSuper.cls)), CFSMember, r.field, override_);
 			}
 		} else if (override_ != null && ctx.com.display.dmsKind == DMDefault) {
-			var allFields = core.TOther.TClassTools.getAllSuperFields(c);
-			var missingFields = allFields.copy();
+			// port: upstream removes from the map it got, persistently; the map is new.
+			var missingFields = core.TOther.TClassTools.getAllSuperFields(c);
 			for (cf in c.clOrderedFields) missingFields.remove(cf.cfName);
-			var l = core.ds.PMap.fold(function(e:{cls:TClass, field:TClassField}, fields:Array<CompletionItemData>) {
+			var l = missingFields.fold(function(e:{cls:TClass, field:TClassField}, fields:Array<CompletionItemData>) {
 				var origin = Parent(TClassDecl(e.cls));
 				follow(e.field.cfType);
 				var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), core.Ast.Ast.getValueMeta(e.field.cfMeta),
@@ -233,7 +233,7 @@ class DisplayEmitter {
 				fields.unshift(CompletionItem.makeCiClassField(CompletionClassField.make(e.field, CFSMember, origin, true),
 					{t: e.field.cfType, ct: ct}));
 				return fields;
-			}, missingFields, []);
+			}, []);
 			var l = Display.sortFields(l, NoValue, TKOverride);
 			DisplayException.raiseFields(l, CROverride, DisplayTypes.makeSubject(cf.cfName, cf.cfNamePos));
 		}

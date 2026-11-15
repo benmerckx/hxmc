@@ -518,7 +518,7 @@ class TypeloadModule {
 		for (c in constructs) {
 			if (e.eConstrs.exists(c.ecName.name)) Error.raiseTypingError("Duplicate constructor " + c.ecName.name, c.ecName.pos);
 			var f = loadEnumField(local, e, et, flat, index++, c);
-			e.eConstrs.set(f.efName, f);
+			e.eConstrs = e.eConstrs.add(f.efName, f);
 			names.push(c.ecName.name);
 			if (MetadataTools.has(MetaTag.InheritDoc,
 				f.efMeta)) delay(local.g, PConnectField, function() InheritDoc.buildEnumFieldDoc(local, f));
@@ -529,10 +529,7 @@ class TypeloadModule {
 		if (MetadataTools.has(MetaTag.InheritDoc, e.eMeta)) delay(local.g, PConnectField, function() InheritDoc.buildEnumDoc(local, e));
 		if (local.com.platform == Jvm && !hasEnumFlag(e, EnExtern)) delay(local.g, PTypeField, function() {
 			e.eMeta = StrictMeta.checkStrictMeta(local, e.eMeta).concat(e.eMeta);
-			var keys = [for (k in e.eConstrs.keys()) k];
-			keys.sort(core.ds.Key.compareStrings);
-			for (k in keys) {
-				var f = e.eConstrs.get(k);
+			for (f in e.eConstrs) {
 				f.efMeta = StrictMeta.checkStrictMeta(local, f.efMeta).concat(f.efMeta);
 			}
 		});

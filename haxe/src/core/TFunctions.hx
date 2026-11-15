@@ -168,7 +168,7 @@ class TFunctions {
 	public static final tDynamic:T = TDynamic(null);
 
 	public static function mkAnon(status:AnonStatus,
-			?fields:TypeMap<TClassField>):T return TAnon({aFields: fields == null ? new StringMap() : fields, aStatus: status});
+			?fields:TypeMap<TClassField>):T return TAnon({aFields: fields == null ? core.ds.PMap.empty() : fields, aStatus: status});
 
 	public static function tfun(pl:TParams, r:T):T return TFun({args: pl.map(t -> {name: "", optional: false, type: t}), ret: r});
 
@@ -213,10 +213,10 @@ class TFunctions {
 			clUsing: [],
 			clSuper: null,
 			clImplements: [],
-			clFields: new StringMap(),
+			clFields: core.ds.PMap.empty(),
 			clOrderedStatics: [],
 			clOrderedFields: [],
-			clStatics: new StringMap(),
+			clStatics: core.ds.PMap.empty(),
 			clDynamic: null,
 			clArrayAccess: null,
 			clConstructor: null,
@@ -274,10 +274,7 @@ class TFunctions {
 		};
 	}
 
-	public static function findMap<V>(map:StringMap<V>, name:String):V {
-		if (!map.exists(name)) throw NotFound.raise();
-		return map.get(name);
-	}
+	public static inline function findMap<V>(map:TypeMap<V>, name:String):V return map.find(name);
 
 	public static function findField(c:TClass, name:String, kind:ClassFieldRefKind):TClassField {
 		var f = switch kind {
@@ -314,7 +311,7 @@ class TFunctions {
 		return t;
 	}
 
-	public static final nullTanon:TAnon = {aFields: new StringMap(), aStatus: Closed};
+	public static final nullTanon:TAnon = {aFields: core.ds.PMap.empty(), aStatus: Closed};
 	public static final nullEnum:TEnum = {
 		ePath: {pack: [], name: ""},
 		eModule: nullModule,
@@ -328,7 +325,7 @@ class TFunctions {
 		eRestore: function() {},
 		eType: tDynamic,
 		eFlags: 0,
-		eConstrs: new StringMap(),
+		eConstrs: core.ds.PMap.empty(),
 		eNames: []
 	};
 	public static final nullField:TClassField = mkField("", tDynamic, Globals.nullPos, Globals.nullPos);
@@ -513,12 +510,11 @@ class TFunctions {
 		case TAbstract(a, tl): TAbstract(a, tl.map(loop));
 		case TFun(s): TFun({args: s.args.map(a -> {name: a.name, optional: a.optional, type: loop(a.type)}), ret: loop(s.ret)});
 		case TAnon(a):
-			var fields = new StringMap<TClassField>();
-			for (name => f in a.aFields) {
+			var fields = a.aFields.map(function(f) {
 				var copy:TClassField = core.ds.Record.copy(f);
 				copy.cfType = loop(f.cfType);
-				fields.set(name, copy);
-			}
+				return copy;
+			});
 			TAnon(core.TType.TAnon.withStatusRef(fields, a.aStatusRef));
 		case TLazy(f):
 			var ft = lazyType(f);

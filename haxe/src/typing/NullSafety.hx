@@ -577,11 +577,9 @@ class Unificator {
 	}
 
 	function unifyAnonToAnon(a:TAnon, b:TAnon):Void {
-		var names = [for (n in b.aFields.keys()) n];
-		names.sort(core.ds.Key.compareStrings);
-		for (n in names) {
+		for (n => fb in b.aFields) {
 			var fa = a.aFields.get(n);
-			if (fa != null) unify(fa.cfType, b.aFields.get(n).cfType, Field(n));
+			if (fa != null) unify(fa.cfType, fb.cfType, Field(n));
 		}
 	}
 

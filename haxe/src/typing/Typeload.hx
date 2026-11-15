@@ -302,9 +302,9 @@ class Typeload {
 		});
 	}
 
-	public static function isRedefined(ctx:Typer, cf1:TClassField, fields:TypeMap<TClassField>, p:Pos):Bool {
-		if (!fields.exists(cf1.cfName)) return false;
-		var cf2 = fields.get(cf1.cfName), pc = printContext();
+	public static function isRedefined(ctx:Typer, cf1:TClassField, cf2:Null<TClassField>, p:Pos):Bool {
+		if (cf2 == null) return false;
+		var pc = printContext();
 		if (!typeIseq(cf1.cfType,
 			cf2.cfType)) raiseTypingErrorExt(makeError(Custom("Cannot redefine field " + cf1.cfName + " with different type"), p, [
 				makeError(Custom(complMsg("Second type was " + sType(pc, cf2.cfType))), cf2.cfPos),
@@ -314,17 +314,16 @@ class Typeload {
 	}
 
 	public static function makeExtensionType(ctx:Typer, tl:Array<{type:T, pos:Pos}>):T {
-		var fields:TypeMap<TClassField> = PMap.empty();
+		// port: upstream adds to a PMap; the fields are gathered in place, then made the anon's.
+		var fields = new core.ds.OrderedMap<TClassField>();
 		for (pair in tl) switch follow(pair.type) {
 			case TAnon(a):
-				PMap.iter(function(_:String, cf:TClassField) {
-					if (!isRedefined(ctx, cf, fields, pair.pos)) fields = PMap.add(cf.cfName, cf, fields);
-				}, a.aFields);
+				for (cf in a.aFields) if (!isRedefined(ctx, cf, fields.get(cf.cfName), pair.pos)) fields.set(cf.cfName, cf);
 			case _:
 				displayError(ctx.com, "Can only extend structures", pair.pos);
-				fields = PMap.empty();
+				fields = new core.ds.OrderedMap();
 		}
-		return mkAnon(Extend(tl.mapToVector(pair -> pair.type)), fields);
+		return mkAnon(Extend(tl.mapToVector(pair -> pair.type)), fields.toPMap());
 	}
 
 	public static function checkParamConstraints(ctx:Typer, t:T, map:T->T, ttp:TypedTypeParam, p:Pos):Void {
@@ -577,21 +576,16 @@ class Typeload {
 					case TInst({clKind: KTypeParameter(_)}, _): raiseTypingError("Cannot structurally extend type parameters", pair.pos);
 					case TMono(_): raiseTypingError("Loop found in cascading signatures definitions. Please change order/import", pair.pos);
 					case TAnon(a2):
-						PMap.iter(function(_:String, cf:TClassField) {
-							isRedefined(ctx, cf, a2.aFields, pair.pos);
-						}, a.aFields);
+						for (cf in a.aFields) isRedefined(ctx, cf, a2.aFields.get(cf.cfName), pair.pos);
 						var fields = a2.aFields;
-						PMap.iter(function(name:String, cf:TClassField) {
-							fields = PMap.add(name, cf, fields);
-						}, a.aFields);
+						for (name => cf in a.aFields) fields = fields.add(name, cf);
 						mkAnon(Extend(vector(pair.type)), fields);
 					case _: raiseTypingError("Can only extend structures", pair.pos);
 				};
 				inline function merge(pair:{type:T, pos:Pos}):Void switch follow(pair.type) {
 					case TAnon(a2):
-						PMap.iter(function(name:String, cf:TClassField) {
-							if (!isRedefined(ctx, cf, a.aFields, pair.pos)) a.aFields = PMap.add(name, cf, a.aFields);
-						}, a2.aFields);
+						for (name => cf in a2.aFields)
+							if (!isRedefined(ctx, cf, a.aFields.get(cf.cfName), pair.pos)) a.aFields = a.aFields.add(name, cf);
 					case _:
 						raiseTypingError("Can only extend structures", pair.pos);
 				}
@@ -614,8 +608,10 @@ class Typeload {
 				}, "constraint");
 				TLazy(r);
 			case CTAnonymous(list):
+				// port: upstream adds each field to a PMap; they are gathered in place, then made
+				// the anon's.
 				var displayed:Null<TClassField> = null,
-					fields:TypeMap<TClassField> = PMap.empty();
+					fields = new core.ds.OrderedMap<TClassField>();
 				for (f in list) {
 					var name = f.cffName.name, pf = f.cffName.pos, p = f.cffPos;
 					if (fields.exists(name)) raiseTypingError("Duplicate field declaration : " + name, pf);
@@ -703,9 +699,9 @@ class Typeload {
 						context.display.DisplayEmitter.checkDisplayMetadata(ctx, cf.cfMeta);
 						if (DisplayPosition.displayPosition.enclosedIn(cf.cfNamePos)) displayed = cf;
 					}
-					fields = PMap.add(name, cf, fields);
+					fields.set(name, cf);
 				}
-				var a = ({aFields: fields, aStatus: Closed} : core.TType.TAnon);
+				var a = ({aFields: fields.toPMap(), aStatus: Closed} : core.TType.TAnon);
 				if (displayed != null) {
 					var cf = displayed;
 					delay(ctx.g, PBuildClass,
@@ -1003,18 +999,16 @@ class Typeload {
 			}
 		}
 		inline function checkFields(expected:TypeMap<TClassField>, actual:TypeMap<TClassField>):Void {
-			PMap.iter(function(name:String, f:TClassField) {
-				if (hasClassFieldFlag(f, CfPublic)) {
-					var f2 = actual.get(f.cfName);
-					if (f2 == null) raiseTypingError("Missing field " + name + " required by core type", c.clPos);
-					compare(f, f2);
-				}
-			}, expected);
-			PMap.iter(function(name:String, f:TClassField) {
+			for (name => f in expected) if (hasClassFieldFlag(f, CfPublic)) {
+				var f2 = actual.get(f.cfName);
+				if (f2 == null) raiseTypingError("Missing field " + name + " required by core type", c.clPos);
+				compare(f, f2);
+			}
+			for (name => f in actual) {
 				var p = f.cfExpr == null ? c.clPos : f.cfExpr.epos;
 				if (hasClassFieldFlag(f, CfPublic) && !Meta.has(MetaTag.Hack, f.cfMeta) && !expected.exists(f.cfName)
 					&& !hasClassFieldFlag(f, CfOverride)) raiseTypingError("Public field " + name + " is not part of core type", p);
-			}, actual);
+			}
 		}
 		checkFields(ccore.clFields, c.clFields);
 		checkFields(ccore.clStatics, c.clStatics);

@@ -258,7 +258,7 @@ class Statistics {
 				case TEnumDecl(en):
 					checkModule(en.eModule);
 					declare(SKEnum(en), en.eNamePos);
-					core.ds.PMap.iter(function(_, ef:TEnumField) declare(SKEnumField(ef), ef.efNamePos), en.eConstrs);
+					for (ef in en.eConstrs) declare(SKEnumField(ef), ef.efNamePos);
 				case TTypeDecl(td):
 					checkModule(td.tModule);
 					declare(SKTypedef(td), td.tNamePos);

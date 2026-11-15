@@ -629,15 +629,13 @@ class Inheritance {
 				}
 			}
 		}
-		// port: core.ds.PMap.iter visits keys in sorted order, like the OCaml PMap.
-		PMap.iter(function(_:String, cf:TClassField) {
+		for (cf in intf.clFields) {
 			checkField(cf);
 			if (hasClassFieldFlag(cf, CfOverload)) {
-				var list = cf.cfOverloads.copy();
-				list.reverse();
-				for (overloadField in list) checkField(overloadField);
+				var overloads = cf.cfOverloads, i = overloads.length;
+				while (i > 0) checkField(overloads[--i]);
 			}
-		}, intf.clFields);
+		}
 	}
 
 	public static function checkInterfaces(ctx:Typer, c:TClass):Void {
@@ -677,11 +675,11 @@ class Inheritance {
 			}
 			if (!found) missing.unshift({field: cf1, type: t1});
 		}
-		PMap.iter(function(_:String, pair:{cls:TClass, field:TClassField}) {
+		TClassTools.getAllFields(csup, params).iter(function(_:String, pair:{cls:TClass, field:TClassField}) {
 			for (overloadField in Overloads.collectOverloads(map, csup,
 				pair.field.cfName)) if (hasClassFieldFlag(overloadField.field,
 					CfAbstract)) checkField(overloadField.field, overloadField.type);
-		}, TClassTools.getAllFields(csup, params));
+		});
 		if (missing.length == 0) return;
 		if (context.display.Diagnostics.errorInDiagnosticsRun(ctx.com, c.clPos)) {
 			// port: List.rev_map over the cons-built list

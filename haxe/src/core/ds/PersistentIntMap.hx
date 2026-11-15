@@ -2,7 +2,7 @@ package core.ds;
 
 // port: an OCaml persistent `IntMap` (Map.Make(Int)) with O(log n) add and remove that share
 // structure with the map they extend, as a little-endian Patricia trie. The mutable
-// haxe.ds.IntMap copies everything, and PersistentMap copies its entries on each `add`.
+// haxe.ds.IntMap copies everything on each `add`.
 // Only what the sites that use it need is here; the order of `exists` is not the key order.
 enum PersistentIntMapNode<V> {
 	Empty;

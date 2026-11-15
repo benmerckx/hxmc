@@ -254,10 +254,10 @@ class Monomorph {
 
 	public static function constraintOfType(name:Null<String>, t:T):Array<TMonoConstraint> return switch follow(t) {
 		case TMono(m): [MMono(m, name)];
-		case TAnon(an) if (!PMap.isEmpty(an.aFields)): PMap.fold(function(cf, l:Array<TMonoConstraint>) {
-				l.unshift(MField(cf));
-				return l;
-			}, an.aFields, []);
+		// port: upstream conses the fields in key order: in reverse.
+		case TAnon(an) if (!an.aFields.isEmpty()):
+			var fields = an.aFields, n = fields.size;
+			[for (i in 0...n) MField(fields.valueAt(n - 1 - i))];
 		case TAnon(_): [MEmptyStructure];
 		case _: [MType(t, name)];
 	}
@@ -278,7 +278,7 @@ class Monomorph {
 					else for (c in constraintOfType(name, m2.tmType)) check(c);
 				}
 			case MField(cf):
-				fields = PMap.add(cf.cfName, cf, fields);
+				fields = fields.add(cf.cfName, cf);
 			case MType(t, name):
 				types.push({type: t, name: name});
 			case MEmptyStructure:
@@ -291,7 +291,7 @@ class Monomorph {
 			case MNullable(_), MDynamic:
 		}
 		var kind = types.length > 0 ? CTypes(types) : CUnknown;
-		if (!PMap.isEmpty(fields) || isOpen) {
+		if (!fields.isEmpty() || isOpen) {
 			var structure = CStructural(fields, isOpen);
 			return switch kind {
 				case CTypes(_): CMixed([kind, structure]);
@@ -412,7 +412,7 @@ class Monomorph {
 			case CTypes(_), CMixed(_):
 			case CStructural(fields, _):
 				// We found a bunch of fields but no type, create a merged structure type and bind to that
-				PMap.iter(function(_, cf:TClassField) {
+				fields.iter(function(_, cf:TClassField) {
 					var t = getRecursion(cf.cfType);
 					if (t != null) {
 						// port: OCaml evaluates the sprintf arguments right to left
@@ -421,7 +421,7 @@ class Monomorph {
 						var s = sType(pctx, t) + " appears in { " + cf.cfName + ": " + sf + " }";
 						throw new Unify_error([UnifyCustom("Recursive type"), UnifyCustom(s)]);
 					}
-				}, fields);
+				});
 				doBind(m, mkAnon(Closed, fields));
 		}
 	}
@@ -525,14 +525,14 @@ class TUnification {
 				case TDynamic(null): false;
 				case TDynamic(t): loop(t);
 				case TLazy(f): loop(lazyType(f));
-				case TAnon(an): try {
-						PMap.iter(function(_, f:TClassField) {
-							if (loop(f.cfType)) throw new TypeExit();
-						}, an.aFields);
-						false;
-					} catch (_:TypeExit) {
-						true;
+				case TAnon(an):
+					// port: upstream leaves PMap.iter with an exception; a loop breaks instead.
+					var found = false;
+					for (f in an.aFields) if (loop(f.cfType)) {
+						found = true;
+						break;
 					}
+					found;
 			}
 		}
 		// tell is already a ~= b
@@ -600,17 +600,10 @@ class TUnification {
 			case [TMono({tmType: null}), TMono({tmType: null})]: true;
 			case [TAnon(a1), TAnon(a2)]:
 				function fieldsEq():Bool {
-					var f1 = PMap.fold(function(f, l:Array<TClassField>) {
-						l.unshift(f);
-						return l;
-					}, a1.aFields, []), f2 = PMap.fold(function(f, l:Array<TClassField>) {
-						l.unshift(f);
-						return l;
-					}, a2.aFields, []);
-					var cmp = function(a:TClassField, b:TClassField) return core.ds.Key.compareStrings(a.cfName, b.cfName);
-					f1.sort(cmp);
-					f2.sort(cmp);
-					if (f1.length != f2.length) return false;
+					// port: upstream folds both into lists and sorts them by name: a PMap's values
+					// are in that order already.
+					if (a1.aFields.size != a2.aFields.size) return false;
+					var f1 = a1.aFields.valueArray(), f2 = a2.aFields.valueArray();
 					for (i in 0...f1.length) {
 						if (f1[i].cfName != f2[i].cfName) return false;
 						try {
@@ -834,9 +827,9 @@ class TUnification {
 						case ClassStatics(c): c.clStatics;
 						case _: a1.aFields;
 					};
-					PMap.iter(function(n, f1) {
+					fields.iter(function(n, f1) {
 						try {
-							var f2 = PMap.find(n, a2.aFields),
+							var f2 = a2.aFields.find(n),
 								kindShouldMatch = param == EqStrict || param == EqCoreType || param == EqStricter;
 							if (!fieldKindEq(f1.cfKind, f2.cfKind)
 								&& (kindShouldMatch || !unifyKind(c, f1.cfKind, f2.cfKind))) error([invalidKind(n, f1.cfKind, f2.cfKind)]);
@@ -849,10 +842,10 @@ class TUnification {
 						} catch (_:NotFound) {
 							error([hasNoField(b, n)]);
 						}
-					}, fields);
-					PMap.iter(function(n, _) {
-						if (!PMap.mem(n, fields)) error([hasNoField(a, n)]);
-					}, a2.aFields);
+					});
+					a2.aFields.iter(function(n, _) {
+						if (!fields.exists(n)) error([hasNoField(a, n)]);
+					});
 				} catch (e:Unify_error) {
 					error([cannotUnify(a, b)].concat(e.errors));
 				}
@@ -1033,7 +1026,7 @@ class TUnification {
 					].concat(e.errors));
 				}
 			case [TInst(cl, tl), TAnon(an)]:
-				if (PMap.isEmpty(an.aFields)) switch cl.clKind {
+				if (an.aFields.isEmpty()) switch cl.clKind {
 					// one of the constraints must unify with { }
 					case KTypeParameter(p): if (!core.ds.ArrayTools.exists(getConstraints(p), function(t) return switch follow(t) {
 							case TInst(_, _), TAnon(_): true;
@@ -1043,7 +1036,7 @@ class TUnification {
 				}
 				cl.clBuild();
 				try {
-					PMap.iter(function(n, f2) {
+					an.aFields.iter(function(n, f2) {
 						// introducing monomorphs while unifying might create infinite loops - see #2315
 						// let's store these monomorphs and make sure we reach a fixed point
 						var monos:core.TType.TParams = vector();
@@ -1133,7 +1126,7 @@ class TUnification {
 									&& !MetadataTools.has(Runtime, f1.cfMeta)) error([HasNoRuntimeField(a, n)]);
 							case _:
 						}
-					}, an.aFields);
+					});
 					switch an.aStatus {
 						case ClassStatics(_), EnumStatics(_), AbstractStatics(_): error([]);
 						case Closed, Extend(_), Const:
@@ -1201,13 +1194,13 @@ class TUnification {
 								case ClassStatics(_), EnumStatics(_): error([]);
 								case _:
 							}
-							PMap.iter(function(_, f) {
+							an.aFields.iter(function(_, f) {
 								try {
 									typeEqCustom(c, fieldTypeForUnification(c, f), t1);
 								} catch (e:Unify_error) {
 									error([invalidField(f.cfName)].concat(e.errors));
 								}
-							}, an.aFields);
+							});
 						} catch (e:Unify_error) {
 							error([cannotUnify(a, b)].concat(e.errors));
 						}
@@ -1243,7 +1236,7 @@ class TUnification {
 
 	public static function unifyAnons(c:UnificationContext, a:T, b:T, a1:TAnon, a2:TAnon):Void {
 		inline function unifyField(fields:TypeMap<TClassField>, f2:TClassField):TClassField {
-			var n = f2.cfName, f1 = PMap.find(n, fields);
+			var n = f2.cfName, f1 = fields.find(n);
 			if (!unifyKind(c, f1.cfKind, f2.cfKind)) error([invalidKind(n, f1.cfKind, f2.cfKind)]);
 			if (hasClassFieldFlag(f2, CfPublic) && !hasClassFieldFlag(f1, CfPublic)) error([invalidVisibility(n)]);
 			try {
@@ -1256,13 +1249,13 @@ class TUnification {
 		}
 		inline function unifyFields(fields:TypeMap<TClassField>, good:TClassField->Void, bad:TClassField->Bool):Void {
 			try {
-				PMap.iter(function(_, f2) {
+				a2.aFields.iter(function(_, f2) {
 					try {
 						good(unifyField(fields, f2));
 					} catch (_:NotFound) {
 						if (!bad(f2)) error([hasNoField(a, f2.cfName)]);
 					}
-				}, a2.aFields);
+				});
 			} catch (e:Unify_error) {
 				error([cannotUnify(a, b)].concat(e.errors));
 			}
@@ -1274,7 +1267,7 @@ class TUnification {
 			case [Const, _]:
 				unifyFields(a1.aFields, function(_) {}, function(f2) {
 					if (MetadataTools.has(Optional, f2.cfMeta)) {
-						a1.aFields = PMap.add(f2.cfName, f2, a1.aFields);
+						a1.aFields = a1.aFields.add(f2.cfName, f2);
 						return true;
 					}
 					return false;

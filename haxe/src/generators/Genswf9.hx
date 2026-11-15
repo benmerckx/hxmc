@@ -2191,8 +2191,7 @@ class Genswf9 {
 				j();
 		}
 		/* --- */
-		for (name in sortedKeys(c.clFields)) {
-			var f = c.clFields.get(name);
+		for (f in c.clFields) {
 			switch [f.cfExpr, f.cfKind] {
 				case [null, _]:
 				case [{eexpr: TFunction(fdata)}, Method(MethDynamic)]:
@@ -2214,8 +2213,6 @@ class Genswf9 {
 		return {m: m, nargs: fdata.tfArgs.length};
 	}
 
-	// port: PMap iteration order: ascending keys under OCaml's string compare.
-	static function sortedKeys<V>(m:haxe.ds.StringMap<V>):Array<String> return compiler.hxb.HxbWriter.sortedKeys(m);
 
 	static function is_const(e:TExpr):Bool {
 		return switch e.eexpr {
@@ -2346,8 +2343,7 @@ class Genswf9 {
 		write(ctx, HClassDef(hc));
 		write(ctx, HPopScope);
 		write(ctx, HInitProp(name_id));
-		for (name in sortedKeys(e.eConstrs)) {
-			var f = e.eConstrs.get(name);
+		for (f in e.eConstrs) {
 			switch f.efType {
 				case TFun(_):
 				case _:
@@ -2944,8 +2940,7 @@ class Genswf9 {
 		// port: PMap.fold visits the fields in ascending key order; the list is
 		// built by prepending (`acc` here is that list, most recent first).
 		var fields:Array<HlField> = [];
-		for (key in sortedKeys(c.clFields)) {
-			var f = c.clFields.get(key);
+		for (f in c.clFields) {
 			fields = generate_prop(false, f, fields, () -> 0);
 			switch generate_field_kind(ctx, f, c, false) {
 				case null:
@@ -3114,8 +3109,7 @@ class Genswf9 {
 		var st_meth_count = 0;
 		// port: PMap.fold in ascending key order, prepending.
 		var constrs:Array<HlField> = [];
-		for (key in sortedKeys(e.eConstrs)) {
-			var f = e.eConstrs.get(key);
+		for (f in e.eConstrs) {
 			var isFun = f.efType.match(TFun(_));
 			var st_count = if (isFun) {
 				st_meth_count++;

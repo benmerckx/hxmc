@@ -76,13 +76,6 @@ function unopIndex(op:Unop, flag:UnopFlag):Int return switch [op, flag] {
 // identical to UTF-8 byte order.
 function compareOcamlString(a:String, b:String):Int return core.ds.Key.compareStrings(a, b);
 
-// port: keys of a PMap-backed string map, in PMap (ascending) order.
-function sortedKeys<V>(m:haxe.ds.StringMap<V>):Array<String> {
-	var keys = [for (k in m.keys()) k];
-	keys.sort(compareOcamlString);
-	return keys;
-}
-
 function pathKey(path:GlobalTypePath):String return path.hashKey();
 
 class Pool<K, V> {
@@ -1093,8 +1086,8 @@ class HxbWriter {
 		inline function writeFields() {
 			var restore = startTemporaryChunk(256);
 			var i = 0;
-			for (k in sortedKeys(an.aFields)) {
-				writeAnonFieldRef(an.aFields.get(k));
+			for (cf in an.aFields) {
+				writeAnonFieldRef(cf);
 				i++;
 			}
 			var bytes = restore(function(newChunk) return newChunk.getBytes());
@@ -1393,7 +1386,7 @@ class HxbWriter {
 				inlinedList(60, 2, function() writeTypedefRef(td), writeTypeInstance, tl);
 			case TAbstract(a, tl):
 				inlinedList(70, 2, function() writeAbstractRef(a), writeTypeInstance, tl);
-			case TAnon(an) if (!an.aFields.keys().hasNext()):
+			case TAnon(an) if (an.aFields.isEmpty()):
 				chunk.writeU8(80);
 			case TAnon(an):
 				chunk.writeU8(81);
@@ -2162,11 +2155,15 @@ class HxbWriter {
 	}
 
 	// Module
-	// port: PMap.foldi (fun s f acc -> (s,f) :: acc) m []: descending key order.
-	static function enumConstructorsDescending(e:TEnum):Array<{name:String, ef:TEnumField}> {
-		var keys = sortedKeys(e.eConstrs);
-		keys.reverse();
-		return [for (k in keys) {name: k, ef: e.eConstrs.get(k)}];
+	// port: write_list of `PMap.foldi (fun s f acc -> (s,f) :: acc) e.e_constrs []`: the
+	// constructors in descending key order, walked by index instead of listed.
+	inline function writeEnumConstructors(e:TEnum, f:String->TEnumField->Void):Void {
+		var constrs = e.eConstrs, i = constrs.size;
+		chunk.writeUleb128(i);
+		while (i > 0) {
+			i--;
+			f(constrs.keyAt(i), constrs.valueAt(i));
+		}
 	}
 
 	function forwardDeclareType(mt:ModuleType):Void {
@@ -2225,10 +2222,10 @@ class HxbWriter {
 				chunk.writeBytes(fields.bytes);
 				chunk.writeBytes(statics.bytes);
 			case TEnumDecl(e):
-				chunk.writeList(enumConstructorsDescending(e), function(entry) {
-					chunk.writeString(entry.name);
-					writePosPair(entry.ef.efPos, entry.ef.efNamePos);
-					chunk.writeUleb128(entry.ef.efIndex);
+				writeEnumConstructors(e, function(name, ef) {
+					chunk.writeString(name);
+					writePosPair(ef.efPos, ef.efNamePos);
+					chunk.writeUleb128(ef.efIndex);
 				});
 			case TAbstractDecl(_):
 			case TTypeDecl(_):
@@ -2307,11 +2304,10 @@ class HxbWriter {
 			chunk.writeList(items, writeEnum);
 			startChunk(EFD);
 			chunk.writeList(items, function(e) {
-				chunk.writeList(enumConstructorsDescending(e), function(entry) {
-					var ef = entry.ef;
+				writeEnumConstructors(e, function(name, ef) {
 					selectType(e.ePath);
 					var close = openFieldScope(ef.efParams);
-					chunk.writeString(entry.name);
+					chunk.writeString(name);
 					var restore = startTemporaryChunk(32);
 					catchUnboundTtp(function() {
 						writeTypeInstance(ef.efType);

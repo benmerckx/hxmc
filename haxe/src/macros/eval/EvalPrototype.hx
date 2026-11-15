@@ -376,10 +376,8 @@ class EvalPrototype {
 					}
 				}
 				// port: PMap.iter: ascending key order
-				var constrNames = [for (k in en.eConstrs.keys()) k];
-				constrNames.sort(compareString);
-				for (name in constrNames)
-					PrototypeBuilder.addProtoField(pctx, EvalHash.hash(name), AtomicLazy.fromVal(enumFieldValue(en.eConstrs.get(name))));
+				for (name => ef in en.eConstrs)
+					PrototypeBuilder.addProtoField(pctx, EvalHash.hash(name), AtomicLazy.fromVal(enumFieldValue(ef)));
 				{init: PrototypeBuilder.finalize(pctx), delays: []};
 			case TAbstractDecl(a):
 				var pctx = PrototypeBuilder.create(ctx, key, null, PClass([]), meta);

@@ -455,10 +455,10 @@ class EnumBuilder extends TypeBuilder {
 	*/
 	override function writeBody():Void {
 		var writeEmptyLines = false;
-		core.ds.PMap.iter((name:String, field:TEnumField) -> {
+		for (name => field in enm.eConstrs) {
 			if (writeEmptyLines) writer.writeEmptyLines() else writeEmptyLines = true;
 			writeConstructor(name, field);
-		}, enm.eConstrs);
+		}
 		writeReflection();
 	}
 
@@ -516,7 +516,7 @@ class EnumBuilder extends TypeBuilder {
 		writer.indentMore();
 		writer.writeLine("return [");
 		writer.indentMore();
-		core.ds.PMap.iter((name:String, field:TEnumField) -> writer.writeLine((Std.string(field.efIndex)) + " => '" + name + "',"), enm.eConstrs);
+		for (name => field in enm.eConstrs) writer.writeLine((Std.string(field.efIndex)) + " => '" + name + "',");
 		writer.indentLess();
 		writer.writeStatement("]");
 		writer.indentLess();
@@ -533,14 +533,14 @@ class EnumBuilder extends TypeBuilder {
 		writer.indentMore();
 		writer.writeLine("return [");
 		writer.indentMore();
-		core.ds.PMap.iter((name:String, field:TEnumField) -> {
+		for (name => field in enm.eConstrs) {
 			var count = switch follow(field.efType) {
 				case TFun(sig): sig.args.length;
 				case TEnum(_): 0;
 				case _: fail(field.efPos, "genphp7.enum_builder#write_reflection");
 			}
 			writer.writeLine("'" + name + "' => " + (Std.string(count)) + ",");
-		}, enm.eConstrs);
+		}
 		writer.indentLess();
 		writer.writeStatement("]");
 		writer.indentLess();
@@ -773,25 +773,25 @@ class ClassBuilder extends TypeBuilder {
 		}
 		if (!(hasClassFlag(cls, CInterface))) {
 			/* Inlined statc vars (constants) */
-			core.ds.PMap.iter(writeIfConstant, cls.clStatics);
+			cls.clStatics.iter(writeIfConstant);
 			if (atLeastOneFieldWritten) writer.writeEmptyLines();
 			atLeastOneFieldWritten = false;
 			/* Statc vars */
-			core.ds.PMap.iter(writeIfVar.bind(true), cls.clStatics);
+			cls.clStatics.iter(writeIfVar.bind(true));
 			if (atLeastOneFieldWritten) writer.writeEmptyLines();
 			atLeastOneFieldWritten = false;
 			/* instance vars */
-			core.ds.PMap.iter(writeIfVar.bind(false), cls.clFields);
+			cls.clFields.iter(writeIfVar.bind(false));
 		}
 		/* Statc methods */
-		core.ds.PMap.iter(writeIfMethod.bind(true), cls.clStatics);
+		cls.clStatics.iter(writeIfMethod.bind(true));
 		/* Constructor */
 		switch getConstructor() {
 			case null:
 			case field: writeIfMethod(false, "new", field);
 		}
 		/* Instance methods */
-		core.ds.PMap.iter(writeIfMethod.bind(false), cls.clFields);
+		cls.clFields.iter(writeIfMethod.bind(false));
 		/* Generate `__toString()` if not defined by user, but has `toString()` */
 		writeToStringIfRequired();
 	}

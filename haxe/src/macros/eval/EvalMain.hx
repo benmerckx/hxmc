@@ -629,10 +629,7 @@ class EvalMain {
 			switch t {
 				case TAnon(an):
 					f("{");
-					var keys = [for (k in an.aFields.keys()) k];
-					keys.sort(core.ds.Key.compareStrings);
-					for (k in keys) {
-						var cf = an.aFields.get(k);
+					for (cf in an.aFields) {
 						line++;
 						f("\n" + (tabs + "\t") + cf.cfName + ": ");
 						try {

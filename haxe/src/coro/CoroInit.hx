@@ -35,9 +35,9 @@ class CoroInit {
 		var state = TAbstract(loadModuleAbstract(ctx, {pack: ["haxe", "coro"], name: "SuspensionState"}), vector());
 		var result = (ctx.t.tcoro.suspensionResultClass).force();
 		var api = ContTypes.createContinuationApi(base, state, result, (ctx.t.tcoro.continuation).force(),
-			PMap.find("suspended", result.clStatics), PMap.find("state", result.clFields), PMap.find("result", result.clFields),
-			PMap.find("error", result.clFields), PMap.find("completion", base.clFields), PMap.find("context", base.clFields),
-			PMap.find("gotoLabel", base.clFields));
+			result.clStatics.find("suspended"), result.clFields.find("state"), result.clFields.find("result"),
+			result.clFields.find("error"), base.clFields.find("completion"), base.clFields.find("context"),
+			base.clFields.find("gotoLabel"));
 		ctx.g.continuationApi = api;
 		return api;
 	}

@@ -2167,14 +2167,15 @@ class HxbReader {
 
 	public function readAnon(an:TAnon):Void {
 		function readFields():Void {
-			var acc = new haxe.ds.StringMap<TClassField>();
+			var names = [], cfs = [];
 			var i = uleb();
 			while (i != 0) {
 				var cf = readAnonFieldRef();
-				acc.set(cf.cfName, cf);
+				names.push(cf.cfName);
+				cfs.push(cf);
 				i--;
 			}
-			an.aFields = acc;
+			an.aFields = core.ds.PMap.ofArrays(names, cfs);
 		}
 
 		switch readByte() {
@@ -2304,17 +2305,15 @@ class HxbReader {
 					c.clInit = readOption(readField);
 					// port: upstream conses each field read onto the accumulator, so
 					// the list holds them in reverse reading order.
-					function readFields(i:Int):{l:Array<TClassField>, pm:haxe.ds.StringMap<TClassField>} {
+					function readFields(i:Int):{l:Array<TClassField>, pm:TypeMap<TClassField>} {
 						var accL = [];
-						var accPm = new haxe.ds.StringMap<TClassField>();
 						while (i != 0) {
-							var cf = readClassFieldForward();
-							accL.push(cf);
-							accPm.set(cf.cfName, cf);
+							accL.push(readClassFieldForward());
 							i--;
 						}
+						var pm = core.ds.PMap.ofArrays([for (cf in accL) cf.cfName], accL);
 						accL.reverse();
-						return {l: accL, pm: accPm};
+						return {l: accL, pm: pm};
 					}
 					var numFields = uleb();
 					var numStatics = uleb();
@@ -2345,14 +2344,15 @@ class HxbReader {
 						ef.efMeta = vector();
 						return ef;
 					}
-					var acc = new haxe.ds.StringMap<TEnumField>();
+					var names = [], efs = [];
 					var i = uleb();
 					while (i != 0) {
 						var ef = readField();
-						acc.set(ef.efName, ef);
+						names.push(ef.efName);
+						efs.push(ef);
 						i--;
 					}
-					en.eConstrs = acc;
+					en.eConstrs = core.ds.PMap.ofArrays(names, efs);
 					TEnumDecl(en);
 				case 2:
 					var td = mkTypedef(currentModule, path, pos, namePos, mkMono());
@@ -2379,7 +2379,7 @@ class HxbReader {
 		anons = new Vector<TAnon>(l);
 		for (i in 0...l)
 			anons[i] = ({
-				aFields:new haxe.ds.StringMap(), aStatus:Closed
+				aFields:core.ds.PMap.empty(), aStatus:Closed
 			} : TAnon);
 		var l = uleb();
 		tmonos = new Vector<T>(l);

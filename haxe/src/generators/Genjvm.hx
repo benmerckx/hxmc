@@ -3171,14 +3171,14 @@ class TexprToJvm {
 			case TObjectDecl(fl):
 				var hadInvalidFieldName = false;
 				/* We cannot rely on e.etype because it might have optional field shit, so we need to build a concrete type from the fields... */
-				var fields = new haxe.ds.StringMap<TClassField>();
+				var names = [], cfs = [];
 				for (f in fl) {
 					var name = f.key.name, e = f.expr;
-					var cf = mkField(name, e.etype, e.epos, e.epos);
 					if (!syntax.Lexer.isValidIdentifier(name)) hadInvalidFieldName = true;
-					fields.set(name, cf);
+					names.push(name);
+					cfs.push(mkField(name, e.etype, e.epos, e.epos));
 				}
-				var t = mkAnon(Closed, fields);
+				var t = mkAnon(Closed, core.ds.PMap.ofArrays(names, cfs));
 				var td = gctx.anonIdentification.identify(AnonIdMode.defaultMode, true, t);
 				switch td {
 					case pfm if (pfm != null && !hadInvalidFieldName):

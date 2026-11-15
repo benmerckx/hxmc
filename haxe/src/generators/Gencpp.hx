@@ -220,13 +220,13 @@ class Gencpp {
 		sys.io.File.saveBytes(filename, haxe.io.Bytes.ofString(buildfile.toString()));
 	}
 
-	public static function writeBuildOptions(commonCtx:Gctx, filename:String, defines:StringMap<String>):Void {
+	public static function writeBuildOptions(commonCtx:Gctx, filename:String, defines:core.ds.PMap<String>):Void {
 		var writer = CppSourceWriter.cachedSourceWriter(commonCtx, filename);
 		function writeDefine(name:String, value:String) writer.write('$name=$value\n');
-		core.ds.PMap.iter(function(name, value) switch name {
+		defines.iter(function(name, value) switch name {
 			case "true" | "sys" | "dce" | "cpp" | "debug":
 			case _: writeDefine(name, escapeCommand(value));
-		}, defines);
+		});
 		// port: Unix.open_process_args_in "haxelib" [|"haxelib"; "path"; "hxcpp"|] and input_line; context.Common.haxelibHook's output when it is set.
 		var line = switch context.Common.haxelibHook {
 			case null:
@@ -525,10 +525,10 @@ class Gencpp {
 				Sys.setCwd(commonCtx.file);
 				var cmd = ["run", "hxcpp", "Build.xml", "haxe"];
 				if (commonCtx.debug) cmd = cmd.concat(["-Ddebug"]);
-				core.ds.PMap.iter(function(name, value) switch name {
+				commonCtx.defines.values.iter(function(name, value) switch name {
 					case "true" | "sys" | "dce" | "cpp" | "debug":
-					case _: cmd = cmd.concat(['-D$name="${escapeCommand(value)}"']);
-				}, commonCtx.defines.values);
+					case _: cmd.push('-D$name="${escapeCommand(value)}"');
+				});
 				for (path in commonCtx.classPaths.asStringList()) cmd = cmd.concat(['-I"${escapeCommand(path)}"']);
 				compiler.io.CompilerIo.writeOut(commonCtx.io, "haxelib " + cmd.join(" ") + "\n");
 				if (commonCtx.runCommandArgs("haxelib", cmd) != 0) throw new core.ds.Failure("Build failed");
@@ -556,10 +556,10 @@ class Gencpp {
 		var superDeps = createSuperDependencies(commonCtx);
 		var constructorDeps = createConstructorDependencies(commonCtx);
 		if (Gctx.defined(commonCtx, Define.Cppia)) {
-			var ctx = CppContext.newContext(commonCtx, debugLevel, new FileInfo(new StringMap()), new StringMap(), superDeps, constructorDeps);
+			var ctx = CppContext.newContext(commonCtx, debugLevel, new FileInfo(core.ds.PMap.empty()), new StringMap(), superDeps, constructorDeps);
 			CppCppia.generateCppia(ctx);
 		} else {
-			var ctx = CppContext.newContext(commonCtx, debugLevel, new FileInfo(new StringMap()), createMemberTypes(commonCtx), superDeps, constructorDeps);
+			var ctx = CppContext.newContext(commonCtx, debugLevel, new FileInfo(core.ds.PMap.empty()), createMemberTypes(commonCtx), superDeps, constructorDeps);
 			generateSource(ctx);
 		}
 	}

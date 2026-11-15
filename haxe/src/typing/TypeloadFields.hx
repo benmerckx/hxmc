@@ -749,7 +749,7 @@ class TypeloadFields {
 	public static function getParent(c:TClass, name:String):Null<TClassField> {
 		if (c.clSuper == null) return null;
 		try {
-			return PMap.find(name, c.clSuper.cls.clFields);
+			return c.clSuper.cls.clFields.find(name);
 		} catch (_:NotFound) {
 			return getParent(c.clSuper.cls, name);
 		}
@@ -1082,7 +1082,7 @@ class TypeloadFields {
 		});
 		inline function propertyType():T {
 			var property = name.substr(4),
-				cf = PMap.find(property, fctx.isStatic ? c.clStatics : c.clFields); // TODO: inheritance?
+				cf = (fctx.isStatic ? c.clStatics : c.clFields).find(property); // TODO: inheritance?
 			return switch [kind.force(), cf.cfKind] {
 				case [MKGetter, Var({vRead: AccCall | AccPrivateCall})] | [MKSetter, Var({vWrite: AccCall | AccPrivateCall})]: cf.cfType;
 				case _: throw NotFound.raise();
@@ -1326,7 +1326,7 @@ class TypeloadFields {
 		}
 		inline function findAccessor(name:String):Array<CastField> {
 			if (fctx.isStatic) {
-				var cf = PMap.find(name, c.clStatics);
+				var cf = c.clStatics.find(name);
 				return [{type: cf.cfType, field: cf}].concat(cf.cfOverloads.map(cf -> {type: cf.cfType, field: cf}));
 			}
 			return getOverloads(ctx.com, c, name);
@@ -1381,7 +1381,7 @@ class TypeloadFields {
 				}
 				if (hasClassFlag(c, CInterface)) {
 					var cf = generate();
-					c.clFields = PMap.add(cf.cfName, cf, c.clFields);
+					c.clFields = c.clFields.add(cf.cfName, cf);
 					c.clOrderedFields.unshift(cf);
 				} else if (context.display.Diagnostics.errorInDiagnosticsRun(ctx.com, f.cffPos)) {
 					var cfAccessor = generate();
@@ -1404,7 +1404,7 @@ class TypeloadFields {
 					compiler.io.CompilerMessage.addModuleDiagnostic(ctx.com, c.clModule, cm);
 				} else if (!hasClassFlag(c, CExtern)) {
 					try {
-						var f2 = fctx.isStatic ? classField(c, extractParamTypes(c.clParams), m).field : PMap.find(m, c.clStatics);
+						var f2 = fctx.isStatic ? classField(c, extractParamTypes(c.clParams), m).field : c.clStatics.find(m);
 						displayError(ctx.com,
 							"Method "
 							+ m
@@ -1611,7 +1611,7 @@ class TypeloadFields {
 		function hasField(name:String, sup:Null<ClassAndParams>):Bool {
 			if (sup == null) return false;
 			var c = sup.cls;
-			if (PMap.exists(name, c.clFields) || hasField(name, c.clSuper)) return true;
+			if (c.clFields.exists(name) || hasField(name, c.clSuper)) return true;
 			for (pair in c.clImplements) if (hasField(name, pair)) return true;
 			return false;
 		}
@@ -1685,8 +1685,8 @@ class TypeloadFields {
 						}
 					case CfrInit:
 					case CfrStatic | CfrMember:
-						var duplicate = fctx.isStatic ? (PMap.exists(cf.cfName,
-							c.clFields) || hasField(cf.cfName, c.clSuper)) : PMap.exists(cf.cfName, c.clStatics);
+						var duplicate = fctx.isStatic ? (c.clFields.exists(cf.cfName)
+							|| hasField(cf.cfName, c.clSuper)) : c.clStatics.exists(cf.cfName);
 						if (!hasClassFlag(c,
 							CExtern) && duplicate) raiseTypingError("Same field name can't be used for both static and instance : "
 								+ cf.cfName, p);
@@ -1697,9 +1697,9 @@ class TypeloadFields {
 							case _: false;
 						};
 						var table = fctx.isStatic ? c.clStatics : c.clFields;
-						if (PMap.mem(cf.cfName, table)) {
+						var main = table.get(cf.cfName);
+						if (main != null) {
 							if (hasClassFieldFlag(cf, CfOverload) && !isVar(cf)) {
-								var main = PMap.find(cf.cfName, table);
 								if (isVar(main)) displayError(ctx.com, "Cannot declare a variable with same name as a method", main.cfPos);
 								if (!hasClassFieldFlag(main,
 									CfOverload)) displayError(ctx.com, "Overloaded methods must have 'overload' accessor", main.cfPos);

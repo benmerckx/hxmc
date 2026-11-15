@@ -1247,12 +1247,7 @@ class Texpr {
 				fields = [];
 				switch follow(d.tType) {
 					case TAnon(a):
-						var keys = [for (k in a.aFields.keys()) k];
-						keys.sort(core.ds.Key.compareStrings);
-						for (k in keys) {
-							var f = a.aFields.get(k);
-							fields.unshift({name: f.cfName, meta: f.cfMeta});
-						}
+						for (f in a.aFields) fields.unshift({name: f.cfName, meta: f.cfMeta});
 					case _:
 				}
 				statics = [];

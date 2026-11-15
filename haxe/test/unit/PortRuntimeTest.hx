@@ -7,7 +7,7 @@ import core.ds.OcamlInt;
 import core.ds.OcamlInt.IntParseFailure;
 import core.ds.OcamlInt32;
 import core.ds.OcamlInt64;
-import core.ds.PersistentMap;
+import core.ds.PMap;
 import core.ds.Record;
 import core.ds.TaskPool;
 import haxe.Int64;
@@ -26,11 +26,13 @@ class PortRuntimeTest {
  }
  static function check(condition:Bool,message:String):Void {if(!condition) throw message;}
  static function persistentBindings():Void {
-  var empty:PersistentMap<String,Int>=PersistentMap.empty();
+  var empty:PMap<Int>=PMap.empty();
   var first=empty.add("z",1).add("a",2),next=first.add("z",3).remove("a");
-  check(!empty.mem("z")&&first.find("z")==1&&first.find("a")==2,"Persistent map updates mutated an earlier binding set");
-  check(next.find("z")==3&&!next.mem("a"),"Persistent map update/remove failed");
+  check(!empty.exists("z")&&first.find("z")==1&&first.find("a")==2,"Persistent map updates mutated an earlier binding set");
+  check(next.find("z")==3&&!next.exists("a"),"Persistent map update/remove failed");
   check([for(k in first.keys())k].join(",")=="a,z","Ordered map traversal must follow key order");
+  check(first.remove("q")==first&&first.add("a",2)==first,"Updates that change nothing must return the map itself");
+  check([for(k in PMap.ofArrays(["b","a","b"],[1,2,3]).keys())k].join(",")=="a,b"&&PMap.ofArrays(["b","a","b"],[1,2,3]).find("b")==3,"ofArrays must keep the last value of a key");
   var table=new Hashtbl<{pack:Array<String>,name:String},Int>();
   table.add({pack:["pkg"],name:"M"},1);
   table.add({pack:["pkg"],name:"M"},2);

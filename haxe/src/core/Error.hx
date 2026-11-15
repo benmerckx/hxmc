@@ -99,16 +99,13 @@ class Error {
 	public static function abort(msg:String, p:Pos):Dynamic throw new FatalError(makeError(Custom(msg), p));
 
 	public static function stringSource(t:T):Array<String> return switch follow(t) {
+		// port: upstream conses the names in key order: the names in reverse.
 		case TInst(c, tl):
-			var names = [for (s in TClassTools.getAllFields(c, tl).keys()) s];
-			names.sort(core.ds.Key.compareStrings);
-			names.reverse();
-			names;
+			var names = TClassTools.getAllFields(c, tl).sortedKeys(), n = names.length;
+			[for (i in 0...n) names[n - 1 - i]];
 		case TAnon(a):
-			var names = [for (s in a.aFields.keys()) s];
-			names.sort(core.ds.Key.compareStrings);
-			names.reverse();
-			[for (s in names) a.aFields.get(s).cfName];
+			var fields = a.aFields, n = fields.size;
+			[for (i in 0...n) fields.valueAt(n - 1 - i).cfName];
 		case TAbstract(a, _) if (a.aImpl != null): [for (cf in a.aImpl.clOrderedStatics) cf.cfName];
 		case _: [];
 	};
@@ -345,15 +342,12 @@ class BetterErrors {
 				case EnumStatics(e): "{ EnumStatics " + Globals.sTypePath(e.ePath) + " }";
 				case AbstractStatics(a): "{ AbstractStatics " + Globals.sTypePath(a.aPath) + " }";
 				case _:
-					var names = [for (n in a.aFields.keys()) n];
-					names.sort(core.ds.Key.compareStrings);
-					names.reverse();
-					"{" + [
-						for (n in names) {
-							var f = a.aFields.get(n);
-							(Meta.has(Meta.Optional, f.cfMeta) ? " ?" : " ") + f.cfName;
-						}
-					].join(",") + " }";
+					var fields = a.aFields, n = fields.size, fl = new haxe.ds.Vector<String>(n);
+					for (i in 0...n) {
+						var f = fields.valueAt(i);
+						fl[n - 1 - i] = (Meta.has(Meta.Optional, f.cfMeta) ? " ?" : " ") + f.cfName;
+					}
+					"{" + fl.join(",") + " }";
 			}
 		case TDynamic(null): "Dynamic";
 		case TDynamic(t2): "Dynamic" + sTypeParams(ctx, vector(t2));

@@ -237,12 +237,6 @@ class Genhl {
 	static inline function isPath(p:GlobalTypePath, pack:Array<String>, name:String):Bool
 		return p.name == name && p.pack.join(".") == pack.join(".");
 
-	// port: PMap iteration order over string keys
-	static function sortedKeys<V>(m:StringMap<V>):Array<String> {
-		var keys = [for (k in m.keys()) k];
-		haxe.ds.ArraySort.sort(keys, strCompare);
-		return keys;
-	}
 
 	static function isToString(t:T):Bool {
 		return switch follow(t) {
@@ -528,7 +522,7 @@ class Genhl {
 					case _: die("", "genhl.ml");
 				}
 			case TAnon(a):
-				if (!a.aFields.keys().hasNext()) return HDyn;
+				if (a.aFields.isEmpty()) return HDyn;
 				/* can't use physical comparison in PMap since addresses might change in GC compact,
 					maybe add an uid to tanon if too slow ? */
 				var cached = ctx.anonsCache.get(a);
@@ -537,8 +531,7 @@ class Genhl {
 				var t = HVirtual(vp);
 				if (tref != null) tref.v = t;
 				ctx.anonsCache.set(a, t);
-				var fields = [for (k in sortedKeys(a.aFields)) cfieldType(ctx, a.aFields.get(k))];
-				fields.reverse();
+				var fields = a.aFields.foldCons(cf -> cfieldType(ctx, cf));
 				var fields = listSort((f1:HField, f2:HField) -> strCompare(f1.name, f2.name), fields);
 				vp.vfields = Vector.fromArrayCopy(fields);
 				for (i in 0...vp.vfields.length) vp.vindex.set(vp.vfields[i].name, i);
@@ -721,8 +714,7 @@ class Genhl {
 				}
 				var pfields:Array<HField> = [];
 				for (i in c.clImplements) pfields = loop(i.cls).concat(pfields);
-				var fields = [for (k in sortedKeys(c.clFields)) cfieldType(ctx, c.clFields.get(k))];
-				fields.reverse();
+				var fields = c.clFields.foldCons(cf -> cfieldType(ctx, cf));
 				return concatUniq(fields, pfields);
 			}
 			var fields = loop(c);
@@ -910,8 +902,7 @@ class Genhl {
 			p.pindex.set(name, {fid: fid, t: t});
 			return fid;
 		}
-		for (k in sortedKeys(e.eConstrs)) {
-			var ef = e.eConstrs.get(k);
+		for (ef in e.eConstrs) {
 			switch follow(ef.efType) {
 				case TEnum(_):
 					addField(ef.efName, toType(ctx, ef.efType));
@@ -2257,12 +2248,9 @@ class Genhl {
 				}
 			case TObjectDecl(fl):
 				/* We cannot rely on e.etype because it might have optional field etc, see jvm */
-				var fields = new StringMap<TClassField>();
-				for (f in fl) {
-					var cf = mkField(f.key.name, f.expr.etype, f.expr.epos, f.expr.epos);
-					fields.set(f.key.name, cf);
-				}
-				var rt = toType(ctx, mkAnon(Closed, fields));
+				var names = [for (f in fl) f.key.name];
+				var cfs = [for (f in fl) mkField(f.key.name, f.expr.etype, f.expr.epos, f.expr.epos)];
+				var rt = toType(ctx, mkAnon(Closed, core.ds.PMap.ofArrays(names, cfs)));
 				switch rt {
 					case HVirtual(vp) if (safeCast(rt, toType(ctx, e.etype))
 						&& !core.ds.ArrayTools.exists(fl, f -> f.key.name == "toString" && isToString(f.expr.etype))):

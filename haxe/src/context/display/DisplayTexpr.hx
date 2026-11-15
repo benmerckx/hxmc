@@ -123,12 +123,10 @@ class DisplayTexpr {
 	public static function checkDisplayEnum(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, en:TEnum):Void {
 		var se = findEnumByPosition(decls, en.eNamePos);
 		Typeload.typeTypeParams(ctx, TPHType, en.ePath, se.params);
-		core.ds.PMap.iter(function(_, ef:TEnumField) {
-			if (DisplayPosition.displayPosition.enclosedIn(ef.efPos)) {
-				var sef = findEnumFieldByPosition(se, ef.efNamePos);
-				TypeloadModule.loadEnumField(ctx, en, TEnum(en, extractParamTypes(en.eParams)), {value: false}, 0, sef);
-			}
-		}, en.eConstrs);
+		for (ef in en.eConstrs) if (DisplayPosition.displayPosition.enclosedIn(ef.efPos)) {
+			var sef = findEnumFieldByPosition(se, ef.efNamePos);
+			TypeloadModule.loadEnumField(ctx, en, TEnum(en, extractParamTypes(en.eParams)), {value: false}, 0, sef);
+		}
 	}
 
 	public static function checkDisplayTypedef(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, td:TDef):Void {

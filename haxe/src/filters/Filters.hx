@@ -82,12 +82,12 @@ class Filters {
 			if (!Define.defined(scom.defines, Define.DocGen)) {
 				c.clOrderedFields = c.clOrderedFields.filter(function(f) {
 					var b = FilterContext.isRemovableField(scom.isMacroContext, f);
-					if (b) c.clFields.remove(f.cfName);
+					if (b) c.clFields = c.clFields.remove(f.cfName);
 					return !b;
 				});
 				c.clOrderedStatics = c.clOrderedStatics.filter(function(f) {
 					var b = FilterContext.isRemovableField(scom.isMacroContext, f);
-					if (b) c.clStatics.remove(f.cfName);
+					if (b) c.clStatics = c.clStatics.remove(f.cfName);
 					return !b;
 				});
 			}
@@ -116,7 +116,7 @@ class Filters {
 				var str = Genxml.genTypeString(t);
 				f.cfExpr = TypeOps.mk(TConst(TString(str)), f.cfType, c.clPos);
 				c.clOrderedStatics.unshift(f);
-				c.clStatics.set(f.cfName, f);
+				c.clStatics = c.clStatics.add(f.cfName, f);
 			case _:
 		}
 	}
@@ -134,12 +134,12 @@ class Filters {
 					var path:core.Globals.GlobalTypePath = {pack: c.clPath.pack, name: c.clPath.name + "_HxMeta"};
 					var ncls = TypeOps.mkClass(c.clModule, path, c.clPos, Globals.nullPos);
 					ncls.clOrderedStatics.unshift(cf);
-					ncls.clStatics.set(cf.cfName, cf);
+					ncls.clStatics = ncls.clStatics.add(cf.cfName, cf);
 					com.types = (cast com.types : Array<ModuleType>).concat([TClassDecl(ncls)]);
 					c.clMeta = core.ds.VectorTools.cons(({meta: Custom(":hasMetadata"), exprs: vector(), pos: e.epos} : core.Ast.MetadataEntry), c.clMeta);
 				} else {
 					c.clOrderedStatics.unshift(cf);
-					c.clStatics.set(cf.cfName, cf);
+					c.clStatics = c.clStatics.add(cf.cfName, cf);
 				}
 			}
 		case _:
@@ -327,9 +327,7 @@ class Filters {
 				if (!visitedAnons.contains(an)) {
 					visitedAnons.unshift(an);
 					// port: sorted like PMap.iter
-					var keys = [for (k in an.aFields.keys()) k];
-					keys.sort(core.ds.Key.compareStrings);
-					for (k in keys) checkT(m, an.aFields.get(k).cfType);
+					for (cf in an.aFields) checkT(m, cf.cfType);
 				}
 			case TMono(r):
 				if (r.tmType != null) checkT(m, r.tmType);
@@ -414,11 +412,8 @@ class Filters {
 					f.cfOverloads = [for (o in saved.overloads) restoreOne(o.field, o.state)];
 					return f;
 				}
-				inline function mkPmap(lst:Array<TClassField>):StringMap<TClassField> {
-					var map = new StringMap();
-					for (f in lst) map.set(f.cfName, f);
-					return map;
-				}
+				// port: mk_pmap: the fields added in order (the last of a name wins).
+				inline function mkPmap(lst:Array<TClassField>):TypeMap<TClassField> return core.ds.PMap.ofArrays([for (f in lst) f.cfName], lst);
 				var meta = c.clMeta;
 				var path = c.clPath;
 				var ext = TypeOps.hasClassFlag(c, CExtern);

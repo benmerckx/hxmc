@@ -50,13 +50,11 @@ class Native {
 						changed = true;
 					} catch (_:NotFound) {}
 				}
-				inline function fields(cfs:Array<TClassField>, old:haxe.ds.StringMap<TClassField>):haxe.ds.StringMap<TClassField> {
+				inline function fields(cfs:Array<TClassField>, old:TypeMap<TClassField>):TypeMap<TClassField> {
 					changed = false;
 					for (cf in cfs) field(cf);
 					if (!changed) return old;
-					var result = new haxe.ds.StringMap<TClassField>();
-					for (cf in cfs) result.set(cf.cfName, cf);
-					return result;
+					return core.ds.PMap.ofArrays([for (cf in cfs) cf.cfName], cfs);
 				}
 				c.clFields = fields(c.clOrderedFields, c.clFields);
 				c.clStatics = fields(c.clOrderedStatics, c.clStatics);
@@ -65,10 +63,7 @@ class Native {
 				c.clPath = Ast.parsePath(r.name);
 			case TEnumDecl(e):
 				var changed = false;
-				var keys = [for (k in e.eConstrs.keys()) k];
-				keys.sort(core.ds.Key.compareStrings);
-				for (k in keys) {
-					var ef = e.eConstrs.get(k);
+				for (ef in e.eConstrs) {
 					try {
 						var r = real(ef.efMeta, ef.efName);
 						ef.efName = r.name;
@@ -77,15 +72,12 @@ class Native {
 					} catch (_:NotFound) {}
 				}
 				if (changed) {
-					var names = [];
-					var result = new haxe.ds.StringMap<TEnumField>();
-					for (k in keys) {
-						var ef = e.eConstrs.get(k);
-						names.unshift(ef.efName);
-						result.set(ef.efName, ef);
-					}
-					e.eConstrs = result;
-					e.eNames = names;
+					// port: upstream rebuilds the map under the new names, consing them in the old
+					// key order: e_names in reverse.
+					var constrs = e.eConstrs, n = constrs.size;
+					e.eNames = [for (i in 0...n) constrs.valueAt(n - 1 - i).efName];
+					var efs = constrs.valueArray();
+					e.eConstrs = core.ds.PMap.ofArrays([for (ef in efs) ef.efName], efs);
 				}
 				var r = real(e.eMeta, Globals.sTypePath(e.ePath));
 				e.eMeta = core.ds.VectorTools.cons(r.meta, e.eMeta);

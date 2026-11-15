@@ -126,11 +126,7 @@ class Genhxold {
 			case TAbstract(a, tl):
 				path(a.aMeta, a.aPath, tl);
 			case TAnon(a):
-				var fields = core.ds.PMap.fold(function(f:TClassField, acc:Array<String>) {
-					acc.unshift(f.cfName + " : " + stype(f.cfType));
-					return acc;
-				}, a.aFields, []);
-				"{" + fields.join(", ") + "}";
+				"{" + a.aFields.foldCons(f -> f.cfName + " : " + stype(f.cfType)).join(", ") + "}";
 			case TLazy(f):
 				stype(lazyType(f));
 			case TDynamic(null):
@@ -301,7 +297,7 @@ class Genhxold {
 				printMeta(e.eMeta);
 				p("extern enum " + stype(TEnum(e, extractParamTypes(e.eParams))) + " {\n");
 				for (n in e.eNames) {
-					var c = core.ds.PMap.find(n, e.eConstrs);
+					var c = e.eConstrs.find(n);
 					p("\t" + c.efName);
 					switch follow(c.efType) {
 						case TFun(sig):

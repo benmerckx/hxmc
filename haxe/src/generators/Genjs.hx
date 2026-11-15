@@ -1655,7 +1655,7 @@ class Genjs {
 			openBlock(ctx);
 		};
 		for (n in e.eNames) {
-			var f = core.ds.PMap.find(n, e.eConstrs);
+			var f = e.eConstrs.find(n);
 			if (asObjects) {
 				newprop(ctx);
 				print(ctx, anonField(f.efName) + ": ");
@@ -1699,7 +1699,7 @@ class Genjs {
 		}
 		if (hasFeature(ctx, "Type.allEnums")) {
 			var ctorsWithoutArgs = e.eNames.filter(function(s) {
-				var ef = core.ds.PMap.find(s, e.eConstrs);
+				var ef = e.eConstrs.find(s);
 				return switch follow(ef.efType) {
 					case TFun(_): false;
 					case _: true;

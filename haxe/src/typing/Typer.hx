@@ -360,8 +360,8 @@ class Typer {
 				return mode == MGet ? acc : AKNo(acc, p);
 			case _:
 		}
-		if (ctx.f.locals.mem(i)) {
-			var v = ctx.f.locals.find(i);
+		var v = ctx.f.locals.get(i);
+		if (v != null) {
 			addVarFlag(v, VUsedByTyper);
 			if (v.vExtra == null) return AKExpr(mk(TLocal(v), v.vType, p));
 			var params = v.vExtra.vParams,
@@ -379,7 +379,7 @@ class Typer {
 							cf.cfExpr = e;
 							cf.cfKind = Method(MethInline);
 							addClassFlag(c, CExtern);
-							c.clFields.set(cf.cfName, cf);
+							c.clFields = core.ds.PMap.singleton(cf.cfName, cf);
 							var on = mk(TConst(TNull), TInst(c, vector()), p);
 							AKField(FieldAccessTools.create(on, cf, FHInstance(c, vector()), true, p));
 					}
@@ -743,15 +743,17 @@ class Typer {
 						matches.length == 0 ? ODKPlain : matches.length == 1 ? matches[0] : ODKFailed;
 					case TDynamic(t) if (t != null):
 						dynamicParameter = t;
-						ODKWithStructure({aStatus: Closed, aFields: new haxe.ds.StringMap()});
+						ODKWithStructure({aStatus: Closed, aFields: core.ds.PMap.empty()});
 					case TInst(c, tl) if (!hadCast && Meta.has(MetaTag.StructInit, c.clMeta)): ODKWithClass(c, tl);
 					case _: ODKPlain;
 				}
 				loop(false, [], t);
 			case _: ODKPlain;
 		};
-		inline function typeFields(fieldMap:haxe.ds.StringMap<TClassField>):{type:T, fields:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>} {
-			var fields = new haxe.ds.StringMap<TClassField>(), extra = [];
+		// port: upstream adds each field to a PMap; the port fills a map in place and makes
+		// the anon's map of it once complete (here and in plain).
+		inline function typeFields(fieldMap:TypeMap<TClassField>):{type:T, fields:Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>} {
+			var fields = new core.ds.OrderedMap<TClassField>(), extra = [];
 			var result = fl.map(function(field) {
 				var n = field.key.name, pn = field.key.pos, valid = Lexer.isValidIdentifier(n);
 				if (fields.exists(n)) raiseTypingError("Duplicate field in object declaration : " + n, pn);
@@ -796,14 +798,13 @@ class Typer {
 				}
 				return {key: field.key, expr: e};
 			});
-			var t = mkAnon(Const, fields);
+			var t = mkAnon(Const, fields.toPMap());
 			if (!ctx.f.isUntyped) {
-				var missing = [];
-				var names = [for (name in fieldMap.keys()) name];
-				names.sort(core.ds.Key.compareStrings);
-				for (name in names) {
-					var cf = fieldMap.get(name);
-					if (!Meta.has(MetaTag.Optional, cf.cfMeta) && !fields.exists(name)) missing.unshift(name);
+				// port: upstream folds the expected fields in key order, consing the missing ones
+				var missing = [], i = fieldMap.size;
+				while (i-- > 0) {
+					var name = fieldMap.keyAt(i);
+					if (!Meta.has(MetaTag.Optional, fieldMap.valueAt(i).cfMeta) && !fields.exists(name)) missing.push(name);
 				}
 				if (missing.length == 1) raiseOrDisplay(ctx, [UnifyCustom("Object requires field " + missing[0])], p);
 				else if (missing.length > 1) raiseOrDisplay(ctx, [UnifyCustom("Object requires fields: " + missing.join(", "))], p);
@@ -812,7 +813,7 @@ class Typer {
 			return {type: t, fields: result};
 		}
 		inline function plain():TExpr {
-			var fields = new Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>(fl.length), types = new haxe.ds.StringMap<TClassField>();
+			var fields = new Vector<{key:{name:String, pos:Pos, quote:QuoteStatus}, expr:TExpr}>(fl.length), types = new core.ds.OrderedMap<TClassField>();
 			for (i in 0...fl.length) {
 				var field = fl[i];
 				var name = field.key.name,
@@ -835,13 +836,13 @@ class Typer {
 					types.set(name, cf);
 				}
 			}
-			var anon:TAnon = {aStatus: Const, aFields: types};
+			var anon:TAnon = {aStatus: Const, aFields: types.toPMap()};
 			ctx.e.opened.unshift(anon);
 			return mk(TObjectDecl(fields), TAnon(anon), p);
 		}
 		return switch kind {
 			case ODKPlain | ODKFailed: plain();
-			case ODKWithStructure(a) if (!a.aFields.keys().hasNext() && dynamicParameter == null): plain();
+			case ODKWithStructure(a) if (a.aFields.isEmpty() && dynamicParameter == null): plain();
 			case ODKWithStructure(a):
 				var typed = typeFields(a.aFields);
 				mk(TObjectDecl(typed.fields), typed.type, p);
@@ -862,15 +863,16 @@ class Typer {
 					}
 					argsWithPos.push({arg: args[i], pos: pos});
 				}
-				var fields = new haxe.ds.StringMap<TClassField>();
+				var fields = new core.ds.OrderedMap<TClassField>();
 				for (pair in argsWithPos) {
 					var arg = pair.arg,
 						f = mkField(arg.name, arg.type, pair.pos, pair.pos);
 					if (arg.optional) f.cfMeta = vector(({meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry));
-					if (c.clFields.exists(arg.name)) f.cfDoc = c.clFields.get(arg.name).cfDoc;
+					var cf = c.clFields.get(arg.name);
+					if (cf != null) f.cfDoc = cf.cfDoc;
 					fields.set(arg.name, f);
 				}
-				var typed = typeFields(fields), input = typed.fields.rev();
+				var typed = typeFields(fields.toPMap()), input = typed.fields.rev();
 				var declarations = [], locals = [], hadSideEffect = false;
 				for (field in input) {
 					var e = field.expr;

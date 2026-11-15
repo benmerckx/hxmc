@@ -233,7 +233,7 @@ class Genswf {
 					for (a in s.args) add_type_rec(tl, a.type);
 					add_type_rec(tl, s.ret);
 				case TAnon(a):
-					for (k in compiler.hxb.HxbWriter.sortedKeys(a.aFields)) add_type_rec(tl, a.aFields.get(k).cfType);
+					for (cf in a.aFields) add_type_rec(tl, cf.cfType);
 				case TDynamic(t2):
 					add_type_rec(tl, (switch t2 {
 						case null: tDynamic;
@@ -311,7 +311,7 @@ class Genswf {
 				}
 				for (i in c.clImplements) add_inherit(i.cls, i.params);
 			case TEnumDecl(e) if (!hasEnumFlag(e, EnExtern)):
-				for (k in compiler.hxb.HxbWriter.sortedKeys(e.eConstrs)) add_type(e.eConstrs.get(k).efType);
+				for (ef in e.eConstrs) add_type(ef.efType);
 			case _:
 		}
 		h = h.filter(x -> !(pathEq(x.p, {pack: [], name: "Int"}) && x.k.match(DKType)));

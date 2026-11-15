@@ -18,9 +18,11 @@ import haxe.ds.IntMap;
 import haxe.ds.StringMap;
 import haxe.ds.Vector;
 
-// port: the PMap-typed fields (fields of anonymous structures and classes, constraint fields) are
-// StringMaps; code that iterates them goes through core.ds.PMap (sorted keys).
-typedef TypeMap<T> = StringMap<T>;
+// port: upstream's PMap-typed fields (fields of anonymous structures and classes, enum
+// constructors, constraint fields): persistent maps, which a write replaces (`c.clFields =
+// c.clFields.add(...)`, upstream's `c.cl_fields <- PMap.add ...`). A class's statics are its
+// `clType`'s fields too (TypeloadFields.initClass), so a change of one must not reach the other.
+typedef TypeMap<T> = core.ds.PMap<T>;
 
 // port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
 @:hxmc.compact enum FieldKind {

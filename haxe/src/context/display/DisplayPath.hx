@@ -149,11 +149,9 @@ class TypePathHandler {
 			};
 			var fields = if (enumStatics == null) fields else {
 				var en = enumStatics;
-				core.ds.PMap.fold(function(ef:TEnumField, acc:Array<CompletionItemData>) {
-					return [
-						CompletionItem.makeCiEnumField(CompletionEnumField.make(ef, Self(TEnumDecl(en)), true), tpair(ef.efType))
-					].concat(acc);
-				}, en.eConstrs, fields);
+				// port: PMap.fold consing each constructor's item onto fields
+				en.eConstrs.foldCons(ef -> CompletionItem.makeCiEnumField(CompletionEnumField.make(ef, Self(TEnumDecl(en)), true),
+					tpair(ef.efType))).concat(fields);
 			};
 			return fields;
 		} catch (_:Dynamic) {
@@ -172,7 +170,7 @@ class DisplayPath {
 	public static function handlePathDisplay(ctx:Typer, path:haxe.ds.Vector<PlacedName>, p:Pos):Void {
 		function classField(c:TClass, name:String):Void {
 			c.clBuild();
-			var cf = core.ds.PMap.find(name, c.clStatics);
+			var cf = c.clStatics.find(name);
 			var origin = switch c.clKind {
 				case KAbstractImpl(a): Self(TAbstractDecl(a));
 				case _: Self(TClassDecl(c));

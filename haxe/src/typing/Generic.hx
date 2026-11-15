@@ -65,10 +65,8 @@ class Generic {
 					case TType(td, tl): result(pathName(td.tPath) + tlName(tl));
 					case TEnum(en, tl): result(pathName(en.ePath) + tlName(tl));
 					case TAnon(a):
-						var names = [for (n in a.aFields.keys()) n];
-						names.sort(core.ds.Key.compareStrings);
 						var fields = [];
-						for (n in names) fields.unshift(n + "_" + deep(follow(a.aFields.get(n).cfType)));
+						for (n => cf in a.aFields) fields.unshift(n + "_" + deep(follow(cf.cfType)));
 						result("anon_" + fields.join("_"));
 					case TFun(s): result("func_" + s.args.map(function(a) return deep(a.type)).join("_") + "_" + deep(s.ret));
 					case TAbstract(a, tl): result(pathName(a.aPath) + tlName(tl));
@@ -256,9 +254,7 @@ class Generic {
 				case TDynamic(t):
 					if (t != null) loop(t);
 				case TAnon(a):
-					var names = [for (n in a.aFields.keys()) n];
-					names.sort(core.ds.Key.compareStrings);
-					for (n in names) loop(a.aFields.get(n).cfType);
+					for (cf in a.aFields) loop(cf.cfType);
 				case TFun(s):
 					for (a in s.args) loop(a.type);
 					loop(s.ret);
@@ -405,7 +401,7 @@ class Generic {
 		});
 		cg.clOrderedFields = c.clOrderedFields.map(function(f) {
 			var f = buildField(f);
-			cg.clFields.set(f.cfName, f);
+			cg.clFields = cg.clFields.add(f.cfName, f);
 			return f;
 		});
 		// In rare cases the class name can become too long, so let's shorten it (issue #3090).
@@ -540,7 +536,7 @@ class Generic {
 				if (field != null) unifyExisting(field.cfType, field.cfPos);
 				else {
 					field = makeField(cf.cfName);
-					container.clStatics.set(field.cfName, field);
+					container.clStatics = container.clStatics.add(field.cfName, field);
 					container.clOrderedStatics.unshift(field);
 					finalize(container, field);
 				}
@@ -549,7 +545,7 @@ class Generic {
 			} else if (stat) {
 				setTypeParameterDependencies(c.clModule, monos);
 				var field = makeField(name);
-				c.clStatics.set(field.cfName, field);
+				c.clStatics = c.clStatics.add(field.cfName, field);
 				c.clOrderedStatics.unshift(field);
 				finalize(c, field);
 				fa = core.ds.Record.withFields(fa, {faField: field});
@@ -557,7 +553,7 @@ class Generic {
 				setTypeParameterDependencies(c.clModule, monos);
 				var field = makeField(name);
 				if (hasClassFieldFlag(cf, CfOverride)) addClassFieldFlag(field, CfOverride);
-				c.clFields.set(field.cfName, field);
+				c.clFields = c.clFields.add(field.cfName, field);
 				c.clOrderedFields.unshift(field);
 				finalize(c, field);
 				fa = core.ds.Record.withFields(fa, {faField: field});

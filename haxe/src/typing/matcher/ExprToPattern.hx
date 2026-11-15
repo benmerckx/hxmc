@@ -35,7 +35,7 @@ using core.ds.VectorTools;
 typedef PatternContext = {
 	var ctx:Typer;
 	var orLocals:Null<haxe.ds.StringMap<{v:TVar, p:Pos}>>;
-	var ctxLocals:core.ds.PersistentMap<String, TVar>;
+	var ctxLocals:core.ds.PMap<TVar>;
 	var currentLocals:haxe.ds.StringMap<{v:TVar, p:Pos}>;
 	var inReification:Bool;
 	var isPostfixMatch:Bool;
@@ -379,12 +379,7 @@ class ExprToPattern {
 				}
 				function collectFields(t:T, filter:Null<Array<String>>):Void switch follow(t) {
 					case TAnon(an):
-						var names = [for (n in an.aFields.keys()) n];
-						names.sort(core.ds.Key.compareStrings);
-						for (n in names) {
-							var cf = an.aFields.get(n);
-							collectField(cf, cf.cfType, filter);
-						}
+						for (cf in an.aFields) collectField(cf, cf.cfType, filter);
 					case TInst(c, tl):
 						function loopClass(c:TClass, tl:core.TType.TParams):Void {
 							if (c.clSuper != null) loopClass(c.clSuper.cls,

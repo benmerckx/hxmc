@@ -305,12 +305,7 @@ class Genjson {
 
 	public static function generateAnon(ctx:GenjsonContext, an:TAnon):JsonValue {
 		function generateAnonFields():JsonValue {
-			// port: PMap.fold conses in key order: the result is in reverse key order
-			var fields = core.ds.PMap.fold(function(cf:TClassField, acc:Array<JsonValue>) {
-				acc.unshift(generateClassField(ctx, CFSMember, cf));
-				return acc;
-			}, an.aFields, []);
-			return jarray(fields);
+			return jarray(an.aFields.foldCons(cf -> generateClassField(ctx, CFSMember, cf)));
 		}
 		return jobject([
 			kv("fields", generateAnonFields()),
@@ -593,8 +588,7 @@ class Genjson {
 
 	public static function generateEnum(ctx:GenjsonContext, e:TEnum):Array<JsonField> {
 		function generateEnumConstructors():JsonValue return jarray(e.eNames.map(function(s) {
-			var ef = core.ds.PMap.find(s, e.eConstrs);
-			return generateEnumField(ctx, ef);
+			return generateEnumField(ctx, e.eConstrs.find(s));
 		}));
 		return [
 			kv("constructors", ctx.generateMemberBodies ? generateEnumConstructors() : jarray([])),

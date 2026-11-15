@@ -130,8 +130,8 @@ class ClassWrapper extends TypeWrapper {
 				var path:GlobalTypePath = {pack: cls.clPath.pack, name: "_extern_" + cls.clPath.name};
 				var additionalCls = core.ds.Record.copy(cls);
 				additionalCls.clPath = path;
-				additionalCls.clFields = new haxe.ds.StringMap();
-				additionalCls.clStatics = new haxe.ds.StringMap();
+				additionalCls.clFields = core.ds.PMap.empty();
+				additionalCls.clStatics = core.ds.PMap.empty();
 				additionalCls.clOrderedFields = [];
 				additionalCls.clOrderedStatics = [];
 				additionalCls.clConstructor = null;

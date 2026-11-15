@@ -1070,7 +1070,7 @@ class ModuleCache {
 
 	// the macros' context's defines, as MacroContext.createMacroContext
 	// makes them
-	static function predictMacroDefines(com:CommonContext):{sign:String, values:haxe.ds.StringMap<String>} {
+	static function predictMacroDefines(com:CommonContext):{sign:String, values:core.ds.PMap<String>} {
 		var c = Common.clone(com, true);
 		var d = Common.adaptDefinesToMacroContext(c.defines);
 		c.defines.values = d.values;
