@@ -532,6 +532,10 @@ class Regalloc {
 			inline function masked(c:Int):Bool
 				return (c < 32 ? mlo >> c : mhi >> (c - 32)) & 1 != 0;
 			var h = f.hint(r);
+			// a virtual hint not allocated yet: its own (a phi's input is hinted
+			// at the phi, allocated later, and the phi at another of its inputs)
+			for (_ in 0...3)
+				if (h >= NPHYS && assigned[h] < 0) h = f.hint(h);
 			if (h >= 0) {
 				var hr = h < NPHYS ? h : assigned[h];
 				if (hr >= 0 && isFpr[hr] == (float ? 1 : 2) && (!vec || s.isVpr[hr]) && !masked(hr) && free(hr, r)) choice = hr;
