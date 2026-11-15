@@ -75,6 +75,7 @@ enum abstract XOp(Int) to Int from Int {
 	var VXK; // d <- d op [the constant of uses: four 32-bit words]
 	var VCONST; // d <- the constant of uses
 	var PTEST; // flags <- s1 & s1 (ptest)
+	var FOPM; // d <- d (cond: as FOP) [mem] (a double)
 }
 
 // Mir -> LIR for x86-64 (System V and Win64: CallConv); the walk, the
@@ -201,7 +202,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				mem();
 			case CMPMI:
 				mem();
-			case ALUM:
+			case ALUM | FOPM:
 				defs.push(i.d);
 				uses.push(i.d);
 				mem();
@@ -318,6 +319,11 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					cand0 = c.b;
 					if (c.op != Sub) cand1 = c.a;
 					if (c.a == c.b) continue;
+				} else if (c.op == FAdd || c.op == FSub || c.op == FMul || c.op == FDiv) {
+					// (a double's operation: the load as its memory operand, FOPM)
+					if (c.a == c.b || mf.vals[c.b].op == ConstF) continue;
+					cand0 = c.b;
+					if (c.op == FAdd || c.op == FMul) cand1 = c.a;
 				} else if (c.op == SExt) {
 					cand0 = c.a;
 				} else continue;
@@ -325,7 +331,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					var x = q == 0 ? cand0 : cand1;
 					if (x < 0) break;
 					var l = mf.vals[x];
-					if (l.op != Load || l.block != b || useCount[x] != 1 || l.ty == F64) continue;
+					if (l.op != Load || l.block != b || useCount[x] != 1 || (l.ty == F64) != (c.ty == F64)) continue;
 					if (l.size != (l.ty == I32 ? 4 : 8)) continue;
 					var j = k;
 					var ok = false;
@@ -821,8 +827,27 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					a = i.b;
 					c = i.a;
 				}
+				if ((i.op == FAdd || i.op == FMul) && memFold(a)) {
+					var t = a;
+					a = c;
+					c = t;
+				}
 				var d = reg(i.id);
 				mov(d, use(a));
+				if (memFold(c)) {
+					var l = m.vals[c];
+					var x = emit(FOPM);
+					x.d = d;
+					memOf(x, l.a, l.b, l.imm2, l.imm);
+					x.mem = l.mem;
+					x.cond = switch i.op {
+						case FAdd: 0x58;
+						case FMul: 0x59;
+						case FSub: 0x5c;
+						case _: 0x5e;
+					};
+					return;
+				}
 				// (x * 2: x + x, exactly, without the constant's load)
 				var twice = i.op == FMul && k(c) && m.vals[c].f == 2.0;
 				var x = emit(k(c) && !twice ? FOPK : FOP);

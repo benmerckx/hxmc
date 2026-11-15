@@ -505,6 +505,8 @@ class Emit implements hxmc.Target.Emitter {
 				a.sdRR(i.cond, i.d, i.s1);
 			case FOPK:
 				a.sdRM(i.cond, i.d, Mem.rip(floatConst(i.f)));
+			case FOPM:
+				a.sdRM(i.cond, i.d, mem(i));
 			case FSQRT:
 				a.sdRR(0x51, i.d, i.s1);
 			case FMASK:
