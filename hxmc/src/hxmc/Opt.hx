@@ -141,9 +141,14 @@ class Opt {
 			}
 		}
 		if (nullsDropped) dce();
-		if (licmOn)
+		if (licmOn) {
+			var moved = false;
 			for (_ in 0...3)
-				if (!licm()) break;
+				if (licm()) moved = true else break;
+			// (loads moved out of a loop's arms together, before it: the same
+			// value, once)
+			if (moved) redundancy(f.cfg());
+		}
 		if (barriers > 0) {
 			freshTargets();
 			loneBarrierOperands();
