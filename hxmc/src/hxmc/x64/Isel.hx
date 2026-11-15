@@ -237,6 +237,13 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	function plainImm(v:Int):Null<Int>
 		return isymOf(v) == null ? immOf(v) : null;
 
+	// whether v's register holds it zero-extended: an Int loaded (a load into
+	// a 32-bit register zeroes the upper half), whose ZExt is then a copy
+	function zeroExtended(v:Int):Bool {
+		var i = m.vals[v];
+		return i.op == Load && i.ty == I32 && i.size <= 4;
+	}
+
 	// a 32-bit constant usable as an immediate (sign-extended for 64-bit
 	// operations), possibly symbolic (isymOf)
 	function immOf(v:Int):Null<Int> {
@@ -854,6 +861,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.s1 = use(i.a);
 				x.flag = true; // movsxd
 				x.size = 8;
+			case ZExt if (zeroExtended(i.a)):
+				mov(reg(i.id), use(i.a), 8);
 			case ZExt:
 				var x = emit(MOV);
 				x.d = reg(i.id);
