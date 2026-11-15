@@ -35,9 +35,14 @@ class Exception {
 	public function new(message:String, ?previous:Exception, ?native:Any) {
 		__exceptionMessage = message;
 		__previousException = previous;
-		recordStack(this, native != null);
+		if (__recordsStack()) recordStack(this, native != null);
 		__nativeException = native != null ? native : this;
 	}
+
+	// hxmc: false in a subclass whose exceptions are control flow, thrown and caught
+	// by the program and their stack never read: making one skips the stack walk
+	@:noCompletion function __recordsStack():Bool
+		return true;
 
 	// (left out of a program without the table of its functions and lines)
 	@:hxmc.withStacks static function recordStack(e:Exception, caught:Bool) {
