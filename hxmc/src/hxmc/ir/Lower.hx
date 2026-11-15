@@ -265,6 +265,24 @@ class Lower implements LowerQueries {
 	// Windows on x86-64, executables at a fixed address; hxmc.rt.Gc.init). Elsewhere
 	// the annotation changes nothing.
 	public static var compact = false;
+	// (-D hxmc.compact=0: not, as no other) every enum of the program with
+	// arguments laid out as @:hxmc.compact makes it, unmarked: their values
+	// are never written after construction (no barrier, no store to encode),
+	// small and many. Not the std's (typed in every build, they would give
+	// every program compressed references and their 32 GB heap), not an
+	// extern one, nor one whose constructor needs more than 32 slots (it
+	// stays as it is). The std's directories (Main.generate; null: off)
+	public static var autoEnums:Null<Array<String>> = null;
+
+	public static function autoCompact(e:TEnum):Bool {
+		if (autoEnums == null || TFunctions.hasEnumFlag(e, EnExtern)) return false;
+		var f = StringTools.replace(sys.FileSystem.absolutePath(e.ePos.pfile), "\\", "/");
+		for (d in autoEnums)
+			if (StringTools.startsWith(f, d)) return false;
+		for (ef in e.eConstrs)
+			if (TFunctions.follow(ef.efType).match(TFun(_))) return true;
+		return false;
+	}
 	// Mem.compact: 1 when compact and a class of the program is @:hxmc.compact
 	// (Main.generate, from the typed types: a constant of every body, so that
 	// the runtime's code for compressed references folds away without one;
@@ -1551,7 +1569,8 @@ class Lower implements LowerQueries {
 		var ei = enums.get(e);
 		if (ei != null) return ei;
 		ei = new EnumInfo(core.Globals.sTypePath(e.ePath), ident(e.ePath.pack, e.ePath.name));
-		ei.compact = hasMeta(":hxmc.compact", e.eMeta);
+		var marked = hasMeta(":hxmc.compact", e.eMeta);
+		ei.compact = marked || autoCompact(e);
 		if (ei.compact && TFunctions.hasEnumFlag(e, EnExtern))
 			throw new LowerError('${ei.name}: @:hxmc.compact is for Haxe enums, not an extern enum', CInterop.posOf(e.ePos));
 		enums.set(e, ei);
@@ -1573,7 +1592,8 @@ class Lower implements LowerQueries {
 					// (on every target alike: also where the arguments stay a slot each, Lower.compact false)
 					if (ei.compact) {
 						var n = Facts.compactSlots([for (t in ci.params) {name: "", ty: t, compact: true}]);
-						if (n > Facts.COMPACT_MAX_SLOTS)
+						if (n > Facts.COMPACT_MAX_SLOTS && !marked) ei.compact = false;
+						else if (n > Facts.COMPACT_MAX_SLOTS)
 							throw new LowerError('${ei.name}.${ci.name}: @:hxmc.compact and $n slots: at most ' + Facts.COMPACT_MAX_SLOTS
 								+ ' (8 bytes each; an Int, a Bool or a compressed reference takes half of one): pass an object holding some of the arguments',
 								CInterop.posOf(ef.efPos));
