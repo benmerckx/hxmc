@@ -41,14 +41,21 @@ class Tag {
 	public static inline function isArray(v:Dynamic):Bool
 		return hxmc.Native.typeKind(v) == 9;
 
+	// (every class instance among the values is an NVal: its tag tells)
+	static inline function nval(v:Dynamic, t:Int):Bool
+		return hxmc.Native.typeKind(v) == 6 && (cast v : NVal).tag == t;
+
 	public static inline function isString(v:Dynamic):Bool
-		return Std.isOfType(v, NStr);
+		return nval(v, TSTRING);
 
 	public static inline function isObject(v:Dynamic):Bool
-		return Std.isOfType(v, NObj);
+		return nval(v, TOBJECT);
 
 	public static inline function isFunction(v:Dynamic):Bool
-		return Std.isOfType(v, NFun);
+		return nval(v, TFUNCTION);
+
+	public static inline function isAbstract(v:Dynamic):Bool
+		return nval(v, TABSTRACT);
 
 	// an Int that does not fit Neko's 31 bits is an int32 (alloc_best_int)
 	public static inline function need32(i:Int):Bool
@@ -209,6 +216,8 @@ class NekoError {
 	public var value:Dynamic;
 	// the positions it went through, innermost first
 	public var stack:Null<Array<Dynamic>>;
+	// the depth it was thrown at
+	public var depth = 0;
 
 	public function new(v:Dynamic)
 		this.value = v;

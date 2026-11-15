@@ -150,7 +150,7 @@ class ZlibPrims {
 		r("set_flush_mode", 2, (vm, a) -> {
 			var mode = a[1].str().toString();
 			if (["NO", "SYNC", "FULL", "FINISH", "BLOCK"].indexOf(mode) < 0) throw Builtins.failure;
-			if (Std.isOfType(a[0], NAbs) && (a[0] : NAbs).kind == "zlib_deflate") ((a[0] : NAbs).data : Deflater).flush = mode else
+			if (Tag.isAbstract(a[0]) && (a[0] : NAbs).kind == "zlib_deflate") ((a[0] : NAbs).data : Deflater).flush = mode else
 				a[0].abs("zlib_inflate");
 			return null;
 		});

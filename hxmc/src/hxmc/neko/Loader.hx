@@ -85,7 +85,7 @@ class Loader {
 		var cache = o.get(Fields.id("cache")).obj();
 		var mid = Fields.idBytes(mname.b);
 		var mv = cache.get(mid);
-		if (Std.isOfType(mv, NAbs) && (mv : NAbs).kind == "module") return ((mv : NAbs).data : Module).exports;
+		if (Tag.isAbstract(mv) && (mv : NAbs).kind == "module") return ((mv : NAbs).data : Module).exports;
 		var name = mname.toString();
 		var file = StringTools.endsWith(name, ".n") ? selectFile(o.get(Fields.id("path")), name, "") : selectFile(o.get(Fields.id("path")), name, ".n");
 		var bytes = try sys.io.File.getBytes(file) catch (_:Dynamic) throw VM.error("Module not found : " + name);

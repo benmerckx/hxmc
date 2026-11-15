@@ -54,7 +54,7 @@ class Main {
 		st.reverse();
 		for (s in st) {
 			b.addString("Called from ");
-			if (s == null) b.addString("a C function") else if (Std.isOfType(s, NStr)) {
+			if (s == null) b.addString("a C function") else if (Tag.isString(s)) {
 				b.add((s : NStr).b);
 				b.addString(" (no debug available)");
 			} else if (Tag.isArray(s) && (s : Array<Dynamic>).length == 2) {

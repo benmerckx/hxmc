@@ -208,6 +208,10 @@ class Module {
 					var t = param + i;
 					if (t < 0 || t > codesize || !isOp[t]) invalid();
 					code[i + 1] = t;
+				case Op.AccInt:
+					// (boxed once: the interpreter reads the value from consts)
+					code[i + 1] = m.consts.length;
+					m.consts.push((param : Dynamic));
 				case Op.AccIndex | Op.AccStack:
 					code[i + 1] = param + 2;
 				case Op.AccBuiltin:

@@ -23,6 +23,9 @@ class VM {
 	public var depth = 0;
 	public var resolver:Dynamic = null;
 	public var excStack:Array<Dynamic> = [];
+	// each depth's module and the pc of its current call (neko's csp frames)
+	final fmods = new Vector<Module>(MAX_DEPTH + 2);
+	final fpcs = new Vector<Int>(MAX_DEPTH + 2, 0);
 	// what $print writes to
 	public var print:Bytes->Void;
 	public var custom:Map<String, Dynamic> = new Map();
@@ -45,6 +48,17 @@ class VM {
 	}
 
 	// ---- errors
+
+	// the boxes of the small Ints, made once
+	static final smallInts:Vector<Dynamic> = {
+		var v = new Vector<Dynamic>(2048);
+		for (i in 0...2048)
+			v[i] = (i - 1024 : Dynamic);
+		v;
+	};
+
+	public static inline function box(i:Int):Dynamic
+		return i >= -1024 && i < 1024 ? smallInts[i + 1024] : (i : Dynamic);
 
 	public static inline function error(msg:String):NekoError
 		return new NekoError(NStr.of(msg));
@@ -81,13 +95,15 @@ class VM {
 			env = oldEnv;
 			return r;
 		} catch (e:Dynamic) {
+			var ne = wrap(e);
+			capture(ne);
 			vthis = oldThis;
 			env = oldEnv;
 			while (sp > oldSp)
 				stack[--sp] = null;
 			sp = oldSp;
 			depth = oldDepth;
-			throw e;
+			throw ne;
 		}
 	}
 
@@ -96,7 +112,7 @@ class VM {
 
 	// a call with nargs arguments on the stack, which it pops
 	public function callOp(f:Dynamic, thisv:Dynamic, nargs:Int):Dynamic {
-		if (!Std.isOfType(f, NFun)) {
+		if (!Tag.isFunction(f)) {
 			pop(nargs);
 			throw error("Invalid call");
 		}
@@ -146,309 +162,416 @@ class VM {
 
 	// ---- the interpreter
 
-	function interp(m:Module, pc:Int, acc:Dynamic):Dynamic {
+	// a frame of the module's code, from pc; trap >= 0: the part of the frame
+	// under the trap whose six slots start there (protect), which ends at its
+	// EndTrap (trapState ENDED, resumePc) or with the function (RETURNED)
+	function interp(m:Module, pc:Int, acc:Dynamic, trap:Int = -1):Dynamic {
 		final code = m.code;
-		var traps:Null<Array<Int>> = null;
+		fmods[depth] = m;
 		while (true) {
-			try {
-				while (true) {
-					switch code[pc++] {
-						case Op.AccNull:
-							acc = null;
-						case Op.AccTrue:
-							acc = true;
-						case Op.AccFalse:
-							acc = false;
-						case Op.AccThis:
-							acc = vthis;
-						case Op.AccInt | Op.AccInt32:
-							acc = code[pc++];
-						case Op.AccStack0:
-							acc = stack[sp - 1];
-						case Op.AccStack1:
-							acc = stack[sp - 2];
-						case Op.AccStack:
-							acc = stack[sp - 1 - code[pc++]];
-						case Op.AccGlobal:
-							acc = m.globals[code[pc++]];
-						case Op.AccEnv:
-							var e:Array<Dynamic> = env;
-							var i = code[pc];
-							if (i >= e.length) throw error("Reading Outside Env");
-							pc++;
-							acc = e[i];
-						case Op.AccField:
-							var id = code[pc];
-							if (Std.isOfType(acc, NObj)) {
-								var o:NObj = acc;
-								if (resolver != null && !o.has(id)) acc = callEx(null, resolver, [o, id], true) else acc = o.get(id);
-							} else
-								throw invalidField(id);
-							pc++;
-						case Op.AccArray:
-							var a:Dynamic = stack[sp - 1];
-							if (Tag.isInt(acc) && Tag.isArray(a)) {
-								var arr:Array<Dynamic> = a;
-								var k:Int = acc;
-								acc = k < 0 || k >= arr.length ? null : arr[k];
-							} else if (Std.isOfType(a, NObj))
-								acc = objectOp(a, acc, Fields.idGet, "Unsupported operation")
-							else
-								throw error("Invalid array access");
-							stack[--sp] = null;
-						case Op.AccIndex0:
-							acc = index(acc, 0);
-						case Op.AccIndex1:
-							acc = index(acc, 1);
-						case Op.AccIndex:
-							acc = index(acc, code[pc]);
-							pc++;
-						case Op.AccBuiltin:
-							acc = m.consts[code[pc++]];
-						case Op.SetStack:
-							stack[sp - 1 - code[pc++]] = acc;
-						case Op.SetGlobal:
-							m.globals[code[pc++]] = acc;
-						case Op.SetEnv:
-							var e:Array<Dynamic> = env;
-							var i = code[pc];
-							if (i >= e.length) throw error("Writing Outside Env");
-							pc++;
-							e[i] = acc;
-						case Op.SetField:
-							var o:Dynamic = stack[sp - 1];
-							if (Std.isOfType(o, NObj)) (o : NObj).set(code[pc], acc) else throw invalidField(code[pc]);
-							stack[--sp] = null;
-							pc++;
-						case Op.SetArray:
-							var a:Dynamic = stack[sp - 1];
-							var k:Dynamic = stack[sp - 2];
-							if (Tag.isArray(a) && Tag.isInt(k)) {
-								var arr:Array<Dynamic> = a;
-								var i:Int = k;
-								if (i >= 0 && i < arr.length) arr[i] = acc;
-							} else if (Std.isOfType(a, NObj)) {
-								var o:NObj = a;
-								var f = o.get(Fields.idSet);
-								if (f == null) throw error("Unsupported operation");
-								callEx(o, f, [k, acc]);
-							} else
-								throw error("Invalid array access");
-							stack[--sp] = null;
-							stack[--sp] = null;
-						case Op.SetIndex:
-							var a:Dynamic = stack[sp - 1];
-							var i = code[pc];
-							if (Tag.isArray(a)) {
-								var arr:Array<Dynamic> = a;
-								if (i >= 0 && i < arr.length) arr[i] = acc;
-							} else if (Std.isOfType(a, NObj)) {
-								var o:NObj = a;
-								var f = o.get(Fields.idSet);
-								if (f == null) throw error("Unsupported operation");
-								callEx(o, f, [i, acc]);
-							} else
-								throw error("Invalid array access");
-							pc++;
-							stack[--sp] = null;
-						case Op.SetThis:
-							vthis = acc;
-						case Op.Push:
-							if (sp == stack.length) grow();
-							stack[sp++] = acc;
-						case Op.Pop:
-							pop(code[pc++]);
-						case Op.Apply:
-							if (!Std.isOfType(acc, NFun)) throw error("$apply");
-							var fn:NFun = acc;
-							var n = code[pc++];
-							if (fn.nargs == n || fn.nargs == -1) acc = callOp(fn, vthis, n) else {
-								if (n > fn.nargs) throw error("$apply");
-								var e:Array<Dynamic> = [for (_ in 0...fn.nargs + 1) null];
-								e[0] = fn;
-								var i = n;
-								while (i > 0) {
-									e[i--] = stack[sp - 1];
-									stack[--sp] = null;
-								}
-								acc = Builtins.applyClosure(fn.nargs - n, e);
-							}
-						case Op.TailCall:
-							var p = code[pc++];
-							var st = p >> 3;
-							var nargs = p & 7;
-							// the arguments over the frame, the frame popped
-							st -= nargs;
-							for (i in 0...nargs)
-								stack[sp - nargs - st + i] = stack[sp - nargs + i];
-							pop(st);
-							return callOp(acc, vthis, nargs);
-						case Op.Call:
-							acc = callOp(acc, vthis, code[pc++]);
-						case Op.ObjCall:
-							var o = stack[sp - 1];
-							stack[--sp] = null;
-							acc = callOp(acc, o, code[pc++]);
-						case Op.Jump:
-							pc = code[pc];
-						case Op.JumpIf:
-							if (Tag.isBool(acc) && (acc : Bool)) pc = code[pc] else pc++;
-						case Op.JumpIfNot:
-							if (Tag.isBool(acc) && (acc : Bool)) pc++ else pc = code[pc];
-						case Op.Trap:
-							if (sp + 6 > stack.length) grow();
-							if (traps == null) traps = [];
-							traps.push(sp);
-							stack[sp] = code[pc];
-							stack[sp + 1] = vthis;
-							stack[sp + 2] = env;
-							stack[sp + 3] = depth;
-							stack[sp + 4] = null;
-							stack[sp + 5] = null;
-							sp += 6;
-							pc++;
-						case Op.EndTrap:
-							if (traps == null || traps.length == 0 || traps[traps.length - 1] != sp - 6) throw error("Invalid End Trap");
-							traps.pop();
-							pop(6);
-						case Op.Ret:
-							pop(code[pc++]);
-							return acc;
-						case Op.MakeEnv:
-							var n = code[pc++];
-							var e:Array<Dynamic> = [for (_ in 0...n) null];
-							while (n-- > 0) {
-								e[n] = stack[sp - 1];
-								stack[--sp] = null;
-							}
-							if (!Std.isOfType(acc, NFun) || (acc : NFun).prim != null) throw error("Invalid environment");
-							var f:NFun = acc;
-							acc = new NFun(f.nargs, e, f.module, f.addr, null, null);
-						case Op.MakeArray:
-							var n = code[pc++];
-							var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
-							while (n > 0) {
-								a[n--] = stack[sp - 1];
-								stack[--sp] = null;
-							}
-							a[0] = acc;
-							acc = a;
-						case Op.MakeArray2:
-							var n = code[pc++];
-							var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
-							a[n] = acc;
-							while (n > 0) {
-								a[--n] = stack[sp - 1];
-								stack[--sp] = null;
-							}
-							acc = a;
-						case Op.Bool:
-							acc = !isFalse(acc);
-						case Op.Not:
-							acc = isFalse(acc);
-						case Op.IsNull:
-							acc = acc == null;
-						case Op.IsNotNull:
-							acc = acc != null;
-						case Op.Add:
-							acc = add(stack[sp - 1], acc);
-							stack[--sp] = null;
-						case Op.Sub:
-							acc = numberOp(stack[sp - 1], acc, Op.Sub);
-							stack[--sp] = null;
-						case Op.Mult:
-							acc = numberOp(stack[sp - 1], acc, Op.Mult);
-							stack[--sp] = null;
-						case Op.Div:
-							acc = div(stack[sp - 1], acc);
-							stack[--sp] = null;
-						case Op.Mod:
-							var a = stack[sp - 1];
-							if (Tag.isInt(acc) && (acc : Int) == 0 && Tag.isInt(a)) throw error("Invalid operation (%)");
-							acc = numberOp(a, acc, Op.Mod);
-							stack[--sp] = null;
-						case Op.Shl | Op.Shr | Op.UShr | Op.Or | Op.And | Op.Xor:
-							var a = stack[sp - 1];
-							var op = code[pc - 1];
-							if (!Tag.isInt(acc) || !Tag.isInt(a)) throw error("Invalid operation (" + opName(op) + ")");
-							var x:Int = a, y:Int = acc;
-							acc = switch op {
-								case Op.Shl: x << y;
-								case Op.Shr: x >> y;
-								case Op.UShr: x >>> y;
-								case Op.Or: x | y;
-								case Op.And: x & y;
-								case _: x ^ y;
-							}
-							stack[--sp] = null;
-						case Op.Eq:
-							var c = compare(stack[sp - 1], acc);
-							acc = c == 0;
-							stack[--sp] = null;
-						case Op.Neq:
-							var c = compare(stack[sp - 1], acc);
-							acc = c != 0;
-							stack[--sp] = null;
-						case Op.Lt:
-							var c = compare(stack[sp - 1], acc);
-							acc = c != INVALID && c < 0;
-							stack[--sp] = null;
-						case Op.Lte:
-							var c = compare(stack[sp - 1], acc);
-							acc = c != INVALID && c <= 0;
-							stack[--sp] = null;
-						case Op.Gt:
-							var c = compare(stack[sp - 1], acc);
-							acc = c != INVALID && c > 0;
-							stack[--sp] = null;
-						case Op.Gte:
-							var c = compare(stack[sp - 1], acc);
-							acc = c != INVALID && c >= 0;
-							stack[--sp] = null;
-						case Op.TypeOf:
-							acc = Tag.of(acc);
-						case Op.Compare:
-							var c = compare(stack[sp - 1], acc);
-							acc = c == INVALID ? null : c;
-							stack[--sp] = null;
-						case Op.PhysCompare:
-							acc = physCompare(stack[sp - 1], acc);
-							stack[--sp] = null;
-						case Op.Hash:
-							if (!Std.isOfType(acc, NStr)) throw error("$hash");
-							acc = Fields.idBytes((acc : NStr).b);
-						case Op.New:
-							acc = newObject(acc);
-						case Op.JumpTable:
-							var n = code[pc];
-							if (Tag.isInt(acc) && (acc : Int) >= 0 && (acc : Int) < n) pc += 1 + 2 * (acc : Int) else pc += 1 + 2 * n;
-						case Op.Loop:
-						case Op.Last:
-							return acc;
-						case op:
-							throw error("Invalid opcode " + op);
-					}
-				}
-			} catch (e:Dynamic) {
-				var ne:NekoError = Std.isOfType(e, NekoError) ? e : wrap(e);
-				if (ne.stack == null) ne.stack = [];
-				// (the frames between the throw and the trap: not the trap's own)
-				if (traps == null || traps.length == 0) {
-					ne.stack.push(m.position(pc - 1));
-					throw ne;
-				}
-				var t = traps.pop();
-				vthis = stack[t + 1];
-				env = stack[t + 2];
-				depth = stack[t + 3];
-				pc = stack[t];
-				while (sp > t)
+			switch code[pc++] {
+				case Op.AccNull:
+					acc = null;
+				case Op.AccTrue:
+					acc = true;
+				case Op.AccFalse:
+					acc = false;
+				case Op.AccThis:
+					acc = vthis;
+				case Op.AccInt:
+					acc = m.consts[code[pc++]];
+				case Op.AccStack0:
+					acc = stack[sp - 1];
+				case Op.AccStack1:
+					acc = stack[sp - 2];
+				case Op.AccStack:
+					acc = stack[sp - 1 - code[pc++]];
+				case Op.AccGlobal:
+					acc = m.globals[code[pc++]];
+				case Op.AccEnv:
+					var e:Array<Dynamic> = env;
+					var i = code[pc];
+					if (i >= e.length) throw errorAt(m, pc, "Reading Outside Env");
+					pc++;
+					acc = e[i];
+				case Op.AccField:
+					fpcs[depth] = pc;
+					var id = code[pc];
+					if (Tag.isObject(acc)) {
+						var o:NObj = acc;
+						if (resolver != null && !o.has(id)) acc = callEx(null, resolver, [o, id], true) else acc = o.get(id);
+					} else
+						throw invalidFieldAt(m, pc, id);
+					pc++;
+				case Op.AccArray:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(acc) && Tag.isArray(a)) {
+						var arr:Array<Dynamic> = a;
+						var k:Int = acc;
+						acc = k < 0 || k >= arr.length ? null : arr[k];
+					} else if (Tag.isObject(a))
+						acc = objectOp(a, acc, Fields.idGet, "Unsupported operation")
+					else
+						throw errorAt(m, pc, "Invalid array access");
 					stack[--sp] = null;
-				excStack = ne.stack;
-				ne.stack = null;
-				acc = ne.value;
+				case Op.AccIndex0:
+					fpcs[depth] = pc;
+					acc = index(acc, 0);
+				case Op.AccIndex1:
+					fpcs[depth] = pc;
+					acc = index(acc, 1);
+				case Op.AccIndex:
+					fpcs[depth] = pc;
+					acc = index(acc, code[pc]);
+					pc++;
+				case Op.AccBuiltin:
+					acc = m.consts[code[pc++]];
+				case Op.SetStack:
+					stack[sp - 1 - code[pc++]] = acc;
+				case Op.SetGlobal:
+					m.globals[code[pc++]] = acc;
+				case Op.SetEnv:
+					var e:Array<Dynamic> = env;
+					var i = code[pc];
+					if (i >= e.length) throw errorAt(m, pc, "Writing Outside Env");
+					pc++;
+					e[i] = acc;
+				case Op.SetField:
+					fpcs[depth] = pc;
+					var o:Dynamic = stack[sp - 1];
+					if (Tag.isObject(o)) (o : NObj).set(code[pc], acc) else throw invalidFieldAt(m, pc, code[pc]);
+					stack[--sp] = null;
+					pc++;
+				case Op.SetArray:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					var k:Dynamic = stack[sp - 2];
+					if (Tag.isArray(a) && Tag.isInt(k)) {
+						var arr:Array<Dynamic> = a;
+						var i:Int = k;
+						if (i >= 0 && i < arr.length) arr[i] = acc;
+					} else if (Tag.isObject(a)) {
+						var o:NObj = a;
+						var f = o.get(Fields.idSet);
+						if (f == null) throw errorAt(m, pc, "Unsupported operation");
+						callEx(o, f, [k, acc]);
+					} else
+						throw errorAt(m, pc, "Invalid array access");
+					stack[--sp] = null;
+					stack[--sp] = null;
+				case Op.SetIndex:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					var i = code[pc];
+					if (Tag.isArray(a)) {
+						var arr:Array<Dynamic> = a;
+						if (i >= 0 && i < arr.length) arr[i] = acc;
+					} else if (Tag.isObject(a)) {
+						var o:NObj = a;
+						var f = o.get(Fields.idSet);
+						if (f == null) throw errorAt(m, pc, "Unsupported operation");
+						callEx(o, f, [i, acc]);
+					} else
+						throw errorAt(m, pc, "Invalid array access");
+					pc++;
+					stack[--sp] = null;
+				case Op.SetThis:
+					vthis = acc;
+				case Op.Push:
+					if (sp == stack.length) grow();
+					stack[sp++] = acc;
+				case Op.Pop:
+					pop(code[pc++]);
+				case Op.Apply:
+					fpcs[depth] = pc + 1;
+					if (!Tag.isFunction(acc)) throw errorAt(m, pc, "$apply");
+					var fn:NFun = acc;
+					var n = code[pc++];
+					if (fn.nargs == n || fn.nargs == -1) acc = callOp(fn, vthis, n) else {
+						if (n > fn.nargs) throw errorAt(m, pc, "$apply");
+						var e:Array<Dynamic> = [for (_ in 0...fn.nargs + 1) null];
+						e[0] = fn;
+						var i = n;
+						while (i > 0) {
+							e[i--] = stack[sp - 1];
+							stack[--sp] = null;
+						}
+						acc = Builtins.applyClosure(fn.nargs - n, e);
+					}
+				case Op.TailCall:
+					var p = code[pc++];
+					var st = p >> 3;
+					var nargs = p & 7;
+					// the arguments over the frame, the frame popped
+					st -= nargs;
+					for (i in 0...nargs)
+						stack[sp - nargs - st + i] = stack[sp - nargs + i];
+					pop(st);
+					fpcs[depth] = pc;
+					var r = callOp(acc, vthis, nargs);
+					if (trap >= 0) trapState = RETURNED;
+					return r;
+				case Op.Call:
+					fpcs[depth] = pc + 1;
+					acc = callOp(acc, vthis, code[pc++]);
+				case Op.ObjCall:
+					fpcs[depth] = pc + 1;
+					var o:Dynamic = stack[sp - 1];
+					stack[--sp] = null;
+					acc = callOp(acc, o, code[pc++]);
+				case Op.Jump:
+					pc = code[pc];
+				case Op.JumpIf:
+					if (Tag.isBool(acc) && (acc : Bool)) pc = code[pc] else pc++;
+				case Op.JumpIfNot:
+					if (Tag.isBool(acc) && (acc : Bool)) pc++ else pc = code[pc];
+				case Op.Trap:
+					if (sp + 6 > stack.length) grow();
+					var t = sp;
+					stack[t] = code[pc];
+					stack[t + 1] = vthis;
+					stack[t + 2] = env;
+					stack[t + 3] = depth;
+					stack[t + 4] = null;
+					stack[t + 5] = null;
+					sp += 6;
+					acc = protect(m, pc + 1, acc, t);
+					if (trapState == RETURNED) {
+						if (trap < 0) trapState = 0;
+						return acc;
+					}
+					pc = resumePc;
+				case Op.EndTrap:
+					if (trap < 0 || trap != sp - 6) throw errorAt(m, pc, "Invalid End Trap");
+					pop(6);
+					trapState = ENDED;
+					resumePc = pc;
+					return acc;
+				case Op.Ret:
+					pop(code[pc++]);
+					if (trap >= 0) trapState = RETURNED;
+					return acc;
+				case Op.MakeEnv:
+					fpcs[depth] = pc;
+					var n = code[pc++];
+					var e:Array<Dynamic> = [for (_ in 0...n) null];
+					while (n-- > 0) {
+						e[n] = stack[sp - 1];
+						stack[--sp] = null;
+					}
+					if (!Tag.isFunction(acc) || (acc : NFun).prim != null) throw errorAt(m, pc, "Invalid environment");
+					var f:NFun = acc;
+					acc = new NFun(f.nargs, e, f.module, f.addr, null, null);
+				case Op.MakeArray:
+					var n = code[pc++];
+					var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
+					while (n > 0) {
+						a[n--] = stack[sp - 1];
+						stack[--sp] = null;
+					}
+					a[0] = acc;
+					acc = a;
+				case Op.MakeArray2:
+					var n = code[pc++];
+					var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
+					a[n] = acc;
+					while (n > 0) {
+						a[--n] = stack[sp - 1];
+						stack[--sp] = null;
+					}
+					acc = a;
+				case Op.Bool:
+					acc = !isFalse(acc);
+				case Op.Not:
+					acc = isFalse(acc);
+				case Op.IsNull:
+					acc = acc == null;
+				case Op.IsNotNull:
+					acc = acc != null;
+				case Op.Add:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					acc = Tag.isInt(a) && Tag.isInt(acc) ? box((a : Int) + (acc : Int)) : add(a, acc);
+					stack[--sp] = null;
+				case Op.Sub:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					acc = Tag.isInt(a) && Tag.isInt(acc) ? box((a : Int) - (acc : Int)) : numberOp(a, acc, Op.Sub);
+					stack[--sp] = null;
+				case Op.Mult:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					acc = Tag.isInt(a) && Tag.isInt(acc) ? box((a : Int) * (acc : Int)) : numberOp(a, acc, Op.Mult);
+					stack[--sp] = null;
+				case Op.Div:
+					fpcs[depth] = pc;
+					acc = div(stack[sp - 1], acc);
+					stack[--sp] = null;
+				case Op.Mod:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(acc) && (acc : Int) == 0 && Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (%)");
+					acc = numberOp(a, acc, Op.Mod);
+					stack[--sp] = null;
+				case Op.Shl | Op.Shr | Op.UShr | Op.Or | Op.And | Op.Xor:
+					var a:Dynamic = stack[sp - 1];
+					var op = code[pc - 1];
+					if (!Tag.isInt(acc) || !Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (" + opName(op) + ")");
+					var x:Int = a, y:Int = acc;
+					acc = switch op {
+						case Op.Shl: x << y;
+						case Op.Shr: x >> y;
+						case Op.UShr: x >>> y;
+						case Op.Or: x | y;
+						case Op.And: x & y;
+						case _: x ^ y;
+					}
+					stack[--sp] = null;
+				case Op.Eq:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) {
+						acc = (a : Int) == (acc : Int);
+						stack[--sp] = null;
+						continue;
+					}
+					var c = compare(a, acc);
+					acc = c == 0;
+					stack[--sp] = null;
+				case Op.Neq:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) {
+						acc = (a : Int) != (acc : Int);
+						stack[--sp] = null;
+						continue;
+					}
+					var c = compare(a, acc);
+					acc = c != 0;
+					stack[--sp] = null;
+				case Op.Lt:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) {
+						acc = (a : Int) < (acc : Int);
+						stack[--sp] = null;
+						continue;
+					}
+					var c = compare(a, acc);
+					acc = c != INVALID && c < 0;
+					stack[--sp] = null;
+				case Op.Lte:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) {
+						acc = (a : Int) <= (acc : Int);
+						stack[--sp] = null;
+						continue;
+					}
+					var c = compare(a, acc);
+					acc = c != INVALID && c <= 0;
+					stack[--sp] = null;
+				case Op.Gt:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) {
+						acc = (a : Int) > (acc : Int);
+						stack[--sp] = null;
+						continue;
+					}
+					var c = compare(a, acc);
+					acc = c != INVALID && c > 0;
+					stack[--sp] = null;
+				case Op.Gte:
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) {
+						acc = (a : Int) >= (acc : Int);
+						stack[--sp] = null;
+						continue;
+					}
+					var c = compare(a, acc);
+					acc = c != INVALID && c >= 0;
+					stack[--sp] = null;
+				case Op.TypeOf:
+					acc = Tag.of(acc);
+				case Op.Compare:
+					fpcs[depth] = pc;
+					var c = compare(stack[sp - 1], acc);
+					acc = c == INVALID ? null : c;
+					stack[--sp] = null;
+				case Op.PhysCompare:
+					acc = physCompare(stack[sp - 1], acc);
+					stack[--sp] = null;
+				case Op.Hash:
+					if (!Tag.isString(acc)) throw errorAt(m, pc, "$hash");
+					acc = Fields.idBytes((acc : NStr).b);
+				case Op.New:
+					acc = newObject(acc);
+				case Op.JumpTable:
+					var n = code[pc];
+					if (Tag.isInt(acc) && (acc : Int) >= 0 && (acc : Int) < n) pc += 1 + 2 * (acc : Int) else pc += 1 + 2 * n;
+				case Op.Loop:
+				case Op.Last:
+					if (trap >= 0) trapState = RETURNED;
+					return acc;
+				case op:
+					throw errorAt(m, pc, "Invalid opcode " + op);
 			}
 		}
+	}
+
+	static inline var ENDED = 1;
+	static inline var RETURNED = 2;
+
+	var trapState = 0;
+	var resumePc = 0;
+
+	// the code under a trap: an exception restores the trap's state and goes on
+	// at its handler
+	function protect(m:Module, pc:Int, acc:Dynamic, t:Int):Dynamic {
+		try {
+			return interp(m, pc, acc, t);
+		} catch (e:Dynamic) {
+			var ne = wrap(e);
+			capture(ne);
+			var d:Int = stack[t + 3];
+			resumePc = stack[t];
+			vthis = stack[t + 1];
+			env = stack[t + 2];
+			// (the frames between the throw and the trap, not the trap's own)
+			excStack = ne.stack.slice(0, ne.depth - d);
+			depth = d;
+			while (sp > t)
+				stack[--sp] = null;
+			trapState = ENDED;
+			return ne.value;
+		}
+	}
+
+	// the positions of the frames when it was thrown, innermost first
+	public function capture(ne:NekoError) {
+		if (ne.stack != null) return;
+		var st:Array<Dynamic> = [];
+		var k = depth;
+		while (k >= 0) {
+			var m = fmods[k];
+			st.push(m == null ? null : m.position(fpcs[k] - 1));
+			k--;
+		}
+		ne.stack = st;
+		ne.depth = depth;
+	}
+
+	function errorAt(m:Module, pc:Int, msg:String):NekoError {
+		fpcs[depth] = pc;
+		return error(msg);
+	}
+
+	function invalidFieldAt(m:Module, pc:Int, id:Int):NekoError {
+		fpcs[depth] = pc;
+		return invalidField(id);
 	}
 
 	// a Haxe error of the host (an unexpected one) as a Neko exception
@@ -483,7 +606,7 @@ class VM {
 		return if (Tag.isArray(acc)) {
 			var arr:Array<Dynamic> = acc;
 			i < 0 || i >= arr.length ? null : arr[i];
-		} else if (Std.isOfType(acc, NObj)) objectOp(acc, i, Fields.idGet, "Unsupported operation") else throw error("Invalid array access");
+		} else if (Tag.isObject(acc)) objectOp(acc, i, Fields.idGet, "Unsupported operation") else throw error("Invalid array access");
 	}
 
 	public static inline function isFalse(v:Dynamic):Bool {
@@ -492,7 +615,7 @@ class VM {
 
 	public static function newObject(p:Dynamic):NObj {
 		if (p == null) return new NObj();
-		if (!Std.isOfType(p, NObj)) throw error("$new");
+		if (!Tag.isObject(p)) throw error("$new");
 		return (p : NObj).copy();
 	}
 
@@ -504,19 +627,19 @@ class VM {
 
 	// a field function of o if any (ObjectOpGen's test)
 	inline function opField(o:Dynamic, id:Int):Dynamic
-		return Std.isOfType(o, NObj) ? (o : NObj).get(id) : null;
+		return Tag.isObject(o) ? (o : NObj).get(id) : null;
 
 	function add(a:Dynamic, b:Dynamic):Dynamic {
 		var ka = hxmc.Native.typeKind(a), kb = hxmc.Native.typeKind(b);
 		if (ka == 1 && kb == 1) return (a : Int) + (b : Int);
 		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return (a : Float) + (b : Float);
-		if (ka == 1 && Std.isOfType(b, NStr)) return concat(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
-		if (kb == 1 && Std.isOfType(a, NStr)) return concat((a : NStr).b, Bytes.ofString(Std.string((b : Int))));
+		if (ka == 1 && Tag.isString(b)) return concat(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
+		if (kb == 1 && Tag.isString(a)) return concat((a : NStr).b, Bytes.ofString(Std.string((b : Int))));
 		var f = opField(a, Fields.idAdd);
 		if (f != null) return callEx(a, f, [b]);
 		f = opField(b, Fields.idRadd);
 		if (f != null) return callEx(b, f, [a]);
-		if (Std.isOfType(a, NStr) || Std.isOfType(b, NStr)) return concat(toBytes(a), toBytes(b));
+		if (Tag.isString(a) || Tag.isString(b)) return concat(toBytes(a), toBytes(b));
 		throw error("Invalid operation (+)");
 	}
 
@@ -596,21 +719,21 @@ class VM {
 		if (ka == 1) {
 			if (kb == 1) return icmp(a, b);
 			if (kb == 2) return fcmp((a : Int), (b : Float));
-			if (Std.isOfType(b, NStr)) return scmp(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
+			if (Tag.isString(b)) return scmp(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
 		} else if (ka == 2) {
 			if (kb == 1) return fcmp((a : Float), (b : Int));
 			if (kb == 2) return fcmp(a, b);
-			if (Std.isOfType(b, NStr)) return scmp(Bytes.ofString(formatFloat(a)), (b : NStr).b);
-		} else if (Std.isOfType(a, NStr)) {
+			if (Tag.isString(b)) return scmp(Bytes.ofString(formatFloat(a)), (b : NStr).b);
+		} else if (Tag.isString(a)) {
 			var sa = (a : NStr).b;
 			if (kb == 1) return scmp(sa, Bytes.ofString(Std.string((b : Int))));
 			if (kb == 2) return scmp(sa, Bytes.ofString(formatFloat(b)));
 			if (kb == 3) return scmp(sa, (b : Bool) ? TRUE : FALSE);
-			if (Std.isOfType(b, NStr)) return scmp(sa, (b : NStr).b);
+			if (Tag.isString(b)) return scmp(sa, (b : NStr).b);
 		} else if (ka == 3) {
 			if (kb == 3) return (a : Bool) == (b : Bool) ? 0 : ((a : Bool) ? 1 : -1);
-			if (Std.isOfType(b, NStr)) return scmp((a : Bool) ? TRUE : FALSE, (b : NStr).b);
-		} else if (Std.isOfType(a, NObj) && Std.isOfType(b, NObj)) {
+			if (Tag.isString(b)) return scmp((a : Bool) ? TRUE : FALSE, (b : NStr).b);
+		} else if (Tag.isObject(a) && Tag.isObject(b)) {
 			if (a == b) return 0;
 			var f = (a : NObj).get(Fields.idCompare);
 			if (f == null) return INVALID;
@@ -643,7 +766,7 @@ class VM {
 	// ---- printing (val_buffer)
 
 	public function toBytes(v:Dynamic):Bytes {
-		if (Std.isOfType(v, NStr)) return (v : NStr).b;
+		if (Tag.isString(v)) return (v : NStr).b;
 		var b = new BytesBuffer();
 		buffer(b, v, []);
 		return b.getBytes();
@@ -672,7 +795,7 @@ class VM {
 				var o:NObj = v;
 				var f = o.get(Fields.idString);
 				var s:Dynamic = f == null ? null : callEx(o, f, []);
-				if (Std.isOfType(s, NStr)) b.add((s : NStr).b) else {
+				if (Tag.isString(s)) b.add((s : NStr).b) else {
 					stack.push(v);
 					b.addString("{");
 					var first = true;

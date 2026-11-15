@@ -13,7 +13,7 @@ class Check {
 	}
 
 	public static inline function str(v:Dynamic):NStr {
-		if (!Std.isOfType(v, NStr)) throw Builtins.failure;
+		if (!Tag.isString(v)) throw Builtins.failure;
 		return v;
 	}
 
@@ -23,12 +23,12 @@ class Check {
 	}
 
 	public static inline function obj(v:Dynamic):NObj {
-		if (!Std.isOfType(v, NObj)) throw Builtins.failure;
+		if (!Tag.isObject(v)) throw Builtins.failure;
 		return v;
 	}
 
 	public static inline function fun(v:Dynamic):NFun {
-		if (!Std.isOfType(v, NFun)) throw Builtins.failure;
+		if (!Tag.isFunction(v)) throw Builtins.failure;
 		return v;
 	}
 
@@ -48,7 +48,7 @@ class Check {
 	}
 
 	public static inline function abs(v:Dynamic, kind:String):Dynamic {
-		if (!Std.isOfType(v, NAbs) || (v : NAbs).kind != kind) throw Builtins.failure;
+		if (!Tag.isAbstract(v) || (v : NAbs).kind != kind) throw Builtins.failure;
 		return (v : NAbs).data;
 	}
 }
@@ -262,27 +262,27 @@ class Builtins {
 		});
 		add("isbigendian", 0, (vm, a) -> false);
 		add("new", 1, (vm, a) -> {
-			if (a[0] != null && !Std.isOfType(a[0], NObj)) throw failure;
+			if (a[0] != null && !Tag.isObject(a[0])) throw failure;
 			return VM.newObject(a[0]);
 		});
 		add("objget", 2, (vm, a) -> {
-			if (!Std.isOfType(a[0], NObj)) return (null : Dynamic);
+			if (!Tag.isObject(a[0])) return (null : Dynamic);
 			return (a[0] : NObj).get(a[1].int());
 		});
 		add("objset", 3, (vm, a) -> {
-			if (!Std.isOfType(a[0], NObj)) return (null : Dynamic);
+			if (!Tag.isObject(a[0])) return (null : Dynamic);
 			(a[0] : NObj).set(a[1].int(), a[2]);
 			return a[2];
 		});
 		add("objcall", 3, (vm, a) -> {
-			if (!Std.isOfType(a[0], NObj)) return (null : Dynamic);
+			if (!Tag.isObject(a[0])) return (null : Dynamic);
 			var o:NObj = a[0];
 			var f = o.get(a[1].int());
 			return vm.callEx(o, f, a[2].arr().copy());
 		});
 		add("objfield", 2, (vm, a) -> {
 			var id = a[1].int();
-			return Std.isOfType(a[0], NObj) && (a[0] : NObj).hasOwn(id);
+			return Tag.isObject(a[0]) && (a[0] : NObj).hasOwn(id);
 		});
 		add("objremove", 2, (vm, a) -> a[0].obj().remove(a[1].int()));
 		add("objfields", 1, (vm, a) -> {
@@ -304,7 +304,7 @@ class Builtins {
 		add("int", 1, (vm, a) -> toInt(a[0]));
 		add("float", 1, (vm, a) -> {
 			var v:Dynamic = a[0];
-			if (Std.isOfType(v, NStr)) return strtod((v : NStr).b);
+			if (Tag.isString(v)) return strtod((v : NStr).b);
 			if (Tag.isInt(v) || Tag.isFloat(v)) return ((v : Float) : Dynamic);
 			return null;
 		});
@@ -353,21 +353,19 @@ class Builtins {
 		add("istrue", 1, (vm, a) -> !VM.isFalse(a[0]));
 		add("throw", 1, (vm, a) -> throw new NekoError(a[0]));
 		add("rethrow", 1, (vm, a) -> {
-			var e = new NekoError(a[0]);
-			e.stack = vm.excStack.copy();
-			throw e;
+			throw new NekoError(a[0]);
 		});
 		add("nargs", 1, (vm, a) -> a[0].fun().nargs);
 		add("call", 3, (vm, a) -> vm.callEx(a[1], a[0], a[2].arr().copy()));
 		add("isnan", 1, (vm, a) -> Tag.isFloat(a[0]) && Math.isNaN(a[0]));
 		add("isinfinite", 1, (vm, a) -> Tag.isFloat(a[0]) && !Math.isNaN(a[0]) && !Math.isFinite(a[0]));
 		add("getkind", 1, (vm, a) -> {
-			if (!Std.isOfType(a[0], NAbs)) throw failure;
+			if (!Tag.isAbstract(a[0])) throw failure;
 			return new NAbs("kind", (a[0] : NAbs).kind);
 		});
 		add("iskind", 2, (vm, a) -> {
 			var k = a[1].abs("kind");
-			return Std.isOfType(a[0], NAbs) && (a[0] : NAbs).kind == k;
+			return Tag.isAbstract(a[0]) && (a[0] : NAbs).kind == k;
 		});
 		add("hnew", 1, (vm, a) -> new NAbs("hash", new NHash(a[0].int())));
 		add("hget", 3, (vm, a) -> a[0].abs("hash").get(vm, a[1], cmpFun(a[2])));
@@ -433,7 +431,7 @@ class Builtins {
 	static function closureCallback(vm:VM, args:Array<Dynamic>):Dynamic {
 		var env:Array<Dynamic> = vm.env;
 		var f:NFun = env[0];
-		var o = env[1];
+		var o:Dynamic = env[1];
 		var cargs = env.length - 2;
 		if (f.nargs != cargs + args.length && f.nargs != -1) return (null : Dynamic);
 		var a = env.slice(2).concat(args);
@@ -464,7 +462,7 @@ class Builtins {
 			var t = Math.ffloor(m);
 			return t >= 2147483648.0 ? Std.int(t - 4294967296.0) : Std.int(t);
 		}
-		if (Std.isOfType(v, NStr)) {
+		if (Tag.isString(v)) {
 			var s = (v : NStr).b;
 			var i = 0;
 			while (i < s.length && isSpace(s.get(i)))
@@ -617,7 +615,7 @@ class NHash {
 						return;
 					}
 				l.push(v);
-				if (Std.isOfType(v, NObj)) {
+				if (Tag.isObject(v)) {
 					var o:NObj = v;
 					for (i in 0...o.ids.length) {
 						big(h, o.ids[i]);

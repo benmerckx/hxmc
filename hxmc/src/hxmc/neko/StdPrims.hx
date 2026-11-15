@@ -356,7 +356,7 @@ class StdPrims {
 		add("set_trusted", 1, (vm, a) -> null);
 		add("same_closure", 2, (vm, a) -> {
 			var f1 = a[0], f2 = a[1];
-			if (!Std.isOfType(f1, NFun) || !Std.isOfType(f2, NFun)) return false;
+			if (!Tag.isFunction(f1) || !Tag.isFunction(f2)) return false;
 			var x:NFun = f1, y:NFun = f2;
 			if (x == y) return true;
 			if (x.nargs != y.nargs || x.module != y.module || x.addr != y.addr || x.prim != y.prim) {
