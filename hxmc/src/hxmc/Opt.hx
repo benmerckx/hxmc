@@ -2,6 +2,7 @@ package hxmc;
 
 import haxe.ds.Vector;
 import hxmc.Mir;
+import hxmc.Ssa;
 import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
@@ -281,6 +282,52 @@ class Opt {
 						if ((i.op == Call || objCall(i.op)) && !b.cold) calls = true;
 					}
 			if (calls) continue;
+			// A guard (LLVM's loop-rotate, then LICM into the guarded
+			// preheader). A header that only tests (pure operations of its phis
+			// and of values from before the loop) and branches out or to the
+			// loop's block after it, which only that header enters, in a loop
+			// of one way back (a jump): the objects that block dereferences
+			// before any effect are not null once the loop's first round passes
+			// the test, so loads through them can move to a block on that edge,
+			// once the test is at the loop's end (guard)
+			var guardTo:Null<MBlock> = null, latch:Null<MBlock> = null;
+			for (p in h.preds)
+				if (p.mark == inOrder && body[p.tmp]) latch = latch == null ? p : h;
+			if (latch == h || latch == null || latch.term() == null || latch.term().op != Jmp) latch = null;
+			var firstDerefs:Array<Int> = [];
+			var ht = h.term();
+			if (latch != null && outside.term() != null && (outside.succs.length != 1 || outside.term().op == Jmp) && ht != null && ht.op == Br
+				&& ht.targets.length == 2) {
+				var t0 = ht.targets[0], t1 = ht.targets[1];
+				var in0 = t0.mark == inOrder && body[t0.tmp], in1 = t1.mark == inOrder && body[t1.tmp];
+				var bb = in0 ? t0 : t1;
+				if (in0 != in1 && bb != h && bb.preds.length == 1 && !bb.handler && !hasPhi(bb)) {
+					var n = 0;
+					for (i in h.ins)
+						if (!i.dead && i.op != Phi && i != ht) {
+							if (!(pure(i.op) || i.op == Const || i.op == ConstF) || i.ty == V128) n = 99;
+							n++;
+						}
+					if (n <= 8) {
+						guardTo = bb;
+						for (i in bb.ins) {
+							if (i.dead) continue;
+							if ((i.op == Load || objDeref(i.op)) && i.a >= 0) firstDerefs.push(baseOf(i.a));
+							if (!(pure(i.op) || i.op == Const || i.op == ConstF || i.op == SymAddr || i.op == Load || objPure(i.op)
+								|| i.op == GetField || i.op == ArrayLength || i.op == NArrayLength || i.op == EnumTag || i.op == NullCheck))
+								break;
+						}
+						if (firstDerefs.length == 0) guardTo = null;
+					}
+				}
+			}
+			// (the instructions that move after the guard: its loads, what uses them)
+			var guarded = new Map<Int, Bool>();
+			var needsGuard = false;
+			inline function nonNullIn(i:MIns):Bool {
+				var o = baseOf(i.a);
+				return nonNull(o, outside, 0) || guardTo != null && i.ty != V128 && firstDerefs.indexOf(o) >= 0 && (needsGuard = true);
+			}
 			// the movable instructions, in reverse postorder of their blocks
 			var hoist:Array<MIns> = [];
 			if (inv.length < vals.length) inv.resize(vals.length);
@@ -292,14 +339,15 @@ class Opt {
 			for (b in members)
 				for (i in b.ins) {
 					if (i.dead) continue;
+					needsGuard = false;
 					var can = switch i.op {
 						case Const | ConstF | SymAddr | StackAddr: true;
 						case Cmp: false; // (fused with its branch)
 						// (object-level: as the loads of fields, headers and immutable memory below)
 						case GetField | ArrayLength | NArrayLength:
 							var c = objLoadClass(i);
-							c >= 0 && kills & (1 << c) == 0 && nonNull(baseOf(i.a), outside, 0);
-						case EnumTag: nonNull(baseOf(i.a), outside, 0);
+							c >= 0 && kills & (1 << c) == 0 && nonNullIn(i);
+						case EnumTag: nonNullIn(i);
 						case TypeTest | FieldAddr: true;
 						case _ if (i.isObj()): false;
 						case Load | TlsLoad:
@@ -309,10 +357,16 @@ class Opt {
 							// the load cannot fault before the loop; a loop that may collect
 							// writes them all: no reference leaves it to live across a GC point)
 							|| i.op == Load && i.b < 0 && (i.mem == MField || i.mem == MHdr || i.mem == MConst)
-							&& kills & (1 << memClass(i)) == 0 && nonNull(baseOf(i.a), outside, 0);
+							&& kills & (1 << memClass(i)) == 0 && nonNullIn(i);
 						case op: pure(op);
 					};
 					if (!can || !invariant(i.a) || !invariant(i.b) || !invariant(i.c)) continue;
+					// (after the guard: a load that needs it, an operation of one that does)
+					if (b == h && needsGuard) continue;
+					if (needsGuard || i.a >= 0 && guarded.exists(i.a) || i.b >= 0 && guarded.exists(i.b) || i.c >= 0 && guarded.exists(i.c)) {
+						if (b == h || i.ty == V128) continue;
+						guarded.set(i.id, true);
+					}
 					inv[i.id] = true;
 					hoist.push(i);
 				}
@@ -354,16 +408,234 @@ class Opt {
 			}
 			// move
 			var term = pre.ins.pop();
-			for (i in hoist) {
-				i.block.ins.remove(i);
-				i.block = pre;
-				pre.ins.push(i);
-			}
+			for (i in hoist)
+				if (!guarded.exists(i.id)) {
+					i.block.ins.remove(i);
+					i.block = pre;
+					pre.ins.push(i);
+				}
 			pre.ins.push(term);
 			moved = true;
+			if (guardTo != null && Lambda.count(guarded) > 0) {
+				guard(pre, h, guardTo, latch, [for (i in hoist) if (guarded.exists(i.id)) i], nextBlock++);
+				made = true;
+			}
 		}
 		if (made) f.edited();
 		return moved;
+	}
+
+	// licm's guard: the loop rotated. Its header h only tests and branches
+	// out (to its exit) or to inLoop (entered from h alone, without phis);
+	// latch, its one way back, jumps to h. The latch gets a copy of the test
+	// (h's phis as their values from the latch) branching to inLoop or the
+	// exit: h runs once, before the loop, and its branch to inLoop goes
+	// through a new block of the guarded instructions gs (in order). The
+	// values of h, of the copy and of gs reach their users through phis
+	// (SsaReader: inLoop's, the exit's; a guarded value is 0 on the way out
+	// from h, where it was not computed).
+	function guard(pre:MBlock, h:MBlock, inLoop:MBlock, latch:MBlock, gs:Array<MIns>, id:Int) {
+		var vals = f.vals;
+		function add(b:MBlock, op:Op, ty:MTy):MIns {
+			var x = new MIns(op, ty);
+			x.id = vals.length;
+			vals.push(x);
+			x.block = b;
+			b.ins.push(x);
+			return x;
+		}
+		var ht = h.term();
+		var exit = ht.targets[0] == inLoop ? ht.targets[1] : ht.targets[0];
+		var li = h.preds.indexOf(latch);
+		var map = new Map<Int, Int>();
+		for (i in h.ins)
+			if (!i.dead && i.op == Phi) map.set(i.id, i.args[li]);
+		inline function m(v:Int):Int {
+			var r = v < 0 ? null : map.get(v);
+			return r == null ? v : r;
+		}
+		// the test at the latch
+		var jmp = latch.ins.pop();
+		for (i in h.ins) {
+			if (i.dead || i.op == Phi || i == ht) continue;
+			var x = add(latch, i.op, i.ty);
+			x.a = m(i.a);
+			x.b = m(i.b);
+			x.c = m(i.c);
+			x.imm = i.imm;
+			x.imm2 = i.imm2;
+			x.f = i.f;
+			x.size = i.size;
+			x.signed = i.signed;
+			x.sym = i.sym;
+			x.vty = i.vty;
+			x.pos = i.pos;
+			map.set(i.id, x.id);
+		}
+		var br = add(latch, Br, Void);
+		br.a = m(ht.a);
+		br.pos = jmp.pos;
+		br.targets = vector(ht.targets[0], ht.targets[1]);
+		latch.succs = [ht.targets[0], ht.targets[1]];
+		inLoop.preds.push(latch);
+		// (the exit's phis: from the latch what they take from h, read again below)
+		var hi = exit.preds.indexOf(h);
+		exit.preds.push(latch);
+		for (i in exit.ins)
+			if (!i.dead && i.op == Phi) {
+				var args = new Vector<Int>(i.args.length + 1);
+				for (q in 0...i.args.length)
+					args[q] = i.args[q];
+				args[i.args.length] = i.args[hi];
+				i.args = args;
+			}
+		// h entered from pre alone
+		h.preds.splice(li, 1);
+		for (i in h.ins)
+			if (!i.dead && i.op == Phi) {
+				var args = new Vector<Int>(i.args.length - 1);
+				var k = 0;
+				for (q in 0...i.args.length)
+					if (q != li) args[k++] = i.args[q];
+				i.args = args;
+			}
+		// the guarded block, on h's edge to inLoop
+		var g = new MBlock(id);
+		g.cold = h.cold;
+		g.sealed = g.filled = true;
+		f.blocks.push(g);
+		for (q in 0...ht.targets.length)
+			if (ht.targets[q] == inLoop) ht.targets[q] = g;
+		for (q in 0...h.succs.length)
+			if (h.succs[q] == inLoop) h.succs[q] = g;
+		inLoop.preds[inLoop.preds.indexOf(h)] = g;
+		for (i in gs) {
+			i.block.ins.remove(i);
+			i.block = g;
+			g.ins.push(i);
+		}
+		var j = add(g, Jmp, Void);
+		j.targets = vector(inLoop);
+		g.preds = [h];
+		g.succs = [inLoop];
+		// (the zeros of guarded values on the way out from h)
+		var zero = new Map<Int, Int>();
+		function zeroOf(ty:MTy):Int {
+			var k = (ty : Int);
+			if (!zero.exists(k)) {
+				var t = pre.ins.pop();
+				zero.set(k, add(pre, ty == F64 ? ConstF : Const, ty).id);
+				pre.ins.push(t);
+			}
+			return zero.get(k);
+		}
+		// the values defined in h (also at the latch) or g, read again where
+		// they are used outside their block
+		var defs:Array<{x:MIns, inLatch:Int}> = [];
+		for (i in h.ins)
+			if (!i.dead && i != ht) defs.push({x: i, inLatch: m(i.id)});
+		for (i in gs)
+			defs.push({x: i, inLatch: -1});
+		var nb = 0;
+		for (b in f.blocks)
+			if (b.id >= nb) nb = b.id + 1;
+		var made:Array<MIns> = [];
+		for (d in defs) {
+			var x = d.x.id, home = d.x.block;
+			var used = false;
+			for (b in f.blocks)
+				if (b != home)
+					for (i in b.ins)
+						if (!i.dead && usesVal(i, x)) used = true;
+			if (!used) continue;
+			var ends = MFunc.ints(nb, SsaReader.NONE);
+			ends[home.id] = x;
+			if (d.inLatch >= 0) ends[latch.id] = d.inLatch;
+			var ty = d.x.ty, vty = d.x.vty;
+			var rd = new SsaReader(f.entry, d.inLatch >= 0 ? SsaReader.LAZY : zeroOf(ty), ends, MFunc.ints(nb, SsaReader.NOTSET), b -> {
+				var phi = new MIns(Phi, ty);
+				phi.id = vals.length;
+				vals.push(phi);
+				phi.vty = vty;
+				phi.block = b;
+				made.push(phi);
+				var k = 0;
+				while (k < b.ins.length && b.ins[k].op == Phi)
+					k++;
+				b.ins.insert(k, phi);
+				phi.id;
+			}, (p, args) -> vals[p].args = args);
+			rd.undefOf = () -> throw "hxmc: Opt.guard: " + f.name + ": v" + x + " read where it is not defined";
+			for (b in f.blocks.copy()) {
+				if (b == home) continue;
+				var entry = -1;
+				for (i in b.ins.copy()) {
+					if (i.dead || made.indexOf(i) >= 0) continue;
+					if (i.op == Phi) {
+						for (q in 0...i.args.length)
+							if (i.args[q] == x) {
+								var r = rd.readEnd(b.preds[q]);
+								if (r != x) {
+									var args = i.args.copy();
+									args[q] = r;
+									i.args = args;
+								}
+							}
+						continue;
+					}
+					if (usesVal(i, x)) {
+						if (entry < 0) entry = rd.readEntry(b);
+						if (i.a == x) i.a = entry;
+						if (i.b == x) i.b = entry;
+						if (i.c == x) i.c = entry;
+						if (i.args.indexOf(x) >= 0) i.args = i.args.map(a -> a == x ? entry : a);
+					}
+				}
+			}
+			rd.finish();
+		}
+		// (h's phis, now of one operand, and the phis made: copies where
+		// trivial, then replaced by what they copy)
+		for (i in h.ins)
+			if (!i.dead && i.op == Phi) made.push(i);
+		Ssa.trivialPhis(vals, made);
+		var copies = new Map<Int, Int>();
+		for (p in made)
+			if (!p.dead && p.op == Copy) copies.set(p.id, p.a);
+		inline function c(v:Int):Int {
+			while (v >= 0 && copies.exists(v))
+				v = copies.get(v);
+			return v;
+		}
+		if (Lambda.count(copies) > 0) {
+			for (b in f.blocks)
+				for (i in b.ins) {
+					if (i.dead) continue;
+					if (copies.exists(i.id)) {
+						i.dead = true;
+						continue;
+					}
+					i.a = c(i.a);
+					i.b = c(i.b);
+					i.c = c(i.c);
+					var any = false;
+					for (x in i.args)
+						if (copies.exists(x)) any = true;
+					if (any) i.args = i.args.map(x -> c(x));
+				}
+			for (b in f.blocks)
+				b.ins = b.ins.filter(i -> !copies.exists(i.id));
+		}
+		// (the new values are their own representatives)
+		function grow(t:Vector<Int>):Vector<Int> {
+			if (t == null || t.length >= vals.length) return t;
+			var r = MFunc.iota(vals.length);
+			for (k in 0...t.length)
+				r[k] = t[k];
+			return r;
+		}
+		repl = grow(repl);
+		canon = grow(canon);
 	}
 
 	// whether v is an object just allocated (MemLower.alloc's result: the
