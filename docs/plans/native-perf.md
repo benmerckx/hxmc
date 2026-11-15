@@ -133,6 +133,20 @@ each):
 | 3f0ed860 | LoopVersion.tryStrings: a small loop without calls reading a string's length gets a copy entered when the string is not null (its length and width loads move out); Opt: redundancy elimination again after LICM moved something | tshx -0.25% |
 | 9fef2714 | the same copy entered only for a string of a byte per unit when the loop reads its width (the width tests known in the copy) | tshx -0.17%, cycles -0.7% |
 | 1072edcc | Opt.fold: a symbol's or a frame slot's address compared with null is known | tshx -0.14%, .text -0.9% (6070 such tests, 40 left) |
+| cc4ad119 | x64: a comparison with 0 is test r, r | tshx .text -0.09% |
+| 118612ef | MemRepr.widen: four bytes a round (one-byte units into a two-byte buffer) | json -3.2%, cycles -5% |
+| 12d7ddc8 | Str.hashSlow: a two-byte string's words by a function of their own (the one-byte loop's registers) | json -0.37% |
+| 50ac87d6 | StringBuf: where a two-byte buffer was widened (slot 0's upper half): toString tests only from there | json -0.49% |
+| 845d84fe | x64: (x >>> 8) & 0xff of x in rax to rbx is movzx d, xh | bcrypt -7.3%, cycles -2.3% |
+| f5cf2d04 | Opt.fold: (x >>> k) | (x << (w - k)) of constants known once inlined is a rotation | sha512 -10.3%, cycles -11% |
+| 41a92a40 | Dyn.dynEq: two of the program's types, neither a closure, are not equal unless the same | tshx -0.09% |
+| da044454 | Dyn.findField, findMethod inline | json -0.66%, formatter -0.29% |
+| cddcf639 | MemLower: a Bool boxed inline (rt_bool_boxes + 8 + 16 * (b != 0)) | json -0.40%, cycles -3.6% |
+
+The Linux session's commits of the same evening (00ebb086 to d998d104,
+merged in 07ced548: guarded LICM, unswitching, strEq of a literal, the
+SWAR tests' one branch, test of two registers, lea for a kept copy,
+x - k as x + -k, non-negative sums) are described in their messages.
 
 Where it stands (Linux x86-64 under WSL2, the machine loaded by other
 work: instructions are reliable, cycles within a few percent):
@@ -191,10 +205,13 @@ Also tried and left out this session (built, measured, reverted):
 | cold blocks split out of line, several block-layout variants, wider loop rotation, forward dup-tests, jump duplication of short blocks, loop alignment | under noise or more code | see the second session's table |
 | once-inlining for all functions, runtime inline limits for json | | code size, no cycles |
 | a string's width test in charCodeAt with the one-byte side as the false (fall-through) one | tshx +0.14% instructions, .text the same | the layout did not change |
-| a Bool boxed inline in MemLower (rt_bool_boxes + 8 + 16 * b) | json, formatter unchanged | json's boxes are made elsewhere |
 | LoopVersion.tryStrings also for a string dereferenced before the loop (the copy entered for one byte per unit only) | tshx -0.44% instructions, .text +0.18% | cycles +1.2% (15 runs): the copies' code |
 | a shadow-stack slot's load after its store in the block forwarded in Opt.lowered (after Frames' merge) | tshx -0.01%, .text -3 KB | rare |
 | the remembered set's slots touched 8 entries ahead (a load, as a prefetch would) in Gc.forwardRemembered | tshx +0.64% instructions; cycles -6.7% and +1.4% in two series | not measurable here: memory-bound functions move by 25% from run to run under WSL's load; worth a prefetch op on a quiet machine |
+
+(A tool built from the sources while an edit was being made took the
+edit in: two measurements made against it, one of them the inline Bool
+boxing first left out here, were redone against a clean build.)
 
 Windows, the merged branch (07ced548: this session's and the Linux
 session's commits), natively: the corpus 373/373; GapBench wall times
