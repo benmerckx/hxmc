@@ -63,28 +63,34 @@ class Dyn {
 
 	// ---- lookups (binary searches: the tables are sorted by fid)
 
-	@:hxmc.unsafe static function findField(ty:Ptr, fid:Int):Ptr {
-		var lo = 0, hi = nfields(ty) - 1;
+	@:hxmc.unsafe static inline function findField(ty:Ptr, fid:Int):Ptr {
+		var lo = 0, hi = nfields(ty) - 1, r = Ptr.nil();
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
 			var f = field(ty, mid);
 			var x = fFid(f);
-			if (x == fid) return f;
+			if (x == fid) {
+				r = f;
+				break;
+			}
 			if (x < fid) lo = mid + 1 else hi = mid - 1;
 		}
-		return Ptr.nil();
+		return r;
 	}
 
-	@:hxmc.unsafe static function findMethod(ty:Ptr, fid:Int):Ptr {
-		var lo = 0, hi = nmethods(ty) - 1;
+	@:hxmc.unsafe static inline function findMethod(ty:Ptr, fid:Int):Ptr {
+		var lo = 0, hi = nmethods(ty) - 1, r = Ptr.nil();
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
 			var m = method(ty, mid);
 			var x = mFid(m);
-			if (x == fid) return m;
+			if (x == fid) {
+				r = m;
+				break;
+			}
 			if (x < fid) lo = mid + 1 else hi = mid - 1;
 		}
-		return Ptr.nil();
+		return r;
 	}
 
 	// rt_icache (Names.hx): uint32 t, int32 slot (> 0: field slot + 1; 0: a
