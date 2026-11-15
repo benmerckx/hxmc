@@ -110,7 +110,7 @@ class StdPrims {
 		return v.abs("file");
 
 	public static function register(add:Register) {
-		var r = (n, k, f) -> add("std@" + n, k, f);
+		var r = (n:String, k:Int, f:Prim) -> add("std@" + n, k, f);
 		buffer(r);
 		math(r);
 		strings(r);

@@ -35,7 +35,7 @@ class SocketPrims {
 	}
 
 	public static function register(add:Register) {
-		var r = (n, k, f) -> add("std@" + n, k, f);
+		var r = (n:String, k:Int, f:Prim) -> add("std@" + n, k, f);
 		r("socket_init", 0, (vm, a) -> null);
 		r("socket_new", 1, (vm, a) -> {
 			if (a[0] == true) throw VM.error("UDP sockets are not supported");

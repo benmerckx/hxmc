@@ -52,7 +52,7 @@ class RegexpPrims {
 	}
 
 	public static function register(add:Register) {
-		var r = (n, k, f) -> add("regexp@" + n, k, f);
+		var r = (n:String, k:Int, f:Prim) -> add("regexp@" + n, k, f);
 		r("regexp_new", 1, (vm, a) -> make(a[0].str(), ""));
 		r("regexp_new_options", 2, (vm, a) -> make(a[0].str(), a[1].str().toString()));
 		r("regexp_match", 4, (vm, a) -> {

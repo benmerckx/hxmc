@@ -101,7 +101,7 @@ class ZlibPrims {
 	}
 
 	public static function register(add:Register) {
-		var r = (n, k, f) -> add("zlib@" + n, k, f);
+		var r = (n:String, k:Int, f:Prim) -> add("zlib@" + n, k, f);
 		r("inflate_init", 1, (vm, a) -> new NAbs("zlib_inflate", new Inflater(a[0] == null ? 15 : a[0].int())));
 		r("inflate_end", 1, (vm, a) -> null);
 		r("inflate_buffer", 5, (vm, a) -> {

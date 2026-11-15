@@ -34,7 +34,7 @@ class SslPrims {
 		return v.abs("ssl_cert");
 
 	public static function register(add:Register) {
-		var r = (n, k, f) -> add("ssl@" + n, k, f);
+		var r = (n:String, k:Int, f:Prim) -> add("ssl@" + n, k, f);
 		r("conf_new", 1, (vm, a) -> {
 			var conf = NativeSsl.configInit();
 			NativeSsl.configDefaults(conf, a[0] == true ? 1 : 0, 0, 0);
