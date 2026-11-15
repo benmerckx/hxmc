@@ -1562,6 +1562,82 @@ class Opt {
 		return nonNeg(v, cfg, 0);
 	}
 
+	// Whether v, x + c of a constant c >= 0 and x not negative (nonNegative,
+	// or such a sum), stays below 2^31: x has an upper bound where v is
+	// computed (upperAt) of at most 2^31 - 1 - c (a loop counter's steps,
+	// i += 1 twice a round below i <= 14)
+	public function nonNegativeSum(v:Int):Bool {
+		var cfg = f.cfg();
+		cfg.dom();
+		return nonNegSum(v, cfg, 0);
+	}
+
+	function nonNegSum(v:Int, cfg:Cfg<MBlock>, depth:Int):Bool {
+		var x = f.vals[v];
+		if (x.op != Add || x.ty != I32 || depth > 4 || x.block == null) return false;
+		var c = f.vals[x.b];
+		if (c.op != Const || c.sym != null || c.imm < 0) return false;
+		return (nonNeg(x.a, cfg, depth + 1) || nonNegSum(x.a, cfg, depth + 1)) && upperAt(v, x.block, cfg, 0) != null;
+	}
+
+	// an upper bound of the I32 v where b runs (null: none known, or past
+	// 2^31 - 1): a constant, x + c of a constant c >= 0 (x's bound plus c),
+	// or a branch dominating b that compared v with a constant
+	function upperAt(v:Int, b:MBlock, cfg:Cfg<MBlock>, depth:Int):Null<Float> {
+		var x = f.vals[v];
+		if (x.ty != I32 || depth > 6) return null;
+		if (x.op == Const) return x.sym == null ? x.imm : null;
+		if (x.op == Add) {
+			var c = f.vals[x.b];
+			if (c.op != Const || c.sym != null || c.imm < 0) return null;
+			var u = upperAt(x.a, b, cfg, depth + 1);
+			return u == null || u + c.imm > 2147483647.0 ? null : u + c.imm;
+		}
+		inline function konst(y:Int):Null<Int> {
+			var k = f.vals[y];
+			return k.op == Const && k.sym == null && k.ty == I32 ? k.imm : null;
+		}
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var y = cfg.rpo[k];
+			if (y.preds.length == 1) {
+				var t = y.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = y == t.targets[0];
+					if (c.op == Cmp && !c.dead) {
+						// (v < K, v <= K, as the branch found them)
+						var lt:Null<Int> = null, le:Null<Int> = null;
+						if (c.a == v && konst(c.b) != null) {
+							var n = konst(c.b);
+							switch (c.imm : Cond) {
+								case CLt: if (taken) lt = n else null;
+								case CLe: if (taken) le = n else null;
+								case CGe: if (!taken) lt = n else null;
+								case CGt: if (!taken) le = n else null;
+								case _:
+							}
+						} else if (c.b == v && konst(c.a) != null) {
+							var n = konst(c.a);
+							switch (c.imm : Cond) {
+								case CGt: if (taken) lt = n else null;
+								case CGe: if (taken) le = n else null;
+								case CLe: if (!taken) lt = n else null;
+								case CLt: if (!taken) le = n else null;
+								case _:
+							}
+						}
+						if (lt != null) return lt - 1.0;
+						if (le != null) return le;
+					}
+				}
+			}
+			k = idom[k];
+		}
+		return null;
+	}
+
 	// Whether v (an I32) is never negative: a constant, or a phi each of
 	// whose operands is, or is the phi plus 1 computed only where the phi is
 	// below some value (a loop's counter: below a bound, the increment
@@ -1572,17 +1648,44 @@ class Opt {
 		switch x.op {
 			case Const:
 				return x.sym == null && x.imm >= 0;
+			// (a byte or 16-bit unit loaded unsigned; x & c, x >>> k of c >= 0, k > 0)
+			case Load:
+				return x.size < 4 && !x.signed;
+			case And:
+				return isNonNegConst(x.a) || isNonNegConst(x.b);
+			case Shr:
+				var k = f.vals[x.b];
+				return k.op == Const && k.sym == null && k.imm & 31 != 0;
 			case Phi:
 				for (a in x.args) {
 					if (a == v) continue;
 					var y = f.vals[a];
 					var one = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
-					if (one ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, depth + 1)) return false;
+					// (or the phi plus constants, bounded below 2^31: nonNegSum)
+					if (one ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, depth + 1) && !sumOf(a, v, cfg)) return false;
 				}
 				return true;
 			case _:
 				return false;
 		}
+	}
+
+	// whether a is v + c1 + c2 ... of constants >= 0 that stays below 2^31
+	function sumOf(a:Int, v:Int, cfg:Cfg<MBlock>):Bool {
+		var x = f.vals[a];
+		var n = 0;
+		while (x.op == Add && x.ty == I32 && n++ < 4) {
+			var c = f.vals[x.b];
+			if (c.op != Const || c.sym != null || c.imm < 0) return false;
+			if (x.a == v) return x.block != null && upperAt(a, x.block, cfg, 0) != null;
+			x = f.vals[x.a];
+		}
+		return false;
+	}
+
+	inline function isNonNegConst(v:Int):Bool {
+		var c = f.vals[v];
+		return c.op == Const && c.sym == null && c.ty == I32 && c.imm >= 0;
 	}
 
 	inline function isOne(v:Int):Bool {
@@ -2602,7 +2705,7 @@ class Opt {
 		var any = false;
 		// copies are their operand; a constant made again in its block is the
 		// first (those LICM moved out of a loop's arms together: a 64-bit
-		// mask once, not a register each); -1 - x is ~x
+		// mask once, not a register each); x + 0 and the like are x; -1 - x is ~x
 		for (b in f.blocks) {
 			var consts = new Map<String, Int>();
 			for (i in b.ins)
@@ -2618,6 +2721,12 @@ class Opt {
 						i.dead = true;
 						any = true;
 					}
+				} else if ((i.op == Add || i.op == Sub || i.op == Or || i.op == Xor || i.op == Shl || i.op == Shr || i.op == Sar)
+					&& (i.ty == I32 || i.ty == I64) && i.b >= 0 && o.isZero(i.b) && f.vals[i.a].ty == i.ty) {
+					// (x + 0, x - 0, x | 0, x ^ 0, x << 0...: x; a lowering's offset 0)
+					o.repl[i.id] = i.a;
+					i.dead = true;
+					any = true;
 				} else if (i.op == Sub && (i.ty == I32 || i.ty == I64) && o.allOnes(i.a)) {
 					i.op = Not;
 					i.a = i.b;

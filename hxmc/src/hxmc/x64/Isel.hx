@@ -263,6 +263,9 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			// (a loop's counter, below a bound where incremented: 0 and up in
 			// the register too, a 64-bit lea of it never carrying into the upper half)
 			case Phi if (i.ty == I32 && (counters ?? (counters = new hxmc.Opt(m))).nonNegative(v)): true;
+			// (a step of such a counter, below 2^31: its 64-bit lea is the sum)
+			case Add if (i.ty == I32 && immOf(i.b) != null && isymOf(i.b) == null && !folded[i.a] && depth < 4 && zeroExtended(i.a, true, depth + 1)
+				&& (counters ?? (counters = new hxmc.Opt(m))).nonNegativeSum(v)): true;
 			case Phi if (depth < 2 && i.ty == I32):
 				var all = true;
 				for (a in i.args)
