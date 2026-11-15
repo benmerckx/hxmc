@@ -261,10 +261,6 @@ class LoopVersion {
 	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitArr:Null<Arr>,
 			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>) {
 		var preB = h.preds[pre];
-		// (dominance in the loop, before the edits: the copy's is the same)
-		var oldIndex = new Map<Int, Int>();
-		for (b in members)
-			oldIndex.set(b.id, cfg.index(b));
 		// ---- the test before the loop: blocks failing to slow, which enters the loop as it was
 		var slow = newBlock();
 		var gb = newBlock();
@@ -337,6 +333,33 @@ class LoopVersion {
 				test(cmp(CULt, x, len));
 		}
 		// gb: every test passed, into the copy
+		copyLoop(h, members, inLoop, cfg, (i, x) -> if (i.op == ArrayGet && taken.indexOf(i) >= 0) x.info.prechecked = true, h2 -> {
+			// ---- the edges: before -> tests; slow -> the loop; the last test -> the copy
+			retargetTerm(preB, h, first);
+			preB.succs[preB.succs.indexOf(h)] = first;
+			first.preds = [preB];
+			var sj = add(slow, Jmp, Void);
+			sj.targets = vector(h);
+			slow.succs = [h];
+			h.preds[pre] = slow;
+			var gj = add(gb, Jmp, Void);
+			gj.targets = vector(h2);
+			gb.succs = [h2];
+			h2.preds[pre] = gb;
+		});
+	}
+
+	// The loop (h, its blocks members, inLoop) copied: adjust(original, copy)
+	// for each instruction copied, enter(the copy's header) to make the ways
+	// into the copy (h2.preds), then the ways out of it (the phis there take the
+	// copy's values) and the values used after the loop read again (SSA) from
+	// the original or the copy. The copy's header.
+	public function copyLoop(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, adjust:(MIns, MIns) -> Void,
+			enter:MBlock->Void):MBlock {
+		// (dominance in the loop, before the edits: the copy's is the same)
+		var oldIndex = new Map<Int, Int>();
+		for (b in members)
+			oldIndex.set(b.id, cfg.index(b));
 		// ---- the loop's blocks copied
 		var bmap = new Map<Int, MBlock>();
 		for (b in members) {
@@ -375,10 +398,7 @@ class LoopVersion {
 				x.imm = i.imm;
 				x.imm2 = i.imm2;
 				x.vty = i.vty;
-				if (i.info != null) {
-					x.info = i.info.copy(i.info.cont == null ? null : mb(i.info.cont));
-					if (i.op == ArrayGet && taken.indexOf(i) >= 0) x.info.prechecked = true;
-				}
+				if (i.info != null) x.info = i.info.copy(i.info.cont == null ? null : mb(i.info.cont));
 				x.pos = i.pos;
 				x.f = i.f;
 				x.size = i.size;
@@ -401,6 +421,7 @@ class LoopVersion {
 				x.targets = i.targets.map(t -> mb(t));
 				x.block = nb;
 				nb.ins.push(x);
+				adjust(i, x);
 			}
 			nb.succs = [for (s in b.succs) mb(s)];
 			nb.preds = [for (p in b.preds) mb(p)];
@@ -410,18 +431,7 @@ class LoopVersion {
 		for (b in members)
 			if (done.exists(b.id)) done.set(bmap.get(b.id).id, true);
 		done.set(h2.id, true);
-		// ---- the edges: before -> tests; slow -> the loop; the last test -> the copy
-		retargetTerm(preB, h, first);
-		preB.succs[preB.succs.indexOf(h)] = first;
-		first.preds = [preB];
-		var sj = add(slow, Jmp, Void);
-		sj.targets = vector(h);
-		slow.succs = [h];
-		h.preds[pre] = slow;
-		var gj = add(gb, Jmp, Void);
-		gj.targets = vector(h2);
-		gb.succs = [h2];
-		h2.preds[pre] = gb;
+		enter(h2);
 		// ---- the edges out: the copy's too, with the copy's values in the phis there
 		var seen = new Map<String, Bool>();
 		for (e in exits) {
@@ -480,7 +490,7 @@ class LoopVersion {
 					note(x);
 			}
 		}
-		if (escaping.length == 0) return;
+		if (escaping.length == 0) return h2;
 		var nb = 0;
 		for (b in f.blocks)
 			if (b.id >= nb) nb = b.id + 1;
@@ -538,6 +548,7 @@ class LoopVersion {
 			rd.finish();
 		}
 		Ssa.trivialPhis(f.vals, made);
+		return h2;
 	}
 
 	// a terminator's target from -> to
