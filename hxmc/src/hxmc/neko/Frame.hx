@@ -81,6 +81,7 @@ class F {
 	public static inline var SLOTRET = 61; // s
 	public static inline var CALLGFPUSH = 62; // g, id, n, d, d2, len
 	public static inline var CALLPUSH = 63; // n, d, d2, len
+	public static inline var BUILTIN = 64; // which (Frame.BUILTINS), n, d, kidx: AccBuiltin $x, Call n
 
 	// an instruction's slots
 	public static function size(code:Array<Int>, pc:Int):Int {
@@ -90,7 +91,7 @@ class F {
 				MULT | DIV | MOD | COMPARE | PHYSCMP: 2;
 			case SFIELD | SINDEX | CALL | OBJCALL | TRAP | MAKEENV | MAKEARRAY | MAKEARRAY2 | BITOP | CMP | APPLY | TAILCALL | COPYPUSH | CONSTPUSH | GLOBALPUSH: 3;
 			case OPIMM: 4;
-			case CMPJUMP | CALLGF: 5;
+			case CMPJUMP | CALLGF | BUILTIN: 5;
 			case OPIMMJUMP: 6;
 			case JUMPTABLE: 3 + code[pc + 1];
 			case op: throw "Frame.size: " + op;
@@ -99,6 +100,10 @@ class F {
 }
 
 class Frame {
+	// the builtins run by BUILTIN (VM.builtin), by their index here
+	public static final BUILTINS = ["$sget", "$sset", "$ssize", "$asize", "$typeof", "$hget", "$hset", "$hmem", "$objget", "$objfield", "$istrue", "$not"];
+	public static final BUILTIN_ARGS = [2, 3, 1, 1, 1, 3, 4, 3, 2, 2, 1, 1];
+
 	static inline function isCmp(op:Int):Bool
 		return op == Op.Lt || op == Op.Lte || op == Op.Gt || op == Op.Gte || op == Op.Eq || op == Op.Neq;
 
@@ -106,6 +111,13 @@ class Frame {
 		return op == Op.Add || op == Op.Sub || op == Op.Mult || isCmp(op);
 
 	// the change of the depth (neko's stack_table; P: the parameter)
+	// the index in BUILTINS of a builtin called with its own count of arguments, else -1
+	static function builtinOf(v:Dynamic, n:Int):Int {
+		if (!Std.isOfType(v, NFun)) return -1;
+		var k = BUILTINS.indexOf((v : NFun).name);
+		return k >= 0 && BUILTIN_ARGS[k] == n ? k : -1;
+	}
+
 	// sequences of the translated code as one instruction, where no
 	// instruction but the first is a jump's target
 	static function peephole(code:Array<Int>, entries:Array<Int>) {
@@ -328,6 +340,14 @@ class Frame {
 					emit(i, [F.AFALSE]);
 				case Op.AccThis:
 					emit(i, [F.ATHIS]);
+				case Op.AccBuiltin if (free(i + 2) && op(i + 2) == Op.Call && builtinOf(m.consts[p], code[i + 3]) >= 0):
+					emit(i, [F.BUILTIN, builtinOf(m.consts[p], code[i + 3]), code[i + 3], d, p]);
+					n = 4;
+				// (return $x(...): a tail call)
+				case Op.AccBuiltin if (free(i + 2) && op(i + 2) == Op.TailCall && builtinOf(m.consts[p], code[i + 3] & 7) >= 0):
+					emit(i, [F.BUILTIN, builtinOf(m.consts[p], code[i + 3] & 7), code[i + 3] & 7, d, p]);
+					emit(i, [F.RET]);
+					n = 4;
 				case Op.AccInt | Op.AccBuiltin:
 					if (free(i + 2) && op(i + 2) == Op.Push && !immAfter(i + 2)) {
 						emit(i, [F.CONSTPUSH, p, d]);

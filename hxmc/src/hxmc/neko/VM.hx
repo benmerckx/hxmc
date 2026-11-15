@@ -562,6 +562,14 @@ class VM {
 					sp = top;
 					stack[fp + code[pc + 3]] = acc;
 					pc += code[pc + 4];
+				case F.BUILTIN:
+					fpcs[depth] = pc;
+					var n = code[pc + 2], d = fp + code[pc + 3];
+					var r:Dynamic = builtin(code[pc + 1], d - n);
+					if (r == NOT_RUN) r = callAt(m.consts[code[pc + 4]], vthis, n, d);
+					acc = r;
+					sp = top;
+					pc += 5;
 				case op:
 					throw errorAt(m, pc, "Invalid opcode " + op);
 			}
@@ -586,6 +594,61 @@ class VM {
 			sp = argTop;
 			callOp(f, thisv, n);
 		}
+	}
+
+	// a builtin's answer (Frame.BUILTINS) from its arguments on the stack
+	// from base, or NOT_RUN where the call takes it (another type of
+	// argument: its error; a comparison function given)
+	static final NOT_RUN = new NVal(-1);
+
+	function builtin(which:Int, base:Int):Dynamic {
+		var a0:Dynamic = stack[base];
+		switch which {
+			case 0: // $sget
+				var p:Dynamic = stack[base + 1];
+				if (Tag.isString(a0) && Tag.isInt(p)) {
+					var b = (a0 : NStr).b, i:Int = p;
+					return i < 0 || i >= b.length ? null : b.get(i);
+				}
+			case 1: // $sset
+				var p:Dynamic = stack[base + 1], c:Dynamic = stack[base + 2];
+				if (Tag.isString(a0) && Tag.isInt(p) && Tag.isInt(c)) {
+					var b = (a0 : NStr).b, i:Int = p;
+					if (i < 0 || i >= b.length) return null;
+					var v = (c : Int) & 0xFF;
+					b.set(i, v);
+					return v;
+				}
+			case 2: // $ssize
+				if (Tag.isString(a0)) return (a0 : NStr).b.length;
+			case 3: // $asize
+				if (Tag.isArray(a0)) return (a0 : Array<Dynamic>).length;
+			case 4: // $typeof
+				return Tag.of(a0);
+			case 5 | 6 | 7: // $hget, $hset, $hmem (no comparison function)
+				var cmp:Dynamic = stack[base + (which == 6 ? 3 : 2)];
+				if (cmp == null && Tag.isAbstract(a0) && (a0 : NAbs).kind == "hash") {
+					var h:Builtins.NHash = (a0 : NAbs).data;
+					var k:Dynamic = stack[base + 1];
+					return switch which {
+						case 5: h.get(this, k, null);
+						case 6: h.set(this, k, stack[base + 2], null);
+						case _: h.mem(this, k, null);
+					}
+				}
+			case 8: // $objget
+				var f:Dynamic = stack[base + 1];
+				if (!Tag.isObject(a0)) return null;
+				if (Tag.isInt(f)) return (a0 : NObj).get(f);
+			case 9: // $objfield
+				var f:Dynamic = stack[base + 1];
+				if (Tag.isInt(f)) return Tag.isObject(a0) && (a0 : NObj).hasOwn(f);
+			case 10: // $istrue
+				return !isFalse(a0);
+			case 11: // $not
+				return isFalse(a0);
+		}
+		return NOT_RUN;
 	}
 
 	// o's field id (AccField): an inline cache by the code index of the
