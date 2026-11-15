@@ -1317,6 +1317,8 @@ class MemLower extends MirWriter {
 		}
 		var mr = callInd(fn, VectorTools.cons(self, ys), MirBuild.mty(m.ret), mTys);
 		if (s.ret == TVoid) return mr;
+		// (a number for a reference that may hold one: Ir.anonAlternatives)
+		if (Ir.isScalar(m.ret) && Ir.isRef(s.ret)) return Ir.isWord(s.ret) && m.ret != TBool ? tagFrom(m.ret, mr) : boxFrom(m.ret, mr);
 		return Ir.isWord(m.ret) && !Ir.isWord(s.ret) ? untagTo(s.ret.match(TRef(_)) ? TRef(RAny) : s.ret, mr, true) : mr;
 	}
 
