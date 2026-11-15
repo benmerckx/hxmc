@@ -720,6 +720,10 @@ class Str {
 	@:hxmc.kernel static function across12(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt16>, from:Int):Int {
 		var n = c.length, m = d.length;
 		if (from < 0 || m < 1 || m > n) return -1;
+		// (a unit of d above 0xFF is in no one-byte string: no match; a
+		// two-byte string has one but where made unnarrowed, StringBuf's)
+		for (k in 0...m)
+			if ((d[k] : Int) > 0xFF) return -1;
 		var i = from;
 		while (i < n - m + 1) {
 			var k = 0;
