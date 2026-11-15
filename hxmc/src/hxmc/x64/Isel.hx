@@ -11,7 +11,7 @@ import core.ds.VectorTools.vector;
 
 // x86-64 LIR operations (LIns.op)
 enum abstract XOp(Int) to Int from Int {
-	var MOV; // d <- s1 (gpr or xmm)
+	var MOV; // d <- s1 (gpr or xmm; flag: movsxd; size 4, imm2 1: zero-extended; imm2 8, 16: its low byte, 16 bits zero-extended)
 	var MOVI; // d <- imm (imm2: high half when size 8)
 	var MOVF; // d (xmm) <- f (constant pool)
 	var LEA; // d <- address
@@ -634,6 +634,12 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case Copy:
 				mov(reg(i.id), use(i.a));
 			case And if (testFolds.exists(i.id)): // (TESTI of its comparison)
+			case And if ((immOf(i.b) == 0xFF || immOf(i.b) == 0xFFFF) && isymOf(i.b) == null): // movzx, the operand kept
+				var x = emit(MOV);
+				x.d = reg(i.id);
+				x.s1 = use(i.a);
+				x.size = 4;
+				x.imm2 = immOf(i.b) == 0xFF ? 8 : 16;
 			case Add if (folded[i.id]): // (the displacement of the loads and stores it is the address of)
 			case Shl if (folded[i.id]): // (the index of the loads and stores it is the address of: scaleFolds)
 			case Add | Sub | And | Or | Xor:

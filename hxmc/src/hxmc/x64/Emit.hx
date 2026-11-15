@@ -179,7 +179,7 @@ class Emit implements hxmc.Target.Emitter {
 		epiLabel = -1;
 		// (a move of a register to itself: a zero or sign extension is not)
 		f.threadJumps(i -> (i.op : XOp) == JMP,
-			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && !(i.size == 4 && i.imm2 == 1)));
+			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && i.imm2 == 0));
 		f.duplicateDispatch(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JTABLE, 10);
 		f.duplicateTests(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> switch (i.op : XOp) {
 			case CMP | CMPI | TEST | TESTI: true;
@@ -431,6 +431,7 @@ class Emit implements hxmc.Target.Emitter {
 			case MOV:
 				if (isX(i.d) && isX(i.s1)) a.movsdRR(i.d, i.s1) else if (isX(i.d)) a.movqXR(i.d, i.s1) else if (isX(i.s1)) a.movqRX(i.d, i.s1) else if (i.flag)
 					a.movsxdR(i.d, i.s1)
+				else if (i.imm2 == 8) a.movzx8R(i.d, i.s1) else if (i.imm2 == 16) a.movzx16R(i.d, i.s1)
 				else if (i.d != i.s1 || i.size == 4 && i.imm2 == 1) a.movRR(i.size == 4 ? 4 : 8, i.d, i.s1);
 			case MOVI:
 				if (i.isym != null) a.movImm32(i.d, i.imm) else if (i.flag && i.imm == 0 && (i.size == 4 || i.imm2 == 0)) a.movImm32(i.d, 0) else if (i.size == 4) a.movRI(4, i.d, i.imm) else a.movRI64(i.d, i.imm, i.imm2);
