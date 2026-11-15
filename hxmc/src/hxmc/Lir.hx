@@ -214,20 +214,22 @@ class LFunc {
 	// (HXMC_DUP_RETURNS=0: off) a short block that returns (a function with
 	// a frame returns through one block: the frame's pop, the return; at most
 	// maxIns instructions, no branch but the return) copied into each block
-	// outside the slow paths that jumps to it, with the epilogue written at
+	// outside the slow paths that jumps to it (but the one laid out just
+	// before it, which falls into it), with the epilogue written at
 	// each return outside the slow paths (x64.Emit): a return path without a
-	// jump (tshx: 4.5% fewer taken branches, 2.6% fewer cycles, 1.9% more
+	// jump (tshx: 4.5% fewer taken branches, 2.6% fewer cycles, 1.4% more
 	// code; each alone gains next to nothing, the other's jump staying)
 	public static var dupReturns = true; // (the build's, Options.apply)
 
 	public function duplicateReturns(isJump:LIns->Bool, isRet:LIns->Bool, maxIns:Int) {
 		if (!dupReturns) return;
 		var any = false;
-		for (b in blocks) {
+		for (bi in 0...blocks.length) {
+			var b = blocks[bi];
 			var m = b.ins.length;
 			if (m == 0 || b.cold || !isJump(b.ins[m - 1])) continue;
 			var t = b.ins[m - 1].target, tn = t.ins.length;
-			if (t == b || tn == 0 || tn > maxIns || !isRet(t.ins[tn - 1])) continue;
+			if (t == b || bi + 1 < blocks.length && blocks[bi + 1] == t || tn == 0 || tn > maxIns || !isRet(t.ins[tn - 1])) continue;
 			var plain = true;
 			for (q in 0...tn - 1)
 				if (t.ins[q].target != null || t.ins[q].table.length > 0) plain = false;
