@@ -247,7 +247,10 @@ class LoopVersion {
 	// of a string from before the loop, not read before it: a copy entered
 	// when the string is not null, its length read in the test (the loop's
 	// loads of the string's length and width then move out of the copy:
-	// Opt.licm, a load through an object dereferenced before the loop).
+	// Opt.licm, a load through an object dereferenced before the loop); a
+	// string whose width the loop reads: a byte per unit too (the copy's
+	// tests of the width then known, its arms for two-byte strings dropped;
+	// the original loop runs for the others).
 	function tryStrings(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>):Bool {
 		var pre = -1;
 		for (k in 0...h.preds.length)
@@ -257,7 +260,7 @@ class LoopVersion {
 			}
 		if (pre < 0) return no(21);
 		var size = 0;
-		var strs:Array<Int> = [];
+		var strs:Array<Int> = [], widths:Array<Int> = [];
 		for (b in members)
 			for (i in b.ins) {
 				if (i.dead) continue;
@@ -273,6 +276,9 @@ class LoopVersion {
 				if (i.op == Load && i.mem == Opt.MConst && i.imm == 0 && i.size == 4 && i.b < 0 && i.ty == I32 && i.a >= 0 && !inLoop(v(i.a).block)
 					&& strs.indexOf(i.a) < 0)
 					strs.push(i.a);
+				if (i.op == Load && i.mem == Opt.MConst && i.imm == Abi.HDR_TINDEX && i.size == 2 && i.b < 0 && i.a >= 0 && !inLoop(v(i.a).block)
+					&& widths.indexOf(i.a) < 0)
+					widths.push(i.a);
 			}
 		if (size > MAX_STR_SIZE) return no(24);
 		// (not those dereferenced in a block before the loop that every way to it passes)
@@ -286,7 +292,7 @@ class LoopVersion {
 			true;
 		});
 		if (strs.length == 0) return no(25);
-		version(h, members, inLoop, cfg, pre, -1, -1, null, [], [], strs);
+		version(h, members, inLoop, cfg, pre, -1, -1, null, [], [], strs, widths);
 		return true;
 	}
 
@@ -309,7 +315,7 @@ class LoopVersion {
 	}
 
 	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitArr:Null<Arr>,
-			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>) {
+			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>) {
 		var preB = h.preds[pre];
 		// (dominance in the loop, before the edits: the copy's is the same)
 		var oldIndex = new Map<Int, Int>();
@@ -380,6 +386,15 @@ class LoopVersion {
 				l.size = 4;
 				l.imm2 = 1;
 				l.mem = Opt.MConst;
+				if (widths.indexOf(o) >= 0) {
+					var w = add(gb, Load, I32);
+					w.a = o;
+					w.imm = Abi.HDR_TINDEX;
+					w.size = 2;
+					w.imm2 = 1;
+					w.mem = Opt.MConst;
+					test(cmp(CEq, w.id, iconst(Abi.T_STRING1)));
+				}
 			}
 		var lim = limitArr == null ? limit : lengthOf(arrayBefore(limitArr));
 		for (e in arrays) {
