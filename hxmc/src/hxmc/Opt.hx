@@ -2625,10 +2625,50 @@ class Opt {
 				}
 		}
 		if (any) o.rewrite();
+		o.negatedSubs();
 		o.zeroExtensions();
 		o.indexed();
 		o.sinkCold();
 		o.dce();
+	}
+
+	// x - k of a 64-bit k no instruction takes as an immediate: x + -k, -k
+	// made beside k (where LICM left it), which x86-64 adds by lea into
+	// another register (Emit: mov d, x; add d, r) where a subtraction takes a
+	// copy and a sub (a SWAR test's x - 0x0101...01)
+	function negatedSubs() {
+		var vals = f.vals;
+		var made = new Map<Int, Int>();
+		for (b in f.blocks)
+			for (i in b.ins) {
+				if (i.dead || i.op != Sub || i.ty != I64 || i.b < 0) continue;
+				var k = vals[i.b];
+				if (k.op != Const || k.sym != null || k.ty != I64 || k.dead || k.block == null) continue;
+				// (a sign-extended 32-bit immediate: lea already)
+				if (k.imm2 == (k.imm < 0 ? -1 : 0)) continue;
+				var n = made.get(k.id);
+				if (n == null) {
+					var v = haxe.Int64.neg(haxe.Int64.make(k.imm2, k.imm));
+					var x = new MIns(Const, I64);
+					x.id = vals.length;
+					vals.push(x);
+					x.imm = v.low;
+					x.imm2 = v.high;
+					x.block = k.block;
+					k.block.ins.insert(k.block.ins.indexOf(k) + 1, x);
+					n = x.id;
+					made.set(k.id, n);
+				}
+				i.op = Add;
+				i.b = n;
+			}
+		// (the new constants are their own representatives)
+		if (repl != null && repl.length < vals.length) {
+			var r = MFunc.iota(vals.length);
+			for (k in 0...repl.length)
+				r[k] = repl[k];
+			repl = r;
+		}
 	}
 
 	// (x << 32) >>> c, of c 29 to 32 and x a 32-bit value extended (Haxe's
