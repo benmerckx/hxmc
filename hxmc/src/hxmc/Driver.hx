@@ -125,6 +125,7 @@ class Driver {
 	var rootStores = 0; // (Frames)
 	var freshStores = 0; // (Opt.freshTargets)
 	var framesRemoved = 0;
+	var framesMerged = 0;
 	var mirBefore = 0;
 	var mirAfter = 0;
 	var devirtualized = 0; // (Inline.devirtualize)
@@ -309,11 +310,12 @@ class Driver {
 				// (the rooted locals' slots nothing reads any more)
 				var fs = new Frames(mf);
 				fs.run();
-				if (fs.storesRemoved > 0 || fs.frameRemoved || op.freshStores > 0) {
+				if (fs.storesRemoved > 0 || fs.frameRemoved || fs.merged > 0 || op.freshStores > 0) {
 					lock.acquire();
 					freshStores += op.freshStores;
 					rootStores += fs.storesRemoved;
 					if (fs.frameRemoved) framesRemoved++;
+					framesMerged += fs.merged;
 					lock.release();
 				}
 			}
@@ -486,7 +488,7 @@ class Driver {
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
-		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
+		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed, $framesMerged inlined frames merged; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
 		var ks = [for (k in foldWhy.keys()) k];
 		ks.sort((a, b) -> foldWhy.get(b) - foldWhy.get(a));
 		for (k in ks)

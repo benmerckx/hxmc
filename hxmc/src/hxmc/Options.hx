@@ -96,7 +96,7 @@ class Options {
 	// std reads it too)
 	public static final FLAGS = [
 		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
-		"hxmc.fold", "hxmc.frames-live", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
+		"hxmc.fold", "hxmc.frames-live", "hxmc.frames-merge", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
 		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc",
 		"hxmc.checked", "hxmc.compact",
 		// (experimental) the LLVM back end's (Options.llvm)
@@ -121,6 +121,7 @@ class Options {
 		Driver.nogc = on("hxmc.nogc", false, d);
 		Driver.wasmStackKb = flag("hxmc.wasm-stack-kb", d);
 		Frames.live = on("hxmc.frames-live", true, d);
+		Frames.merge = on("hxmc.frames-merge", true, d);
 		Inline.configure(flag("hxmc.inline", d));
 		Inline.devirtOn = on("hxmc.devirt", true, d);
 		Lir.LFunc.dupDispatch = on("hxmc.dup-dispatch", true, d);

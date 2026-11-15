@@ -1933,6 +1933,7 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.dup-dispatch=0` | `HXMC_DUP_DISPATCH` | yes | jump tables not copied into their predecessors |
 | `hxmc.dup-min=<n>` | `HXMC_DUP_MIN` | yes | the smallest jump table copied (64) |
 | `hxmc.frames-live=0` | `HXMC_FRAMES_LIVE` | yes | frame stores kept that no load sees |
+| `hxmc.frames-merge=0` | `HXMC_FRAMES_MERGE` | yes | inlined callees push their own frames |
 | `hxmc.framespill=0` | `HXMC_FRAMESPILL` | yes | a frame push on every slow path |
 | `hxmc.noshadow=1` | `HXMC_NOSHADOW` | yes | no shadow stack (measurements) |
 | `hxmc.trymem=all` | `HXMC_TRYMEM` | yes | every local assigned in a `try` in memory |
