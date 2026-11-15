@@ -238,10 +238,22 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		return isymOf(v) == null ? immOf(v) : null;
 
 	// whether v's register holds it zero-extended: an Int loaded (a load into
-	// a 32-bit register zeroes the upper half), whose ZExt is then a copy
-	function zeroExtended(v:Int):Bool {
+	// a 32-bit register zeroes the upper half), a phi of such (its copies are
+	// of 64 bits); whose ZExt is then a copy, and with nonNeg, when it is not
+	// negative either (a byte or 16-bit unit loaded unsigned, a constant),
+	// its SExt
+	function zeroExtended(v:Int, nonNeg:Bool, depth = 0):Bool {
 		var i = m.vals[v];
-		return i.op == Load && i.ty == I32 && i.size <= 4;
+		return switch i.op {
+			case Load: i.ty == I32 && i.size <= 4 && (!nonNeg || i.size < 4 && !i.signed);
+			case Const: i.ty == I32 && i.sym == null && i.imm >= 0;
+			case Phi if (depth < 2 && i.ty == I32):
+				var all = true;
+				for (a in i.args)
+					if (a != v && !zeroExtended(a, nonNeg, depth + 1)) all = false;
+				all;
+			case _: false;
+		}
 	}
 
 	// a 32-bit constant usable as an immediate (sign-extended for 64-bit
@@ -855,13 +867,15 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.imm2 = 1; // movsxd from memory
 				memOf(x, l.a, l.b, l.imm2, l.imm);
 				x.mem = l.mem;
+			case SExt if (zeroExtended(i.a, true)):
+				mov(reg(i.id), use(i.a), 8);
 			case SExt:
 				var x = emit(MOV);
 				x.d = reg(i.id);
 				x.s1 = use(i.a);
 				x.flag = true; // movsxd
 				x.size = 8;
-			case ZExt if (zeroExtended(i.a)):
+			case ZExt if (zeroExtended(i.a, false)):
 				mov(reg(i.id), use(i.a), 8);
 			case ZExt:
 				var x = emit(MOV);
