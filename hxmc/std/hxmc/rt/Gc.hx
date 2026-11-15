@@ -776,6 +776,13 @@ class Gc {
 					} while (false);
 				} else {
 					var j = 0;
+					while (j < words - 3) { // (4 words a round)
+						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
+						Mem.setI64At(dst, 8, j, Mem.getI64At(v, 0, j));
+						Mem.setI64At(dst, 16, j, Mem.getI64At(v, 8, j));
+						Mem.setI64At(dst, 24, j, Mem.getI64At(v, 16, j));
+						j += 4;
+					}
 					while (j < words) {
 						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
 						j++;
@@ -1823,6 +1830,13 @@ class Gc {
 					} while (false);
 				} else {
 					var j = 0;
+					while (j < words - 3) { // (4 words a round)
+						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
+						Mem.setI64At(dst, 8, j, Mem.getI64At(v, 0, j));
+						Mem.setI64At(dst, 16, j, Mem.getI64At(v, 8, j));
+						Mem.setI64At(dst, 24, j, Mem.getI64At(v, 16, j));
+						j += 4;
+					}
 					while (j < words) {
 						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
 						j++;
