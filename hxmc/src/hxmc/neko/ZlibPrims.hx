@@ -20,17 +20,16 @@ class Inflater {
 		this.wbits = wbits;
 }
 
-// a deflate stream: stored blocks (no compression), zlib's framing unless the
-// window bits are negative
+// a deflate stream: zlib's deflate (the compiler port's, libs.extc.Zlib: the
+// zlib 1.3.1 Neko links, so the same bytes), the flush mode set_flush_mode
+// gave, and the Adler-32 of the input it took (zlib's strm->adler)
 class Deflater {
-	public var wbits:Int;
-	public var flush = "NO";
-	public var input = new NBuf();
-	public var out:Null<Bytes>;
-	public var outPos = 0;
+	public final z:libs.extc.Zlib;
+	public var flush = libs.extc.Zlib.Z_NO_FLUSH;
+	public var adler = 1;
 
-	public function new(wbits)
-		this.wbits = wbits;
+	public function new(z)
+		this.z = z;
 }
 
 class ZlibPrims {
@@ -59,33 +58,14 @@ class ZlibPrims {
 		return (s << 16) | a;
 	}
 
-	static function stored(data:Bytes, zlib:Bool):Bytes {
-		var b = new NBuf();
-		if (zlib) {
-			b.addByte(0x78);
-			b.addByte(0x01);
+	// (zlib_error: "ZLib Error : " and zlib's message for the code)
+	static function zerror(err:Int):Dynamic {
+		var msg = switch err {
+			case -2: "stream error";
+			case -5: "buffer error";
+			case _: null;
 		}
-		var p = 0;
-		do {
-			var n = data.length - p;
-			if (n > 65535) n = 65535;
-			var last = p + n >= data.length;
-			b.addByte(last ? 1 : 0);
-			b.addByte(n & 0xFF);
-			b.addByte(n >> 8);
-			b.addByte(~n & 0xFF);
-			b.addByte((~n >> 8) & 0xFF);
-			b.addBytes(data, p, n);
-			p += n;
-		} while (p < data.length);
-		if (zlib) {
-			var a = adler32(data, 0, data.length);
-			b.addByte((a >>> 24) & 0xFF);
-			b.addByte((a >>> 16) & 0xFF);
-			b.addByte((a >>> 8) & 0xFF);
-			b.addByte(a & 0xFF);
-		}
-		return b.bytes();
+		return VM.error("ZLib Error : " + (msg == null ? "" + err : msg + " (" + err + ")"));
 	}
 
 	static function inflate(input:haxe.io.Input, header:Bool):Bytes {
@@ -126,37 +106,49 @@ class ZlibPrims {
 			z.outPos += n;
 			return result(z.outPos >= z.out.length, read, n);
 		});
-		r("deflate_init", 1, (vm, a) -> new NAbs("zlib_deflate", new Deflater(15)));
-		r("deflate_end", 1, (vm, a) -> null);
+		r("deflate_init", 1, (vm, a) -> {
+			var level = a[0].int();
+			var z = try libs.extc.Zlib.deflateInit2(level, 15) catch (e:Dynamic) throw zerror(-2);
+			return new NAbs("zlib_deflate", new Deflater(z));
+		});
+		r("deflate_end", 1, (vm, a) -> {
+			var d:Deflater = a[0].abs("zlib_deflate");
+			d.z.deflateEnd();
+			return null;
+		});
 		r("deflate_bound", 2, (vm, a) -> {
-			var n = a[1].int();
-			return n + 6 + 5 * (Std.int(n / 65535) + 1) + 4;
+			var d:Deflater = a[0].abs("zlib_deflate");
+			return d.z.deflateBound(a[1].int());
 		});
 		r("deflate_buffer", 5, (vm, a) -> {
-			var z:Deflater = a[0].abs("zlib_deflate");
+			var d:Deflater = a[0].abs("zlib_deflate");
 			var src = a[1].str().b, sp = a[2].int(), dst = a[3].str().b, dp = a[4].int();
-			if (sp < 0 || dp < 0 || sp > src.length || dp > dst.length) throw Builtins.failure;
-			var read = 0;
-			if (z.out == null) {
-				z.input.addBytes(src, sp, src.length - sp);
-				read = src.length - sp;
-				if (z.flush != "FINISH") return result(false, read, 0);
-				z.out = stored(z.input.bytes(), z.wbits > 0);
-			}
-			var n = drain(z.out, z.outPos, dst, dp);
-			z.outPos += n;
-			return result(z.outPos >= z.out.length, read, n);
+			if (sp < 0 || dp < 0) throw Builtins.failure;
+			var slen = src.length - sp, dlen = dst.length - dp;
+			if (slen < 0 || dlen < 0) throw Builtins.failure;
+			var err = d.z.deflate(src, sp, slen, dst, dp, dlen, d.flush);
+			if (err < 0) throw zerror(err);
+			var read = slen - d.z.getAvailIn();
+			d.adler = adler32(src, sp, read, d.adler);
+			return result(err == libs.extc.Zlib.Z_STREAM_END, read, dlen - d.z.getAvailOut());
 		});
 		r("set_flush_mode", 2, (vm, a) -> {
 			var mode = a[1].str().toString();
-			if (["NO", "SYNC", "FULL", "FINISH", "BLOCK"].indexOf(mode) < 0) throw Builtins.failure;
-			if (Tag.isAbstract(a[0]) && (a[0] : NAbs).kind == "zlib_deflate") ((a[0] : NAbs).data : Deflater).flush = mode else
+			var f = switch mode {
+				case "NO": libs.extc.Zlib.Z_NO_FLUSH;
+				case "SYNC": libs.extc.Zlib.Z_SYNC_FLUSH;
+				case "FULL": libs.extc.Zlib.Z_FULL_FLUSH;
+				case "FINISH": libs.extc.Zlib.Z_FINISH;
+				case "BLOCK": libs.extc.Zlib.Z_BLOCK;
+				case _: throw Builtins.failure;
+			}
+			if (Tag.isAbstract(a[0]) && (a[0] : NAbs).kind == "zlib_deflate") ((a[0] : NAbs).data : Deflater).flush = f else
 				a[0].abs("zlib_inflate");
 			return null;
 		});
 		r("get_adler32", 1, (vm, a) -> {
-			var z:Deflater = a[0].abs("zlib_deflate");
-			return adler32(z.input.b, 0, z.input.len);
+			var d:Deflater = a[0].abs("zlib_deflate");
+			return d.adler;
 		});
 		r("update_adler32", 4, (vm, a) -> {
 			var s = a[1].str().b, p = a[2].int(), l = a[3].int();
