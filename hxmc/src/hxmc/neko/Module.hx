@@ -74,6 +74,15 @@ class Op {
 	public static inline var MakeArray2 = 65;
 	public static inline var AccInt32 = 66;
 	public static inline var Last = 67;
+	// superinstructions (Module.fuse), in the slots of what they replace
+	public static inline var PushStack0 = 68; // AccStack0 Push
+	public static inline var PushStack1 = 69; // AccStack1 Push
+	public static inline var PushStack = 70; // AccStack n Push: n
+	public static inline var PushConst = 71; // AccInt Push: the constant's index
+	public static inline var PushGlobal = 72; // AccGlobal g Push: g
+	public static inline var OpImm = 73; // Push AccInt k <op>: k, the constant's index, op
+	public static inline var CmpJump = 74; // <cmp> JumpIf(Not) t: cmp | 256 for JumpIf, t
+	public static inline var OpImmJump = 75; // Push AccInt k <cmp> JumpIf(Not) t: k, index, cmp | 256 for JumpIf, (slot), t
 
 	public static final hasParam:Array<Bool> = [
 		false, false, false, false, true, true, true, true, true, false, true, true, // AccNull..AccBuiltin
@@ -232,8 +241,100 @@ class Module {
 		}
 		for (f in funcs)
 			if (!isOp[f.addr]) invalid();
+		fuse(m, code, codesize, [for (f in funcs) f.addr]);
 		m.code = code;
 		return m;
+	}
+
+	static inline function isCmp(op:Int):Bool
+		return op == Op.Lt || op == Op.Lte || op == Op.Gt || op == Op.Gte || op == Op.Eq || op == Op.Neq;
+
+	static inline function isImmOp(op:Int):Bool
+		return op == Op.Add || op == Op.Sub || op == Op.Mult || isCmp(op);
+
+	// common sequences as one instruction each (fewer dispatches; a comparison
+	// jumping without its Bool read back), where no instruction but the first
+	// is a jump's target: the instruction's slots keep the sequence's length,
+	// the debug positions and the targets stay where they were
+	static function fuse(m:Module, code:Vector<Int>, codesize:Int, entries:Array<Int>) {
+		var target = new Vector<Bool>(codesize + 1, false);
+		target[0] = true;
+		for (e in entries)
+			target[e] = true;
+		var i = 0;
+		while (i < codesize) {
+			var c = code[i];
+			switch c {
+				case Op.Jump | Op.JumpIf | Op.JumpIfNot | Op.Trap:
+					target[code[i + 1]] = true;
+				case _:
+			}
+			i += Op.hasParam[c] ? 2 : 1;
+		}
+		// (JumpTable's entries are jumps: their positions targets too)
+		i = 0;
+		while (i < codesize) {
+			var c = code[i];
+			if (c == Op.JumpTable) {
+				var n = code[i + 1];
+				for (k in 0...n + 1)
+					if (i + 2 + 2 * k <= codesize) target[i + 2 + 2 * k] = true;
+			}
+			i += Op.hasParam[c] ? 2 : 1;
+		}
+		inline function op(k:Int):Int
+			return k < codesize ? code[k] : Op.Last;
+		inline function free(k:Int):Bool
+			return k < codesize && !target[k];
+		i = 0;
+		while (i < codesize) {
+			var c = code[i];
+			var len = Op.hasParam[c] ? 2 : 1;
+			switch c {
+				case Op.Push if (free(i + 1) && op(i + 1) == Op.AccInt && free(i + 3) && isImmOp(op(i + 3))
+					&& Tag.isInt(m.consts[code[i + 2]])):
+					var k:Int = m.consts[code[i + 2]];
+					var cmp = op(i + 3);
+					if (isCmp(cmp) && free(i + 4) && (op(i + 4) == Op.JumpIf || op(i + 4) == Op.JumpIfNot)) {
+						var t = code[i + 5];
+						var flag = op(i + 4) == Op.JumpIf ? 256 : 0;
+						code[i] = Op.OpImmJump;
+						code[i + 1] = k;
+						// (i + 2: the constant's index, kept)
+						code[i + 3] = cmp | flag;
+						code[i + 5] = t;
+						len = 6;
+					} else {
+						code[i] = Op.OpImm;
+						code[i + 1] = k;
+						code[i + 3] = cmp;
+						len = 4;
+					}
+				case Op.AccStack0 if (free(i + 1) && op(i + 1) == Op.Push):
+					code[i] = Op.PushStack0;
+					len = 2;
+				case Op.AccStack1 if (free(i + 1) && op(i + 1) == Op.Push):
+					code[i] = Op.PushStack1;
+					len = 2;
+				case Op.AccStack if (free(i + 2) && op(i + 2) == Op.Push):
+					code[i] = Op.PushStack;
+					len = 3;
+				case Op.AccInt if (free(i + 2) && op(i + 2) == Op.Push):
+					code[i] = Op.PushConst;
+					len = 3;
+				case Op.AccGlobal if (free(i + 2) && op(i + 2) == Op.Push):
+					code[i] = Op.PushGlobal;
+					len = 3;
+				case _ if (isCmp(c) && free(i + 1) && (op(i + 1) == Op.JumpIf || op(i + 1) == Op.JumpIfNot)):
+					var t = code[i + 2];
+					code[i + 1] = c | (op(i + 1) == Op.JumpIf ? 256 : 0);
+					code[i] = Op.CmpJump;
+					code[i + 2] = t;
+					len = 3;
+				case _:
+			}
+			i += len;
+		}
 	}
 
 	// strtod's prefix (atof)

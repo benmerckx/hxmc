@@ -513,6 +513,51 @@ class VM {
 					var n = code[pc];
 					if (Tag.isInt(acc) && (acc : Int) >= 0 && (acc : Int) < n) pc += 1 + 2 * (acc : Int) else pc += 1 + 2 * n;
 				case Op.Loop:
+				// ---- superinstructions (Module.fuse)
+				case Op.PushStack0:
+					acc = stack[sp - 1];
+					if (sp == stack.length) grow();
+					stack[sp++] = acc;
+					pc++;
+				case Op.PushStack1:
+					acc = stack[sp - 2];
+					if (sp == stack.length) grow();
+					stack[sp++] = acc;
+					pc++;
+				case Op.PushStack:
+					acc = stack[sp - 1 - code[pc]];
+					if (sp == stack.length) grow();
+					stack[sp++] = acc;
+					pc += 2;
+				case Op.PushConst:
+					acc = m.consts[code[pc]];
+					if (sp == stack.length) grow();
+					stack[sp++] = acc;
+					pc += 2;
+				case Op.PushGlobal:
+					acc = m.globals[code[pc]];
+					if (sp == stack.length) grow();
+					stack[sp++] = acc;
+					pc += 2;
+				case Op.OpImm:
+					var k = code[pc], op = code[pc + 2];
+					fpcs[depth] = pc + 3;
+					if (Tag.isInt(acc)) acc = intOp(op, acc, k) else acc = anyOp(op, acc, m.consts[code[pc + 1]]);
+					pc += 3;
+				case Op.CmpJump:
+					var p = code[pc];
+					fpcs[depth] = pc;
+					var a:Dynamic = stack[sp - 1];
+					stack[--sp] = null;
+					var b = Tag.isInt(a) && Tag.isInt(acc) ? intCmp(p & 255, a, acc) : anyCmp(p & 255, a, acc);
+					acc = b;
+					if (b == (p >= 256)) pc = code[pc + 1] else pc += 2;
+				case Op.OpImmJump:
+					var k = code[pc], p = code[pc + 2];
+					fpcs[depth] = pc + 3;
+					var b = Tag.isInt(acc) ? intCmp(p & 255, acc, k) : anyCmp(p & 255, acc, m.consts[code[pc + 1]]);
+					acc = b;
+					if (b == (p >= 256)) pc = code[pc + 4] else pc += 5;
 				case Op.Last:
 					if (trap >= 0) trapState = RETURNED;
 					return acc;
@@ -572,6 +617,47 @@ class VM {
 	function invalidFieldAt(m:Module, pc:Int, id:Int):NekoError {
 		fpcs[depth] = pc;
 		return invalidField(id);
+	}
+
+	// a binary operation of an Int and a constant (OpImm)
+	inline function intOp(op:Int, a:Int, k:Int):Dynamic {
+		return switch op {
+			case Op.Add: box(a + k);
+			case Op.Sub: box(a - k);
+			case Op.Mult: box(a * k);
+			case _: intCmp(op, a, k);
+		}
+	}
+
+	static inline function intCmp(op:Int, a:Int, b:Int):Bool {
+		return switch op {
+			case Op.Lt: a < b;
+			case Op.Lte: a <= b;
+			case Op.Gt: a > b;
+			case Op.Gte: a >= b;
+			case Op.Eq: a == b;
+			case _: a != b;
+		}
+	}
+
+	function anyOp(op:Int, a:Dynamic, b:Dynamic):Dynamic {
+		return switch op {
+			case Op.Add: add(a, b);
+			case Op.Sub | Op.Mult: numberOp(a, b, op);
+			case _: anyCmp(op, a, b);
+		}
+	}
+
+	function anyCmp(op:Int, a:Dynamic, b:Dynamic):Bool {
+		var c = compare(a, b);
+		return switch op {
+			case Op.Eq: c == 0;
+			case Op.Neq: c != 0;
+			case Op.Lt: c != INVALID && c < 0;
+			case Op.Lte: c != INVALID && c <= 0;
+			case Op.Gt: c != INVALID && c > 0;
+			case _: c != INVALID && c >= 0;
+		}
 	}
 
 	// a Haxe error of the host (an unexpected one) as a Neko exception
