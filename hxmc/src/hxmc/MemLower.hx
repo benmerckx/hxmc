@@ -641,7 +641,8 @@ class MemLower extends MirWriter {
 	function boxFrom(t:Ty, v:Int):Int
 		return switch t {
 			case TI32: call("hx_box_int", vector(v), I64);
-			case TBool: call("hx_box_bool", vector(v), I64);
+			// (the two boxes, rt_bool_boxes: false at 8, true at 24; no call)
+			case TBool: op2(Add, I64, symAddr("rt_bool_boxes", 8), op1(ZExt, I64, op2(Shl, I32, cmp(CNe, v, iconst(0)), iconst(4))));
 			case TF64: call("hx_box_float", vector(v), I64);
 			case TI64: call("hx_box_i64", vector(v), I64);
 			case _: v;
