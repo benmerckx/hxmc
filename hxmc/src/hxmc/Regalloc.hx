@@ -174,22 +174,25 @@ class Regalloc {
 	public var insns = 0; // instructions they went through
 
 	public function run() {
-		// loop depths from the layout (reverse postorder, slow paths last): a
-		// branch back to an earlier block closes a loop over the blocks between
+		// loop depths: the Mir's loop nest's (IselBase), else from the layout
+		// (reverse postorder, slow paths last): a branch back to an earlier
+		// block closes a loop over the blocks between
 		var nb = f.blocks.length;
 		for (bi in 0...nb)
 			f.blocks[bi].id = bi;
-		var depth = Scratch.fill(s.count, nb + 1, 0);
-		for (b in f.blocks)
-			for (pr in b.preds)
-				if (pr.id >= b.id && !pr.cold) {
-					depth[b.id]++;
-					depth[pr.id + 1]--;
-				}
-		var d = 0;
-		for (bi in 0...nb) {
-			d += depth[bi];
-			f.blocks[bi].loopDepth = d;
+		if (!f.depths) {
+			var depth = Scratch.fill(s.count, nb + 1, 0);
+			for (b in f.blocks)
+				for (pr in b.preds)
+					if (pr.id >= b.id && !pr.cold) {
+						depth[b.id]++;
+						depth[pr.id + 1]--;
+					}
+			var d = 0;
+			for (bi in 0...nb) {
+				d += depth[bi];
+				f.blocks[bi].loopDepth = d;
+			}
 		}
 		for (round in 0...64) {
 			rounds++;

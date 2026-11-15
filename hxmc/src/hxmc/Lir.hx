@@ -110,6 +110,7 @@ class LFunc {
 	public var slots:Array<{size:Int, align:Int}> = []; // frame slots (MIR slots, then spills)
 	public var outArgs = 0; // bytes of outgoing stack arguments
 	public var hasCalls = false;
+	public var depths = false; // the blocks' loopDepth set (IselBase: the Mir's), else Regalloc's from the layout
 	public var display:Null<String>; // (-debug) the Haxe name of the function (FuncRec.name)
 	public var foreignPasses = false; // (FuncInfo.foreignPasses: Unwind.PASS)
 	var hints:Array<Int> = []; // vreg - NPHYS -> preferred register (physical or virtual), -1

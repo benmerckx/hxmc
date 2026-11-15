@@ -244,12 +244,18 @@ class IselBase {
 		for (b in mf.blocks)
 			if (b.id >= maxId) maxId = b.id + 1;
 		lb = new Vector<LBlock>(maxId);
+		// (the loops' depths from the Mir's loop nest: Regalloc's spill costs)
+		var cfg = mf.cfg();
+		cfg.loops();
 		for (b in layout) {
 			var l = new LBlock(f.blocks.length);
 			l.cold = b.cold;
+			var x = cfg.index(b);
+			l.loopDepth = x >= 0 ? cfg.loopDepth[x] : 0;
 			lb[b.id] = l;
 			f.blocks.push(l);
 		}
+		f.depths = true;
 		tlsBase = -1;
 		var usesTls = false;
 		if (abi.tls != LocalExec)
@@ -364,6 +370,7 @@ class IselBase {
 		flush();
 		var e = new LBlock(f.blocks.length);
 		e.cold = lb[to.id].cold;
+		e.loopDepth = lb[to.id].loopDepth;
 		f.blocks.push(e);
 		var saved = cur;
 		cur = e;
