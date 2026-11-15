@@ -3188,11 +3188,15 @@ class FnLower {
 				var xs = args(cargs, s.args, null);
 				return coerceRhs(anonCall(cf.cfName, s, ELocal(o), xs), s.ret, rt);
 			case TField(obj, FDynamic(name)):
-				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
-				var xs = args(cargs, new Vector<Ty>(cargs.length, TRef(RAny)), null);
-				var arr = temp(TRef(RArr(TRef(RAny))), ENewArr(TRef(RAny), xs));
-				var r = ECallHost("hx_dyn_call_field", vector(o, EStr(name), arr), TRef(RAny));
-				return coerceRhs(r, TRef(RAny), rt);
+				// (a structural call of Dynamic arguments and result: the inline
+				// cache takes a method of the object's class where only the
+				// result differs, Ir.anonAlternatives; else the runtime calls
+				// it as Reflect would, hx_anon_call_slow_r)
+				var o = asLocal(coerce(value(obj), tyOf(obj), TRef(RAny)), TRef(RAny));
+				var tys = new Vector<Ty>(cargs.length, TRef(RAny));
+				var xs = args(cargs, tys, null);
+				var s = l.sig([for (t in tys) t], TRef(RAny));
+				return coerceRhs(anonCall(name, s, ELocal(o), xs), TRef(RAny), rt);
 			case _:
 				return callValue(f, cargs, e);
 		}

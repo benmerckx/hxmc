@@ -18,6 +18,9 @@ class Abi {
 	// payload - 8; 16 to 31 are arrays, the other types records
 	public static inline var HDR_TINDEX = -8;
 	public static inline var T_FIRST = 32;
+	// the boxes of Int and Float (hxmc.rt.Types): their number at 0
+	public static inline var T_BOXINT = 2;
+	public static inline var T_BOXFLOAT = 3;
 	public static inline var T_ARRAY = 5;
 	public static inline var T_STRING = 16;
 	public static inline var T_STRING1 = 17; // a string of a byte per unit (hxmc.rt.Types)
