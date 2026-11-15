@@ -622,7 +622,7 @@ class CppCppia {
 
 	public static function generateScriptEnum(script:ScriptWriter, enumDef:TEnum, meta:Null<TExpr>):Void {
 		script.incClasses();
-		var sortedItems = listSort(function(f1:TEnumField, f2:TEnumField) return f1.efIndex - f2.efIndex, CppContext.pmapValues(enumDef.eConstrs));
+		var sortedItems = listSort(function(f1:TEnumField, f2:TEnumField) return f1.efIndex - f2.efIndex, CppContext.pmapValues(enumDef.eConstrs.byName));
 		script.writeList(script.op(IaEnum) + script.enumText(enumDef), sortedItems.length);
 
 		for (constructor in sortedItems) {

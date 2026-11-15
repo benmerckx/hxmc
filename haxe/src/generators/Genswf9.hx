@@ -2343,7 +2343,7 @@ class Genswf9 {
 		write(ctx, HClassDef(hc));
 		write(ctx, HPopScope);
 		write(ctx, HInitProp(name_id));
-		for (f in e.eConstrs) {
+		for (f in e.eConstrs.byName) {
 			switch f.efType {
 				case TFun(_):
 				case _:
@@ -2357,8 +2357,8 @@ class Genswf9 {
 			}
 		}
 		write(ctx, HGetLex(name_id));
-		for (n in e.eNames) write(ctx, HString(n));
-		write(ctx, HArray(e.eNames.length));
+		for (n in e.eConstrs.names()) write(ctx, HString(n));
+		write(ctx, HArray(e.eConstrs.length));
 		write(ctx, HInitProp(ident("__constructs__")));
 		switch meta {
 			case null:
@@ -3109,7 +3109,7 @@ class Genswf9 {
 		var st_meth_count = 0;
 		// port: PMap.fold in ascending key order, prepending.
 		var constrs:Array<HlField> = [];
-		for (f in e.eConstrs) {
+		for (f in e.eConstrs.byName) {
 			var isFun = f.efType.match(TFun(_));
 			var st_count = if (isFun) {
 				st_meth_count++;

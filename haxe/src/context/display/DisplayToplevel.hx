@@ -447,7 +447,7 @@ class DisplayToplevel {
 							case TEnumDecl(e) if (!cctx.pathExists(e.ePath)):
 								cctx.addPath(e.ePath);
 								var origin = Self(TEnumDecl(e));
-								for (ef in e.eConstrs) {
+								for (ef in e.eConstrs.byName) {
 									var isQualified = cctx.isQualified(ef.efName);
 									add(CompletionItem.makeCiEnumField(CompletionEnumField.make(ef, origin, isQualified), tpair(ef.efType)),
 										ef.efName);

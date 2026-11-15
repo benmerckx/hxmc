@@ -170,7 +170,7 @@ class Typer {
 						case TEnum(en, _): {
 								isEnum: true,
 								path: en.ePath,
-								fields: en.eNames,
+								fields: en.eConstrs.keyArray(),
 								type: TEnumDecl(en)
 							};
 						case TAbstract(a, _) if (a.aImpl != null && a.aEnum): {

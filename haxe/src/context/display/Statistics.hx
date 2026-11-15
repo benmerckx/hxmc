@@ -258,7 +258,7 @@ class Statistics {
 				case TEnumDecl(en):
 					checkModule(en.eModule);
 					declare(SKEnum(en), en.eNamePos);
-					for (ef in en.eConstrs) declare(SKEnumField(ef), ef.efNamePos);
+					for (ef in en.eConstrs.byName) declare(SKEnumField(ef), ef.efNamePos);
 				case TTypeDecl(td):
 					checkModule(td.tModule);
 					declare(SKTypedef(td), td.tNamePos);

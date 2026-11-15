@@ -862,7 +862,7 @@ class Genhl {
 		var t = HEnum(et);
 		if (tref != null) tref.v = t;
 		ctx.cachedTypes.set(keyPath, t);
-		et.efields = e.eNames.mapToVector(n -> {
+		et.efields = e.eConstrs.keyArray().mapToVector(n -> {
 			var f = e.eConstrs.get(n);
 			if (f == null) throw NotFound.raise();
 			var args:Vector<Ttype> = switch f.efType {
@@ -902,7 +902,7 @@ class Genhl {
 			p.pindex.set(name, {fid: fid, t: t});
 			return fid;
 		}
-		for (ef in e.eConstrs) {
+		for (ef in e.eConstrs.byName) {
 			switch follow(ef.efType) {
 				case TEnum(_):
 					addField(ef.efName, toType(ctx, ef.efType));
@@ -2209,7 +2209,7 @@ class Genhl {
 						op(ctx, ODynGet(r, robj, f));
 					case AEnum(en, index):
 						var curFid = ctx.cfids.arr.length;
-						var name = en.eNames[index];
+						var name = en.eConstrs.keyAt(index);
 						var fid = allocFunPath(ctx, en.ePath, name);
 						if (fid == curFid) {
 							var ef = en.eConstrs.get(name);
@@ -4172,7 +4172,7 @@ class Genhl {
 					var avalues = allocTmp(ctx, HArray(t));
 					op(ctx, OField(avalues, r, index("__evalues__")));
 
-					for (n in e.eNames) {
+					for (n in e.eConstrs.names()) {
 						var f = e.eConstrs.get(n);
 						if (f == null) throw NotFound.raise();
 						switch follow(f.efType) {

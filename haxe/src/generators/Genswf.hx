@@ -311,7 +311,7 @@ class Genswf {
 				}
 				for (i in c.clImplements) add_inherit(i.cls, i.params);
 			case TEnumDecl(e) if (!hasEnumFlag(e, EnExtern)):
-				for (ef in e.eConstrs) add_type(ef.efType);
+				for (ef in e.eConstrs.byName) add_type(ef.efType);
 			case _:
 		}
 		h = h.filter(x -> !(pathEq(x.p, {pack: [], name: "Int"}) && x.k.match(DKType)));

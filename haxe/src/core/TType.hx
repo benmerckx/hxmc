@@ -598,15 +598,16 @@ typedef TInfos = {
 	/* do not insert any fields above */
 	public var eType:T;
 	public var eFlags:Int;
-	public var eConstrs:TypeMap<TEnumField>;
-	public var eNames:Array<String>;
+	// port: `e_constrs` with `e_names`: the constructors in the names' order, by name in
+	// `byName` (core.ds.SeqMap); `names()` are e_names.
+	public var eConstrs:core.ds.SeqMap<TEnumField>;
 
 	public inline function new(ePath:GlobalTypePath, eModule:ModuleDef, ePos:Pos, eNamePos:Pos, ePrivate:Bool, eDoc:Documentation,
 			eMeta:Metadata, eParams:TypeParams, eUsing:Array<{
 			var cls:TClass;
 			var pos:Pos;
 		}>, eRestore:Void->Void, eType:T, eFlags:Int,
-			eConstrs:TypeMap<TEnumField>, eNames:Array<String>) {
+			eConstrs:core.ds.SeqMap<TEnumField>) {
 		this.ePath = ePath;
 		this.eModule = eModule;
 		this.ePos = ePos;
@@ -620,11 +621,10 @@ typedef TInfos = {
 		this.eType = eType;
 		this.eFlags = eFlags;
 		this.eConstrs = eConstrs;
-		this.eNames = eNames;
 	}
 
 	public inline function clone():TEnum return new TEnum(ePath, eModule, ePos, eNamePos, ePrivate, eDoc, eMeta, eParams, eUsing,
-		eRestore, eType, eFlags, eConstrs, eNames);
+		eRestore, eType, eFlags, eConstrs);
 }
 
 @:structInit class TDef {

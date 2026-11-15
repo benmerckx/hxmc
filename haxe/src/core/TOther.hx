@@ -278,8 +278,7 @@ class TOther {
 		eRestore: function() {},
 		ePrivate: false,
 		eFlags: 0,
-		eConstrs: core.ds.PMap.empty(),
-		eNames: [],
+		eConstrs: core.ds.SeqMap.empty(),
 		eType: mkMono()
 	};
 

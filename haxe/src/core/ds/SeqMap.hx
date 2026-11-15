@@ -4,7 +4,8 @@ import haxe.ds.Vector;
 
 // port: a persistent map with string keys that keeps a sequence too: upstream's pairs
 // of a PMap and the list of the same bindings in another order (a class's `cl_fields`
-// and `cl_ordered_fields`, its `cl_statics` and `cl_ordered_statics`), which upstream
+// and `cl_ordered_fields`, its `cl_statics` and `cl_ordered_statics`, an enum's
+// `e_constrs` and `e_names`, whose `names()` its sequence's are), which upstream
 // keeps in step by hand at every write. Iteration follows the sequence; `byName` is the
 // PMap, in key order, for lookups by name and wherever upstream iterates the PMap (and
 // to share, as a class's statics are its `cl_type`'s fields). The operations are the
@@ -50,6 +51,20 @@ final class SeqMap<V> {
 
 	// port: the i-th of the sequence (0 <= i < length).
 	public inline function at(i:Int):V return values[i];
+
+	// port: the name of the i-th of the sequence.
+	public inline function keyAt(i:Int):String return keys[i];
+
+	// port: the names in sequence order (an enum's `e_names`).
+	public inline function names():SeqMapIterator<String> return new SeqMapIterator(keys);
+
+	// port: the names in sequence order, a new Array.
+	public function keyArray():Array<String> {
+		var out:Array<String> = [];
+		out.resize(keys.length);
+		for (i in 0...keys.length) out[i] = keys[i];
+		return out;
+	}
 
 	// port: `f :: l` and `PMap.add name f m`.
 	public function cons(name:String, value:V):SeqMap<V> {

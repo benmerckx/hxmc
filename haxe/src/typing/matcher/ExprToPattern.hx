@@ -140,7 +140,7 @@ class ExprToPattern {
 			return {kind: ConEnum(en, ef), pos: p};
 		}
 		inline function enumerable():Array<String> return switch follow(t) {
-			case TEnum(en, _): en.eNames;
+			case TEnum(en, _): en.eConstrs.keyArray();
 			case TAbstract(a = {aImpl: c}, _) if (c != null && a.aEnum): [
 					for (cf in c.clStatics) if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) cf.cfName
 				];

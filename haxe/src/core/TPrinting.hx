@@ -512,7 +512,7 @@ class Printer {
 	]);
 
 	public static function sTenum(tabs:String, en:TEnum):String {
-		var constrs = en.eConstrs.valueArray();
+		var constrs = en.eConstrs.byName.valueArray();
 		constrs.reverse();
 		return record(tabs, [
 			["e_path", Globals.sTypePath(en.ePath)],
@@ -529,7 +529,7 @@ class Printer {
 				"e_constrs",
 				sList("\n\t", function(ef) return sTenumField(tabs + "\t", ef), constrs)
 			],
-			["e_names", en.eNames.join(", ")]
+			["e_names", en.eConstrs.keyArray().join(", ")]
 		]);
 	}
 

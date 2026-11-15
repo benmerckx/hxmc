@@ -587,7 +587,7 @@ class Genjson {
 	}
 
 	public static function generateEnum(ctx:GenjsonContext, e:TEnum):Array<JsonField> {
-		function generateEnumConstructors():JsonValue return jarray(e.eNames.map(function(s) {
+		function generateEnumConstructors():JsonValue return jarray(e.eConstrs.keyArray().map(function(s) {
 			return generateEnumField(ctx, e.eConstrs.find(s));
 		}));
 		return [

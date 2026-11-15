@@ -296,7 +296,7 @@ class Genhxold {
 			case TEnumDecl(e):
 				printMeta(e.eMeta);
 				p("extern enum " + stype(TEnum(e, extractParamTypes(e.eParams))) + " {\n");
-				for (n in e.eNames) {
+				for (n in e.eConstrs.names()) {
 					var c = e.eConstrs.find(n);
 					p("\t" + c.efName);
 					switch follow(c.efType) {

@@ -153,7 +153,7 @@ class Subject {
 				// port: `constructors` is still empty here and the constructors are distinct, so they are pushed without add's linear search.
 				case TEnum(en, _):
 					if (!deep) {
-						for (ef in en.eConstrs) constructors.push(({kind: ConEnum(en, ef), pos: nullPos} : ConstructorData));
+						for (ef in en.eConstrs.byName) constructors.push(({kind: ConEnum(en, ef), pos: nullPos} : ConstructorData));
 					}
 					{kind: SKEnum, finiteness: RunTimeFinite};
 				case _: {kind: SKValue, finiteness: Infinite};

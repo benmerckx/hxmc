@@ -1487,13 +1487,13 @@ class Lower {
 		enums.set(e, ei);
 		prog.enums.push(ei);
 		var ctors = [];
-		for (name in e.eNames) {
+		for (name in e.eConstrs.names()) {
 			var ef = e.eConstrs.get(name);
 			ctors.push(new CtorInfo(ei, name, ef.efIndex, vector()));
 		}
 		ctors.sort((a, b) -> a.tag - b.tag);
 		ei.ctors = Vector.fromArrayCopy(ctors);
-		outsideUnfolding(() -> for (name in e.eNames) {
+		outsideUnfolding(() -> for (name in e.eConstrs.names()) {
 			var ef = e.eConstrs.get(name);
 			var ci = ei.ctors[ef.efIndex];
 			switch TFunctions.follow(ef.efType) {

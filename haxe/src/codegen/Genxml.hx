@@ -227,7 +227,7 @@ class Genxml {
 				if (hasClassFlag(c, CAbstract)) attrs.push(attr("abstract", "1"));
 				node("class", attrs, tree.concat(statics).concat(fields).concat(ctor).concat(genDocOpt(c.clDoc)).concat(genMeta(c.clMeta)));
 			case TEnumDecl(e): node("enum", genTypeParams(includePos, e.ePrivate, tpath(t), e.eParams, e.ePos, m),
-					e.eNames.map(name -> genConstr(e.eConstrs.find(name)))
+					e.eConstrs.keyArray().map(name -> genConstr(e.eConstrs.find(name)))
 						.concat(genDocOpt(e.eDoc))
 						.concat(genMeta(e.eMeta)));
 			case TTypeDecl(d): node("typedef", genTypeParams(includePos, d.tPrivate, d.tPath, d.tParams, d.tPos, m),

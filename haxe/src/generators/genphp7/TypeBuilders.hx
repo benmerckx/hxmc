@@ -455,7 +455,7 @@ class EnumBuilder extends TypeBuilder {
 	*/
 	override function writeBody():Void {
 		var writeEmptyLines = false;
-		for (name => field in enm.eConstrs) {
+		for (name => field in enm.eConstrs.byName) {
 			if (writeEmptyLines) writer.writeEmptyLines() else writeEmptyLines = true;
 			writeConstructor(name, field);
 		}
@@ -516,7 +516,7 @@ class EnumBuilder extends TypeBuilder {
 		writer.indentMore();
 		writer.writeLine("return [");
 		writer.indentMore();
-		for (name => field in enm.eConstrs) writer.writeLine((Std.string(field.efIndex)) + " => '" + name + "',");
+		for (name => field in enm.eConstrs.byName) writer.writeLine((Std.string(field.efIndex)) + " => '" + name + "',");
 		writer.indentLess();
 		writer.writeStatement("]");
 		writer.indentLess();
@@ -533,7 +533,7 @@ class EnumBuilder extends TypeBuilder {
 		writer.indentMore();
 		writer.writeLine("return [");
 		writer.indentMore();
-		for (name => field in enm.eConstrs) {
+		for (name => field in enm.eConstrs.byName) {
 			var count = switch follow(field.efType) {
 				case TFun(sig): sig.args.length;
 				case TEnum(_): 0;

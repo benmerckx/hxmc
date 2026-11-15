@@ -2383,7 +2383,7 @@ class Generator {
 		var p = getPath(mt);
 		var pName = getFullName(mt);
 
-		var enumConstructs = en.eConstrs.foldCons(ef -> ef);
+		var enumConstructs = en.eConstrs.byName.foldCons(ef -> ef);
 		haxe.ds.ArraySort.sort(enumConstructs, function(a, b) return if (a.efIndex < b.efIndex) -1 else if (a.efIndex > b.efIndex) 1 else 0);
 
 		newline(ctx);

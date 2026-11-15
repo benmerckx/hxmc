@@ -684,7 +684,7 @@ class Genneko {
 				{name: "__serialize", expr: ident(p, "@serialize")},
 				{name: "__string", expr: ident(p, "@enum_to_string")}
 			]), p)), p)
-		].concat(pmapList(genEnumConstr.bind(ctx, uname), e.eConstrs)).concat(switch e.ePath {
+		].concat(pmapList(genEnumConstr.bind(ctx, uname), e.eConstrs.byName)).concat(switch e.ePath {
 			case {pack: [], name: name}: [new NExpr(EBinop("=", field(p, ident(p, "@classes"), name), ident(p, name)), p)];
 			case _: [];
 		})), p);
@@ -773,7 +773,7 @@ class Genneko {
 				var arr = call(p, field(p, ident(p, "Array"), "new1"), [array(p, name.map(n -> genConstant(ctx, e.ePos, TString(n)))), int(p, name.length)]);
 				var path = genTypePath(p, e.ePath);
 				var setname = new NExpr(EBinop("=", field(p, path, "__ename__"), arr), p);
-				var arr = call(p, field(p, ident(p, "Array"), "new1"), [array(p, e.eNames.map(n -> genConstant(ctx, e.ePos, TString(n)))), int(p, e.eNames.length)]);
+				var arr = call(p, field(p, ident(p, "Array"), "new1"), [array(p, e.eConstrs.keyArray().map(n -> genConstant(ctx, e.ePos, TString(n)))), int(p, e.eConstrs.length)]);
 				var setconstrs = new NExpr(EBinop("=", field(p, path, "__constructs__"), arr), p);
 				var meta = (switch core.Texpr.buildMetadata(ctx.com.basic, TEnumDecl(e)) {
 					case null: [];

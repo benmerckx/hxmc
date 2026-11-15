@@ -1645,7 +1645,7 @@ class Genjs {
 			"$hxClasses[\"" + dotp + "\"] = "));
 		spr(ctx, "{");
 		if (hasFeature(ctx, "js.Boot.isEnum")) print(ctx, " __ename__:" + (if (hasFeature(ctx, "Type.getEnumName")) "\"" + dotp + "\"" else "true") + ",");
-		if (asObjects) print(ctx, "__constructs__:null") else print(ctx, "__constructs__:[" + ([for (s in e.eNames) '"$s"'].join(",")) + "]");
+		if (asObjects) print(ctx, "__constructs__:null") else print(ctx, "__constructs__:[" + ([for (s in e.eConstrs.names()) '"$s"'].join(",")) + "]");
 		var bend = if (!asObjects) {
 			spr(ctx, " }");
 			ctx.separator = true;
@@ -1654,7 +1654,7 @@ class Genjs {
 		} else {
 			openBlock(ctx);
 		};
-		for (n in e.eNames) {
+		for (n in e.eConstrs.names()) {
 			var f = e.eConstrs.find(n);
 			if (asObjects) {
 				newprop(ctx);
@@ -1694,11 +1694,11 @@ class Genjs {
 			spr(ctx, "\n}");
 			ctx.separator = true;
 			newline(ctx);
-			print(ctx, p + ".__constructs__ = [" + ([for (s in e.eNames) p + field(s)].join(",")) + "]");
+			print(ctx, p + ".__constructs__ = [" + ([for (s in e.eConstrs.names()) p + field(s)].join(",")) + "]");
 			newline(ctx);
 		}
 		if (hasFeature(ctx, "Type.allEnums")) {
-			var ctorsWithoutArgs = e.eNames.filter(function(s) {
+			var ctorsWithoutArgs = e.eConstrs.keyArray().filter(function(s) {
 				var ef = e.eConstrs.find(s);
 				return switch follow(ef.efType) {
 					case TFun(_): false;

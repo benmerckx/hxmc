@@ -1742,7 +1742,7 @@ class ModuleCache {
 						field("s", f);
 				case TEnumDecl(e):
 					b.add("E" + core.Globals.sTypePath(e.ePath) + "\n");
-					for (n in e.eNames) {
+					for (n in e.eConstrs.names()) {
 						b.add(n + ":");
 						ty(e.eConstrs.get(n).efType, 0);
 						b.add(";");

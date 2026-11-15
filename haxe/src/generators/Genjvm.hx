@@ -846,7 +846,7 @@ class Genjvm {
 			jmCtor.return_();
 		}
 		var inits:Array<{jmStatic:JvmMethodBuilder, jcCtor:JvmClassBuilder}> = [];
-		var names = en.eNames.map(function(name) {
+		var names = en.eConstrs.keyArray().map(function(name) {
 			var ef = en.eConstrs.get(name);
 			if (ef == null) throw NotFound.raise();
 			var args = switch TFunctions.follow(ef.efType) {

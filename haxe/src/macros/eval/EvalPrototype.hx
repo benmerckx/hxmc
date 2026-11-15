@@ -354,7 +354,7 @@ class EvalPrototype {
 				}
 				{init: PrototypeBuilder.finalize(pctx), delays: delays};
 			case TEnumDecl(en):
-				var names = en.eNames.map(name -> {
+				var names = en.eConstrs.keyArray().map(name -> {
 					var ef = en.eConstrs.get(name);
 					if (ef == null) throw NotFound.raise();
 					var args = switch TFunctions.follow(ef.efType) {
@@ -376,7 +376,7 @@ class EvalPrototype {
 					}
 				}
 				// port: PMap.iter: ascending key order
-				for (name => ef in en.eConstrs)
+				for (name => ef in en.eConstrs.byName)
 					PrototypeBuilder.addProtoField(pctx, EvalHash.hash(name), AtomicLazy.fromVal(enumFieldValue(ef)));
 				{init: PrototypeBuilder.finalize(pctx), delays: []};
 			case TAbstractDecl(a):

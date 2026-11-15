@@ -1239,7 +1239,7 @@ class Texpr {
 			case TEnumDecl(e):
 				p = e.ePos;
 				meta = [{name: "", meta: e.eMeta}];
-				fields = e.eNames.map(n -> {name: n, meta: e.eConstrs.get(n).efMeta});
+				fields = [for (i in 0...e.eConstrs.length) {name: e.eConstrs.keyAt(i), meta: e.eConstrs.at(i).efMeta}];
 				statics = [];
 			case TTypeDecl(d):
 				p = d.tPos;

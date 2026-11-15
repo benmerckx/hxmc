@@ -63,7 +63,7 @@ class Native {
 				c.clPath = Ast.parsePath(r.name);
 			case TEnumDecl(e):
 				var changed = false;
-				for (ef in e.eConstrs) {
+				for (ef in e.eConstrs.byName) {
 					try {
 						var r = real(ef.efMeta, ef.efName);
 						ef.efName = r.name;
@@ -73,11 +73,9 @@ class Native {
 				}
 				if (changed) {
 					// port: upstream rebuilds the map under the new names, consing them in the old
-					// key order: e_names in reverse.
-					var constrs = e.eConstrs, n = constrs.size;
-					e.eNames = [for (i in 0...n) constrs.valueAt(n - 1 - i).efName];
-					var efs = constrs.valueArray();
-					e.eConstrs = core.ds.PMap.ofArrays([for (ef in efs) ef.efName], efs);
+					// key order: e_names in reverse key order (not the declaration's any more).
+					var efs = e.eConstrs.byName.foldCons(ef -> ef);
+					e.eConstrs = core.ds.SeqMap.ofArray([for (ef in efs) ef.efName], efs);
 				}
 				var r = real(e.eMeta, Globals.sTypePath(e.ePath));
 				e.eMeta = core.ds.VectorTools.cons(r.meta, e.eMeta);

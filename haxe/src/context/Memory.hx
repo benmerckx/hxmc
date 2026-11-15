@@ -75,7 +75,7 @@ class Memory {
 				for (f in c.clFields) deps.unshift(f);
 			case TEnumDecl(e):
 				deps.unshift(e);
-				for (n in e.eNames) deps.unshift(e.eConstrs.get(n));
+				for (ef in e.eConstrs) deps.unshift(ef);
 			case TTypeDecl(t):
 				deps.unshift(t);
 			case TAbstractDecl(a):

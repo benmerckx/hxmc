@@ -1757,7 +1757,7 @@ class HxbReader {
 		typeTypeParameters = e.eParams.copy();
 		readList(function() {
 			var name = readString();
-			var ef = findMap(e.eConstrs, name);
+			var ef = e.eConstrs.find(name);
 			ef.efParams = readFieldTypeParameters();
 			ef.efType = readTypeInstance();
 			ef.efDoc = readOption(readDocumentation);
@@ -1938,7 +1938,9 @@ class HxbReader {
 	public function readEnum(e:TEnum):Void {
 		readCommonModuleType(TEnumDecl(e));
 		e.eFlags = uleb();
-		e.eNames = readList(readString);
+		// port: e_names: the constructors (read with the forward declarations) in that order
+		var names = readList(readString), constrs = e.eConstrs;
+		e.eConstrs = core.ds.SeqMap.ofArray(names, [for (n in names) constrs.find(n)]);
 	}
 
 	public function readTypedef(td:TDef):Void {
@@ -1974,7 +1976,7 @@ class HxbReader {
 				var name = readString();
 				AtomicLazy.fromFun(function() {
 					var en = en.force();
-					return findMap(en.eConstrs, name);
+					return en.eConstrs.find(name);
 				});
 			}
 		enumFields = a;
@@ -2347,7 +2349,7 @@ class HxbReader {
 						efs.push(ef);
 						i--;
 					}
-					en.eConstrs = core.ds.PMap.ofArrays(names, efs);
+					en.eConstrs = core.ds.SeqMap.ofArray(names, efs);
 					TEnumDecl(en);
 				case 2:
 					var td = mkTypedef(currentModule, path, pos, namePos, mkMono());

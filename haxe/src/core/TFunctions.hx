@@ -272,8 +272,6 @@ class TFunctions {
 		};
 	}
 
-	public static inline function findMap<V>(map:TypeMap<V>, name:String):V return map.find(name);
-
 	// port: a class's fields of a list of them: the list, and `List.fold_left (fun m f ->
 	// PMap.add f.cf_name f m) PMap.empty` of it (upstream's mk_pmap).
 	public static function classFieldsOf(cfs:Array<TClassField>):core.ds.SeqMap<TClassField>
@@ -328,8 +326,7 @@ class TFunctions {
 		eRestore: function() {},
 		eType: tDynamic,
 		eFlags: 0,
-		eConstrs: core.ds.PMap.empty(),
-		eNames: []
+		eConstrs: core.ds.SeqMap.empty()
 	};
 	public static final nullField:TClassField = mkField("", tDynamic, Globals.nullPos, Globals.nullPos);
 	public static final nullEnumField:TEnumField = {
@@ -902,7 +899,7 @@ class TFunctions {
 			case KTypeParameter(ttp):
 				for (t in getConstraints(ttp)) switch follow(t) {
 					case TAnon(a): try {
-							var f = findMap(a.aFields, i);
+							var f = a.aFields.find(i);
 							return {owner: null, type: buildType(f), field: f};
 						} catch (_:NotFound) {}
 					case TInst(c, tl): try {
@@ -930,12 +927,12 @@ class TFunctions {
 			var result = rawClassField(function(f) return f.cfType, c, tl, n);
 			result.owner == null ? FAnon(result.field) : FInstance(result.owner.cls, result.owner.params, result.field);
 		case TAnon(a): switch a.aStatus {
-				case EnumStatics(e): FEnum(e, findMap(e.eConstrs, n));
+				case EnumStatics(e): FEnum(e, e.eConstrs.find(n));
 				case ClassStatics(c): FStatic(c, c.clStatics.find(n));
 				case AbstractStatics(a):
 					if (a.aImpl == null) throw NotFound.raise();
 					FStatic(a.aImpl, a.aImpl.clStatics.find(n)); // is that right?
-				case _: FAnon(findMap(a.aFields, n));
+				case _: FAnon(a.aFields.find(n));
 			}
 		case TDynamic(_): FDynamic(n);
 		case TEnum(_) | TMono(_) | TAbstract(_, _) | TFun(_): throw NotFound.raise();

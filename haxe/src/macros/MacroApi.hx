@@ -1433,8 +1433,8 @@ class MacroApiImpl {
 	}
 
 	public static function encodeTenum(e:TEnum):Value {
-		var names = encodeArrayV(e.eNames.mapToVector(encodeString));
-		var constructs = encodePMap(encodeEfield, e.eConstrs);
+		var names = encodeArray([for (n in e.eConstrs.names()) encodeString(n)]);
+		var constructs = encodePMap(encodeEfield, e.eConstrs.byName);
 		var exclude = vfun0(() -> {
 			addEnumFlag(e, EnExcluded);
 			vnull;

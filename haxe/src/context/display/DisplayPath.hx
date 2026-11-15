@@ -150,7 +150,7 @@ class TypePathHandler {
 			var fields = if (enumStatics == null) fields else {
 				var en = enumStatics;
 				// port: PMap.fold consing each constructor's item onto fields
-				en.eConstrs.foldCons(ef -> CompletionItem.makeCiEnumField(CompletionEnumField.make(ef, Self(TEnumDecl(en)), true),
+				en.eConstrs.byName.foldCons(ef -> CompletionItem.makeCiEnumField(CompletionEnumField.make(ef, Self(TEnumDecl(en)), true),
 					tpair(ef.efType))).concat(fields);
 			};
 			return fields;

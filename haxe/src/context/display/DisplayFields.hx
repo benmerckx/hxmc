@@ -369,7 +369,7 @@ class DisplayFields {
 							function fAllow(cf:TClassField):Bool return shouldAccess(c, cf, true);
 							iterFields(Self(TAbstractDecl(a)), c.clStatics.byName, fAllow, CompletionItem.makeCiClassField);
 						case EnumStatics(en):
-							en.eConstrs.fold(function(ef:TEnumField, acc:PMap<CompletionItemData>) {
+							en.eConstrs.byName.fold(function(ef:TEnumField, acc:PMap<CompletionItemData>) {
 								var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(ef.efMeta), ef.efType);
 								var cef = CompletionEnumField.make(ef, Self(TEnumDecl(en)), true);
 								return acc.add(ef.efName, CompletionItem.makeCiEnumField(cef, {t: ef.efType, ct: ct}));

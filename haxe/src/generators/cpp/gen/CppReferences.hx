@@ -271,7 +271,7 @@ class CppReferences {
 		}
 		function visitEnum(enumDef:TEnum):Void {
 			addType(enumDef.ePath);
-			for (constructor in enumDef.eConstrs) {
+			for (constructor in enumDef.eConstrs.byName) {
 				switch constructor.efType {
 					case TFun(sig): for (a in sig.args) visitType(a.type);
 					case _:

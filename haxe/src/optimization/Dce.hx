@@ -290,7 +290,7 @@ class Dce {
 			dce.usedMutex.release();
 			checkAndAddFeature(dce, "has_enum");
 			checkFeature(dce, Globals.sTypePath(en.ePath) + ".*");
-			for (ef in en.eConstrs) markT(dce, ef.efPos, ef.efType);
+			for (ef in en.eConstrs.byName) markT(dce, ef.efPos, ef.efType);
 		} else dce.usedMutex.release();
 	}
 

@@ -230,7 +230,7 @@ class ImportHandling {
 										case TEnumDecl(e): {
 												parent: "Enum<" + Globals.sTypePath(md.mPath) + ">",
 												kind: "field",
-												names: e.eConstrs.keyArray()
+												names: e.eConstrs.byName.keyArray()
 											};
 										case _: {
 												parent: "Module " + Globals.sTypePath(md.mPath),

@@ -133,7 +133,7 @@ class Dump {
 				case TEnumDecl(e):
 					buf.add(metas(e.eMeta, "") + (e.ePrivate ? "private " : "") + (hasEnumFlag(e, EnExtern) ? "extern " : "") + "enum "
 						+ sTypePath(path) + params(e.eParams) + " {\n");
-					for (name in e.eNames) {
+					for (name in e.eConstrs.names()) {
 						var f = e.eConstrs.get(name);
 						var suffix = switch f.efType {
 							case TFun(s): "("

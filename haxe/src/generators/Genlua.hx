@@ -2105,11 +2105,11 @@ class Genlua {
 			print(ctx, "_hxClasses[\"" + dotPath(e.ePath) + "\"] = {");
 			print(ctx, " __ename__ = " + (if (hasFeature(ctx, "Type.getEnumName")) "\"" + ename.join(".") + "\"" else "true") + ",");
 			spr(ctx, " __constructs__ = _hx_tab_array({");
-			if (e.eNames.length > 0) {
+			if (e.eConstrs.length > 0) {
 				spr(ctx, "[0]=");
-				spr(ctx, e.eNames.map(s -> '"$s"').join(","));
+				spr(ctx, e.eConstrs.keyArray().map(s -> '"$s"').join(","));
 			}
-			print(ctx, "}," + e.eNames.length + ")}");
+			print(ctx, "}," + e.eConstrs.length + ")}");
 			ctx.separator = true;
 			newline(ctx);
 		}
@@ -2118,7 +2118,7 @@ class Genlua {
 			print(ctx, p + " = _hxClasses[\"" + dotPath(e.ePath) + "\"];");
 
 		newline(ctx);
-		for (n in e.eNames) {
+		for (n in e.eConstrs.names()) {
 			var f = e.eConstrs.get(n);
 			if (f == null) throw core.ds.NotFound.raise();
 			print(ctx, p + field(f.efName) + " = ");
@@ -2142,7 +2142,7 @@ class Genlua {
 			newline(ctx);
 		}
 		if (hasFeature(ctx, "Type.allEnums")) {
-			var ctorsWithoutArgs = e.eNames.filter(function(s) {
+			var ctorsWithoutArgs = e.eConstrs.keyArray().filter(function(s) {
 				var ef = e.eConstrs.get(s);
 				if (ef == null) throw core.ds.NotFound.raise();
 				return switch follow(ef.efType) {

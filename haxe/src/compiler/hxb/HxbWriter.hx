@@ -2141,7 +2141,8 @@ class HxbWriter {
 		selectType(e.ePath);
 		writeCommonModuleType(TFunctions.tInfos(TEnumDecl(e)));
 		chunk.writeUleb128(e.eFlags);
-		chunk.writeList(e.eNames, chunk.writeString);
+		chunk.writeUleb128(e.eConstrs.length);
+		for (n in e.eConstrs.names()) chunk.writeString(n);
 	}
 
 	function writeTypedef(td:TDef):Void {
@@ -2158,7 +2159,7 @@ class HxbWriter {
 	// port: write_list of `PMap.foldi (fun s f acc -> (s,f) :: acc) e.e_constrs []`: the
 	// constructors in descending key order, walked by index instead of listed.
 	inline function writeEnumConstructors(e:TEnum, f:String->TEnumField->Void):Void {
-		var constrs = e.eConstrs, i = constrs.size;
+		var constrs = e.eConstrs.byName, i = constrs.size;
 		chunk.writeUleb128(i);
 		while (i > 0) {
 			i--;

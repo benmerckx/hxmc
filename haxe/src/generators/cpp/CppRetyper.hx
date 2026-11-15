@@ -890,7 +890,7 @@ class CppRetyper {
 					null;
 			}
 		}
-		var constructors = listSort(sortConstructors, CppContext.pmapValues(enumDef.eConstrs)).map(function(f) return ({
+		var constructors = listSort(sortConstructors, CppContext.pmapValues(enumDef.eConstrs.byName)).map(function(f) return ({
 			tefField: f,
 			tefName: keywordRemap(f.efName),
 			tefHash: strq(f.efName),
