@@ -600,14 +600,54 @@ class MemLower extends MirWriter {
 		return readVar(r, cur);
 	}
 
+	// a Dynamic as a number: an Int's box read inline (and as a Float, a
+	// Float's), any other value by the runtime (null, a Bool, the other kind)
 	function unboxTo(t:Ty, v:Int):Int
 		return switch t {
-			case TI32: call("hx_unbox_int", vector(v), I32);
+			case TI32: unboxInline(TI32, v, "hx_unbox_int");
 			case TBool: call("hx_unbox_bool", vector(v), I32);
-			case TF64: call("hx_unbox_float", vector(v), F64);
+			case TF64: unboxInline(TF64, v, "hx_unbox_float");
 			case TI64: call("hx_unbox_i64", vector(v), I64);
 			case _: v;
 		};
+
+	function unboxInline(t:Ty, v:Int, fn:String):Int {
+		var ty = MirBuild.mty(t);
+		var res = newVar(ty);
+		var join = newBlock();
+		var nn = newBlock(), slow = newBlock();
+		slow.cold = true;
+		br(cmp(CNe, v, lconst(0, 0)), nn, slow);
+		seal(nn);
+		cur = nn;
+		var ti = tindex(v);
+		var isInt = newBlock();
+		if (t == TF64) {
+			var isFloat = newBlock(), notFloat = newBlock();
+			br(cmp(CEq, ti, iconst(Abi.T_BOXFLOAT)), isFloat, notFloat);
+			seal(isFloat);
+			cur = isFloat;
+			writeVar(res, cur, loadM(Opt.MConst, F64, 8, v, 0));
+			jmp(join);
+			seal(notFloat);
+			cur = notFloat;
+			br(cmp(CEq, ti, iconst(Abi.T_BOXINT)), isInt, slow);
+		} else
+			br(cmp(CEq, ti, iconst(Abi.T_BOXINT)), isInt, slow);
+		seal(isInt);
+		seal(slow);
+		cur = isInt;
+		// (a box is never written: its number a constant load)
+		var i = loadM(Opt.MConst, I32, 4, v, 0);
+		writeVar(res, cur, t == TF64 ? op1(I2F, F64, i) : i);
+		jmp(join);
+		cur = slow;
+		writeVar(res, cur, call(fn, vector(v), ty));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(res, cur);
+	}
 
 	function boxFrom(t:Ty, v:Int):Int
 		return switch t {
