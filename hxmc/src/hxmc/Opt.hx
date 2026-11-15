@@ -2177,7 +2177,37 @@ class Opt {
 	// element at a sub's start, hxmc.rt.Bytes' accessors); an index y << k
 	// (k of 1 to 3) at scale 1: index y at scale 2^k (a reference store's
 	// element, whose shifted index its barrier's address shares)
+	// An index sext(x + c) or sext(x | c), of x in 0...m and a constant c
+	// with m + c below 2^31 (and, for the or, c's bits above x's): index
+	// sext(x), displacement c times the scale (a table's row, sBox[0x100 |
+	// (x & 0xff)]: [base + x*4 + 0x400], no or, add or extension of its own)
 	function indexed() {
+		for (b in f.blocks) {
+			var k = 0;
+			while (k < b.ins.length) {
+				var i = b.ins[k++];
+				if ((i.op == Load || i.op == Store) && !i.dead && i.sym == null && i.b >= 0) {
+					var s = f.vals[i.b];
+					if (s.op != SExt) continue;
+					var v = f.vals[s.a];
+					if (v.op != Add && v.op != Or) continue;
+					var c = constOf(v.b);
+					if (c < 0) continue;
+					var m = upTo(v.a), span = 1;
+					while (span <= m)
+						span <<= 1;
+					if (m < 0 || m + c > 0x7fffffff || v.op == Or && c & (span - 1) != 0 || c * i.imm2 > 0x3fffffff - i.imm) continue;
+					var x = new MIns(SExt, I64);
+					x.id = f.vals.length;
+					f.vals.push(x);
+					x.block = b;
+					x.a = v.a;
+					b.ins.insert(k++ - 1, x);
+					i.b = x.id;
+					i.imm += c * i.imm2;
+				}
+			}
+		}
 		for (b in f.blocks)
 			for (i in b.ins)
 				if ((i.op == Load || i.op == Store) && !i.dead && i.sym == null) {
@@ -2198,6 +2228,24 @@ class Opt {
 					i.b = x.b;
 					i.imm2 = 1;
 				}
+	}
+
+	// the largest an Int v can be when it is never negative (-1: unknown): a
+	// constant, x & a constant, x >>> a constant, a byte or 16-bit unit loaded
+	public function upTo(v:Int):Int {
+		var x = f.vals[v];
+		if (x.ty != I32) return -1;
+		return switch x.op {
+			case Const: x.sym == null && x.imm >= 0 ? x.imm : -1;
+			case And:
+				var a = constOf(x.a), b = constOf(x.b);
+				a >= 0 && b >= 0 ? (a < b ? a : b) : a >= 0 ? a : b;
+			case Shr:
+				var k = constOf(x.b);
+				k >= 1 && k <= 31 ? (1 << (32 - k)) - 1 : -1;
+			case Load: x.size < 4 && !x.signed ? (1 << (8 * x.size)) - 1 : -1;
+			case _: -1;
+		}
 	}
 
 	// A cheap pure value whose uses are all in one slow-path block, other than
