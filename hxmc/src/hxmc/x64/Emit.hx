@@ -204,6 +204,27 @@ class Emit implements hxmc.Target.Emitter {
 			}
 			ins.resize(n);
 		}
+		// (x >>> 8) & 0xff of x in rax to rbx (d <- x; d >>= 8; movzx d, d8):
+		// movzx d, xh (MOV, imm2 9), as LLVM's
+		for (b in f.blocks) {
+			var ins = b.ins, n = 0, j = 0;
+			while (j < ins.length) {
+				var x = ins[j], k = (x.op : XOp) == MOV && !x.flag && x.imm2 == 0 && !isX(x.d) && !isX(x.s1) ? j + 1 : j;
+				var y = k < ins.length ? ins[k] : null, z = k + 1 < ins.length ? ins[k + 1] : null;
+				var s = k > j ? x.s1 : y == null ? -1 : y.d;
+				if (y != null && z != null && (y.op : XOp) == SHIFTI && y.cond == Asm.SHR && y.imm == 8 && (k == j || y.d == x.d)
+					&& (z.op : XOp) == MOV && z.imm2 == 8 && !z.flag && z.d == y.d && z.s1 == y.d && s >= 0 && s < 4 && z.d < 8) {
+					z.imm2 = 9;
+					z.s1 = s;
+					ins[n++] = z;
+					j = k + 2;
+					continue;
+				}
+				ins[n++] = x;
+				j++;
+			}
+			ins.resize(n);
+		}
 		for (b in f.blocks)
 			b.label = a.newLabel();
 		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
@@ -468,7 +489,7 @@ class Emit implements hxmc.Target.Emitter {
 			case MOV:
 				if (isX(i.d) && isX(i.s1)) a.movsdRR(i.d, i.s1) else if (isX(i.d)) a.movqXR(i.d, i.s1) else if (isX(i.s1)) a.movqRX(i.d, i.s1) else if (i.flag)
 					a.movsxdR(i.d, i.s1)
-				else if (i.imm2 == 8) a.movzx8R(i.d, i.s1) else if (i.imm2 == 16) a.movzx16R(i.d, i.s1)
+				else if (i.imm2 == 8) a.movzx8R(i.d, i.s1) else if (i.imm2 == 16) a.movzx16R(i.d, i.s1) else if (i.imm2 == 9) a.movzxHighR(i.d, i.s1)
 				else if (i.d != i.s1 || i.size == 4 && i.imm2 == 1) a.movRR(i.size == 4 ? 4 : 8, i.d, i.s1);
 			case MOVI:
 				if (i.isym != null) a.movImm32(i.d, i.imm) else if (i.flag && i.imm == 0 && (i.size == 4 || i.imm2 == 0)) a.movImm32(i.d, 0) else if (i.size == 4) a.movRI(4, i.d, i.imm) else a.movRI64(i.d, i.imm, i.imm2);

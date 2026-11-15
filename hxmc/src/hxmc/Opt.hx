@@ -3349,7 +3349,21 @@ class Opt {
 			i.a = i.b = i.c = -1;
 			return true;
 		}
+		// (x >>> k) | (x << (w - k)), of constants known once inlined (MirBuild's
+		// rotation saw a parameter): x rotated right by k (not a constant: numbered)
+		inline function rotation(s:MIns, l:MIns):Bool {
+			var w = i.ty == I64 ? 64 : 32;
+			var k = s.op == Shr && l.op == Shl && s.ty == i.ty && l.ty == i.ty && res(s.a) == res(l.a) ? f.vals[res(s.b)] : null;
+			var m = k == null ? null : f.vals[res(l.b)];
+			if (k == null || !plain(k) || !plain(m) || k.imm <= 0 || k.imm >= w || m.imm != w - k.imm) return false;
+			i.op = Rotr;
+			i.a = res(s.a);
+			i.b = res(s.b);
+			return true;
+		}
 		switch i.op {
+			case Or if ((i.ty == I32 || i.ty == I64) && y != null && (rotation(x, y) || rotation(y, x))):
+				return false;
 			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr if (i.ty == I32 && plain(x) && plain(y)):
 				var a = x.imm, b = y.imm;
 				return set(switch i.op {
