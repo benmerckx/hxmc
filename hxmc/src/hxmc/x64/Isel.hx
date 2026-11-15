@@ -244,9 +244,19 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	// its SExt
 	function zeroExtended(v:Int, nonNeg:Bool, depth = 0):Bool {
 		var i = m.vals[v];
+		if (folded[v] && i.op != Const) return false;
+		inline function nonNegConst(x:Int):Bool {
+			var c = m.vals[x];
+			return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0;
+		}
 		return switch i.op {
 			case Load: i.ty == I32 && i.size <= 4 && (!nonNeg || i.size < 4 && !i.signed);
 			case Const: i.ty == I32 && i.sym == null && i.imm >= 0;
+			// (32-bit operations: the upper half zeroed; x >>> k, x & c not negative)
+			case Shr | Shl if (i.ty == I32 && nonNegConst(i.b) && m.vals[i.b].imm & 31 != 0): !nonNeg || i.op == Shr;
+			case And if (i.ty == I32): !nonNeg || nonNegConst(i.a) || nonNegConst(i.b);
+			case Or | Xor if (i.ty == I32 && depth < 2):
+				!nonNeg || zeroExtended(i.a, true, depth + 1) && zeroExtended(i.b, true, depth + 1);
 			case Phi if (depth < 2 && i.ty == I32):
 				var all = true;
 				for (a in i.args)
