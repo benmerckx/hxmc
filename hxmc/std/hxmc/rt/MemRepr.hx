@@ -241,6 +241,14 @@ class MemRepr {
 	@:hxmc.unsafe(gc) public static inline function sbSetLen(b:Dynamic, n:Int)
 		Mem.setI32(Mem.addr(b), 0, n);
 
+	// (slot 0's upper half: where a two-byte buffer was widened, its units
+	// before that each below 0x100; StrBufView.clear sets it to 0 with the length)
+	@:hxmc.unsafe(gc) public static inline function sbWideFrom(b:Dynamic):Int
+		return Mem.getI32(Mem.addr(b), 4);
+
+	@:hxmc.unsafe(gc) public static inline function sbClear(b:Dynamic)
+		Mem.setI64(Mem.addr(b), 0, (0 : I64));
+
 	@:hxmc.unsafe(gc) static inline function sbData(b:Dynamic):String
 		return Mem.getRef(Mem.addr(b), 8);
 
@@ -271,6 +279,7 @@ class MemRepr {
 		var nd = make2(cap);
 		widen(chars2(nd), 0, sbChars1(b), 0, n);
 		Mem.setRefBarrier(b, 8, nd);
+		Mem.setI32(Mem.addr(b), 4, n);
 	}
 
 	// ---- arrays (Boxes): slot 0 the length and the element kind, slot 1 the

@@ -1154,7 +1154,10 @@ class Str {
 			Repr.copy1(chars1(s), Repr.sbChars1(b), n);
 			return s;
 		}
-		if (Repr.fitsOne(Repr.sbChars2(b), 0, n)) {
+		// (the units before where it was widened fit)
+		var w = Repr.sbWideFrom(b);
+		if (w > n) w = n;
+		if (Repr.fitsOne(Repr.sbChars2(b), w, n - w)) {
 			var s = make1(n);
 			Repr.narrow(chars1(s), 0, Repr.sbChars2(b), 0, n);
 			return s;
