@@ -450,31 +450,37 @@ class Str {
 			// (the last 8 bytes; of a shorter string, the bytes before its
 			// units too, its length and header's, shifted out: window1)
 			if (n > 0) h = hashMix(h, n >= 8 ? c.getI64(n - 8) : StrView.window1(s).getI64(n) >>> (8 * (8 - n)));
-		} else {
-			var c = StrView.units2(s);
-			while (i < n - 8) {
-				h = hashMix2(h, c.sub(i, 8));
-				i += 8;
-			}
-			if (n >= 8)
-				h = hashMix2(h, c.sub(n - 8, 8));
-			else if (n > 0) {
-				var lo:I64 = 0, hi:I64 = 0;
-				for (k in 0...n) {
-					var u:Int = c[k];
-					lo = lo | ((u & 0xFF : I64) << (8 * k));
-					hi = hi | ((u >> 8 : I64) << (8 * k));
-				}
-				h = hashMix(h, lo);
-				if (hi != (0 : I64)) h = hashMix(h, hi);
-			}
-		}
+		} else
+			h = hashUnits2(StrView.units2(s), h);
 		h = (h ^ (h >>> 33)) * k64(0xFF51AFD7, 0xED558CCD);
 		h = h ^ (h >>> 33);
 		var x = h.toInt();
 		if (x == 0) x = 1;
 		StrView.storeHash(s, x);
 		return x;
+	}
+
+	// hashSlow of a two-byte string's units, from h (a call: its masks out of
+	// the one-byte loop's registers)
+	@:hxmc.kernel static function hashUnits2(c:ReadOnlySpan<UInt16>, h:I64):I64 {
+		var n = c.length, i = 0;
+		while (i < n - 8) {
+			h = hashMix2(h, c.sub(i, 8));
+			i += 8;
+		}
+		if (n >= 8)
+			h = hashMix2(h, c.sub(n - 8, 8));
+		else if (n > 0) {
+			var lo:I64 = 0, hi:I64 = 0;
+			for (k in 0...n) {
+				var u:Int = c[k];
+				lo = lo | ((u & 0xFF : I64) << (8 * k));
+				hi = hi | ((u >> 8 : I64) << (8 * k));
+			}
+			h = hashMix(h, lo);
+			if (hi != (0 : I64)) h = hashMix(h, hi);
+		}
+		return h;
 	}
 	#end
 
@@ -1146,7 +1152,10 @@ class Str {
 			Repr.copy1(chars1(s), Repr.sbChars1(b), n);
 			return s;
 		}
-		if (Repr.fitsOne(Repr.sbChars2(b), 0, n)) {
+		// (the units before where it was widened fit)
+		var w = Repr.sbWideFrom(b);
+		if (w > n) w = n;
+		if (Repr.fitsOne(Repr.sbChars2(b), w, n - w)) {
 			var s = make1(n);
 			Repr.narrow(chars1(s), 0, Repr.sbChars2(b), 0, n);
 			return s;

@@ -142,9 +142,14 @@ class Opt {
 			}
 		}
 		if (nullsDropped) dce();
-		if (licmOn)
+		if (licmOn) {
+			var moved = false;
 			for (_ in 0...3)
-				if (!licm()) break;
+				if (licm()) moved = true else break;
+			// (loads moved out of a loop's arms together, before it: the same
+			// value, once)
+			if (moved) redundancy(f.cfg());
+		}
 		// (a branch LICM made invariant: the loop copied for each way)
 		if (unswitchOn && unswitch()) {
 			simplifyCfg();
@@ -3380,6 +3385,12 @@ class Opt {
 				if (a < 0 || b <= 0) return false;
 				var r = i.op == UDiv ? a / b : a % b;
 				return set(r.low, i.ty == I64 ? r.high : 0);
+			// (a symbol's or a frame slot's address is not null: a string
+			// literal's null test in an equality)
+			case Cmp if ((i.imm == (CEq : Int) || i.imm == (CNe : Int)) && y != null
+				&& ((x.op == SymAddr || x.op == StackAddr) && plain(y) && y.imm == 0 && y.imm2 == 0
+					|| (y.op == SymAddr || y.op == StackAddr) && plain(x) && x.imm == 0 && x.imm2 == 0)):
+				return set(i.imm == (CNe : Int) ? 1 : 0, 0);
 			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
 				// (signed and unsigned order of two words, 32 or 64 bits)
 				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);

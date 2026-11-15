@@ -41,6 +41,8 @@ class LoopVersion {
 	static inline var MAX_LOOPS = 8;
 	// the largest step and look-ahead of a counter (counter + them stays below 2^31: an array is shorter)
 	static inline var MAX_STEP = 16;
+	// at most this many instructions in a loop copied for its strings (tryStrings)
+	static inline var MAX_STR_SIZE = 150;
 
 	// (Options.loopVersion, loopVersionWhy: set by Driver)
 	public static var on = true;
@@ -135,6 +137,7 @@ class LoopVersion {
 			return b != null && inL.exists(b.id);
 		inline function outside(id:Int):Bool
 			return id >= 0 && !inLoop(v(id).block);
+		if (tryStrings(h, members, inLoop, cfg)) return true;
 		// one way in, one way back
 		if (h.preds.length != 2) return no(1);
 		var pre = -1, latch = -1;
@@ -240,6 +243,59 @@ class LoopVersion {
 		return true;
 	}
 
+	// A loop without Array reads or calls (as try1's) that reads the length
+	// of a string from before the loop, not read before it: a copy entered
+	// when the string is not null, its length read in the test (the loop's
+	// loads of the string's length and width then move out of the copy:
+	// Opt.licm, a load through an object dereferenced before the loop); a
+	// string whose width the loop reads: a byte per unit too (the copy's
+	// tests of the width then known, its arms for two-byte strings dropped;
+	// the original loop runs for the others).
+	function tryStrings(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>):Bool {
+		var pre = -1;
+		for (k in 0...h.preds.length)
+			if (!inLoop(h.preds[k])) {
+				if (pre >= 0) return no(20);
+				pre = k;
+			}
+		if (pre < 0) return no(21);
+		var size = 0;
+		var strs:Array<Int> = [], widths:Array<Int> = [];
+		for (b in members)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				size++;
+				if (i.info != null && i.info.cold) return no(22);
+				switch i.op {
+					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
+					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet | SetField:
+					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
+					case _:
+						return no(23);
+				}
+				if (i.op == Load && i.mem == Opt.MConst && i.imm == 0 && i.size == 4 && i.b < 0 && i.ty == I32 && i.a >= 0 && !inLoop(v(i.a).block)
+					&& strs.indexOf(i.a) < 0)
+					strs.push(i.a);
+				if (i.op == Load && i.mem == Opt.MConst && i.imm == Abi.HDR_TINDEX && i.size == 2 && i.b < 0 && i.a >= 0 && !inLoop(v(i.a).block)
+					&& widths.indexOf(i.a) < 0)
+					widths.push(i.a);
+			}
+		if (size > MAX_STR_SIZE) return no(24);
+		// (not those dereferenced in a block before the loop that every way to it passes)
+		var preB = h.preds[pre], at = cfg.index(preB);
+		strs = strs.filter(o -> {
+			for (b in f.blocks) {
+				if (inLoop(b) || cfg.index(b) < 0 || !cfg.dominates(cfg.index(b), at)) continue;
+				for (i in b.ins)
+					if (!i.dead && (i.op == Load || i.op == Store || i.op == GetField) && i.a == o) return false;
+			}
+			true;
+		});
+		if (strs.length == 0) return no(25);
+		version(h, members, inLoop, cfg, pre, -1, -1, null, [], [], strs, widths);
+		return true;
+	}
+
 	static function fieldKey(o:OInfo):Int
 		return Opt.fieldOff(o);
 
@@ -259,7 +315,7 @@ class LoopVersion {
 	}
 
 	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitArr:Null<Arr>,
-			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>) {
+			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>) {
 		var preB = h.preds[pre];
 		// ---- the test before the loop: blocks failing to slow, which enters the loop as it was
 		var slow = newBlock();
@@ -316,7 +372,26 @@ class LoopVersion {
 			return len.id;
 		}
 		// the start is not negative (the counter only grows from it)
-		test(cmp(CGe, start, iconst(0)));
+		if (start >= 0) test(cmp(CGe, start, iconst(0)));
+		// the strings not null, their lengths read (Opt: dereferenced before the copy)
+		if (strs != null)
+			for (o in strs) {
+				test(cmp(CNe, o, lzero()));
+				var l = add(gb, Load, I32);
+				l.a = o;
+				l.size = 4;
+				l.imm2 = 1;
+				l.mem = Opt.MConst;
+				if (widths.indexOf(o) >= 0) {
+					var w = add(gb, Load, I32);
+					w.a = o;
+					w.imm = Abi.HDR_TINDEX;
+					w.size = 2;
+					w.imm2 = 1;
+					w.mem = Opt.MConst;
+					test(cmp(CEq, w.id, iconst(Abi.T_STRING1)));
+				}
+			}
 		var lim = limitArr == null ? limit : lengthOf(arrayBefore(limitArr));
 		for (e in arrays) {
 			var a = arrayBefore(e.arr);
