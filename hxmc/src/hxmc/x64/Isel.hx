@@ -394,6 +394,13 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		for (b in mf.blocks)
 			for (i in b.ins)
 				if ((i.op == Const && immOf(i.id) != null) || i.op == SymAddr || i.op == StackAddr || i.op == ConstF) folded[i.id] = true;
+		// (a double a comparison uses: in a register where it is made, which
+		// LICM moved out of the loop; ucomisd takes no constant)
+		for (b in mf.blocks)
+			for (i in b.ins)
+				if (i.op == Cmp && i.a >= 0 && mf.vals[i.a].ty == F64)
+					for (x in [i.a, i.b])
+						if (mf.vals[x].op == ConstF) folded[x] = false;
 		// vector constants: made where used (pxor, pcmpeqd, a load from
 		// .rodata), or the memory operand of their user (vbk), never a
 		// register of their own across the code
@@ -811,10 +818,12 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				}
 				var d = reg(i.id);
 				mov(d, use(a));
-				var x = emit(k(c) ? FOPK : FOP);
+				// (x * 2: x + x, exactly, without the constant's load)
+				var twice = i.op == FMul && k(c) && m.vals[c].f == 2.0;
+				var x = emit(k(c) && !twice ? FOPK : FOP);
 				x.d = d;
-				if (k(c)) x.f = m.vals[c].f else x.s1 = use(c);
-				x.cond = switch i.op {
+				if (twice) x.s1 = d else if (k(c)) x.f = m.vals[c].f else x.s1 = use(c);
+				x.cond = twice ? 0x58 : switch i.op {
 					case FAdd: 0x58;
 					case FMul: 0x59;
 					case FSub: 0x5c;
