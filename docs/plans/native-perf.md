@@ -127,6 +127,12 @@ each):
 | aa1c7514 | MemOps.compare: 16 bytes a round | alloc -3.2% |
 | d0f4c966 | Layout: after a block leaving its loop on one side, the side staying in the loop next | alloc -1.7%, tshx taken branches -0.2% |
 | fe536a4d | Gc: young objects of more than 8 words copied 4 words a round | alloc -10.0%, cycles -7.1% |
+| fd1ad66b | Names.strOf inline; Names.nameOf (fidName's body) inline in Dyn.fid | json -0.3% |
+| 98519622 | MemRepr.narrowFits inline into Str.range, its one caller | json -0.6% |
+| 461a6eb1 | x64: a 4-byte store of a constant, then of 0 after it (an object's header): one 8-byte store | tshx -0.12%, .text -1.6%; binarytrees -1.0%, cycles -2.5% |
+| 3f0ed860 | LoopVersion.tryStrings: a small loop without calls reading a string's length gets a copy entered when the string is not null (its length and width loads move out); Opt: redundancy elimination again after LICM moved something | tshx -0.25% |
+| 9fef2714 | the same copy entered only for a string of a byte per unit when the loop reads its width (the width tests known in the copy) | tshx -0.17%, cycles -0.7% |
+| 1072edcc | Opt.fold: a symbol's or a frame slot's address compared with null is known | tshx -0.14%, .text -0.9% (6070 such tests, 40 left) |
 
 Where it stands (Linux x86-64 under WSL2, the machine loaded by other
 work: instructions are reliable, cycles within a few percent):
@@ -137,6 +143,31 @@ work: instructions are reliable, cycles within a few percent):
 | tshx cycles (9 interleaved runs) | 11.19 G | 10.85 G | native +3.1% (per module 10.70 G) |
 | json instructions | 3.18 G | 2.87 G | +11% |
 | alloc instructions | 3.59 G | 3.40 G | +5% |
+
+Later the same day, LLVM release at O2 and at O3 rebuilt with the day's
+runtime (which made LLVM's code faster too: tshx 9.80 -> 9.60 G
+instructions), cycles (instructions for tshx), medians, outputs identical:
+
+| | native | LLVM O2 | LLVM O3 |
+| --- | --- | --- | --- |
+| tshx instructions | 9.637 G | 9.604 G | 9.470 G |
+| tshx cycles (7 runs) | 10.198 G | 9.882 G (native +3.2%) | 9.740 G (+4.7%) |
+| tshx .text | 14.98 MB | 12.53 MB | 12.91 MB |
+| alloc | 3.254 G | 3.244 G | 3.192 G |
+| json | 1.714 G | 1.482 G (+16%) | 1.464 G |
+| nbody | 4.448 G | 4.451 G | 4.483 G |
+| mandelbrot | 1.003 G | 1.000 G | 1.000 G |
+| sha512 | 0.058 G | 0.050 G | 0.049 G |
+| bcrypt | 7.465 G | 7.254 G (+2.9%) | 7.232 G |
+
+O3 is within 2% of O2 everywhere. Per function (tshx, cycles sampled
+against LLVM O2 after the commits above, 8.29 G against 8.11 G: +2.2%),
+the largest excesses: NameResolver.Resolve 160 M against 73 M,
+SymbolTableImpl.get 206 against 154, Scanner.scanIdentifier 97 against
+47 (LLVM unswitches its inner loop on the string's width: a loop per
+width), ECMALineStartsSeqIterator.advance 95 against 45 (its loop now as
+LLVM's), Gc.forwardRemembered 222 against 182 (memory-bound in both),
+MemberLayout.indexOf 113 against 85, StringMap.get 97 against 73.
 
 Windows wall times (GapBench, before json's, nbody's and alloc's commits):
 native faster on formatter (11-17%), sha256, binarytrees; bcrypt 0.99x of
@@ -159,6 +190,8 @@ Also tried and left out this session (built, measured, reverted):
 | Regalloc rematerializes a spilled constant at its uses (no slot, no reload) | tshx -0.02%, json -0.08%, .text -80 bytes | few constants spill; 40 lines |
 | cold blocks split out of line, several block-layout variants, wider loop rotation, forward dup-tests, jump duplication of short blocks, loop alignment | under noise or more code | see the second session's table |
 | once-inlining for all functions, runtime inline limits for json | | code size, no cycles |
+| a string's width test in charCodeAt with the one-byte side as the false (fall-through) one | tshx +0.14% instructions, .text the same | the layout did not change |
+| a Bool boxed inline in MemLower (rt_bool_boxes + 8 + 16 * b) | json, formatter unchanged | json's boxes are made elsewhere |
 
 ## Next
 
