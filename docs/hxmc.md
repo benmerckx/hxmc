@@ -1933,6 +1933,7 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.sroa=0` | `HXMC_SROA` | yes | no scalar replacement |
 | `hxmc.licm=0` | `HXMC_LICM` | yes | no loop-invariant code motion |
 | `hxmc.unswitch=0` | `HXMC_UNSWITCH` | yes | no unswitching (a loop copied per way of a branch on a value from before it) |
+| `hxmc.slots=0` | `HXMC_SLOTS` | yes | a loop header reads a rooted local from its shadow-stack slot (no phi of the values stored: Opt.promoteSlots) |
 | `hxmc.escape=0` | `HXMC_ESCAPE` | yes | no escape analysis |
 | `hxmc.escape-no=<parts>` | `HXMC_ESCAPE_NO` | yes | parts of it off (closures, frames, again, boxes, replace, screen, anon) |
 | `hxmc.escape-hash=<lo>-<hi>` | `HXMC_ESCAPE_HASH` | yes | it on the functions whose names hash to lo...hi of 1024 only (bisecting) |

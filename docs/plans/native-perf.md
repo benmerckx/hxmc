@@ -193,6 +193,71 @@ Also tried and left out this session (built, measured, reverted):
 | a string's width test in charCodeAt with the one-byte side as the false (fall-through) one | tshx +0.14% instructions, .text the same | the layout did not change |
 | a Bool boxed inline in MemLower (rt_bool_boxes + 8 + 16 * b) | json, formatter unchanged | json's boxes are made elsewhere |
 
+## Progress (2026-11-15, fourth session, a Linux cloud VM)
+
+A parallel session to the third (both on this branch from fe536a4d, merged
+twice: f573648, 07ced54). No hardware counters there (a VM without a PMU):
+instructions counted by valgrind (`cachegrind --cache-sim=no`: exact and
+the same under load; every thread, so tshx counts about 0.35 G more than
+`perf stat`'s user instructions), per instruction by `callgrind
+--dump-instr=yes` against `objdump -d` of the same binary; wall times
+too noisy for a few percent (single runs +-10%). tshx on ts6-compiler
+declarations as in Setup, its output and every file compared each time.
+
+| commit | what | gain (valgrind) |
+| --- | --- | --- |
+| 00ebb08 | Opt.licm: a guard, the loop rotated (its header's test copied to its one way back, the header run once before it), loads through an object the loop's first block dereferences before any effect into a block on the header's edge into the loop (LLVM's loop-rotate and LICM into the guarded preheader) | tshx -0.32% (ECMALineStartsSeqIterator.advance -9.7%) |
+| fb5eade | LoopVersion.copyLoop: the copy of a loop out of version, for other passes | none (tshx byte-identical) |
+| 3336646 | Opt.unswitch: a loop of at most 40 instructions copied per way of a branch on a value from before it in most of its rounds (guessed as BranchProbabilityInfo does), not a null test; 2 a function (`-D hxmc.unswitch=0`) | tshx -0.23% (Scanner.scanIdentifier -5.8%) |
+| 0cf88b3 | MirBuild.strEq: a literal is not tested for null, its length a constant | tshx -0.26% (with 1072edc's fold, the third session's, on the same tests) |
+| 474edea | Str.jsonRun, jsonPlain: a word's three tests in one, `(A \| B \| C) & ~w & 0x80..` | json -2.4% |
+| beb3aef | x64: x & y of two registers compared with 0 is test x, y | json -0.34%, tshx -0.04% |
+| de83c6d | x64: mov d, a; add d, b (both kept) is lea d, [a + b] where the flags are dead | tshx -0.15% |
+| 91d6d27 | Opt.lowered: x - k of a k no instruction takes is x + -k (lea) | json -2.3% |
+| d998d10 | Opt.nonNegativeSum (a counter's x + c below a constant bound: its SExt a copy), Opt.nonNeg of more forms, DivConst of a non-negative dividend (`i % 256`: and), `x + 0` and the like folded | sha512 -5.5%, alloc -0.75%, bcrypt -0.31% |
+| 08b8add | Opt.promoteSlots: a loop header's load of a rooted local's slot is a phi of the values its predecessors leave (`-D hxmc.slots=0`) | tshx -0.12% (NameResolver.Resolve -3.0%: its pass-through loop's `location` no longer through the slot each round: cycles more than instructions) |
+
+At 08b8add (valgrind instructions; the LLVM release builds, and the
+numbers in parentheses, of fe536a4d, this session's start):
+
+| | native | LLVM release (O2) | |
+| --- | --- | --- | --- |
+| tshx | 9.965 G (10.098 G at fe536a4d) | 10.371 G | native -3.9% |
+| json | 3.077 G (3.362) | 2.921 G | +5.3% |
+| alloc | 5.977 G (6.042) | 5.749 G | +4.0% |
+| bcrypt | 10.177 G (11.019) | 9.886 G | +2.9% |
+| binarytrees | 8.682 G (8.752) | 8.570 G | +1.3% |
+| mandelbrot | 2.079 G (2.079) | 1.881 G | +10.5% |
+| nbody | 8.570 G (8.570) | 8.510 G | +0.7% |
+| sha256 | 2.532 G (2.553) | 2.502 G | +1.2% |
+| sha512 | 0.160 G (0.193) | 0.144 G | +11% |
+| formatter | 44.52 G (44.63) | 48.07 G | native -7.4% |
+
+The tool's own workload, the port's self-compile to HXB (this branch's
+`haxe/src` with each tool, the archives' contents identical): main's tool
+(9ea9e87, its fixpoint) 38.81 G instructions, this branch's 37.14 G
+(-4.3%; the day's commits before this session most of it); wall times
+within noise (24 interleaved runs: medians 4.72 s and 4.74 s, minima 4.19 s
+and 4.06 s); tshx's cold build the same CPU time (24-26 s). tshx's wall
+time on this VM (21 interleaved runs, before 474edea): native median
+1.565 s, LLVM release 1.554 s, fe536a4d 1.625 s.
+
+Also tried and left out (built, measured, reverted):
+
+| | result | why out |
+| --- | --- | --- |
+| the guard repeating the header's test before the loop (no rotation) | tshx +0.05% | a test more per entry: lists walked one or two rounds lose |
+| the guard rotated with the test kept in the header (the guard entering the loop's first block) | tshx -0.02% | two phis per header value, not coalesced (a copy and a jump each round) |
+| unswitching without a frequency guess / of a block that dominates the latches only | tshx -0.04% / 0 | a hash probe's width test under its equality (SymbolTableImpl.get +11 M: spills, the whole function); a string scan's width test is under its bounds test |
+| Opt.promoteSlots through every join (SsaReader) | tshx +5.8%, .text +8.6% | a function's rooted locals kept as values through it: linear scan without splitting spills them |
+
+Notes: `cg_annotate` hides functions under 0.1% (10 M of tshx): one that
+crosses that line looks gone, not inlined (`--threshold=0.001`). The
+other session's tool at 50ac87d built in one stage by main's compiler
+mis-lexes `#if` (`Unknown token`); built by this branch's compiler (the
+merge) it is right: new runtime code that main's compiler gets wrong, or a
+bootstrap order, not looked into.
+
 ## Next
 
 1. On a Linux machine (quiet core, perf with call graphs): `make check`
@@ -205,3 +270,14 @@ Also tried and left out this session (built, measured, reverted):
 3. json: Str.sbAddJson/jsonRun/jsonPlain against LLVM's code; the
    field-name lookup (Dyn.findField, Names.fidName).
 4. alloc: Gc.drainMinor's scan and hxmc_zero against LLVM's.
+5. mandelbrot (+10.5%): two phi copies a round where `vi + vi`,
+   two-address, takes the dying `vi`'s register that the new `valI` is hinted
+   to (Regalloc: a phi's input should keep its register over a two-address
+   hint; the multiply commuted), and the loop not rotated (its header
+   computes before its test).
+6. Regalloc without splitting: a value live across a loop spills whole
+   (Str.hashSlow's `s`, reloaded four times before the loop); the reason
+   Opt.promoteSlots stops at loop headers.
+7. Opt.promoteSlots at other joins once spills are cheaper; json's word
+   loop still sign-extends its counter (`k < m - 7`, k += 8: a bound not a
+   constant).
