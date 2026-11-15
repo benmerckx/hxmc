@@ -181,6 +181,7 @@ class Emit implements hxmc.Target.Emitter {
 		f.threadJumps(i -> (i.op : XOp) == JMP,
 			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && i.imm2 == 0));
 		f.duplicateDispatch(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JTABLE, 10);
+		f.duplicateReturns(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == RET, 3);
 		f.duplicateTests(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> switch (i.op : XOp) {
 			case CMP | CMPI | TEST | TESTI: true;
 			case _: false;
@@ -191,6 +192,7 @@ class Emit implements hxmc.Target.Emitter {
 		for (bi in 0...f.blocks.length) {
 			var b = f.blocks[bi];
 			a.bind(b.label);
+			coldBlock = b.cold;
 			var next = bi + 1 < f.blocks.length ? f.blocks[bi + 1] : null;
 			LFunc.fallThrough(b, next, i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> i.cond ^= 1);
 			// a zero constant may be xor where no flags are live (none are
@@ -392,6 +394,7 @@ class Emit implements hxmc.Target.Emitter {
 
 	var epilogueBytes = 0;
 	var epiLabel = -1; // the shared epilogue (this function's first)
+	var coldBlock = false; // (the block being written)
 
 	// the registers the prologue pushes (rbp first with frame pointers)
 	inline function pushed():Int
@@ -520,8 +523,9 @@ class Emit implements hxmc.Target.Emitter {
 				if (i.sym != null) a.callSym(obj.sym(i.sym)) else a.callR(i.s1);
 			case RET:
 				// the first return's epilogue is shared: later ones jump to it
-				// when it is longer than the jump
-				if (epiLabel >= 0) a.jmp(epiLabel) else {
+				// when it is longer than the jump, those of slow paths only when
+				// returns are copied (LFunc.duplicateReturns)
+				if (epiLabel >= 0 && (coldBlock || !LFunc.dupReturns)) a.jmp(epiLabel) else {
 					var at = text.buf.len;
 					var l = a.newLabel();
 					a.bind(l);

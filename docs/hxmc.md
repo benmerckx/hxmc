@@ -1932,6 +1932,7 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.reach=0` | `HXMC_REACH` | yes | every function kept |
 | `hxmc.dup-dispatch=0` | `HXMC_DUP_DISPATCH` | yes | jump tables not copied into their predecessors |
 | `hxmc.dup-min=<n>` | `HXMC_DUP_MIN` | yes | the smallest jump table copied (64) |
+| `hxmc.dup-returns=0` | `HXMC_DUP_RETURNS` | yes | x86-64: returns through the function's one return block and shared epilogue (a jump each) |
 | `hxmc.dup-tests=0` | `HXMC_DUP_TESTS` | yes | x86-64: no loop rotation (a loop head that only tests, copied into its back edges) |
 | `hxmc.frames-live=0` | `HXMC_FRAMES_LIVE` | yes | frame stores kept that no load sees |
 | `hxmc.frames-merge=0` | `HXMC_FRAMES_MERGE` | yes | inlined callees push their own frames |
