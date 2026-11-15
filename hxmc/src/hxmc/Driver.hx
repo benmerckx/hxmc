@@ -1003,13 +1003,44 @@ class Driver {
 
 // The order blocks are laid out in: reverse postorder (Cfg), the cold blocks
 // (slow paths) at the end.
+// The blocks' order in the code: reverse postorder, the slow paths last;
+// but after a block that branches out of its loop on one side, the side
+// staying in the loop (a loop's test in its middle, while (a && b): the
+// rest of the round falls through, not the code after the loop, so the
+// round takes one branch back instead of a branch to its end and one back)
 class Layout {
 	public static function order(f:MFunc):haxe.ds.Vector<MBlock> {
-		var rpo = f.cfg().rpo;
-		var r = new haxe.ds.Vector<MBlock>(rpo.length);
+		var cfg = f.cfg(), rpo = cfg.rpo, n = rpo.length;
+		var r = new haxe.ds.Vector<MBlock>(n);
 		var k = 0;
-		for (b in rpo)
-			if (!b.cold) r[k++] = b;
+		var placed = new haxe.ds.Vector<Bool>(n);
+		cfg.loops();
+		var head = cfg.loopHead;
+		// after a branch that leaves its loop on one side, the other side
+		function next(b:MBlock):Null<MBlock> {
+			var t = b.term();
+			if (t == null || t.op != Br) return null;
+			var h = head[cfg.index(b)];
+			if (h < 0) return null;
+			var x = cfg.index(t.targets[0]), y = cfg.index(t.targets[1]);
+			if (x < 0 || y < 0) return null;
+			var inX = head[x] == h, inY = head[y] == h;
+			if (inX == inY) return null;
+			var s = inX ? x : y;
+			return placed[s] || rpo[s].cold ? null : rpo[s];
+		}
+		var start = 0;
+		while (true) {
+			while (start < n && (placed[start] || rpo[start].cold))
+				start++;
+			if (start == n) break;
+			var b = rpo[start];
+			while (b != null) {
+				placed[cfg.index(b)] = true;
+				r[k++] = b;
+				b = next(b);
+			}
+		}
 		for (b in rpo)
 			if (b.cold) r[k++] = b;
 		return r;
