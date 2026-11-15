@@ -630,7 +630,7 @@ class VM {
 		return Tag.isObject(o) ? (o : NObj).get(id) : null;
 
 	function add(a:Dynamic, b:Dynamic):Dynamic {
-		var ka = hxmc.Native.typeKind(a), kb = hxmc.Native.typeKind(b);
+		var ka = Tag.kind(a), kb = Tag.kind(b);
 		if (ka == 1 && kb == 1) return (a : Int) + (b : Int);
 		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return (a : Float) + (b : Float);
 		if (ka == 1 && Tag.isString(b)) return concat(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
@@ -651,7 +651,7 @@ class VM {
 	}
 
 	function numberOp(a:Dynamic, b:Dynamic, op:Int):Dynamic {
-		var ka = hxmc.Native.typeKind(a), kb = hxmc.Native.typeKind(b);
+		var ka = Tag.kind(a), kb = Tag.kind(b);
 		if (ka == 1 && kb == 1) {
 			var x:Int = a, y:Int = b;
 			return switch op {
@@ -688,7 +688,7 @@ class VM {
 	}
 
 	function div(a:Dynamic, b:Dynamic):Dynamic {
-		var ka = hxmc.Native.typeKind(a), kb = hxmc.Native.typeKind(b);
+		var ka = Tag.kind(a), kb = Tag.kind(b);
 		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return (a : Float) / (b : Float);
 		var f = opField(a, Fields.idDiv);
 		if (f != null) return callEx(a, f, [b]);
@@ -715,7 +715,7 @@ class VM {
 
 	// val_compare
 	public function compare(a:Dynamic, b:Dynamic):Int {
-		var ka = hxmc.Native.typeKind(a), kb = hxmc.Native.typeKind(b);
+		var ka = Tag.kind(a), kb = Tag.kind(b);
 		if (ka == 1) {
 			if (kb == 1) return icmp(a, b);
 			if (kb == 2) return fcmp((a : Int), (b : Float));

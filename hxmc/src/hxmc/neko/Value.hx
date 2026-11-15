@@ -18,44 +18,44 @@ class Tag {
 	public static inline var TABSTRACT = 8;
 
 	public static function of(v:Dynamic):Int {
-		return switch hxmc.Native.typeKind(v) {
-			case 0: TNULL;
-			case 1: TINT;
-			case 2: TFLOAT;
-			case 3: TBOOL;
-			case 9: TARRAY;
-			case 6: (v : NVal).tag;
-			case k: throw 'neko: a foreign value (kind $k)';
-		}
+		if (v == null) return TNULL;
+		if (isInt(v)) return TINT;
+		if (isFloat(v)) return TFLOAT;
+		if (isBool(v)) return TBOOL;
+		if (Std.isOfType(v, NVal)) return (v : NVal).tag;
+		if (isArray(v)) return TARRAY;
+		throw 'neko: a foreign value (kind ${hxmc.Native.typeKind(v)})';
 	}
 
+	// (the number boxes tested exactly and inline: a Float of an integer's
+	// value is no Int; the classes by Std.isOfType's inline range test)
 	public static inline function isInt(v:Dynamic):Bool
-		return hxmc.Native.typeKind(v) == 1;
+		return hxmc.Native.isIntBox(v);
 
 	public static inline function isFloat(v:Dynamic):Bool
-		return hxmc.Native.typeKind(v) == 2;
+		return hxmc.Native.isFloatBox(v);
 
 	public static inline function isBool(v:Dynamic):Bool
-		return hxmc.Native.typeKind(v) == 3;
+		return hxmc.Native.isBoolBox(v);
 
 	public static inline function isArray(v:Dynamic):Bool
 		return hxmc.Native.typeKind(v) == 9;
 
-	// (every class instance among the values is an NVal: its tag tells)
-	static inline function nval(v:Dynamic, t:Int):Bool
-		return hxmc.Native.typeKind(v) == 6 && (cast v : NVal).tag == t;
-
 	public static inline function isString(v:Dynamic):Bool
-		return nval(v, TSTRING);
+		return Std.isOfType(v, NStr);
 
 	public static inline function isObject(v:Dynamic):Bool
-		return nval(v, TOBJECT);
+		return Std.isOfType(v, NObj);
 
 	public static inline function isFunction(v:Dynamic):Bool
-		return nval(v, TFUNCTION);
+		return Std.isOfType(v, NFun);
 
 	public static inline function isAbstract(v:Dynamic):Bool
-		return nval(v, TABSTRACT);
+		return Std.isOfType(v, NAbs);
+
+	// 0 null, 1 Int, 2 Float, 3 Bool, 4 another value
+	public static inline function kind(v:Dynamic):Int
+		return v == null ? 0 : isInt(v) ? 1 : isFloat(v) ? 2 : isBool(v) ? 3 : 4;
 
 	// an Int that does not fit Neko's 31 bits is an int32 (alloc_best_int)
 	public static inline function need32(i:Int):Bool
