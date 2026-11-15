@@ -78,6 +78,7 @@ class MemLower extends MirWriter {
 			case ArrayInit: !o.t.match(TF64 | TI64 | TId | TI32 | TBool);
 			case NArrayInit: o.kind == Abi.AK_PTR;
 			case NArraySet: o.flag;
+			case Unbox: o.t.match(TI32 | TBool | TF64);
 			case _: false;
 		}
 	}
@@ -319,7 +320,7 @@ class MemLower extends MirWriter {
 			case Box:
 				boxFrom(o.t, r(x.a));
 			case Unbox:
-				unboxTo(o.t, r(x.a));
+				unboxTo(o.t, r(x.a), true);
 			case Tag:
 				tagFrom(o.t, r(x.a));
 			case Untag:
@@ -602,14 +603,40 @@ class MemLower extends MirWriter {
 		return readVar(r, cur);
 	}
 
-	function unboxTo(t:Ty, v:Int):Int
-		return switch t {
-			case TI32: call("hx_unbox_int", vector(v), I32);
-			case TBool: call("hx_unbox_bool", vector(v), I32);
-			case TF64: call("hx_unbox_float", vector(v), F64);
-			case TI64: call("hx_unbox_i64", vector(v), I64);
-			case _: v;
+	// a Dynamic's Int, Bool or Float: inline when it is boxed as that (the
+	// box's payload, its type index tested; null 0), else the runtime's
+	// conversion on a slow path (hx_unbox_*: the other boxes)
+	function unboxTo(t:Ty, v:Int, last = false):Int {
+		var name = switch t {
+			case TI32: "hx_unbox_int";
+			case TBool: "hx_unbox_bool";
+			case TF64: "hx_unbox_float";
+			case TI64: "hx_unbox_i64";
+			case _: return v;
 		};
+		if (t == TI64) return call(name, vector(v), I64);
+		var ty:MTy = t == TF64 ? F64 : I32;
+		var r = newVar(ty);
+		writeVar(r, cur, t == TF64 ? fconst(0.0) : iconst(0));
+		var nn = newBlock(), fast = newBlock(), slow = newBlock(), join = last ? joinBlock() : newBlock();
+		br(cmp(CNe, v, lconst(0, 0)), nn, join);
+		seal(nn);
+		cur = nn;
+		br(cmp(CEq, tindex(v), iconst(t == TF64 ? Abi.T_BOXFLOAT : t == TBool ? Abi.T_BOXBOOL : Abi.T_BOXINT)), fast, slow);
+		seal(fast);
+		cur = fast;
+		var x = loadM(Opt.MConst, ty, t == TF64 ? 8 : 4, v, 0);
+		writeVar(r, cur, t == TBool ? cmp(CNe, x, iconst(0)) : x);
+		jmp(join);
+		seal(slow);
+		slow.cold = true;
+		cur = slow;
+		writeVar(r, cur, call(name, vector(v), ty));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(r, cur);
+	}
 
 	function boxFrom(t:Ty, v:Int):Int
 		return switch t {
