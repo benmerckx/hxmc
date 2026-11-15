@@ -150,8 +150,8 @@ class MemRepr {
 
 	// src[si, si + n) narrowed into dst from di, four units at a time, and
 	// whether each was below 0x100 (if not, dst's bytes are of no use): the
-	// test and the copy in one pass (Str.range)
-	@:hxmc.unsafe(gc) public static function narrowFits(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int):Bool {
+	// test and the copy in one pass (Str.range, its one caller: inline)
+	@:hxmc.unsafe(gc) public static inline function narrowFits(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int):Bool {
 		var s = src.at(si), d = dst.at(di), k = 0;
 		var half = ((0xFF00 : I64) << 16) | (0xFF00 : I64), low = ((0xFF : I64) << 16) | (0xFF : I64);
 		var hi = (half << 32) | half, lo = (low << 32) | low, words = ((0xFFFF : I64) << 32) | (0xFFFF : I64), seen:I64 = 0;
@@ -163,14 +163,14 @@ class MemRepr {
 			Mem.setI32(d, k, (x | (x >>> 16)).toInt());
 			k += 4;
 		}
-		if (seen & hi != (0 : I64)) return false;
-		while (k < n) {
+		var ok = seen & hi == (0 : I64);
+		while (ok && k < n) {
 			var u = src.get(si + k);
-			if (u > 0xFF) return false;
+			ok = u <= 0xFF;
 			dst.set(di + k, u);
 			k++;
 		}
-		return true;
+		return ok;
 	}
 
 	// whether the two-byte units src[si, si + n) are each below 0x100 (unitsFitOne)
