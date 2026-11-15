@@ -605,7 +605,7 @@ class MemLower extends MirWriter {
 	function unboxTo(t:Ty, v:Int):Int
 		return switch t {
 			case TI32: unboxInline(TI32, v, "hx_unbox_int");
-			case TBool: call("hx_unbox_bool", vector(v), I32);
+			case TBool: unboxInline(TBool, v, "hx_unbox_bool");
 			case TF64: unboxInline(TF64, v, "hx_unbox_float");
 			case TI64: call("hx_unbox_i64", vector(v), I64);
 			case _: v;
@@ -621,6 +621,22 @@ class MemLower extends MirWriter {
 		seal(nn);
 		cur = nn;
 		var ti = tindex(v);
+		if (t == TBool) {
+			// (a Bool's box read inline; null, a number's box... by the runtime)
+			var isBool = newBlock();
+			seal(slow);
+			br(cmp(CEq, ti, iconst(Abi.T_BOXBOOL)), isBool, slow);
+			seal(isBool);
+			cur = isBool;
+			writeVar(res, cur, loadM(Opt.MConst, I32, 4, v, 0));
+			jmp(join);
+			cur = slow;
+			writeVar(res, cur, call(fn, vector(v), ty));
+			jmp(join);
+			seal(join);
+			cur = join;
+			return readVar(res, cur);
+		}
 		var isInt = newBlock();
 		if (t == TF64) {
 			var isFloat = newBlock(), notFloat = newBlock();
@@ -651,12 +667,33 @@ class MemLower extends MirWriter {
 
 	function boxFrom(t:Ty, v:Int):Int
 		return switch t {
-			case TI32: call("hx_box_int", vector(v), I64);
-			case TBool: call("hx_box_bool", vector(v), I64);
+			case TI32: boxIntInline(v);
+			// (the static boxes, rt_bool_boxes: false's, then true's, 16 bytes each)
+			case TBool: op2(Add, I64, symAddr("rt_bool_boxes", 8), op2(Shl, I64, op1(ZExt, I64, cmp(CNe, v, iconst(0))), lconst32(4)));
 			case TF64: call("hx_box_float", vector(v), I64);
 			case TI64: call("hx_box_i64", vector(v), I64);
 			case _: v;
 		};
+
+	// an Int's box: from -128 to 1023 a static one (rt_small_ints, 16 bytes
+	// each, Boxes.SMALL_MIN and SMALL_MAX), the others by the runtime
+	function boxIntInline(v:Int):Int {
+		var res = newVar(I64);
+		var join = newBlock(), small = newBlock(), big = newBlock();
+		var k = op2(Add, I32, v, iconst(128));
+		br(cmp(CULt, k, iconst(1152)), small, big);
+		seal(small);
+		seal(big);
+		cur = small;
+		writeVar(res, cur, op2(Add, I64, symAddr("rt_small_ints", 8), op2(Shl, I64, op1(ZExt, I64, k), lconst32(4))));
+		jmp(join);
+		cur = big;
+		writeVar(res, cur, call("hx_box_int", vector(v), I64));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(res, cur);
+	}
 
 	// ---- the tagged words of type parameters' values (hxmc.rt.Tagged; docs/hxmc.md,
 	// "Values of type parameters"): a reference below 2^48, a Float's bits

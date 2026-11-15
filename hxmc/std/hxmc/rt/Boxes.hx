@@ -15,8 +15,9 @@ import hxmc.unsafe.Ptr;
 class Boxes {
 	static inline var SMALL_MIN = -128;
 	static inline var SMALL_MAX = 1023;
-	@:hxmc.bss(18432) static var smallInts:Ptr; // 16 bytes each (SMALL_MAX - SMALL_MIN + 1)
-	@:hxmc.bss(32) static var boolBoxes:Ptr;
+	// (named: the generated code boxes a Bool and a small Int inline, MemLower.boxFrom)
+	@:hxmc.bss(18432, "rt_small_ints") static var smallInts:Ptr; // 16 bytes each (SMALL_MAX - SMALL_MIN + 1)
+	@:hxmc.bss(32, "rt_bool_boxes") static var boolBoxes:Ptr;
 	@:hxmc.bss(18432) static var smallI64s:Ptr; // likewise for Int64 (OCaml's ints in converted code: ml2hx)
 
 	// at startup (rt_init; WebAssembly's Gc.init)
