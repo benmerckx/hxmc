@@ -45,16 +45,43 @@ sinking into slow paths): make quick ok, -0.2%, kept. tshx's cold build:
 make quick on each, make check once (all lanes but arm64/qemu and wine,
 not installed; the Windows corpus run natively instead: 373/373).
 
-Tried and left out: inlining every function called once in its module
-(-0.65% instructions, +7.6% code: their copies stay for other callers;
-restricting it to functions nothing else reaches needs that fact in each
-module's cache key); loop rotation at forward jumps too (0.2% for 0.9%
-more code).
+Tried and left out (each built, measured on tshx, reverted):
 
-Next, by the front-end numbers: slow paths out of line (a cold section:
-hot code contiguous, per-function unwind entries for the cold part),
-then less code per hot function (spills of long-lived values: no
-splitting in Regalloc; moves around calls).
+| | instructions | cycles | code | why out |
+| --- | --- | --- | --- | --- |
+| inline every function called once in its module | -0.65% | ~0 | +7.6% | copies stay for other callers; "nothing else reaches it" would have to be in each module's cache key |
+| loop rotation at forward jumps too | -0.2% | ~0 | +0.9% | taken branches only -25 M |
+| loop rotation of heads up to 4 or 8 instructions | -0.25% | -0.6% (noise) | +0.6% | taken branches only -7 M |
+| slow paths out of line (a `.cold` part per function after the object's functions, branches patched, unwind and line records of their own) | 0 | -0.45% (noise) | +0.2% | L1i misses unchanged (61.7 M -> 61.1 M): the cold blocks were at each function's end already |
+| block layout by chains of likely successors (in loop, not equal, not cold) | +1.3% | 0 (9 runs) | +3.3% | taken branches only -21 M |
+| the same at conditional branches only; true successor first | +0.5% | +1.4% | | true-first: taken branches +70 M (false-first, reverse postorder's, is the better default) |
+| spill cost per sqrt(length) instead of per length | -0.17% | +3% | -0.3% | more spills in loops |
+| a compressed reference's null test and equality on the 32-bit word | +0.18% | | | both forms then live where the reference is used otherwise too |
+| LICM of Ints in loops with calls | +0.03% | -0.7% (noise) | | |
+| `-D hxmc.frame-pointers=0` (rbp allocatable) | -4.5% | -0.5% | -1% | not worth profilers' and debuggers' stack walks |
+| tshx without its `-D hxmc.inline=48,128,6,120,4` (hxmc's defaults) | +7.7% | +4.6% | -48% | |
+| `48,128,6,120,3` / `24,128,6,120,4` | +0.8% / +3.1% | 0 / +1.2% | -10% / -23% | code size alone is not the cycles |
+
+HaxeBenchmarks (GapBench, then perf stat interleaved where the wall times
+looked worse): no regression; alloc -10% instructions (-2% cycles), nbody
+-2.7%, binarytrees -0.4%, mandelbrot identical, formatter and the
+self-compile about 1% faster. make check at HEAD: 27/29 (arm64/qemu and
+wine not installed); fixpoint byte-identical.
+
+What the rest of the gap is (Zen 2 counters, native against LLVM per
+module): 2.135 G branches against 2.241 G, but 1.134 G taken against
+0.950 G (+19%): about 212 M unconditional jumps against 134 M (calls and
+returns nearly equal: 139 M returns against 131 M) and about 90 M more
+taken conditional branches; 2.13 G 32-byte fetch windows against 2.00 G
+for fewer instructions (longer encodings on average); decoder redirects
+27.6 M against 20.7 M. Spills are not it (stack loads executed: 144 M
+against 140 M); the taken branches are spread over every function (the
+largest excess, StringMap.get, 6.6 M). Next, by these numbers: why native
+code takes more unconditional jumps (LLVM's block placement with tail
+duplication and its IR-level loop rotation shape loops and joins before
+isel; hxmc lays out reverse postorder and fixes only loop heads of
+compares after allocation), and denser encodings (bytes per executed
+instruction).
 
 ## Status (2026-11-15, handoff)
 
