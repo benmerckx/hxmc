@@ -2204,8 +2204,9 @@ class Opt {
 	// an access at x + y, of no index: at base x, index y (as Mem's raw
 	// accesses make it, which the back ends encode in the access; a span's
 	// element at a sub's start, hxmc.rt.Bytes' accessors); an index y << k
-	// (k of 1 to 3) at scale 1: index y at scale 2^k (a reference store's
-	// element, whose shifted index its barrier's address shares)
+	// (k of 1 to 3) or y * 2^k at scale 1: index y at scale 2^k (a reference
+	// store's element, whose shifted index its barrier's address shares; a
+	// span's word read at a unit's index)
 	// An index sext(x + c) or sext(x | c), of x in 0...m and a constant c
 	// with m + c below 2^31 (and, for the or, c's bits above x's): index
 	// sext(x), displacement c times the scale (a table's row, sBox[0x100 |
@@ -2240,22 +2241,25 @@ class Opt {
 		for (b in f.blocks)
 			for (i in b.ins)
 				if ((i.op == Load || i.op == Store) && !i.dead && i.sym == null) {
-					if (i.b >= 0) {
-						var s = f.vals[i.b];
-						if (i.imm2 != 1 || s.op != Shl || s.ty != I64 || f.vals[s.a].ty != I64) continue;
-						var k = f.vals[s.b];
-						if (k.op != Const || k.sym != null || k.imm < 1 || k.imm > 3) continue;
-						i.b = s.a;
-						i.imm2 = 1 << k.imm;
-						continue;
+					if (i.b < 0) {
+						var x = f.vals[i.a];
+						if (x.op != Add || x.ty != I64 || x.dead) continue;
+						var l = f.vals[x.a], r = f.vals[x.b];
+						if (l.op == Const || r.op == Const || l.ty != I64 || r.ty != I64) continue;
+						// (the scaled operand the index)
+						var sx = r.op == Shl || r.op == Mul || l.op != Shl && l.op != Mul;
+						i.a = sx ? x.a : x.b;
+						i.b = sx ? x.b : x.a;
+						i.imm2 = 1;
 					}
-					var x = f.vals[i.a];
-					if (x.op != Add || x.ty != I64 || x.dead) continue;
-					var l = f.vals[x.a], r = f.vals[x.b];
-					if (l.op == Const || r.op == Const || l.ty != I64 || r.ty != I64) continue;
-					i.a = x.a;
-					i.b = x.b;
-					i.imm2 = 1;
+					var s = f.vals[i.b];
+					if (i.imm2 != 1 || s.op != Shl && s.op != Mul || s.ty != I64 || f.vals[s.a].ty != I64) continue;
+					var k = f.vals[s.b];
+					if (k.op != Const || k.sym != null || k.imm2 != 0) continue;
+					var scale = s.op == Shl ? (k.imm >= 1 && k.imm <= 3 ? 1 << k.imm : 0) : k.imm == 2 || k.imm == 4 || k.imm == 8 ? k.imm : 0;
+					if (scale == 0) continue;
+					i.b = s.a;
+					i.imm2 = scale;
 				}
 	}
 
