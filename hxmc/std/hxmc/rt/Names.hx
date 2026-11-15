@@ -177,9 +177,13 @@ class Names {
 	}
 
 	@:hxmc.host("hx_fid_name") @:hxmc.unsafe static function fidName(f:Int):Ptr
+		return nameOf(f);
+
+	// (inline: Dyn.fid's lookup, a field name compared per access)
+	@:hxmc.unsafe public static inline function nameOf(f:Int):Ptr
 		return f < nstatic() ? staticName(f) : extraName(f - nstatic());
 
-	@:hxmc.unsafe static function strOf(f:Int):Ptr {
+	@:hxmc.unsafe static inline function strOf(f:Int):Ptr {
 		lock();
 		var r = f < strsCap ? Mem.getPtr(strs, 8 * f) : Ptr.nil();
 		unlock();

@@ -29,7 +29,7 @@ class Dyn {
 		var v = Atomic.load64(e);
 		if ((v >>> 32).toInt() == h) {
 			var f = v.toInt() - 1;
-			if (f >= 0 && nameIs(Names.fidName(f), name)) return f;
+			if (f >= 0 && nameIs(Names.nameOf(f), name)) return f;
 		}
 		var f = Names.fidSlow(name);
 		Atomic.store64(e, ((h : I64) << 32) | ((f + 1 : I64) & (((1 : I64) << 32) - 1)));
