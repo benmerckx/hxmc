@@ -1078,6 +1078,11 @@ class Opt {
 		return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0 ? c.imm : -1;
 	}
 
+	function allOnes(v:Int):Bool {
+		var c = f.vals[repl[v]];
+		return c.op == Const && c.sym == null && c.imm == -1 && (c.ty == I32 || c.imm2 == -1);
+	}
+
 	// nonNeg for a back end (x64.Isel: a counter's extension a copy)
 	public function nonNegative(v:Int):Bool {
 		var cfg = f.cfg();
@@ -2123,13 +2128,30 @@ class Opt {
 		o.ifConvert();
 		o.repl = MFunc.iota(f.vals.length);
 		var any = false;
-		for (b in f.blocks)
+		// copies are their operand; a constant made again in its block is the
+		// first (those LICM moved out of a loop's arms together: a 64-bit
+		// mask once, not a register each); -1 - x is ~x
+		for (b in f.blocks) {
+			var consts = new Map<String, Int>();
 			for (i in b.ins)
 				if (i.op == Copy && !i.dead) {
 					o.repl[i.id] = i.a;
 					i.dead = true;
 					any = true;
+				} else if (i.op == Const && !i.dead) {
+					var key = (i.ty : Int) + ":" + i.imm + ":" + i.imm2 + ":" + i.sym;
+					var first = consts.get(key);
+					if (first == null) consts.set(key, i.id) else {
+						o.repl[i.id] = first;
+						i.dead = true;
+						any = true;
+					}
+				} else if (i.op == Sub && (i.ty == I32 || i.ty == I64) && o.allOnes(i.a)) {
+					i.op = Not;
+					i.a = i.b;
+					i.b = -1;
 				}
+		}
 		if (any) o.rewrite();
 		o.zeroExtensions();
 		o.indexed();
