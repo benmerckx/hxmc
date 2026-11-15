@@ -722,6 +722,12 @@ class Dyn {
 			if (ta == T_BOXINT || ta == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
 			if (isString(ta)) return Str.eqSlow(TypeView.string(a), TypeView.string(b));
 		}
+		// (two of the program's types, neither a closure: the boxes, strings and
+		// type objects below are the runtime's types, below T_FIRST)
+		if (ta >= T_FIRST && tb >= T_FIRST) {
+			var ka = TypeView.kind(ta), kb = TypeView.kind(tb);
+			if (ka != TK_CLOSURE && ka != TK_BOUND && kb != TK_CLOSURE && kb != TK_BOUND) return false;
+		}
 		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) return unboxI64(a) == unboxI64(b);
 		if (isNum(a) && isNum(b)) return unboxFloat(a) == unboxFloat(b);
 		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);

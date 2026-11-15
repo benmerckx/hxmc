@@ -192,6 +192,16 @@ Also tried and left out this session (built, measured, reverted):
 | once-inlining for all functions, runtime inline limits for json | | code size, no cycles |
 | a string's width test in charCodeAt with the one-byte side as the false (fall-through) one | tshx +0.14% instructions, .text the same | the layout did not change |
 | a Bool boxed inline in MemLower (rt_bool_boxes + 8 + 16 * b) | json, formatter unchanged | json's boxes are made elsewhere |
+| LoopVersion.tryStrings also for a string dereferenced before the loop (the copy entered for one byte per unit only) | tshx -0.44% instructions, .text +0.18% | cycles +1.2% (15 runs): the copies' code |
+| a shadow-stack slot's load after its store in the block forwarded in Opt.lowered (after Frames' merge) | tshx -0.01%, .text -3 KB | rare |
+| the remembered set's slots touched 8 entries ahead (a load, as a prefetch would) in Gc.forwardRemembered | tshx +0.64% instructions; cycles -6.7% and +1.4% in two series | not measurable here: memory-bound functions move by 25% from run to run under WSL's load; worth a prefetch op on a quiet machine |
+
+Windows, the merged branch (07ced548: this session's and the Linux
+session's commits), natively: the corpus 373/373; GapBench wall times
+(best of 5) against LLVM release: formatter 0.91x, binarytrees 0.98x,
+alloc 1.00x, mandelbrot 1.00x, sha256 1.01x, json 1.02x (1.13-1.21x in the
+morning), bcrypt 1.02x, nbody 1.03x, sha512 1.04x; native builds 1.1-2.5 s
+against 4-18 s.
 
 ## Progress (2026-11-15, fourth session, a Linux cloud VM)
 
