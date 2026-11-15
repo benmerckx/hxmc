@@ -5,7 +5,9 @@
 // receiver's field: a class's methods (numbers in and out), a closure in a
 // structure's field, a dynamic method, a static of a class read as Dynamic,
 // String's and Array's methods, an enum's constructor by name, a
-// Reflect.makeVarArgs function, a missing method, null.
+// Reflect.makeVarArgs function, a missing method, null. Reflect.getProperty
+// and setProperty (a property's accessors, a plain field, a structure's, a
+// name no field has), Reflect.callMethod (its array left as it was).
 enum Shape {
 	Circle(r:Float);
 	Square(s:Int);
@@ -33,6 +35,20 @@ class Counter {
 
 	public static function twice(x:Int):Int
 		return x * 2;
+}
+
+class Temp {
+	public var celsius:Float = 20;
+	public var fahrenheit(get, set):Float;
+	public var plain = 1;
+
+	public function new() {}
+
+	function get_fahrenheit()
+		return celsius * 9 / 5 + 32;
+
+	function set_fahrenheit(v:Float)
+		return celsius = (v - 32) * 5 / 9;
 }
 
 typedef Num = {
@@ -91,6 +107,18 @@ class DynCalls {
 		while (it.hasNext())
 			n += it.next();
 		trace(n);
+		var tp = new Temp();
+		trace(Reflect.getProperty(tp, "fahrenheit"), Reflect.getProperty(tp, "plain"), Reflect.getProperty(tp, "nothing"));
+		Reflect.setProperty(tp, "fahrenheit", 212);
+		Reflect.setProperty(tp, "plain", 5);
+		trace(tp.celsius, tp.plain, Reflect.getProperty({a: 1}, "a"), Reflect.getProperty(null, "a"));
+		var args:Array<Dynamic> = [4];
+		trace(Reflect.callMethod(null, Reflect.field(anon, "g"), ["b", 3]), Reflect.callMethod(c, Reflect.field(c, "add"), args), args);
+		var grab = Reflect.makeVarArgs(a -> {
+			a.push("more");
+			return a.length;
+		});
+		trace(Reflect.callMethod(null, grab, args), args, Reflect.callMethod(null, grab, []));
 		try {
 			anon.missing(1);
 			trace("no error");

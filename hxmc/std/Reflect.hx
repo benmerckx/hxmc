@@ -55,8 +55,8 @@ class Reflect {
 		If `o` or `field` are null, the result is unspecified.
 	**/
 	public static function getProperty(o:Dynamic, field:String):Dynamic {
-		var getter = Native.getField(o, "get_" + field);
-		return getter != null && isFunction(getter) ? Native.callMethod(getter, []) : Native.getField(o, field);
+		// (hxmc: the getter's name made once per name, Dyn.accessorFid)
+		return Native.getProperty(o, field);
 	}
 
 	/**
@@ -69,8 +69,7 @@ class Reflect {
 		If `field` is null, the result is unspecified.
 	**/
 	public static function setProperty(o:Dynamic, field:String, value:Dynamic):Void {
-		var setter = Native.getField(o, "set_" + field);
-		if (setter != null && isFunction(setter)) Native.callMethod(setter, [value]) else Native.setField(o, field, value);
+		Native.setProperty(o, field, value);
 	}
 
 	/**
