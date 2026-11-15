@@ -472,8 +472,12 @@ class Dyn {
 				case _:
 			}
 		}
-		var r:Dynamic = Str.isNull(o) ? NOT_BUILTIN : callBuiltin(o, Names.fidStr(fid), boxed, n);
-		if (isNotBuiltin(r)) r = callBoxed(anonGetSlow(o, fid), boxed, n);
+		// (as a call of a Dynamic's field, which this is too, FnLower: a
+		// String's or an Array's method, an enum's constructor by name, a
+		// Reflect.makeVarArgs function)
+		var t = Str.isNull(o) ? 0 : tindex(o);
+		var r:Dynamic = t == T_ARRAY || isString(t) ? callBuiltin(o, Names.fidStr(fid), boxed, n) : NOT_BUILTIN;
+		if (isNotBuiltin(r)) r = callAny(fieldOf(o, fid), boxed, n);
 		return fromBoxed(r, rk);
 	}
 
@@ -482,6 +486,22 @@ class Dyn {
 	// building this one; removable once neither does)
 	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_call_slow") static function anonCallSlowOld(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64
 		return anonCallSlow(o, fid, sig, args, args);
+
+	// o's field fid as a Dynamic read gives it (dynGet by field id)
+	static function fieldOf(o:Dynamic, fid:Int):Dynamic {
+		if (!Str.isNull(o) && tindex(o) == T_TYPEOBJ && tk(ty(described(o))) == TK_ENUM) {
+			var i = enumCtorNames(o).indexOf(Names.fidStr(fid));
+			if (i >= 0) return single(ty(ctor(ty(described(o)), i))) >= 0 ? enumCreate(o, i, null) : enumCtorFunction(o, i);
+		}
+		return anonGetSlow(o, fid);
+	}
+
+	// f called with the first n of args, as dynCall calls it (its own array)
+	static function callAny(f:Dynamic, args:Array<Dynamic>, n:Int):Dynamic {
+		f = unadapt(f);
+		if (closureSig(f) < 0 && Std.isOfType(f, VarArgs)) return (f : VarArgs).f(args.slice(0, n));
+		return callBoxed(f, args, n);
+	}
 
 	// ---- Dynamic access
 
