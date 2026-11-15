@@ -84,6 +84,11 @@ class Key {
 	public static function compareStrings(a:String, b:String):Int {
 		// port: `==` first: a runtime compare at most once, and no compare for the same string
 		if (core.StringHelper.codePointHost) return a == b ? 0 : a < b ? -1 : 1;
+		#if (target.name == "hxmc")
+		// port: hxmc's one-byte strings (every unit below 256, no surrogates): their units'
+		// order is code point order, the runtime's compare of them (most keys are ASCII)
+		if (hxmc.NativeString.isOneByte(a) && hxmc.NativeString.isOneByte(b)) return hxmc.NativeString.compareUnits(a, b);
+		#end
 		var la = a.length, lb = b.length, n = la < lb ? la : lb;
 		for (i in 0...n) {
 			var ca = StringTools.fastCodeAt(a, i),
