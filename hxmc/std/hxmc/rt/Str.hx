@@ -79,12 +79,10 @@ class Str {
 			Repr.copyFrom1(chars1(r), chars1(s), pos, n);
 			return r;
 		}
-		if (Repr.fitsOne(chars2(s), pos, n)) {
-			var r = make1(n);
-			Repr.narrow(chars1(r), 0, chars2(s), pos, n);
-			return r;
-		}
-		var r = make2(n);
+		// (narrowed while tested; a unit above 0xFF: the copy of two bytes a unit)
+		var r = make1(n);
+		if (Repr.narrowFits(chars1(r), 0, chars2(s), pos, n)) return r;
+		r = make2(n);
 		Repr.copyFrom(chars2(r), chars2(s), pos, n);
 		return r;
 	}

@@ -148,6 +148,31 @@ class MemRepr {
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
 
+	// src[si, si + n) narrowed into dst from di, four units at a time, and
+	// whether each was below 0x100 (if not, dst's bytes are of no use): the
+	// test and the copy in one pass (Str.range)
+	@:hxmc.unsafe(gc) public static function narrowFits(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int):Bool {
+		var s = src.at(si), d = dst.at(di), k = 0;
+		var half = ((0xFF00 : I64) << 16) | (0xFF00 : I64), low = ((0xFF : I64) << 16) | (0xFF : I64);
+		var hi = (half << 32) | half, lo = (low << 32) | low, words = ((0xFFFF : I64) << 32) | (0xFFFF : I64), seen:I64 = 0;
+		while (k < n - 3) {
+			var w = Mem.getI64(s, 2 * k);
+			seen |= w;
+			var x = w & lo;
+			x = (x | (x >>> 8)) & words;
+			Mem.setI32(d, k, (x | (x >>> 16)).toInt());
+			k += 4;
+		}
+		if (seen & hi != (0 : I64)) return false;
+		while (k < n) {
+			var u = src.get(si + k);
+			if (u > 0xFF) return false;
+			dst.set(di + k, u);
+			k++;
+		}
+		return true;
+	}
+
 	// whether the two-byte units src[si, si + n) are each below 0x100 (unitsFitOne)
 	@:hxmc.unsafe(gc) public static inline function fitsOne(src:MemChars, si:Int, n:Int):Bool
 		return unitsFitOne(ReadOnlySpan.unsafeOf((cast src.at(si) : Ptr<UInt16>), n));
