@@ -4,6 +4,7 @@ import haxe.ds.Vector;
 import haxe.io.Bytes;
 import haxe.io.BytesBuffer;
 import hxmc.neko.Module.Op;
+import hxmc.neko.Frame.F;
 import hxmc.neko.Value;
 
 // one thread's interpreter (neko/vm/interp.c): the stack, `this`, the
@@ -71,6 +72,11 @@ class VM {
 		stack[sp++] = v;
 	}
 
+	function growTo(n:Int) {
+		while (stack.length < n)
+			grow();
+	}
+
 	function grow() {
 		if (stack.length >= 1 << 24) throw error("Stack Overflow");
 		var n = new Vector<Dynamic>(stack.length * 2);
@@ -127,9 +133,17 @@ class VM {
 				depth = 0;
 				throw error("Stack Overflow");
 			}
-			// (this and the environment are the frame's own: interp's arguments)
-			var r = interp(fn.module, fn.addr, null, -1, thisv, fn.env);
+			// (this and the environment are the frame's own: interp's arguments;
+			// the frame's slots from the arguments, sp above them)
+			var fp = sp - nargs;
+			var m = fn.module;
+			var top = fp + m.frameMax[fn.addr];
+			if (top + 8 > stack.length) growTo(top + 8);
+			sp = top;
+			var r = interp(m, fn.addr, null, -1, thisv, fn.env, fp, top);
 			depth--;
+			// (the arguments popped; the frame's slots left as they are)
+			sp = fp;
 			return r;
 		}
 		if (fn.nargs != nargs && fn.nargs != -1) {
@@ -157,73 +171,61 @@ class VM {
 
 	// a module's code from its start (neko_vm_execute)
 	public function execute(m:Module):Dynamic {
-		return interp(m, 0, null, -1, null, []);
+		var fp = sp;
+		var top = fp + m.frameMax[0];
+		if (top + 8 > stack.length) growTo(top + 8);
+		sp = top;
+		var r = interp(m, 0, null, -1, null, [], fp, top);
+		sp = fp;
+		return r;
 	}
 
 	// ---- the interpreter
 
-	// a frame of the module's code, from pc; trap >= 0: the part of the frame
-	// under the trap whose six slots start there (protect), which ends at its
-	// EndTrap (trapState ENDED, resumePc) or with the function (RETURNED)
-	function interp(m:Module, pc:Int, acc:Dynamic, trap:Int, vthis:Dynamic, env:Dynamic):Dynamic {
-		final code = m.code;
+	// a frame of a module's translated code (Frame), from pc: the frame's
+	// slots from fp, the VM's sp at top above them (set to the arguments' top
+	// for a call, back after it); trap >= 0: the part of the frame under the
+	// trap whose six slots start there (protect), which ends at its EndTrap
+	// (trapState ENDED, resumePc) or with the function (RETURNED)
+	function interp(m:Module, pc:Int, acc:Dynamic, trap:Int, vthis:Dynamic, env:Dynamic, fp:Int, top:Int):Dynamic {
+		final code = m.vcode;
 		fmods[depth] = m.id;
 		while (true) {
-			switch code[pc++] {
-				case Op.AccNull:
+			switch code[pc] {
+				case F.ANULL:
 					acc = null;
-				case Op.AccTrue:
+					pc++;
+				case F.ATRUE:
 					acc = true;
-				case Op.AccFalse:
+					pc++;
+				case F.AFALSE:
 					acc = false;
-				case Op.AccThis:
+					pc++;
+				case F.ATHIS:
 					acc = vthis;
-				case Op.AccInt:
-					acc = m.consts[code[pc++]];
-				case Op.AccStack0:
-					acc = stack[sp - 1];
-				case Op.AccStack1:
-					acc = stack[sp - 2];
-				case Op.AccStack:
-					acc = stack[sp - 1 - code[pc++]];
-				case Op.AccGlobal:
-					acc = m.globals[code[pc++]];
-				case Op.AccEnv:
+					pc++;
+				case F.ACONST:
+					acc = m.consts[code[pc + 1]];
+					pc += 2;
+				case F.ASLOT:
+					acc = stack[fp + code[pc + 1]];
+					pc += 2;
+				case F.AGLOBAL:
+					acc = m.globals[code[pc + 1]];
+					pc += 2;
+				case F.AENV:
 					var e:Array<Dynamic> = env;
-					var i = code[pc];
+					var i = code[pc + 1];
 					if (i >= e.length) throw errorAt(m, pc, "Reading Outside Env");
-					pc++;
 					acc = e[i];
-				case Op.AccField:
+					pc += 2;
+				case F.AFIELD:
 					fpcs[depth] = pc;
-					var id = code[pc];
-					if (Tag.isObject(acc)) {
-						var o:NObj = acc;
-						// (an inline cache of the object and its field's slot, an own
-						// field's: checked against the slot's id, the slots move)
-						// (or of its prototype's, where it has no such field of its own)
-						var k = m.icIdx[pc];
-						var c = m.icObj[pc];
-						if (c == o && k < o.ids.length && o.ids[k] == id) acc = o.vals[k] else if (c != null && c == o.proto && k < c.ids.length
-							&& c.ids[k] == id && o.find(id) < 0) acc = c.vals[k] else {
-							k = o.find(id);
-							var p = o.proto;
-							if (k >= 0) {
-								m.icObj[pc] = o;
-								m.icIdx[pc] = k;
-								acc = o.vals[k];
-							} else if (p != null && (k = p.find(id)) >= 0) {
-								m.icObj[pc] = p;
-								m.icIdx[pc] = k;
-								acc = p.vals[k];
-							} else if (resolver != null && !o.has(id)) acc = callEx(vthis, resolver, [o, id]) else acc = o.get(id);
-						}
-					} else
-						throw invalidFieldAt(m, pc, id);
-					pc++;
-				case Op.AccArray:
+					acc = field(m, pc, acc, code[pc + 1], vthis);
+					pc += 2;
+				case F.AARRAY:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
+					var a:Dynamic = stack[fp + code[pc + 1] - 1];
 					if (Tag.isInt(acc) && Tag.isArray(a)) {
 						var arr:Array<Dynamic> = a;
 						var k:Int = acc;
@@ -232,39 +234,32 @@ class VM {
 						acc = objectOp(a, acc, Fields.idGet, "Unsupported operation")
 					else
 						throw errorAt(m, pc, "Invalid array access");
-					stack[--sp] = null;
-				case Op.AccIndex0:
+					pc += 2;
+				case F.AINDEX:
 					fpcs[depth] = pc;
-					acc = index(acc, 0);
-				case Op.AccIndex1:
-					fpcs[depth] = pc;
-					acc = index(acc, 1);
-				case Op.AccIndex:
-					fpcs[depth] = pc;
-					acc = index(acc, code[pc]);
-					pc++;
-				case Op.AccBuiltin:
-					acc = m.consts[code[pc++]];
-				case Op.SetStack:
-					stack[sp - 1 - code[pc++]] = acc;
-				case Op.SetGlobal:
-					m.globals[code[pc++]] = acc;
-				case Op.SetEnv:
+					acc = index(acc, code[pc + 1]);
+					pc += 2;
+				case F.SSLOT:
+					stack[fp + code[pc + 1]] = acc;
+					pc += 2;
+				case F.SGLOBAL:
+					m.globals[code[pc + 1]] = acc;
+					pc += 2;
+				case F.SENV:
 					var e:Array<Dynamic> = env;
-					var i = code[pc];
+					var i = code[pc + 1];
 					if (i >= e.length) throw errorAt(m, pc, "Writing Outside Env");
-					pc++;
 					e[i] = acc;
-				case Op.SetField:
+					pc += 2;
+				case F.SFIELD:
+					var o:Dynamic = stack[fp + code[pc + 2] - 1];
+					if (Tag.isObject(o)) (o : NObj).set(code[pc + 1], acc) else throw invalidFieldAt(m, pc, code[pc + 1]);
+					pc += 3;
+				case F.SARRAY:
 					fpcs[depth] = pc;
-					var o:Dynamic = stack[sp - 1];
-					if (Tag.isObject(o)) (o : NObj).set(code[pc], acc) else throw invalidFieldAt(m, pc, code[pc]);
-					stack[--sp] = null;
-					pc++;
-				case Op.SetArray:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					var k:Dynamic = stack[sp - 2];
+					var d = fp + code[pc + 1];
+					var a:Dynamic = stack[d - 1];
+					var k:Dynamic = stack[d - 2];
 					if (Tag.isArray(a) && Tag.isInt(k)) {
 						var arr:Array<Dynamic> = a;
 						var i:Int = k;
@@ -276,12 +271,11 @@ class VM {
 						callEx(o, f, [k, acc]);
 					} else
 						throw errorAt(m, pc, "Invalid array access");
-					stack[--sp] = null;
-					stack[--sp] = null;
-				case Op.SetIndex:
+					pc += 2;
+				case F.SINDEX:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					var i = code[pc];
+					var a:Dynamic = stack[fp + code[pc + 2] - 1];
+					var i = code[pc + 1];
 					if (Tag.isArray(a)) {
 						var arr:Array<Dynamic> = a;
 						if (i >= 0 && i < arr.length) arr[i] = acc;
@@ -292,151 +286,184 @@ class VM {
 						callEx(o, f, [i, acc]);
 					} else
 						throw errorAt(m, pc, "Invalid array access");
-					pc++;
-					stack[--sp] = null;
-				case Op.SetThis:
+					pc += 3;
+				case F.STHIS:
 					vthis = acc;
-				case Op.Push:
-					if (sp == stack.length) grow();
-					stack[sp++] = acc;
-				case Op.Pop:
-					pop(code[pc++]);
-				case Op.Apply:
-					fpcs[depth] = pc + 1;
+					pc++;
+				case F.PUSH:
+					stack[fp + code[pc + 1]] = acc;
+					pc += 2;
+				case F.COPYPUSH:
+					acc = stack[fp + code[pc + 1]];
+					stack[fp + code[pc + 2]] = acc;
+					pc += 3;
+				case F.CONSTPUSH:
+					acc = m.consts[code[pc + 1]];
+					stack[fp + code[pc + 2]] = acc;
+					pc += 3;
+				case F.GLOBALPUSH:
+					acc = m.globals[code[pc + 1]];
+					stack[fp + code[pc + 2]] = acc;
+					pc += 3;
+				case F.CALL:
+					fpcs[depth] = pc;
+					sp = fp + code[pc + 2];
+					acc = callOp(acc, vthis, code[pc + 1]);
+					sp = top;
+					pc += 3;
+				case F.OBJCALL:
+					fpcs[depth] = pc;
+					var d = fp + code[pc + 2];
+					var o:Dynamic = stack[d - 1];
+					sp = d - 1;
+					acc = callOp(acc, o, code[pc + 1]);
+					sp = top;
+					pc += 3;
+				case F.CALLGF:
+					// (a static's method: the class from a global, the method by the field's cache)
+					fpcs[depth] = pc;
+					var o:Dynamic = m.globals[code[pc + 1]];
+					var f = field(m, pc, o, code[pc + 2], vthis);
+					sp = fp + code[pc + 4];
+					acc = callOp(f, o, code[pc + 3]);
+					sp = top;
+					pc += 5;
+				case F.TAILCALL:
+					fpcs[depth] = pc;
+					sp = fp + code[pc + 2];
+					var r = callOp(acc, vthis, code[pc + 1]);
+					if (trap >= 0) trapState = RETURNED;
+					return r;
+				case F.APPLY:
+					fpcs[depth] = pc;
 					if (!Tag.isFunction(acc)) throw errorAt(m, pc, "$apply");
 					var fn:NFun = acc;
-					var n = code[pc++];
-					if (fn.nargs == n || fn.nargs == -1) acc = callOp(fn, vthis, n) else {
+					var n = code[pc + 1], d = fp + code[pc + 2];
+					if (fn.nargs == n || fn.nargs == -1) {
+						sp = d;
+						acc = callOp(fn, vthis, n);
+						sp = top;
+					} else {
 						if (n > fn.nargs) throw errorAt(m, pc, "$apply");
 						var e:Array<Dynamic> = [for (_ in 0...fn.nargs + 1) null];
 						e[0] = fn;
-						var i = n;
-						while (i > 0) {
-							e[i--] = stack[sp - 1];
-							stack[--sp] = null;
-						}
+						for (i in 0...n)
+							e[i + 1] = stack[d - n + i];
 						acc = Builtins.applyClosure(fn.nargs - n, e);
 					}
-				case Op.TailCall:
-					var p = code[pc++];
-					var st = p >> 3;
-					var nargs = p & 7;
-					// the arguments over the frame, the frame popped
-					st -= nargs;
-					for (i in 0...nargs)
-						stack[sp - nargs - st + i] = stack[sp - nargs + i];
-					pop(st);
-					fpcs[depth] = pc;
-					var r = callOp(acc, vthis, nargs);
-					if (trap >= 0) trapState = RETURNED;
-					return r;
-				case Op.Call:
-					fpcs[depth] = pc + 1;
-					acc = callOp(acc, vthis, code[pc++]);
-				case Op.ObjCall:
-					fpcs[depth] = pc + 1;
-					var o:Dynamic = stack[sp - 1];
-					stack[--sp] = null;
-					acc = callOp(acc, o, code[pc++]);
-				case Op.Jump:
-					pc = code[pc];
-				case Op.JumpIf:
-					if (Tag.isBool(acc) && (acc : Bool)) pc = code[pc] else pc++;
-				case Op.JumpIfNot:
-					if (Tag.isBool(acc) && (acc : Bool)) pc++ else pc = code[pc];
-				case Op.Trap:
-					if (sp + 6 > stack.length) grow();
-					var t = sp;
-					stack[t] = code[pc];
+					pc += 3;
+				case F.JUMP:
+					pc = code[pc + 1];
+				case F.JIF:
+					if (Tag.isBool(acc) && (acc : Bool)) pc = code[pc + 1] else pc += 2;
+				case F.JIFNOT:
+					if (Tag.isBool(acc) && (acc : Bool)) pc += 2 else pc = code[pc + 1];
+				case F.TRAP:
+					var t = fp + code[pc + 2];
+					stack[t] = code[pc + 1];
 					stack[t + 1] = vthis;
 					stack[t + 2] = env;
 					stack[t + 3] = depth;
 					stack[t + 4] = null;
 					stack[t + 5] = null;
-					sp += 6;
-					acc = protect(m, pc + 1, acc, t, vthis, env);
+					acc = protect(m, pc + 3, acc, t, vthis, env, fp, top);
+					sp = top;
 					if (trapState == RETURNED) {
 						if (trap < 0) trapState = 0;
 						return acc;
 					}
 					pc = resumePc;
 					vthis = resumeThis;
-				case Op.EndTrap:
-					if (trap < 0 || trap != sp - 6) throw errorAt(m, pc, "Invalid End Trap");
-					pop(6);
+				case F.ENDTRAP:
+					if (trap < 0 || trap != fp + code[pc + 1] - 6) throw errorAt(m, pc, "Invalid End Trap");
 					trapState = ENDED;
-					resumePc = pc;
+					resumePc = pc + 2;
 					resumeThis = vthis;
 					return acc;
-				case Op.Ret:
-					pop(code[pc++]);
+				case F.RET | F.LAST:
 					if (trap >= 0) trapState = RETURNED;
 					return acc;
-				case Op.MakeEnv:
-					fpcs[depth] = pc;
-					var n = code[pc++];
+				case F.MAKEENV:
+					var n = code[pc + 1], d = fp + code[pc + 2];
 					var e:Array<Dynamic> = [for (_ in 0...n) null];
-					while (n-- > 0) {
-						e[n] = stack[sp - 1];
-						stack[--sp] = null;
-					}
+					for (i in 0...n)
+						e[i] = stack[d - n + i];
 					if (!Tag.isFunction(acc) || (acc : NFun).prim != null) throw errorAt(m, pc, "Invalid environment");
 					var f:NFun = acc;
 					acc = new NFun(f.nargs, e, f.module, f.addr, null, null);
-				case Op.MakeArray:
-					var n = code[pc++];
+					pc += 3;
+				case F.MAKEARRAY:
+					var n = code[pc + 1], d = fp + code[pc + 2];
 					var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
-					while (n > 0) {
-						a[n--] = stack[sp - 1];
-						stack[--sp] = null;
-					}
 					a[0] = acc;
+					for (i in 0...n)
+						a[i + 1] = stack[d - n + i];
 					acc = a;
-				case Op.MakeArray2:
-					var n = code[pc++];
+					pc += 3;
+				case F.MAKEARRAY2:
+					var n = code[pc + 1], d = fp + code[pc + 2];
 					var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
+					for (i in 0...n)
+						a[i] = stack[d - n + i];
 					a[n] = acc;
-					while (n > 0) {
-						a[--n] = stack[sp - 1];
-						stack[--sp] = null;
-					}
 					acc = a;
-				case Op.Bool:
+					pc += 3;
+				case F.BOOL:
 					acc = !isFalse(acc);
-				case Op.Not:
+					pc++;
+				case F.NOT:
 					acc = isFalse(acc);
-				case Op.IsNull:
+					pc++;
+				case F.ISNULL:
 					acc = acc == null;
-				case Op.IsNotNull:
+					pc++;
+				case F.ISNOTNULL:
 					acc = acc != null;
-				case Op.Add:
+					pc++;
+				case F.TYPEOF:
+					acc = Tag.of(acc);
+					pc++;
+				case F.HASH:
+					if (!Tag.isString(acc)) throw errorAt(m, pc, "$hash");
+					acc = Fields.idBytes((acc : NStr).b);
+					pc++;
+				case F.NEW:
+					acc = newObject(acc);
+					pc++;
+				case F.ADD:
+					var a:Dynamic = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box((a : Int) + (acc : Int)) else {
+						fpcs[depth] = pc;
+						acc = add(a, acc);
+					}
+					pc += 2;
+				case F.SUB:
+					var a:Dynamic = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box((a : Int) - (acc : Int)) else {
+						fpcs[depth] = pc;
+						acc = numberOp(a, acc, Op.Sub);
+					}
+					pc += 2;
+				case F.MULT:
+					var a:Dynamic = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box((a : Int) * (acc : Int)) else {
+						fpcs[depth] = pc;
+						acc = numberOp(a, acc, Op.Mult);
+					}
+					pc += 2;
+				case F.DIV:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					acc = Tag.isInt(a) && Tag.isInt(acc) ? box((a : Int) + (acc : Int)) : add(a, acc);
-					stack[--sp] = null;
-				case Op.Sub:
+					acc = div(stack[fp + code[pc + 1] - 1], acc);
+					pc += 2;
+				case F.MOD:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					acc = Tag.isInt(a) && Tag.isInt(acc) ? box((a : Int) - (acc : Int)) : numberOp(a, acc, Op.Sub);
-					stack[--sp] = null;
-				case Op.Mult:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					acc = Tag.isInt(a) && Tag.isInt(acc) ? box((a : Int) * (acc : Int)) : numberOp(a, acc, Op.Mult);
-					stack[--sp] = null;
-				case Op.Div:
-					fpcs[depth] = pc;
-					acc = div(stack[sp - 1], acc);
-					stack[--sp] = null;
-				case Op.Mod:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
+					var a:Dynamic = stack[fp + code[pc + 1] - 1];
 					if (Tag.isInt(acc) && (acc : Int) == 0 && Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (%)");
 					acc = numberOp(a, acc, Op.Mod);
-					stack[--sp] = null;
-				case Op.Shl | Op.Shr | Op.UShr | Op.Or | Op.And | Op.Xor:
-					var a:Dynamic = stack[sp - 1];
-					var op = code[pc - 1];
+					pc += 2;
+				case F.BITOP:
+					var op = code[pc + 1];
+					var a:Dynamic = stack[fp + code[pc + 2] - 1];
 					if (!Tag.isInt(acc) || !Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (" + opName(op) + ")");
 					var x:Int = a, y:Int = acc;
 					acc = switch op {
@@ -447,144 +474,82 @@ class VM {
 						case Op.And: x & y;
 						case _: x ^ y;
 					}
-					stack[--sp] = null;
-				case Op.Eq:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) {
-						acc = (a : Int) == (acc : Int);
-						stack[--sp] = null;
-						continue;
-					}
-					var c = compare(a, acc);
-					acc = c == 0;
-					stack[--sp] = null;
-				case Op.Neq:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) {
-						acc = (a : Int) != (acc : Int);
-						stack[--sp] = null;
-						continue;
-					}
-					var c = compare(a, acc);
-					acc = c != 0;
-					stack[--sp] = null;
-				case Op.Lt:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) {
-						acc = (a : Int) < (acc : Int);
-						stack[--sp] = null;
-						continue;
-					}
-					var c = compare(a, acc);
-					acc = c != INVALID && c < 0;
-					stack[--sp] = null;
-				case Op.Lte:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) {
-						acc = (a : Int) <= (acc : Int);
-						stack[--sp] = null;
-						continue;
-					}
-					var c = compare(a, acc);
-					acc = c != INVALID && c <= 0;
-					stack[--sp] = null;
-				case Op.Gt:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) {
-						acc = (a : Int) > (acc : Int);
-						stack[--sp] = null;
-						continue;
-					}
-					var c = compare(a, acc);
-					acc = c != INVALID && c > 0;
-					stack[--sp] = null;
-				case Op.Gte:
-					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) {
-						acc = (a : Int) >= (acc : Int);
-						stack[--sp] = null;
-						continue;
-					}
-					var c = compare(a, acc);
-					acc = c != INVALID && c >= 0;
-					stack[--sp] = null;
-				case Op.TypeOf:
-					acc = Tag.of(acc);
-				case Op.Compare:
-					fpcs[depth] = pc;
-					var c = compare(stack[sp - 1], acc);
-					acc = c == INVALID ? null : c;
-					stack[--sp] = null;
-				case Op.PhysCompare:
-					acc = physCompare(stack[sp - 1], acc);
-					stack[--sp] = null;
-				case Op.Hash:
-					if (!Tag.isString(acc)) throw errorAt(m, pc, "$hash");
-					acc = Fields.idBytes((acc : NStr).b);
-				case Op.New:
-					acc = newObject(acc);
-				case Op.JumpTable:
-					var n = code[pc];
-					if (Tag.isInt(acc) && (acc : Int) >= 0 && (acc : Int) < n) pc += 1 + 2 * (acc : Int) else pc += 1 + 2 * n;
-				case Op.Loop:
-				// ---- superinstructions (Module.fuse)
-				case Op.PushStack0:
-					acc = stack[sp - 1];
-					if (sp == stack.length) grow();
-					stack[sp++] = acc;
-					pc++;
-				case Op.PushStack1:
-					acc = stack[sp - 2];
-					if (sp == stack.length) grow();
-					stack[sp++] = acc;
-					pc++;
-				case Op.PushStack:
-					acc = stack[sp - 1 - code[pc]];
-					if (sp == stack.length) grow();
-					stack[sp++] = acc;
-					pc += 2;
-				case Op.PushConst:
-					acc = m.consts[code[pc]];
-					if (sp == stack.length) grow();
-					stack[sp++] = acc;
-					pc += 2;
-				case Op.PushGlobal:
-					acc = m.globals[code[pc]];
-					if (sp == stack.length) grow();
-					stack[sp++] = acc;
-					pc += 2;
-				case Op.OpImm:
-					var k = code[pc], op = code[pc + 2];
-					fpcs[depth] = pc + 3;
-					if (Tag.isInt(acc)) acc = intOp(op, acc, k) else acc = anyOp(op, acc, m.consts[code[pc + 1]]);
 					pc += 3;
-				case Op.CmpJump:
-					var p = code[pc];
+				case F.CMP:
+					var a:Dynamic = stack[fp + code[pc + 2] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = intCmp(code[pc + 1], a, acc) else {
+						fpcs[depth] = pc;
+						acc = anyCmp(code[pc + 1], a, acc);
+					}
+					pc += 3;
+				case F.COMPARE:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[sp - 1];
-					stack[--sp] = null;
-					var b = Tag.isInt(a) && Tag.isInt(acc) ? intCmp(p & 255, a, acc) : anyCmp(p & 255, a, acc);
+					var c = compare(stack[fp + code[pc + 1] - 1], acc);
+					acc = c == INVALID ? null : c;
+					pc += 2;
+				case F.PHYSCMP:
+					acc = physCompare(stack[fp + code[pc + 1] - 1], acc);
+					pc += 2;
+				case F.JUMPTABLE:
+					var n = code[pc + 1];
+					if (Tag.isInt(acc) && (acc : Int) >= 0 && (acc : Int) < n) pc = code[pc + 3 + (acc : Int)] else pc = code[pc + 2];
+				case F.OPIMM:
+					var op = code[pc + 1], k = code[pc + 2];
+					if (Tag.isInt(acc)) acc = intOp(op, acc, k) else {
+						fpcs[depth] = pc;
+						acc = anyOp(op, acc, m.consts[code[pc + 3]]);
+					}
+					pc += 4;
+				case F.CMPJUMP:
+					var a:Dynamic = stack[fp + code[pc + 4] - 1];
+					var b = false;
+					if (Tag.isInt(a) && Tag.isInt(acc)) b = intCmp(code[pc + 1], a, acc) else {
+						fpcs[depth] = pc;
+						b = anyCmp(code[pc + 1], a, acc);
+					}
 					acc = b;
-					if (b == (p >= 256)) pc = code[pc + 1] else pc += 2;
-				case Op.OpImmJump:
-					var k = code[pc], p = code[pc + 2];
-					fpcs[depth] = pc + 3;
-					var b = Tag.isInt(acc) ? intCmp(p & 255, acc, k) : anyCmp(p & 255, acc, m.consts[code[pc + 1]]);
+					if (b == (code[pc + 2] == 1)) pc = code[pc + 3] else pc += 5;
+				case F.OPIMMJUMP:
+					var b = false;
+					if (Tag.isInt(acc)) b = intCmp(code[pc + 1], acc, code[pc + 3]) else {
+						fpcs[depth] = pc;
+						b = anyCmp(code[pc + 1], acc, m.consts[code[pc + 4]]);
+					}
 					acc = b;
-					if (b == (p >= 256)) pc = code[pc + 4] else pc += 5;
-				case Op.Last:
-					if (trap >= 0) trapState = RETURNED;
-					return acc;
+					if (b == (code[pc + 2] == 1)) pc = code[pc + 5] else pc += 6;
 				case op:
 					throw errorAt(m, pc, "Invalid opcode " + op);
 			}
 		}
+	}
+
+	// o's field id (AccField): an inline cache by the code index of the
+	// object and its field's slot, an own field's or its prototype's, checked
+	// against the slot's id (the slots move)
+	inline function field(m:Module, pc:Int, o:Dynamic, id:Int, vthis:Dynamic):Dynamic {
+		if (!Tag.isObject(o)) throw invalidFieldAt(m, pc, id);
+		var obj:NObj = o;
+		var k = m.icIdx[pc];
+		var c = m.icObj[pc];
+		return if (c == obj && k < obj.ids.length && obj.ids[k] == id) obj.vals[k] else if (c != null && c == obj.proto && k < c.ids.length
+			&& c.ids[k] == id && obj.find(id) < 0) c.vals[k] else fieldSlow(m, pc, obj, id, vthis);
+	}
+
+	function fieldSlow(m:Module, pc:Int, o:NObj, id:Int, vthis:Dynamic):Dynamic {
+		var k = o.find(id);
+		var p = o.proto;
+		if (k >= 0) {
+			m.icObj[pc] = o;
+			m.icIdx[pc] = k;
+			return o.vals[k];
+		}
+		if (p != null && (k = p.find(id)) >= 0) {
+			m.icObj[pc] = p;
+			m.icIdx[pc] = k;
+			return p.vals[k];
+		}
+		if (resolver != null && !o.has(id)) return callEx(vthis, resolver, [o, id]);
+		return o.get(id);
 	}
 
 	static inline var ENDED = 1;
@@ -596,9 +561,9 @@ class VM {
 
 	// the code under a trap: an exception restores the trap's state and goes on
 	// at its handler
-	function protect(m:Module, pc:Int, acc:Dynamic, t:Int, vthis:Dynamic, env:Dynamic):Dynamic {
+	function protect(m:Module, pc:Int, acc:Dynamic, t:Int, vthis:Dynamic, env:Dynamic, fp:Int, top:Int):Dynamic {
 		try {
-			return interp(m, pc, acc, t, vthis, env);
+			return interp(m, pc, acc, t, vthis, env, fp, top);
 		} catch (e:Dynamic) {
 			var ne = wrap(e);
 			capture(ne);
@@ -608,8 +573,6 @@ class VM {
 			// (the frames between the throw and the trap, not the trap's own)
 			excStack = ne.stack.slice(0, ne.depth - d);
 			depth = d;
-			while (sp > t)
-				stack[--sp] = null;
 			trapState = ENDED;
 			return ne.value;
 		}
@@ -622,7 +585,7 @@ class VM {
 		var k = depth;
 		while (k >= 0) {
 			var m = Module.byId(fmods[k]);
-			st.push(m == null ? null : m.position(fpcs[k] - 1));
+			st.push(m == null ? null : m.position(m.oldOf[fpcs[k]]));
 			k--;
 		}
 		ne.stack = st;

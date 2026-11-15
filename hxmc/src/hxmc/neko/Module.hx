@@ -109,6 +109,11 @@ class Module {
 	}
 
 	public var name:NStr;
+	// the code the interpreter runs (Frame), the original code's index of
+	// each of its slots, the frame's size of each function's entry
+	public var vcode:Vector<Int>;
+	public var oldOf:Vector<Int>;
+	public var frameMax:Vector<Int>;
 	// AccField's inline caches, by the field's code index (VM.interp)
 	public var icObj:Vector<NObj>;
 	public var icIdx:Vector<Int>;
@@ -263,10 +268,8 @@ class Module {
 		for (f in funcs)
 			if (!isOp[f.addr]) invalid();
 		m.consts = Vector.fromArrayCopy(consts);
-		fuse(m, code, codesize, [for (f in funcs) f.addr]);
 		m.code = code;
-		m.icObj = new Vector(codesize + 1);
-		m.icIdx = new Vector(codesize + 1, 0);
+		Frame.translate(m, code, codesize, funcs);
 		return m;
 	}
 
