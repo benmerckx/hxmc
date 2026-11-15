@@ -1011,24 +1011,22 @@ class Str {
 		if (Repr.sbIsOne(b)) Repr.sbChars1(b).set(at, u) else Repr.sbChars2(b).set(at, u);
 
 	// eight one-byte units (lanes1) or four two-byte ones (lanes2) of a 64-bit
-	// word at a time: whether a lane of x is zero, or below 0x20
+	// word at a time
 	static inline function lanes1(n:Int):I64
 		return ((n * 0x1010101 : I64) << 32) | (((n * 0x1010101 : I64) << 32) >>> 32);
 
 	static inline function lanes2(n:Int):I64
 		return ((n * 0x10001 : I64) << 32) | (((n * 0x10001 : I64) << 32) >>> 32);
 
-	static inline function zero1(x:I64):Bool
-		return (x - lanes1(1)) & ~x & lanes1(0x80) != (0 : I64);
+	// whether a lane of w is below lo (1: a 0 unit; 0x20: a control
+	// character) or a or b, of no high bit: (x - lanes(lo)) & ~x & high lanes
+	// of w, w ^ lanes(a) and w ^ lanes(b) in one test, as ~(w ^ c) and ~w have
+	// the same high bits ((A & M) | (B & M) | (C & M) = (A | B | C) & M)
+	static inline function any1(w:I64, lo:Int, a:Int, b:Int):Bool
+		return ((w - lanes1(lo)) | ((w ^ lanes1(a)) - lanes1(1)) | ((w ^ lanes1(b)) - lanes1(1))) & ~w & lanes1(0x80) != (0 : I64);
 
-	static inline function low1(x:I64):Bool
-		return (x - lanes1(0x20)) & ~x & lanes1(0x80) != (0 : I64);
-
-	static inline function zero2(x:I64):Bool
-		return (x - lanes2(1)) & ~x & lanes2(0x8000) != (0 : I64);
-
-	static inline function low2(x:I64):Bool
-		return (x - lanes2(0x20)) & ~x & lanes2(0x8000) != (0 : I64);
+	static inline function any2(w:I64, lo:Int, a:Int, b:Int):Bool
+		return ((w - lanes2(lo)) | ((w ^ lanes2(a)) - lanes2(1)) | ((w ^ lanes2(b)) - lanes2(1))) & ~w & lanes2(0x8000) != (0 : I64);
 
 	// the index of the first quote, backslash or 0 unit of s from pos (its
 	// length if none): haxe.format.JsonParser.parseString's units to skip
@@ -1042,7 +1040,7 @@ class Str {
 			var c = StrView.units1(s).sub(i, n - i), m = n - i, k = 0;
 			while (k < m - 7) {
 				var w = c.getI64(k);
-				if (zero1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
+				if (any1(w, 1, '"'.code, '\\'.code)) break;
 				k += 8;
 			}
 			while (k < m) {
@@ -1055,7 +1053,7 @@ class Str {
 		var c = StrView.units2(s).sub(i, n - i), m = n - i, k = 0;
 		while (k < m - 3) {
 			var w = c.getI64(k);
-			if (zero2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
+			if (any2(w, 1, '"'.code, '\\'.code)) break;
 			k += 4;
 		}
 		while (k < m) {
@@ -1077,7 +1075,7 @@ class Str {
 			var c = StrView.units1(s).sub(i, n - i), m = n - i, k = 0;
 			while (k < m - 7) {
 				var w = c.getI64(k);
-				if (low1(w) || zero1(w ^ lanes1('"'.code)) || zero1(w ^ lanes1('\\'.code))) break;
+				if (any1(w, 0x20, '"'.code, '\\'.code)) break;
 				k += 8;
 			}
 			while (k < m && !jsonEscaped(c[k]))
@@ -1087,7 +1085,7 @@ class Str {
 		var c = StrView.units2(s).sub(i, n - i), m = n - i, k = 0;
 		while (k < m - 3) {
 			var w = c.getI64(k);
-			if (low2(w) || zero2(w ^ lanes2('"'.code)) || zero2(w ^ lanes2('\\'.code))) break;
+			if (any2(w, 0x20, '"'.code, '\\'.code)) break;
 			k += 4;
 		}
 		while (k < m && !jsonEscaped(c[k]))
