@@ -150,8 +150,7 @@ class VM {
 			pop(nargs);
 			throw error("Invalid call");
 		}
-		var args:Array<Dynamic> = [];
-		args.resize(nargs);
+		var args = new Vector<Dynamic>(nargs);
 		for (i in 0...nargs)
 			args[i] = stack[sp - nargs + i];
 		pop(nargs);
@@ -597,7 +596,7 @@ class VM {
 		var obj:NObj = o;
 		var k = m.icIdx[pc];
 		var c = m.icObj[pc];
-		return if (c == obj && k < obj.ids.length && obj.ids[k] == id) obj.vals[k] else if (c != null && c == obj.proto && k < c.ids.length
+		return if (c == obj && k < obj.n && obj.ids[k] == id) obj.vals[k] else if (c != null && c == obj.proto && k < c.n
 			&& c.ids[k] == id && obj.find(id) < 0) c.vals[k] else fieldSlow(m, pc, obj, id, vthis);
 	}
 
@@ -935,7 +934,7 @@ class VM {
 					stack.push(v);
 					b.addString("{");
 					var first = true;
-					for (i in 0...o.ids.length) {
+					for (i in 0...o.n) {
 						b.addString(first ? " " : ", ");
 						first = false;
 						var n = Fields.nameBytes(o.ids[i]);

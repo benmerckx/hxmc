@@ -82,7 +82,7 @@ class Builtins {
 				vm.print(vm.toBytes(v));
 			return null;
 		});
-		add("array", -1, (vm, a) -> a.copy());
+		add("array", -1, (vm, a) -> a.toArray());
 		add("amake", 1, (vm, a) -> {
 			var n = a[0].int();
 			if (n < 0) throw failure;
@@ -286,7 +286,8 @@ class Builtins {
 		});
 		add("objremove", 2, (vm, a) -> a[0].obj().remove(a[1].int()));
 		add("objfields", 1, (vm, a) -> {
-			var r:Array<Dynamic> = [for (id in a[0].obj().ids) id];
+			var o = a[0].obj();
+			var r:Array<Dynamic> = [for (i in 0...o.n) o.ids[i]];
 			return r;
 		});
 		add("hash", 1, (vm, a) -> Fields.idBytes(a[0].str().b));
@@ -317,12 +318,12 @@ class Builtins {
 			if (a.length <= 1) throw VM.error("Invalid closure arguments number");
 			var f = a[0].fun();
 			if (f.nargs != -1 && f.nargs < a.length - 2) throw VM.error("Invalid closure arguments number");
-			return prim("closure_callback", -1, closureCallback, a.copy());
+			return prim("closure_callback", -1, closureCallback, a.toArray());
 		});
 		add("apply", -1, (vm, a) -> {
 			if (a.length < 1) throw failure;
 			var f = a[0].fun();
-			var args = a.slice(1);
+			var args = [for (i in 1...a.length) a[i]];
 			if (args.length == 0) return f;
 			if (f.nargs == args.length || f.nargs == -1) return vm.callN(f, args);
 			if (args.length > f.nargs) throw failure;
@@ -336,7 +337,7 @@ class Builtins {
 		add("varargs", 1, (vm, a) -> {
 			var f = a[0].fun();
 			if (f.nargs != 1 && f.nargs != -1) throw failure;
-			return prim("varargs", -1, (vm, args) -> vm.callN(vm.env, [args.copy()]), f);
+			return prim("varargs", -1, (vm, args) -> vm.callN(vm.env, [args.toArray()]), f);
 		});
 		add("compare", 2, (vm, a) -> {
 			var r = vm.compare(a[0], a[1]);
@@ -429,13 +430,13 @@ class Builtins {
 	static inline function swap32(v:Int):Int
 		return ((v >>> 24) & 0xFF) | ((v >> 8) & 0xFF00) | ((v & 0xFF00) << 8) | (v << 24);
 
-	static function closureCallback(vm:VM, args:Array<Dynamic>):Dynamic {
+	static function closureCallback(vm:VM, args:haxe.ds.Vector<Dynamic>):Dynamic {
 		var env:Array<Dynamic> = vm.env;
 		var f:NFun = env[0];
 		var o:Dynamic = env[1];
 		var cargs = env.length - 2;
 		if (f.nargs != cargs + args.length && f.nargs != -1) return (null : Dynamic);
-		var a = env.slice(2).concat(args);
+		var a = env.slice(2).concat(args.toArray());
 		return vm.callEx(o, f, a);
 	}
 
@@ -618,7 +619,7 @@ class NHash {
 				l.push(v);
 				if (Tag.isObject(v)) {
 					var o:NObj = v;
-					for (i in 0...o.ids.length) {
+					for (i in 0...o.n) {
 						big(h, o.ids[i]);
 						hashRec(o.vals[i], h, l);
 					}

@@ -68,7 +68,7 @@ class Loader {
 		return ff;
 	}
 
-	static function loadprim(vm:VM, a:Array<Dynamic>):Dynamic {
+	static function loadprim(vm:VM, a:haxe.ds.Vector<Dynamic>):Dynamic {
 		var o = vm.vthis.obj();
 		var name = a[0].str().toString();
 		var nargs = a[1].int();
@@ -78,7 +78,7 @@ class Loader {
 		return f;
 	}
 
-	static function loadmodule(vm:VM, a:Array<Dynamic>):Dynamic {
+	static function loadmodule(vm:VM, a:haxe.ds.Vector<Dynamic>):Dynamic {
 		var o = vm.vthis.obj();
 		var mname = a[0].str();
 		var vthis = a[1].obj();

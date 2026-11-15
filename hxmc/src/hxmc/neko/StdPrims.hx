@@ -687,7 +687,7 @@ class StdPrims {
 			var p = try new sys.io.Process(cmd, args) catch (e:Dynamic) throw Builtins.failure;
 			return new NAbs("process", p);
 		});
-		function read(p:haxe.io.Input, a:Array<Dynamic>):Dynamic {
+		function read(p:haxe.io.Input, a:haxe.ds.Vector<Dynamic>):Dynamic {
 			var s = a[1].str().b, pos = a[2].int(), len = a[3].int();
 			if (pos < 0 || len < 0 || pos + len > s.length) throw Builtins.failure;
 			var n = try p.readBytes(s, pos, len) catch (e:Dynamic) 0;

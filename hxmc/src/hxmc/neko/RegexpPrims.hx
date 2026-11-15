@@ -85,7 +85,7 @@ class RegexpPrims {
 			var d = re(a[0]);
 			return d.str == null ? -1 : d.re.ngroups;
 		});
-		function replace(vm:VM, a:Array<Dynamic>, all:Bool, f:Null<NFun>):Dynamic {
+		function replace(vm:VM, a:haxe.ds.Vector<Dynamic>, all:Bool, f:Null<NFun>):Dynamic {
 			var d = re(a[0]), s = a[1].str();
 			var by = f == null ? a[2].str().b : null;
 			var t = text(s.b);

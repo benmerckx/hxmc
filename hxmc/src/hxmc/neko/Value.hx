@@ -88,21 +88,26 @@ class NStr extends NVal {
 		return b.toString();
 }
 
-// fields sorted by their hash (neko/vm/objtable.h), the prototype
+// fields sorted by their hash (neko/vm/objtable.h), the prototype: the
+// first n slots of ids and vals (their capacity grows by doubling)
 class NObj extends NVal {
-	public var ids:Array<Int>;
-	public var vals:Array<Dynamic>;
+	static final NO_IDS = new haxe.ds.Vector<Int>(0);
+	static final NO_VALS = new haxe.ds.Vector<Dynamic>(0);
+
+	public var ids:haxe.ds.Vector<Int>;
+	public var vals:haxe.ds.Vector<Dynamic>;
+	public var n = 0;
 	public var proto:Null<NObj>;
 
 	public function new(?proto:NObj) {
 		super(Tag.TOBJECT);
-		ids = [];
-		vals = [];
+		ids = NO_IDS;
+		vals = NO_VALS;
 		this.proto = proto;
 	}
 
 	public inline function find(id:Int):Int {
-		var min = 0, max = ids.length;
+		var min = 0, max = n;
 		var found = -1;
 		while (min < max) {
 			var mid = (min + max) >> 1;
@@ -144,7 +149,7 @@ class NObj extends NVal {
 	}
 
 	public function set(id:Int, v:Dynamic):Void {
-		var min = 0, max = ids.length;
+		var min = 0, max = n;
 		while (min < max) {
 			var mid = (min + max) >> 1;
 			var c = ids[mid];
@@ -153,28 +158,52 @@ class NObj extends NVal {
 				return;
 			}
 		}
-		ids.insert(min, id);
-		vals.insert(min, v);
+		if (n == ids.length) {
+			var cap = n == 0 ? 4 : n * 2;
+			var ni = new haxe.ds.Vector<Int>(cap), nv = new haxe.ds.Vector<Dynamic>(cap);
+			haxe.ds.Vector.blit(ids, 0, ni, 0, n);
+			haxe.ds.Vector.blit(vals, 0, nv, 0, n);
+			ids = ni;
+			vals = nv;
+		}
+		// (Vector.blit moves overlapping slots as memmove does)
+		if (min < n) {
+			haxe.ds.Vector.blit(ids, min, ids, min + 1, n - min);
+			haxe.ds.Vector.blit(vals, min, vals, min + 1, n - min);
+		}
+		ids[min] = id;
+		vals[min] = v;
+		n++;
 	}
 
 	public function remove(id:Int):Bool {
 		var i = find(id);
 		if (i < 0) return false;
-		ids.splice(i, 1);
-		vals.splice(i, 1);
+		if (i < n - 1) {
+			haxe.ds.Vector.blit(ids, i + 1, ids, i, n - 1 - i);
+			haxe.ds.Vector.blit(vals, i + 1, vals, i, n - 1 - i);
+		}
+		n--;
+		vals[n] = null;
 		return true;
 	}
 
 	// $new(o): o's fields copied, o's prototype
 	public function copy():NObj {
 		var o = new NObj(proto);
-		o.ids = ids.copy();
-		o.vals = vals.copy();
+		if (n > 0) {
+			o.ids = new haxe.ds.Vector<Int>(n);
+			o.vals = new haxe.ds.Vector<Dynamic>(n);
+			haxe.ds.Vector.blit(ids, 0, o.ids, 0, n);
+			haxe.ds.Vector.blit(vals, 0, o.vals, 0, n);
+			o.n = n;
+		}
 		return o;
 	}
 }
 
-typedef Prim = (vm:VM, args:Array<Dynamic>) -> Dynamic;
+// (the arguments: a Vector, one allocation of their number)
+typedef Prim = (vm:VM, args:haxe.ds.Vector<Dynamic>) -> Dynamic;
 
 // a function of a module's code (prim == null) or a primitive; nargs -1: any
 class NFun extends NVal {
