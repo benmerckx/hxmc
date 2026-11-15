@@ -186,6 +186,24 @@ class Emit implements hxmc.Target.Emitter {
 			case CMP | CMPI | TEST | TESTI: true;
 			case _: false;
 		}, i -> i.cond ^= 1, 2);
+		// a 4-byte store of a non-negative constant, then of 0 just after it
+		// (an object's header: its type index, then 0): one 8-byte store of
+		// the first, sign-extended (a symbol's too: RAbs32S)
+		for (b in f.blocks) {
+			var ins = b.ins, n = 0, j = 0;
+			while (j < ins.length) {
+				var x = ins[j], y = j + 1 < ins.length ? ins[j + 1] : null;
+				ins[n++] = x;
+				j++;
+				if (y != null && (x.op : XOp) == STOREI && (y.op : XOp) == STOREI && x.size == 4 && y.size == 4 && x.imm >= 0 && y.imm == 0
+					&& y.isym == null && x.sym == null && y.sym == null && x.dsym == null && y.dsym == null && x.secrel == null && y.secrel == null
+					&& y.base == x.base && y.index == x.index && y.scale == x.scale && y.slot == x.slot && y.disp == x.disp + 4) {
+					x.size = 8;
+					j++;
+				}
+			}
+			ins.resize(n);
+		}
 		for (b in f.blocks)
 			b.label = a.newLabel();
 		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
