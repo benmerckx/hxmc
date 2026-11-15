@@ -99,7 +99,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
-	var testFolds = new Map<Int, Bool>(); // x & constant used only by a comparison with 0 (TESTI)
+	var testFolds = new Map<Int, Bool>(); // x & constant (or y) used only by a comparison with 0 (TESTI, TEST)
 	var indexFolds = new Map<Int, Bool>(); // x + y used only as the base of accesses: their base and index
 	var scaleFolds = new Map<Int, Bool>(); // x << 3 (a compressed reference's address) used only as the base of accesses: their index, scaled
 
@@ -352,7 +352,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			}
 		}
 		// x & constant compared with 0 (== or !=), used only there, in its
-		// block: a TESTI of the comparison
+		// block: a TESTI of the comparison (x & y of registers: a TEST)
 		// (also when value numbering left one x & constant for several such
 		// comparisons: each tests x, the and is not computed nor kept live)
 		testFolds = new Map();
@@ -366,7 +366,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				var x = mf.vals[c.a];
 				if (x.op != And || x.ty == F64) continue;
 				var k = immOf(x.b);
-				if (k == null || isymOf(x.b) != null || folded[x.a]) continue;
+				if (k == null && immOf(x.a) == null ? folded[x.b] || x.a == x.b : k == null || isymOf(x.b) != null) continue;
+				if (folded[x.a]) continue;
 				var n = testUses.exists(x.id) ? testUses.get(x.id) + 1 : 1;
 				testUses.set(x.id, n);
 				if (n == useCount[x.id]) {
@@ -573,10 +574,17 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		if (imm != null) {
 			if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe) && testFolds.exists(a)) {
 				var y = m.vals[a];
-				var x = emit(TESTI);
-				x.s1 = use(y.a);
-				x.imm = immOf(y.b);
-				x.size = sz(t);
+				if (immOf(y.b) == null) {
+					var x = emit(TEST);
+					x.s1 = use(y.a);
+					x.s2 = use(y.b);
+					x.size = sz(t);
+				} else {
+					var x = emit(TESTI);
+					x.s1 = use(y.a);
+					x.imm = immOf(y.b);
+					x.size = sz(t);
+				}
 			} else if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe)) {
 				var x = emit(TEST);
 				x.s1 = use(a);
