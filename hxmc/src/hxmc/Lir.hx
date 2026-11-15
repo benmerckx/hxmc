@@ -164,7 +164,56 @@ class LFunc {
 				for (k in 0...i.table.length)
 					i.table[k] = dest(i.table[k]);
 			}
-		// (every block ends with its jumps: none falls into the next one)
+		prune();
+	}
+
+	// (HXMC_DUP_TESTS=0: off) loop rotation: a loop's head that only tests
+	// and branches (at most maxTests comparisons, isTest, then a conditional
+	// branch and a jump) copied into each block outside the slow paths that
+	// jumps back to it: the back edge tests and branches into the loop
+	// itself, a taken branch per round instead of a jump and a branch (its
+	// condition inverted, invert, so that the branch goes on into the loop:
+	// to a block laid out between). Forward jumps to such blocks (joins that
+	// test) stay: in tshx they saved 0.2% more instructions for 0.9% more code.
+	public static var dupTests = true; // (the build's, Options.apply)
+
+	public function duplicateTests(isJump:LIns->Bool, isCond:LIns->Bool, isTest:LIns->Bool, invert:LIns->Void, maxTests:Int) {
+		if (!dupTests) return;
+		var n = blocks.length;
+		for (k in 0...n)
+			blocks[k].id = k;
+		var any = false;
+		for (bi in 0...n) {
+			var b = blocks[bi], m = b.ins.length;
+			if (m == 0 || b.cold || !isJump(b.ins[m - 1])) continue;
+			var t = b.ins[m - 1].target, tn = t.ins.length;
+			if (t.id >= bi || tn < 3 || tn > maxTests + 2 || !isJump(t.ins[tn - 1]) || !isCond(t.ins[tn - 2])) continue;
+			var tests = true;
+			for (q in 0...tn - 2)
+				if (!isTest(t.ins[q])) tests = false;
+			if (!tests) continue;
+			b.ins.pop();
+			for (q in 0...tn - 2)
+				b.ins.push(t.ins[q].copy());
+			var c = t.ins[tn - 2].copy(), e = t.ins[tn - 1].copy();
+			inline function inLoop(x:LBlock):Bool
+				return x.id > t.id && x.id <= bi;
+			if (inLoop(e.target) && !inLoop(c.target)) {
+				var x = c.target;
+				invert(c);
+				c.target = e.target;
+				e.target = x;
+			}
+			b.ins.push(c);
+			b.ins.push(e);
+			any = true;
+		}
+		if (any) prune();
+	}
+
+	// the blocks no branch reaches go (every block ends with its jumps: none
+	// falls into the next one; the entry is reached)
+	function prune() {
 		var n = blocks.length;
 		for (k in 0...n)
 			blocks[k].id = k;

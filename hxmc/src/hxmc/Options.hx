@@ -96,7 +96,7 @@ class Options {
 	// std reads it too)
 	public static final FLAGS = [
 		"hxmc.loop-version", "hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.sroa", "hxmc.escape", "hxmc.escape-hash", "hxmc.escape-no",
-		"hxmc.fold", "hxmc.frames-live", "hxmc.frames-merge", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
+		"hxmc.fold", "hxmc.frames-live", "hxmc.frames-merge", "hxmc.inline", "hxmc.devirt", "hxmc.dup-dispatch", "hxmc.dup-tests", "hxmc.dup-min", "hxmc.noshadow", "hxmc.framespill",
 		"hxmc.trymem", "hxmc.licm", "hxmc.reach", "hxmc.falign", "hxmc.fshift", "hxmc.wasm-coalesce", "hxmc.interp-coalesce", "hxmc.wasm-stack-kb", "hxmc.nogc",
 		"hxmc.checked", "hxmc.compact",
 		// (experimental) the LLVM back end's (Options.llvm)
@@ -125,6 +125,7 @@ class Options {
 		Inline.configure(flag("hxmc.inline", d));
 		Inline.devirtOn = on("hxmc.devirt", true, d);
 		Lir.LFunc.dupDispatch = on("hxmc.dup-dispatch", true, d);
+		Lir.LFunc.dupTests = on("hxmc.dup-tests", true, d);
 		Lir.LFunc.minTable = Std.parseInt(flag("hxmc.dup-min", d) ?? "64");
 		MirBuild.noShadow = MemLower.noShadow = on("hxmc.noshadow", false, d);
 		MirBuild.frameSpills = on("hxmc.framespill", true, d);

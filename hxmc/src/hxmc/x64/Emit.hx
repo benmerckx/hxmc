@@ -181,6 +181,10 @@ class Emit implements hxmc.Target.Emitter {
 		f.threadJumps(i -> (i.op : XOp) == JMP,
 			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && !(i.size == 4 && i.imm2 == 1)));
 		f.duplicateDispatch(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JTABLE, 10);
+		f.duplicateTests(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> switch (i.op : XOp) {
+			case CMP | CMPI | TEST | TESTI: true;
+			case _: false;
+		}, i -> i.cond ^= 1, 2);
 		for (b in f.blocks)
 			b.label = a.newLabel();
 		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
