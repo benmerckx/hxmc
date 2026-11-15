@@ -2124,9 +2124,52 @@ class Opt {
 					any = true;
 				}
 		if (any) o.rewrite();
+		o.zeroExtensions();
 		o.indexed();
 		o.sinkCold();
 		o.dce();
+	}
+
+	// (x << 32) >>> c, of c 29 to 32 and x a 32-bit value extended (Haxe's
+	// unsigned conversion, a compressed reference decoded by hand: GcCore):
+	// x's zero extension shifted left by 32 - c, which x86-64 makes without
+	// the shifts or as an address's scale 8 (MemLower.decompress's form)
+	function zeroExtensions() {
+		inline function count(v:Int):Int {
+			var c = f.vals[v];
+			return c.op == Const && c.sym == null ? c.imm : -1;
+		}
+		for (b in f.blocks) {
+			var k = 0;
+			while (k < b.ins.length) {
+				var i = b.ins[k++];
+				if (i.op != Shr || i.ty != I64 || i.dead) continue;
+				var c = count(i.b), s = f.vals[i.a];
+				if (c < 29 || c > 32 || s.op != Shl || count(s.b) != 32) continue;
+				var x = f.vals[s.a];
+				if ((x.op != SExt && x.op != ZExt) || f.vals[x.a].ty != I32) continue;
+				inline function ins(op:Op, ty:MTy):MIns {
+					var n = new MIns(op, ty);
+					n.id = f.vals.length;
+					f.vals.push(n);
+					n.block = b;
+					b.ins.insert(k++ - 1, n);
+					return n;
+				}
+				if (c == 32) {
+					i.op = ZExt;
+					i.a = x.a;
+					i.b = -1;
+					continue;
+				}
+				var z = ins(ZExt, I64), n = ins(Const, I32);
+				z.a = x.a;
+				n.imm = 32 - c;
+				i.op = Shl;
+				i.a = z.id;
+				i.b = n.id;
+			}
+		}
 	}
 
 	// an access at x + y, of no index: at base x, index y (as Mem's raw
