@@ -12,6 +12,50 @@ Method: measure, take LLVM's code of the hottest functions where native
 loses as the oracle, name the transformation it did, port the largest,
 one per commit with numbers; revert what gains nothing.
 
+## Progress (2026-11-15, second session, WSL2)
+
+Measured with `perf stat` (user-mode counters work under WSL2; sampling
+is throttled, so per-function shares are rescaled to the counted totals):
+tshx on ts6-compiler declarations, medians of 7 interleaved runs, the
+machine loaded by other work (cycles inflated alike):
+
+| | instructions | cycles | task-clock | .text |
+| --- | --- | --- | --- | --- |
+| native, start (6c0efe21) | 10.63 G | 10.20 G | 2919 ms | 16.41 MB |
+| native, now | 9.72 G | 9.63 G | 2772 ms | 14.77 MB |
+| LLVM per module | 9.96 G | 8.97 G | 2542 ms | 13.10 MB |
+| LLVM release | 9.80 G | 9.08 G | 2547 ms | |
+
+Native now executes fewer instructions than either LLVM build; the rest of
+the gap (about 7% of cycles) is the front end: `stalled-cycles-frontend`
+2.67 G against 2.12 G (all of the cycle difference), L1i misses 58.6 M
+against 44.4 M, iTLB misses 1.2 M against 0.67 M, branch misses +9%. The
+code is 13% larger; 2.5 MB of it is slow paths (cold blocks), laid out at
+each function's end, between the hot code.
+
+Commits (each with its numbers): Regalloc follows unallocated hints
+(-1.0%); x64 ZExt of a load is a copy (-1.4%); Frames merges inlined
+callees' frames into the function's (-3.6% instructions, -8.6% code);
+x64 loop rotation after allocation (-0.94%); Regalloc lifetime holes
+inside a block (-1.4%); x64 SExt of a non-negative zero-extended value
+is a copy (-0.1%); Opt.lowered's `(x << 32) >>> c` rule (-0.17%); x64
+`and 0xff/0xffff` as movzx (-0.09%). The WIP commit (index shift fold,
+sinking into slow paths): make quick ok, -0.2%, kept. tshx's cold build:
+54.5 s CPU against 55.3 s before (no cost). Output identical throughout;
+make quick on each, make check once (all lanes but arm64/qemu and wine,
+not installed; the Windows corpus run natively instead: 373/373).
+
+Tried and left out: inlining every function called once in its module
+(-0.65% instructions, +7.6% code: their copies stay for other callers;
+restricting it to functions nothing else reaches needs that fact in each
+module's cache key); loop rotation at forward jumps too (0.2% for 0.9%
+more code).
+
+Next, by the front-end numbers: slow paths out of line (a cold section:
+hot code contiguous, per-function unwind entries for the cold part),
+then less code per hot function (spills of long-lived values: no
+splitting in Regalloc; moves around calls).
+
 ## Status (2026-11-15, handoff)
 
 Started on Windows (Ryzen 5 3600) with tshx under WSL2; moved to a Linux
