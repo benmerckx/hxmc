@@ -145,6 +145,11 @@ class Opt {
 		if (licmOn)
 			for (_ in 0...3)
 				if (!licm()) break;
+		// (a branch LICM made invariant: the loop copied for each way)
+		if (unswitchOn && unswitch()) {
+			simplifyCfg();
+			dce();
+		}
 		if (barriers > 0) {
 			freshTargets();
 			loneBarrierOperands();
@@ -175,6 +180,201 @@ class Opt {
 	}
 
 	static var licmOn = true; // (the build's, Options.apply)
+	public static var unswitchOn = true; // (the build's, Options.apply)
+
+	// ---- unswitching
+
+	// at most this many instructions in a loop copied; loops copied per function
+	static inline var UNSWITCH_SIZE = 40;
+	static inline var UNSWITCH_LOOPS = 2;
+
+	// An innermost loop with one way in, of at most UNSWITCH_SIZE instructions,
+	// that branches on a value from before it (or on a comparison of such
+	// values or constants) to two blocks of the loop, neither a slow path, in a
+	// block of at least half its rounds (guessed: a test the loop makes only
+	// sometimes costs its copy's test at each entry for little, as in a hash
+	// table's probe):
+	// copied (LoopVersion.copyLoop), a test of the value before the loop
+	// entering the copy, where the branch is a jump to its first target, or the
+	// loop, where it is a jump to the other (simplifyCfg). A string scan's
+	// branch on the string's width (one byte or two a unit), once its header
+	// word has left the loop (licm): a loop per width, as LLVM's
+	// simple-loop-unswitch makes at -O3. Returns whether a loop was copied.
+	function unswitch():Bool {
+		var count = 0;
+		var lv:Null<LoopVersion> = null;
+		var done = new Map<Int, Bool>(); // (headers looked at, the copies' too)
+		while (count < UNSWITCH_LOOPS) {
+			var cfg = f.cfg();
+			cfg.loops();
+			if (cfg.irreducible) break;
+			var order = cfg.rpo;
+			var bodies = cfg.loopBodies();
+			var vals = f.vals;
+			var found = false;
+			var k = order.length;
+			while (!found && k-- > 1) {
+				var h = order[k];
+				var ks = bodies[k];
+				if (ks == null || h.handler || done.exists(h.id)) continue;
+				done.set(h.id, true);
+				var inL = new Map<Int, Bool>();
+				var inner = true, size = 0;
+				for (x in ks) {
+					if (x != k && bodies[x] != null || order[x].handler) inner = false;
+					inL.set(order[x].id, true);
+					for (i in order[x].ins)
+						if (!i.dead) size++;
+				}
+				if (!inner || size > UNSWITCH_SIZE) continue;
+				function inLoop(b:Null<MBlock>):Bool
+					return b != null && inL.exists(b.id);
+				var pre = -1;
+				for (q in 0...h.preds.length)
+					if (!inLoop(h.preds[q])) pre = pre == -1 ? q : -2;
+				if (pre < 0) continue;
+				var preB = h.preds[pre];
+				var pt = preB.term();
+				if (pt == null || pt.op == Switch || pt.op == AnonTest) continue;
+				// (a value from before the loop, or a constant of it)
+				inline function before(v:Int):Bool {
+					var x = vals[v];
+					return !inLoop(x.block) || (x.op == Const || x.op == ConstF) && x.sym == null;
+				}
+				// (a branch of most rounds: each block's share of the rounds, by
+				// static guesses at the branches, as LLVM's BranchProbabilityInfo:
+				// a slow path never, a way out of the loop rarely, an unsigned x < n
+				// (a bounds test) passes,
+				// an equality rarely holds)
+				var freq = new Map<Int, Float>();
+				freq.set(h.id, 1.0);
+				function share(p:MBlock, b:MBlock):Float {
+					var t = p.term();
+					if (b.cold) return 0;
+					if (t.op == Jmp) return 1;
+					if (t.op != Br) return 1 / t.targets.length;
+					if (t.targets[0] == t.targets[1]) return 1;
+					var other = t.targets[0] == b ? t.targets[1] : t.targets[0];
+					if (other.cold) return 1;
+					// (staying in the loop: likely)
+					if (!inLoop(other)) return 0.97;
+					var c = vals[t.a];
+					var yes = c.op != Cmp ? 0.5 : switch (c.imm : Cond) {
+						case CULt | CULe: 0.95;
+						case CUGt | CUGe: 0.05;
+						case CEq | FEq: 0.2;
+						case CNe | FNe: 0.8;
+						case _: 0.5;
+					};
+					return t.targets[0] == b ? yes : 1 - yes;
+				}
+				for (x in ks) {
+					var b = order[x];
+					if (b == h) continue;
+					var sum = 0.0;
+					for (p in b.preds)
+						if (inLoop(p) && cfg.index(p) < x && freq.exists(p.id)) sum += freq.get(p.id) * share(p, b);
+					freq.set(b.id, sum);
+				}
+				var br:Null<MIns> = null;
+				for (x in ks) {
+					var t = order[x].term();
+					if (br != null || t == null || t.op != Br || t.targets[0] == t.targets[1]) continue;
+					if (freq.get(order[x].id) < 0.5) continue;
+					if (!inLoop(t.targets[0]) || !inLoop(t.targets[1]) || t.targets[0].cold || t.targets[1].cold || order[x].cold) continue;
+					var c = vals[t.a];
+					// (not a null test: its other way is the exception, a copy for nothing)
+					if (c.op == Cmp && (c.imm == (CEq : Int) || c.imm == (CNe : Int)) && c.a >= 0 && c.b >= 0 && vals[c.a].ty == I64 && (isZero(c.a) || isZero(c.b))) continue;
+					if (!inLoop(c.block) || c.op == Cmp && c.a >= 0 && c.b >= 0 && before(c.a) && before(c.b) && c.ty == I32) br = t;
+				}
+				if (br == null) continue;
+				var members = [for (x in ks) order[x]];
+				if (lv == null) lv = new LoopVersion(f);
+				var copyBr:Null<MIns> = null;
+				lv.copyLoop(h, members, inLoop, cfg, (i, x) -> if (i == br) copyBr = x, h2 -> {
+					// the test before the loop: the copy where the value is true
+					var test = new MBlock(0);
+					for (b in f.blocks)
+						if (b.id >= test.id) test.id = b.id + 1;
+					test.sealed = test.filled = true;
+					test.cold = preB.cold;
+					f.blocks.push(test);
+					inline function add(op:Op, ty:MTy):MIns {
+						var x = new MIns(op, ty);
+						x.id = vals.length;
+						vals.push(x);
+						x.block = test;
+						test.ins.push(x);
+						return x;
+					}
+					function here(v:Int):Int {
+						var x = vals[v];
+						if (!inLoop(x.block)) return v;
+						var y = add(x.op, x.ty);
+						y.imm = x.imm;
+						y.imm2 = x.imm2;
+						y.f = x.f;
+						y.vty = x.vty;
+						return y.id;
+					}
+					var c = vals[br.a];
+					var cond = br.a;
+					if (inLoop(c.block)) {
+						var a = here(c.a), b = here(c.b);
+						var y = add(Cmp, c.ty);
+						y.imm = c.imm;
+						y.imm2 = c.imm2;
+						y.a = a;
+						y.b = b;
+						y.vty = c.vty;
+						y.pos = c.pos;
+						cond = y.id;
+					}
+					var tb = add(Br, Void);
+					tb.a = cond;
+					tb.pos = br.pos;
+					tb.targets = vector(h2, h);
+					test.succs = [h2, h];
+					test.preds = [preB];
+					for (q in 0...pt.targets.length)
+						if (pt.targets[q] == h) pt.targets[q] = test;
+					for (q in 0...preB.succs.length)
+						if (preB.succs[q] == h) preB.succs[q] = test;
+					h.preds[pre] = test;
+					h2.preds[pre] = test;
+					// (the decided branches: simplifyCfg makes them jumps)
+					var one = add(Const, I32);
+					one.imm = 1;
+					var zero = add(Const, I32);
+					var t = test.ins.pop();
+					test.ins.insert(0, zero);
+					test.ins.insert(0, one);
+					test.ins.push(t);
+					copyBr.a = one.id;
+					br.a = zero.id;
+					done.set(h2.id, true);
+				});
+				f.edited();
+				found = true;
+				count++;
+			}
+			if (!found) break;
+		}
+		if (count > 0) {
+			// (the new values are their own representatives)
+			var r = MFunc.iota(f.vals.length);
+			if (repl != null)
+				for (k in 0...repl.length)
+					r[k] = repl[k];
+			repl = r;
+			var c = MFunc.iota(f.vals.length);
+			if (canon != null)
+				for (k in 0...canon.length)
+					c[k] = canon[k];
+			canon = c;
+		}
+		return count > 0;
+	}
 
 	// ---- loop-invariant code motion
 

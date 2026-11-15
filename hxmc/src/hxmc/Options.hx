@@ -132,6 +132,7 @@ class Options {
 		MirBuild.frameSpills = on("hxmc.framespill", true, d);
 		MirBuild.tryMemAll = flag("hxmc.trymem", d) == "all";
 		Opt.licmOn = on("hxmc.licm", true, d);
+		Opt.unswitchOn = on("hxmc.unswitch", true, d);
 		hxmc.ir.Reach.on = on("hxmc.reach", true, d);
 		hxmc.ir.Reach.whyName = flag("hxmc.reach-why", d);
 		hxmc.x64.Emit.sizeStats = on("hxmc.size-stats", false, d);

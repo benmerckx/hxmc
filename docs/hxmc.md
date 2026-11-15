@@ -27,7 +27,7 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `ir/Facts.hx`, `Prep.hx` | program-wide facts: names, layouts, type indices, field ids, no-GC functions, GC points |
 | `UpToDate.hx`, `Fingerprint.hx`, `LowerCache.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint, lowered bodies reused by the server |
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
-| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM, dead code, barriers and frame slots nothing needs |
+| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM (behind a guard: the loop rotated), unswitching, dead code, barriers and frame slots nothing needs |
 | `LoopVersion.hx` | counted loops over Arrays they cannot change: a copy whose Array reads have no tests, entered when one test before the loop finds the arrays of the kind and long enough (`-D hxmc.loop-version=0`: off) |
 | `Fold.hx`, `DivConst.hx` | allocation folding; division by constants |
 | `SimdOps.hx` | `hxmc.simd`'s vector operations by their WebAssembly opcodes: what Mir's `VOp` carries and every back end implements ([interop.md](interop.md#simd-vectors), [plans/simd.md](plans/simd.md)) |
@@ -1932,6 +1932,7 @@ their variables. Four are read before any build, so only as the variable:
 | `hxmc.devirt=0` | `HXMC_DEVIRT` | yes | no devirtualization |
 | `hxmc.sroa=0` | `HXMC_SROA` | yes | no scalar replacement |
 | `hxmc.licm=0` | `HXMC_LICM` | yes | no loop-invariant code motion |
+| `hxmc.unswitch=0` | `HXMC_UNSWITCH` | yes | no unswitching (a loop copied per way of a branch on a value from before it) |
 | `hxmc.escape=0` | `HXMC_ESCAPE` | yes | no escape analysis |
 | `hxmc.escape-no=<parts>` | `HXMC_ESCAPE_NO` | yes | parts of it off (closures, frames, again, boxes, replace, screen, anon) |
 | `hxmc.escape-hash=<lo>-<hi>` | `HXMC_ESCAPE_HASH` | yes | it on the functions whose names hash to lo...hi of 1024 only (bisecting) |
