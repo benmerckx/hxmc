@@ -1131,6 +1131,18 @@ class Dyn {
 	@:hxmc.kernel public static function refEq(a:Dynamic, b:Dynamic):Bool
 		return TypeView.same(a, b);
 
+	// whether v is an Int's box, a Float's, a Bool's: exactly that kind (a
+	// Float of an integer's value is not an Int, as Std.isOfType has it),
+	// tested inline (interpreters keeping their numbers as Dynamic)
+	public static inline function isIntBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXINT;
+
+	public static inline function isFloatBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXFLOAT;
+
+	public static inline function isBoolBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXBOOL;
+
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 anonymous object, 5 function, 6 class
 	// instance, 7 enum value, 8 String, 9 Array, 10 a type object, 11 other
 	@:hxmc.kernel public static function typeKind(v:Dynamic):Int {
