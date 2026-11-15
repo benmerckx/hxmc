@@ -73,7 +73,7 @@ class Str {
 		return Repr.make2(n);
 
 	// the units [pos, pos + n) of s as a new string (one-byte where they fit)
-	@:hxmc.unsafe(gc) static function range(s:String, pos:Int, n:Int):String {
+	@:hxmc.unsafe(gc) public static function range(s:String, pos:Int, n:Int):String {
 		if (isOne(s)) {
 			var r = make1(n);
 			Repr.copyFrom1(chars1(r), chars1(s), pos, n);
