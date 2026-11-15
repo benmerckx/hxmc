@@ -186,6 +186,7 @@ class Opt {
 
 	static var licmOn = true; // (the build's, Options.apply)
 	public static var unswitchOn = true; // (the build's, Options.apply)
+	public static var slotsOn = true; // (the build's, Options.apply)
 
 	// ---- unswitching
 
@@ -628,6 +629,205 @@ class Opt {
 		}
 		if (made) f.edited();
 		return moved;
+	}
+
+	// ---- shadow-stack slots as values
+
+	// After MemLower (Opt.lowered: its operations and their continuations are
+	// plain code, the points that may collect are calls), a loop header's
+	// first load of a slot of the function's shadow-stack frame (rt_sp read
+	// at its entry, plus a constant) is a phi of the value each predecessor
+	// leaves there: its store, its earlier load, its one predecessor's (up a
+	// chain), or a reload at its end after what may write the slot (a call
+	// that may collect: killMask) or, outside the loop, where paths meet; in a block, a load after a store or load
+	// of the slot with nothing between that may write it is that value. A
+	// loop's rooted local, as NameResolver.Resolve's `location =
+	// location.Parent` with calls on its other way, then goes around in a
+	// register, not through its slot (a store's latency each round). Not at
+	// other joins: values kept through whole functions cost spills (tshx +5.8%
+	// instructions). The stores stay (Frames, before MemLower, dropped those
+	// no load read). Not in functions with a try, nor where the frame's
+	// address goes elsewhere than into constant-offset loads, stores and its
+	// push. Returns whether a load was replaced.
+	function promoteSlots():Bool {
+		var vals = f.vals;
+		var fp:Null<MIns> = null;
+		for (i in f.entry.ins)
+			if (!i.dead && i.op == TlsLoad && i.sym == "rt_sp") {
+				fp = i;
+				break;
+			}
+		if (fp == null) return false;
+		var NO = 0x40000000;
+		var off = MFunc.ints(vals.length, NO);
+		off[fp.id] = 0;
+		// the slot of each load and store of the frame (by offset)
+		var slotOf = new Map<Int, Int>();
+		var slots = new Map<Int, Bool>();
+		var cfg = f.cfg();
+		for (b in cfg.rpo)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				if (i.op == Call && i.returnsTwice) return false;
+				var da = i.a >= 0 && off[i.a] != NO, db = i.b >= 0 && off[i.b] != NO, dc = i.c >= 0 && off[i.c] != NO;
+				var dargs = false;
+				for (x in i.args)
+					if (off[x] != NO) dargs = true;
+				if (!da && !db && !dc && !dargs) continue;
+				if (i.op == Add && da && !db) {
+					var c = vals[i.b];
+					if (c.op != Const || c.sym != null || c.imm2 != (c.imm < 0 ? -1 : 0)) return false;
+					off[i.id] = off[i.a] + c.imm;
+				} else if ((i.op == Load || i.op == Store) && da && !db && !dc && !dargs) {
+					var s = off[i.a] + i.imm;
+					if (i.size != 8 || s < 0 || s & 7 != 0) return false;
+					slotOf.set(i.id, s);
+					if (i.op == Load) slots.set(s, true);
+				} else if (i.op == TlsStore && (i.sym == "rt_sp" || i.sym == "rt_sp_hw") && da || i.op == Cmp && da && !db) {
+					// (the push)
+				} else if (i.isObj() && i.info != null && i.info.fr) {
+					// (an operation that takes the frame: kills every slot, below)
+				} else return false;
+			}
+		var nb = 0;
+		for (b in f.blocks)
+			if (b.id >= nb) nb = b.id + 1;
+		var any = false;
+		var r = [for (k in 0...vals.length) k];
+		var made:Array<MIns> = [];
+		var sorted = [for (s in slots.keys()) s];
+		sorted.sort((a, b) -> a - b);
+		for (s in sorted) {
+			var cls = (1 << (MFrameAt + ((s >> 3) & 7))) | (1 << MFrame);
+			// per block: the loads of the slot it reads on entry (none written
+			// or killed before them), its value at its end (NONE: as on
+			// entry; LAZY: killed, a reload there if asked)
+			var entryLoads = new Map<Int, Array<MIns>>();
+			var ends = MFunc.ints(nb, SsaReader.NONE);
+			var ty:MTy = I64;
+			var vty:Null<hxmc.ir.Ir.Ty> = null;
+			for (b in f.blocks) {
+				// (-2: as on entry, -1: killed, else the value)
+				var state = b.handler ? -1 : -2;
+				for (i in b.ins) {
+					if (i.dead) continue;
+					var at = slotOf.get(i.id);
+					if (at != null) {
+						if (at != s) continue;
+						if (i.op == Store) {
+							var v = vals[i.c];
+							state = v.ty == I64 ? i.c : -1;
+						} else if (state >= 0) {
+							r[i.id] = state;
+							i.dead = true;
+							any = true;
+						} else {
+							if (state == -2) {
+								var l = entryLoads.get(b.id);
+								if (l == null) entryLoads.set(b.id, l = []);
+								l.push(i);
+								if (vty == null) vty = i.vty;
+							}
+							state = i.id;
+						}
+						continue;
+					}
+					if (i.isObj() && i.info != null && i.info.fr || killMask(i) & cls != 0) state = -1;
+				}
+				if (state >= 0) ends[b.id] = state else if (state == -1) ends[b.id] = SsaReader.LAZY;
+			}
+			if (Lambda.count(entryLoads) == 0) continue;
+			// (a reload: at a block's end, before its terminator)
+			var reloads = new Map<Int, Int>();
+			function reload(b:MBlock):Int {
+				var have = reloads.get(b.id);
+				if (have != null) return have;
+				var x = new MIns(Load, I64);
+				x.id = vals.length;
+				vals.push(x);
+				r.push(x.id);
+				x.a = fp.id;
+				x.imm = s;
+				x.size = 8;
+				x.mem = MFrame;
+				x.vty = vty;
+				x.block = b;
+				b.ins.insert(b.term() != null ? b.ins.length - 1 : b.ins.length, x);
+				reloads.set(b.id, x.id);
+				return x.id;
+			}
+			// the slot's value at the end of p: what p left, else what its one
+			// predecessor left (null: paths meet before, unknown)
+			function endOf(p:MBlock, depth:Int):Null<Int> {
+				var e = ends[p.id];
+				if (e >= 0) return e;
+				if (e == SsaReader.LAZY) return reload(p);
+				if (p.handler) return reload(p);
+				if (p == f.entry) return reload(p);
+				return p.preds.length == 1 && depth < 8 ? endOf(p.preds[0], depth + 1) : null;
+			}
+			// only loop headers (a way back to them: a predecessor not before
+			// them in reverse postorder): the value goes around in a register
+			var index = new Map<Int, Int>();
+			for (k in 0...cfg.rpo.length)
+				index.set(cfg.rpo[k].id, k);
+			for (b in f.blocks) {
+				var l = entryLoads.get(b.id);
+				if (l == null || b.handler || !index.exists(b.id)) continue;
+				var back = false;
+				for (p in b.preds)
+					if (index.exists(p.id) && index.get(p.id) >= index.get(b.id)) back = true;
+				if (!back) continue;
+				var args = new haxe.ds.Vector<Int>(b.preds.length);
+				var known = true;
+				for (q in 0...b.preds.length) {
+					var p = b.preds[q];
+					var v = endOf(p, 0);
+					// (from outside the loop where paths meet: a reload there, once
+					// per entry into the loop)
+					if (v == null && index.exists(p.id) && index.get(p.id) < index.get(b.id)) v = reload(p);
+					if (v == null) {
+						known = false;
+						break;
+					}
+					args[q] = v;
+				}
+				if (!known) continue;
+				var first = l[0];
+				var p = new MIns(Phi, ty);
+				p.id = vals.length;
+				vals.push(p);
+				r.push(p.id);
+				p.vty = vty;
+				p.block = b;
+				// (the phi itself where the way back brings the load's own value)
+				for (q in 0...args.length)
+					if (args[q] == first.id) args[q] = p.id;
+				p.args = args;
+				made.push(p);
+				var k = 0;
+				while (k < b.ins.length && b.ins[k].op == Phi)
+					k++;
+				b.ins.insert(k, p);
+				for (i in l) {
+					r[i.id] = p.id;
+					i.dead = true;
+				}
+				any = true;
+			}
+		}
+		if (!any) return false;
+		Ssa.trivialPhis(vals, made);
+		repl = haxe.ds.Vector.fromArrayCopy(r);
+		for (p in made)
+			if (!p.dead && p.op == Copy) {
+				repl[p.id] = p.a;
+				p.dead = true;
+			}
+		rewrite();
+		dce();
+		f.edited();
+		return true;
 	}
 
 	// licm's guard: the loop rotated. Its header h only tests and branches
@@ -2739,6 +2939,8 @@ class Opt {
 				}
 		}
 		if (any) o.rewrite();
+		// (a rooted local's slot read where paths meet: its value)
+		if (slotsOn) o.promoteSlots();
 		o.negatedSubs();
 		o.zeroExtensions();
 		o.indexed();
