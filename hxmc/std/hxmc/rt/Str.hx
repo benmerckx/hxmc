@@ -311,10 +311,10 @@ class Str {
 
 	// ---- comparison, hashing
 
-	// a and b of the same length (MirBuild.strEq)
+	// a and b of the same length (MirBuild.strEq; Dyn.dynEq's of any)
 	@:hxmc.export("hx_str_eq_slow") @:hxmc.kernel static function eqSlow(a:String, b:String):Bool {
 		var oa = StrView.isOne(a);
-		if (oa == StrView.isOne(b)) return StrView.sameUnits(a, b);
+		if (oa == StrView.isOne(b)) return StrView.sameUnits(a, b, oa);
 		// (one call: eqMixed is inlined, Inline.once)
 		return eqMixed(StrView.units1(oa ? a : b), StrView.units2(oa ? b : a));
 	}

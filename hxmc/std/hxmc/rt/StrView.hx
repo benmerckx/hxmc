@@ -47,10 +47,10 @@ class StrView {
 	public static function window1(s:String):ReadOnlySpan<UInt8>
 		return ReadOnlySpan.unsafeOf((cast Mem.addr(s).add(-4) : Ptr<UInt8>), Repr.len(s) + 8);
 
-	// a and b of the same width and length, with the same units
-	public static function sameUnits(a:String, b:String):Bool {
-		var n = Repr.len(a), one = Repr.isOne(a);
-		if (n != Repr.len(b) || one != Repr.isOne(b)) return false;
-		return MemOps.compareAt(Mem.addr(a).add(4), Mem.addr(b).add(4), one ? (n : I64) : (2 * n : I64)) == 0;
+	// a and b, both of a byte per unit (one) or both of two, of the same
+	// length, with the same units (a unit 1 << !one bytes)
+	public static function sameUnits(a:String, b:String, one:Bool):Bool {
+		var n = Repr.len(a), bytes = n << (one ? 0 : 1);
+		return n == Repr.len(b) && MemOps.compareAt(Mem.addr(a).add(4), Mem.addr(b).add(4), (bytes : I64)) == 0;
 	}
 }

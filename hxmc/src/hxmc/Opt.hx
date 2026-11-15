@@ -2910,7 +2910,8 @@ class Opt {
 		var any = false;
 		// copies are their operand; a constant made again in its block is the
 		// first (those LICM moved out of a loop's arms together: a 64-bit
-		// mask once, not a register each); x + 0 and the like are x; -1 - x is ~x
+		// mask once, not a register each); x + 0 and the like are x; -1 - x is ~x;
+		// a comparison's c ? 1 : 0 is c, c ? 0 : 1 is c ^ 1
 		for (b in f.blocks) {
 			var consts = new Map<String, Int>();
 			for (i in b.ins)
@@ -2932,6 +2933,15 @@ class Opt {
 					o.repl[i.id] = i.a;
 					i.dead = true;
 					any = true;
+				} else if (i.op == Select && i.ty == I32 && f.vals[i.a].op == Cmp && o.isConst(i.b, 1) && o.isConst(i.c, 0)) {
+					// (c ? 1 : 0 of a comparison c: c; c ? 0 : 1: c ^ 1)
+					o.repl[i.id] = i.a;
+					i.dead = true;
+					any = true;
+				} else if (i.op == Select && i.ty == I32 && f.vals[i.a].op == Cmp && o.isConst(i.b, 0) && o.isConst(i.c, 1)) {
+					i.op = Xor;
+					i.b = i.c;
+					i.c = -1;
 				} else if (i.op == Sub && (i.ty == I32 || i.ty == I64) && o.allOnes(i.a)) {
 					i.op = Not;
 					i.a = i.b;
