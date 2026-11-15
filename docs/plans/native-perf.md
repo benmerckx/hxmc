@@ -58,6 +58,7 @@ Tried and left out (each built, measured on tshx, reverted):
 | spill cost per sqrt(length) instead of per length | -0.17% | +3% | -0.3% | more spills in loops |
 | a compressed reference's null test and equality on the 32-bit word | +0.18% | | | both forms then live where the reference is used otherwise too |
 | LICM of Ints in loops with calls | +0.03% | -0.7% (noise) | | |
+| a critical edge's constant phi copies set before the branch, no edge block (`p == null ? 0 : p.f` without the jump over the null's arm) | +0.77% | 0 | -0.7% | taken branches only -1.3 M |
 | `-D hxmc.frame-pointers=0` (rbp allocatable) | -4.5% | -0.5% | -1% | not worth profilers' and debuggers' stack walks |
 | tshx without its `-D hxmc.inline=48,128,6,120,4` (hxmc's defaults) | +7.7% | +4.6% | -48% | |
 | `48,128,6,120,3` / `24,128,6,120,4` | +0.8% / +3.1% | 0 / +1.2% | -10% / -23% | code size alone is not the cycles |
