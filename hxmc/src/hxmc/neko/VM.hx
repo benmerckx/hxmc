@@ -307,25 +307,20 @@ class VM {
 					pc += 3;
 				case F.CALL:
 					fpcs[depth] = pc;
-					sp = fp + code[pc + 2];
-					acc = callOp(acc, vthis, code[pc + 1]);
+					acc = callAt(acc, vthis, code[pc + 1], fp + code[pc + 2]);
 					sp = top;
 					pc += 3;
 				case F.OBJCALL:
 					fpcs[depth] = pc;
 					var d = fp + code[pc + 2];
-					var o:Dynamic = stack[d - 1];
-					sp = d - 1;
-					acc = callOp(acc, o, code[pc + 1]);
+					acc = callAt(acc, stack[d - 1], code[pc + 1], d - 1);
 					sp = top;
 					pc += 3;
 				case F.CALLGF:
 					// (a static's method: the class from a global, the method by the field's cache)
 					fpcs[depth] = pc;
 					var o:Dynamic = m.globals[code[pc + 1]];
-					var f = field(m, pc, o, code[pc + 2], vthis);
-					sp = fp + code[pc + 4];
-					acc = callOp(f, o, code[pc + 3]);
+					acc = callAt(field(m, pc, o, code[pc + 2], vthis), o, code[pc + 3], fp + code[pc + 4]);
 					sp = top;
 					pc += 5;
 				case F.TAILCALL:
@@ -517,9 +512,80 @@ class VM {
 					}
 					acc = b;
 					if (b == (code[pc + 2] == 1)) pc = code[pc + 5] else pc += 6;
+				case F.SLOTOPIMM:
+					var a:Dynamic = stack[fp + code[pc + 1]];
+					var op = code[pc + 2];
+					if (Tag.isInt(a)) acc = intOp(op, a, code[pc + 3]) else {
+						fpcs[depth] = pc;
+						acc = anyOp(op, a, m.consts[code[pc + 4]]);
+					}
+					pc += code[pc + 5];
+				case F.SLOTOPIMMJUMP:
+					var a:Dynamic = stack[fp + code[pc + 1]];
+					var b = false;
+					if (Tag.isInt(a)) b = intCmp(code[pc + 2], a, code[pc + 4]) else {
+						fpcs[depth] = pc;
+						b = anyCmp(code[pc + 2], a, m.consts[code[pc + 5]]);
+					}
+					acc = b;
+					if (b == (code[pc + 3] == 1)) pc = code[pc + 6] else pc += 8;
+				case F.OPIMMPUSH:
+					var op = code[pc + 1];
+					if (Tag.isInt(acc)) acc = intOp(op, acc, code[pc + 2]) else {
+						fpcs[depth] = pc;
+						acc = anyOp(op, acc, m.consts[code[pc + 3]]);
+					}
+					stack[fp + code[pc + 4]] = acc;
+					pc += code[pc + 5];
+				case F.SLOTOPIMMPUSH:
+					var a:Dynamic = stack[fp + code[pc + 1]];
+					var op = code[pc + 2];
+					if (Tag.isInt(a)) acc = intOp(op, a, code[pc + 3]) else {
+						fpcs[depth] = pc;
+						acc = anyOp(op, a, m.consts[code[pc + 4]]);
+					}
+					stack[fp + code[pc + 5]] = acc;
+					pc += code[pc + 6];
+				case F.SLOTRET:
+					acc = stack[fp + code[pc + 1]];
+					if (trap >= 0) trapState = RETURNED;
+					return acc;
+				case F.CALLGFPUSH:
+					fpcs[depth] = pc;
+					var o:Dynamic = m.globals[code[pc + 1]];
+					acc = callAt(field(m, pc, o, code[pc + 2], vthis), o, code[pc + 3], fp + code[pc + 4]);
+					sp = top;
+					stack[fp + code[pc + 5]] = acc;
+					pc += code[pc + 6];
+				case F.CALLPUSH:
+					fpcs[depth] = pc;
+					acc = callAt(acc, vthis, code[pc + 1], fp + code[pc + 2]);
+					sp = top;
+					stack[fp + code[pc + 3]] = acc;
+					pc += code[pc + 4];
 				case op:
 					throw errorAt(m, pc, "Invalid opcode " + op);
 			}
+		}
+	}
+
+	// a call of f with n arguments up to argTop: a function of the code
+	// entered here (no callOp's frame between the two interps), any other by callOp
+	inline function callAt(f:Dynamic, thisv:Dynamic, n:Int, argTop:Int):Dynamic {
+		var fn:NFun = Std.isOfType(f, NFun) ? f : null;
+		return if (fn != null && fn.prim == null && fn.nargs == n && depth < MAX_DEPTH) {
+			var fp = argTop - n;
+			var cm = fn.module;
+			var top = fp + cm.frameMax[fn.addr];
+			if (top + 8 > stack.length) growTo(top + 8);
+			sp = top;
+			depth++;
+			var r = interp(cm, fn.addr, null, -1, thisv, fn.env, fp, top);
+			depth--;
+			r;
+		} else {
+			sp = argTop;
+			callOp(f, thisv, n);
 		}
 	}
 

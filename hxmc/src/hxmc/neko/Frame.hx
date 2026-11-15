@@ -72,6 +72,30 @@ class F {
 	public static inline var CMPJUMP = 54; // op, flag (1: JumpIf), t, d
 	public static inline var OPIMMJUMP = 55; // op, flag, k, kidx, t
 	public static inline var CALLGF = 56; // g, id, n, d
+	// (Frame.peephole: in the slots of the instructions they replace, the
+	// last operand the length to skip)
+	public static inline var SLOTOPIMM = 57; // s, op, k, kidx, len
+	public static inline var SLOTOPIMMJUMP = 58; // s, op, flag, k, kidx, t, (len)
+	public static inline var OPIMMPUSH = 59; // op, k, kidx, d, len
+	public static inline var SLOTOPIMMPUSH = 60; // s, op, k, kidx, d, len
+	public static inline var SLOTRET = 61; // s
+	public static inline var CALLGFPUSH = 62; // g, id, n, d, d2, len
+	public static inline var CALLPUSH = 63; // n, d, d2, len
+
+	// an instruction's slots
+	public static function size(code:Array<Int>, pc:Int):Int {
+		return switch code[pc] {
+			case ANULL | ATRUE | AFALSE | ATHIS | STHIS | RET | LAST | BOOL | ISNULL | ISNOTNULL | NOT | TYPEOF | HASH | NEW: 1;
+			case ACONST | ASLOT | AGLOBAL | AENV | AFIELD | AARRAY | AINDEX | SSLOT | SGLOBAL | SENV | SARRAY | PUSH | JUMP | JIF | JIFNOT | ENDTRAP | ADD | SUB |
+				MULT | DIV | MOD | COMPARE | PHYSCMP: 2;
+			case SFIELD | SINDEX | CALL | OBJCALL | TRAP | MAKEENV | MAKEARRAY | MAKEARRAY2 | BITOP | CMP | APPLY | TAILCALL | COPYPUSH | CONSTPUSH | GLOBALPUSH: 3;
+			case OPIMM: 4;
+			case CMPJUMP | CALLGF: 5;
+			case OPIMMJUMP: 6;
+			case JUMPTABLE: 3 + code[pc + 1];
+			case op: throw "Frame.size: " + op;
+		}
+	}
 }
 
 class Frame {
@@ -82,6 +106,96 @@ class Frame {
 		return op == Op.Add || op == Op.Sub || op == Op.Mult || isCmp(op);
 
 	// the change of the depth (neko's stack_table; P: the parameter)
+	// sequences of the translated code as one instruction, where no
+	// instruction but the first is a jump's target
+	static function peephole(code:Array<Int>, entries:Array<Int>) {
+		var target = new Map<Int, Bool>();
+		for (e in entries)
+			target.set(e, true);
+		var pc = 0;
+		while (pc < code.length) {
+			switch code[pc] {
+				case F.JUMP | F.JIF | F.JIFNOT | F.TRAP:
+					target.set(code[pc + 1], true);
+				case F.CMPJUMP:
+					target.set(code[pc + 3], true);
+				case F.OPIMMJUMP:
+					target.set(code[pc + 5], true);
+				case F.JUMPTABLE:
+					for (k in 0...code[pc + 1] + 1)
+						target.set(code[pc + 2 + k], true);
+				case _:
+			}
+			pc += F.size(code, pc);
+		}
+		inline function at(k:Int, op:Int):Bool
+			return k < code.length && code[k] == op && !target.exists(k);
+		pc = 0;
+		while (pc < code.length) {
+			var n = F.size(code, pc);
+			switch code[pc] {
+				case F.ASLOT:
+					var s = code[pc + 1], q = pc + 2;
+					if (at(q, F.OPIMMJUMP)) {
+						// s, op, flag, k, kidx, t (8 slots)
+						var op = code[q + 1], flag = code[q + 2], k = code[q + 3], kidx = code[q + 4], t = code[q + 5];
+						code[pc] = F.SLOTOPIMMJUMP;
+						code[pc + 1] = s;
+						code[pc + 2] = op;
+						code[pc + 3] = flag;
+						code[pc + 4] = k;
+						code[pc + 5] = kidx;
+						code[pc + 6] = t;
+						n = 8;
+					} else if (at(q, F.OPIMM)) {
+						var op = code[q + 1], k = code[q + 2], kidx = code[q + 3];
+						if (at(q + 4, F.PUSH)) {
+							var d = code[q + 5];
+							code[pc] = F.SLOTOPIMMPUSH;
+							code[pc + 1] = s;
+							code[pc + 2] = op;
+							code[pc + 3] = k;
+							code[pc + 4] = kidx;
+							code[pc + 5] = d;
+							code[pc + 6] = 8;
+							n = 8;
+						} else {
+							code[pc] = F.SLOTOPIMM;
+							code[pc + 1] = s;
+							code[pc + 2] = op;
+							code[pc + 3] = k;
+							code[pc + 4] = kidx;
+							code[pc + 5] = 6;
+							n = 6;
+						}
+					} else if (at(q, F.RET)) {
+						code[pc] = F.SLOTRET;
+						n = 3;
+					}
+				case F.OPIMM if (at(pc + 4, F.PUSH)):
+					var d = code[pc + 5];
+					code[pc] = F.OPIMMPUSH;
+					code[pc + 4] = d;
+					code[pc + 5] = 6;
+					n = 6;
+				case F.CALLGF if (at(pc + 5, F.PUSH)):
+					var d2 = code[pc + 6];
+					code[pc] = F.CALLGFPUSH;
+					code[pc + 5] = d2;
+					code[pc + 6] = 7;
+					n = 7;
+				case F.CALL if (at(pc + 3, F.PUSH)):
+					var d2 = code[pc + 4];
+					code[pc] = F.CALLPUSH;
+					code[pc + 3] = d2;
+					code[pc + 4] = 5;
+					n = 5;
+				case _:
+			}
+			pc += n;
+		}
+	}
+
 	static function effect(c:Int, p:Int):Int {
 		return switch c {
 			case Op.AccArray | Op.SetField | Op.SetIndex | Op.Compare | Op.PhysCompare: -1;
@@ -372,6 +486,7 @@ class Frame {
 			out[fix[k]] = t;
 			k += 2;
 		}
+		peephole(out, [for (e in entries) map[e]]);
 		var frameMax = new Vector<Int>(out.length + 1, 0);
 		for (e => size in frameOf)
 			frameMax[map[e]] = size;
