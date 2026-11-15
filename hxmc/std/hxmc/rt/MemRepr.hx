@@ -140,9 +140,23 @@ class MemRepr {
 
 	// dst[di, di + n) = src[si, si + n): one-byte units widened (widen), two-byte
 	// ones each below 0x100 narrowed (narrow)
-	@:hxmc.unsafe public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
-		for (k in 0...n)
+	// (four bytes a round: their 32 bits spread to four 16-bit lanes; then a
+	// byte at a time)
+	@:hxmc.unsafe public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int) {
+		var s = src.at(si), d = dst.at(di), k = 0;
+		var low = ((0xFF : I64) << 16) | (0xFF : I64), word = ((0xFFFF : I64) << 32) | (0xFFFF : I64);
+		var bytes = (low << 32) | low, u32 = ((1 : I64) << 32) - 1;
+		while (k < n - 3) {
+			var w = (Mem.getI32(s, k) : I64) & u32;
+			w = (w | (w << 16)) & word;
+			Mem.setI64(d, 2 * k, (w | (w << 8)) & bytes);
+			k += 4;
+		}
+		while (k < n) {
 			dst.set(di + k, src.get(si + k));
+			k++;
+		}
+	}
 
 	@:hxmc.unsafe public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
 		for (k in 0...n)
