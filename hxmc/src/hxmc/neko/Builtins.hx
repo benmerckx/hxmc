@@ -422,7 +422,8 @@ class Builtins {
 	}
 
 	public static function prim(name:String, nargs:Int, f:Prim, ?env:Dynamic):NFun {
-		return NFun.primitive(name, nargs, (vm, args) -> try f(vm, args) catch (e:Failure) throw new NekoError(NStr.of(name)), env);
+		// (a Failure thrown is the primitive's name: VM.wrap, by the primitive the VM called last)
+		return NFun.primitive(name, nargs, f, env);
 	}
 
 	static inline function swap32(v:Int):Int

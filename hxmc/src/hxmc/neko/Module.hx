@@ -95,11 +95,27 @@ class Op {
 }
 
 class Module {
+	static final all:Array<Module> = [];
+	static final allLock = new sys.thread.Mutex();
+
+	// (frame records hold this, not the module: VM.fmods)
+	public var id = -1;
+
+	public static function byId(i:Int):Null<Module> {
+		allLock.acquire();
+		var m = i >= 0 && i < all.length ? all[i] : null;
+		allLock.release();
+		return m;
+	}
+
 	public var name:NStr;
-	public var globals:Array<Dynamic>;
+	// AccField's inline caches, by the field's code index (VM.interp)
+	public var icObj:Vector<NObj>;
+	public var icIdx:Vector<Int>;
+	public var globals:Vector<Dynamic>;
 	public var code:Vector<Int>;
 	// AccBuiltin's values, by the index in the code
-	public var consts:Array<Dynamic> = [];
+	public var consts:Vector<Dynamic>;
 	public var exports:NObj;
 	public var loader:NObj;
 	public var fields:Array<String> = [];
@@ -141,12 +157,17 @@ class Module {
 		}
 		var m = new Module();
 		if (long() != 0x4F4B454E) invalid();
+		allLock.acquire();
+		m.id = all.length;
+		all.push(m);
+		allLock.release();
 		var nglobals = long(), nfields = long(), codesize = long();
 		if (nglobals < 0 || nglobals > 0xFFFF || nfields < 0 || nfields > 0xFFFF || codesize < 0 || codesize > 0xFFFFFF) invalid();
 		m.loader = loader;
 		m.exports = new NObj();
 		m.exports.set(Fields.id("__module"), new NAbs("module", m));
-		m.globals = [for (_ in 0...nglobals) null];
+		m.globals = new Vector<Dynamic>(nglobals);
+		var consts:Array<Dynamic> = [];
 		var version = 1;
 		var funcs = [];
 		for (i in 0...nglobals) {
@@ -219,8 +240,8 @@ class Module {
 					code[i + 1] = t;
 				case Op.AccInt:
 					// (boxed once: the interpreter reads the value from consts)
-					code[i + 1] = m.consts.length;
-					m.consts.push((param : Dynamic));
+					code[i + 1] = consts.length;
+					consts.push((param : Dynamic));
 				case Op.AccIndex | Op.AccStack:
 					code[i + 1] = param + 2;
 				case Op.AccBuiltin:
@@ -229,8 +250,8 @@ class Module {
 						if (!o.has(param)) throw new NekoError(NStr.of("Builtin not found : " + Fields.name(param)));
 						o.get(param);
 					}
-					code[i + 1] = m.consts.length;
-					m.consts.push(v);
+					code[i + 1] = consts.length;
+					consts.push(v);
 				case Op.MakeArray:
 					if (version >= 2) code[i] = Op.MakeArray2;
 				case Op.JumpTable:
@@ -241,8 +262,11 @@ class Module {
 		}
 		for (f in funcs)
 			if (!isOp[f.addr]) invalid();
+		m.consts = Vector.fromArrayCopy(consts);
 		fuse(m, code, codesize, [for (f in funcs) f.addr]);
 		m.code = code;
+		m.icObj = new Vector(codesize + 1);
+		m.icIdx = new Vector(codesize + 1, 0);
 		return m;
 	}
 

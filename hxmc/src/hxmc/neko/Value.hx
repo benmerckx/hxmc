@@ -101,7 +101,7 @@ class NObj extends NVal {
 		this.proto = proto;
 	}
 
-	inline function find(id:Int):Int {
+	public inline function find(id:Int):Int {
 		var min = 0, max = ids.length;
 		var found = -1;
 		while (min < max) {

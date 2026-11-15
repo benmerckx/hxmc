@@ -733,7 +733,7 @@ class StdPrims {
 				try
 					tvm.callN(f, [p])
 				catch (e:Dynamic) {
-					var ne = VM.wrap(e);
+					var ne = tvm.wrap(e);
 					Main.report(tvm, ne, true);
 				}
 			});

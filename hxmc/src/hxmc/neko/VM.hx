@@ -19,12 +19,13 @@ class VM {
 	public var stack:Vector<Dynamic>;
 	public var sp = 0;
 	public var vthis:Dynamic = null;
+	public var lastPrim:Null<NFun> = null;
 	public var env:Dynamic = [];
 	public var depth = 0;
 	public var resolver:Dynamic = null;
 	public var excStack:Array<Dynamic> = [];
 	// each depth's module and the pc of its current call (neko's csp frames)
-	final fmods = new Vector<Module>(MAX_DEPTH + 2);
+	final fmods = new Vector<Int>(MAX_DEPTH + 2, -1);
 	final fpcs = new Vector<Int>(MAX_DEPTH + 2, 0);
 	// what $print writes to
 	public var print:Bytes->Void;
@@ -117,7 +118,6 @@ class VM {
 			throw error("Invalid call");
 		}
 		var fn:NFun = f;
-		var oldThis = vthis, oldEnv = env;
 		if (fn.prim == null) {
 			if (fn.nargs != nargs) {
 				pop(nargs);
@@ -127,37 +127,37 @@ class VM {
 				depth = 0;
 				throw error("Stack Overflow");
 			}
-			vthis = thisv;
-			env = fn.env;
-			var r = interp(fn.module, fn.addr, null);
+			// (this and the environment are the frame's own: interp's arguments)
+			var r = interp(fn.module, fn.addr, null, -1, thisv, fn.env);
 			depth--;
-			vthis = oldThis;
-			env = oldEnv;
 			return r;
 		}
 		if (fn.nargs != nargs && fn.nargs != -1) {
 			pop(nargs);
 			throw error("Invalid call");
 		}
-		var args:Array<Dynamic> = [for (i in 0...nargs) stack[sp - nargs + i]];
+		var args:Array<Dynamic> = [];
+		args.resize(nargs);
+		for (i in 0...nargs)
+			args[i] = stack[sp - nargs + i];
 		pop(nargs);
+		// (a primitive reads them from the VM: val_this, the closure's env;
+		// lastPrim names the primitive a Failure comes from, wrap: left as
+		// it is when the primitive throws)
+		var oldThis = vthis, oldEnv = env, oldPrim = lastPrim;
 		vthis = thisv;
 		env = fn.env;
+		lastPrim = fn;
 		var r = fn.prim(this, args);
 		vthis = oldThis;
 		env = oldEnv;
+		lastPrim = oldPrim;
 		return r;
 	}
 
 	// a module's code from its start (neko_vm_execute)
 	public function execute(m:Module):Dynamic {
-		var oldThis = vthis, oldEnv = env;
-		vthis = null;
-		env = [];
-		var r = interp(m, 0, null);
-		vthis = oldThis;
-		env = oldEnv;
-		return r;
+		return interp(m, 0, null, -1, null, []);
 	}
 
 	// ---- the interpreter
@@ -165,9 +165,9 @@ class VM {
 	// a frame of the module's code, from pc; trap >= 0: the part of the frame
 	// under the trap whose six slots start there (protect), which ends at its
 	// EndTrap (trapState ENDED, resumePc) or with the function (RETURNED)
-	function interp(m:Module, pc:Int, acc:Dynamic, trap:Int = -1):Dynamic {
+	function interp(m:Module, pc:Int, acc:Dynamic, trap:Int, vthis:Dynamic, env:Dynamic):Dynamic {
 		final code = m.code;
-		fmods[depth] = m;
+		fmods[depth] = m.id;
 		while (true) {
 			switch code[pc++] {
 				case Op.AccNull:
@@ -199,7 +199,25 @@ class VM {
 					var id = code[pc];
 					if (Tag.isObject(acc)) {
 						var o:NObj = acc;
-						if (resolver != null && !o.has(id)) acc = callEx(null, resolver, [o, id], true) else acc = o.get(id);
+						// (an inline cache of the object and its field's slot, an own
+						// field's: checked against the slot's id, the slots move)
+						// (or of its prototype's, where it has no such field of its own)
+						var k = m.icIdx[pc];
+						var c = m.icObj[pc];
+						if (c == o && k < o.ids.length && o.ids[k] == id) acc = o.vals[k] else if (c != null && c == o.proto && k < c.ids.length
+							&& c.ids[k] == id && o.find(id) < 0) acc = c.vals[k] else {
+							k = o.find(id);
+							var p = o.proto;
+							if (k >= 0) {
+								m.icObj[pc] = o;
+								m.icIdx[pc] = k;
+								acc = o.vals[k];
+							} else if (p != null && (k = p.find(id)) >= 0) {
+								m.icObj[pc] = p;
+								m.icIdx[pc] = k;
+								acc = p.vals[k];
+							} else if (resolver != null && !o.has(id)) acc = callEx(vthis, resolver, [o, id]) else acc = o.get(id);
+						}
 					} else
 						throw invalidFieldAt(m, pc, id);
 					pc++;
@@ -336,17 +354,19 @@ class VM {
 					stack[t + 4] = null;
 					stack[t + 5] = null;
 					sp += 6;
-					acc = protect(m, pc + 1, acc, t);
+					acc = protect(m, pc + 1, acc, t, vthis, env);
 					if (trapState == RETURNED) {
 						if (trap < 0) trapState = 0;
 						return acc;
 					}
 					pc = resumePc;
+					vthis = resumeThis;
 				case Op.EndTrap:
 					if (trap < 0 || trap != sp - 6) throw errorAt(m, pc, "Invalid End Trap");
 					pop(6);
 					trapState = ENDED;
 					resumePc = pc;
+					resumeThis = vthis;
 					return acc;
 				case Op.Ret:
 					pop(code[pc++]);
@@ -572,19 +592,19 @@ class VM {
 
 	var trapState = 0;
 	var resumePc = 0;
+	var resumeThis:Dynamic = null;
 
 	// the code under a trap: an exception restores the trap's state and goes on
 	// at its handler
-	function protect(m:Module, pc:Int, acc:Dynamic, t:Int):Dynamic {
+	function protect(m:Module, pc:Int, acc:Dynamic, t:Int, vthis:Dynamic, env:Dynamic):Dynamic {
 		try {
-			return interp(m, pc, acc, t);
+			return interp(m, pc, acc, t, vthis, env);
 		} catch (e:Dynamic) {
 			var ne = wrap(e);
 			capture(ne);
 			var d:Int = stack[t + 3];
 			resumePc = stack[t];
-			vthis = stack[t + 1];
-			env = stack[t + 2];
+			resumeThis = stack[t + 1];
 			// (the frames between the throw and the trap, not the trap's own)
 			excStack = ne.stack.slice(0, ne.depth - d);
 			depth = d;
@@ -601,7 +621,7 @@ class VM {
 		var st:Array<Dynamic> = [];
 		var k = depth;
 		while (k >= 0) {
-			var m = fmods[k];
+			var m = Module.byId(fmods[k]);
 			st.push(m == null ? null : m.position(fpcs[k] - 1));
 			k--;
 		}
@@ -661,8 +681,9 @@ class VM {
 	}
 
 	// a Haxe error of the host (an unexpected one) as a Neko exception
-	public static function wrap(e:Dynamic):NekoError {
+	public function wrap(e:Dynamic):NekoError {
 		if (Std.isOfType(e, NekoError)) return e;
+		if (Std.isOfType(e, Builtins.Failure)) return new NekoError(NStr.of(lastPrim == null ? "?" : lastPrim.name));
 		if (Std.isOfType(e, haxe.Exception)) return new NekoError(NStr.of((e : haxe.Exception).message));
 		return new NekoError(NStr.of(Std.string(e)));
 	}

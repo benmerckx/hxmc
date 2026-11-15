@@ -34,7 +34,7 @@ class Main {
 		try {
 			vm.callEx(loader, loader.get(Fields.id("loadmodule")), [NStr.of(file), loader]);
 		} catch (e:Dynamic) {
-			report(vm, VM.wrap(e), true);
+			report(vm, vm.wrap(e), true);
 			flush();
 			return 1;
 		}
