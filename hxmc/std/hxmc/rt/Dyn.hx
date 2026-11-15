@@ -42,11 +42,21 @@ class Dyn {
 
 	// whether the C string at p (UTF-8) is the string s (ASCII names only:
 	// any other unit answers false, and the caller asks the C table)
-	@:hxmc.unsafe static function nameIs(p:Ptr, s:String):Bool {
+	// (a loop per width: the width tested once, not at each unit)
+	@:hxmc.unsafe @:hxmc.kernel static function nameIs(p:Ptr, s:String):Bool {
 		var n = Str.len(s);
-		for (i in 0...n) {
-			var u = Str.unit(s, i);
-			if (u >= 0x80 || Mem.getU8At(p, 0, i) != u) return false;
+		if (Str.isOne(s)) {
+			var c = StrView.units1(s);
+			for (i in 0...n) {
+				var u:Int = c[i];
+				if (u >= 0x80 || Mem.getU8At(p, 0, i) != u) return false;
+			}
+		} else {
+			var c = StrView.units2(s);
+			for (i in 0...n) {
+				var u:Int = c[i];
+				if (u >= 0x80 || Mem.getU8At(p, 0, i) != u) return false;
+			}
 		}
 		return Mem.getU8At(p, 0, n) == 0;
 	}
