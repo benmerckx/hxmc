@@ -196,11 +196,27 @@ class Emit implements hxmc.Target.Emitter {
 			var next = bi + 1 < f.blocks.length ? f.blocks[bi + 1] : null;
 			LFunc.fallThrough(b, next, i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> i.cond ^= 1);
 			// a zero constant may be xor where no flags are live (none are
-			// live at block ends: branches consume them in their block)
+			// live at block ends: branches consume them in their block); there
+			// too, a register copied and added to (the allocator kept both: mov
+			// d, a; add d, b) is one lea d, [a + b] (32 bits of a 32-bit add)
 			var live = false;
 			var k = b.ins.length;
 			while (k-- > 0) {
 				var i = b.ins[k];
+				if ((i.op : XOp) == ALU && i.cond == Asm.ADD && !live && k > 0 && i.s1 != i.d && (i.size == 4 || i.size == 8)) {
+					var p = b.ins[k - 1];
+					if ((p.op : XOp) == MOV && p.d == i.d && p.s1 != i.d && !isX(p.d) && !isX(p.s1) && !p.flag && p.size == i.size
+						&& (p.imm2 == 0 || p.size == 4 && p.imm2 == 1)) {
+						p.op = LEA;
+						p.base = p.s1;
+						p.index = i.s1;
+						p.scale = 1;
+						p.disp = 0;
+						p.imm2 = i.size == 4 ? 4 : 0;
+						b.ins.splice(k, 1);
+						continue;
+					}
+				}
 				switch i.op {
 					case JCC | SETCC | CMOV: live = true;
 					case CMP | CMPI | TEST | TESTI | UCOMI | ALU | ALUI | NEG | CALL: live = false;
@@ -441,7 +457,7 @@ class Emit implements hxmc.Target.Emitter {
 			case MOVF:
 				if (i.f == 0 && 1 / i.f > 0) a.xorpd(i.d, i.d) else a.movsdRM(i.d, Mem.rip(floatConst(i.f)));
 			case LEA:
-				a.lea(8, i.d, mem(i));
+				a.lea(i.imm2 == 4 ? 4 : 8, i.d, mem(i));
 			case LOAD:
 				var m = mem(i);
 				// (an xmm register: a double, a vector, or a vector's low 8 or 4 bytes, the rest zeroed)
