@@ -52,13 +52,13 @@ class Names {
 		return Mem.getI32(Mem.sym("rt_mt"), 0) != 0;
 	}
 
-	@:hxmc.unsafe static function lock() {
+	@:hxmc.unsafe static inline function lock() {
 		if (Platform.os() == 3) return;
 		var l = spin.add(32);
 		while (Atomic.cas32(l, 0, 1) != 0) {}
 	}
 
-	@:hxmc.unsafe static function unlock() {
+	@:hxmc.unsafe static inline function unlock() {
 		if (Platform.os() != 3) Atomic.store32(spin.add(32), 0);
 	}
 
