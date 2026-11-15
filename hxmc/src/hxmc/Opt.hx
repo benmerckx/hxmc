@@ -1078,6 +1078,13 @@ class Opt {
 		return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0 ? c.imm : -1;
 	}
 
+	// nonNeg for a back end (x64.Isel: a counter's extension a copy)
+	public function nonNegative(v:Int):Bool {
+		var cfg = f.cfg();
+		cfg.dom();
+		return nonNeg(v, cfg, 0);
+	}
+
 	// Whether v (an I32) is never negative: a constant, or a phi each of
 	// whose operands is, or is the phi plus 1 computed only where the phi is
 	// below some value (a loop's counter: below a bound, the increment

@@ -242,6 +242,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 	// of 64 bits); whose ZExt is then a copy, and with nonNeg, when it is not
 	// negative either (a byte or 16-bit unit loaded unsigned, a constant),
 	// its SExt
+	var counters:Null<hxmc.Opt> = null; // (the function's loop counters: Opt.nonNegative)
+
 	function zeroExtended(v:Int, nonNeg:Bool, depth = 0):Bool {
 		var i = m.vals[v];
 		if (folded[v] && i.op != Const) return false;
@@ -257,6 +259,9 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case And if (i.ty == I32): !nonNeg || nonNegConst(i.a) || nonNegConst(i.b);
 			case Or | Xor if (i.ty == I32 && depth < 2):
 				!nonNeg || zeroExtended(i.a, true, depth + 1) && zeroExtended(i.b, true, depth + 1);
+			// (a loop's counter, below a bound where incremented: 0 and up in
+			// the register too, a 64-bit lea of it never carrying into the upper half)
+			case Phi if (i.ty == I32 && (counters ?? (counters = new hxmc.Opt(m))).nonNegative(v)): true;
 			case Phi if (depth < 2 && i.ty == I32):
 				var all = true;
 				for (a in i.args)
