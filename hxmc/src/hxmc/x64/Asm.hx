@@ -373,6 +373,14 @@ class Asm {
 	public function movzx8R(dst:Int, src:Int)
 		op(0, false, 0x0fb6, 2, dst, src, null, 2);
 
+	// movzx dst32, ah/ch/dh/bh: bits 8 to 15 of src (rax to rbx; dst one of
+	// the first eight, no REX: with one, those encodings are spl to dil)
+	public function movzxHighR(dst:Int, src:Int) {
+		b.u8(0x0f);
+		b.u8(0xb6);
+		b.u8(0xc0 | ((dst & 7) << 3) | (4 + src));
+	}
+
 	public function movzx16R(dst:Int, src:Int)
 		op(0, false, 0x0fb7, 2, dst, src, null);
 
