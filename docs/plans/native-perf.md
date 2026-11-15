@@ -138,7 +138,7 @@ each):
 | 12d7ddc8 | Str.hashSlow: a two-byte string's words by a function of their own (the one-byte loop's registers) | json -0.37% |
 | 50ac87d6 | StringBuf: where a two-byte buffer was widened (slot 0's upper half): toString tests only from there | json -0.49% |
 | 845d84fe | x64: (x >>> 8) & 0xff of x in rax to rbx is movzx d, xh | bcrypt -7.3%, cycles -2.3% |
-| f5cf2d04 | Opt.fold: (x >>> k) | (x << (w - k)) of constants known once inlined is a rotation | sha512 -10.3%, cycles -11% |
+| f5cf2d04 | Opt.fold: (x >>> k) \| (x << (w - k)) of constants known once inlined is a rotation | sha512 -10.3%, cycles -11% |
 | 41a92a40 | Dyn.dynEq: two of the program's types, neither a closure, are not equal unless the same | tshx -0.09% |
 | da044454 | Dyn.findField, findMethod inline | json -0.66%, formatter -0.29% |
 | cddcf639 | MemLower: a Bool boxed inline (rt_bool_boxes + 8 + 16 * (b != 0)) | json -0.40%, cycles -3.6% |
