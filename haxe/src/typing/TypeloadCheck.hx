@@ -455,7 +455,7 @@ class TypeloadCheck {
 	public static function checkFinalVars(ctx:Typer, e:TExpr):Void {
 		var finalVars = new Map<String, Bool>(), ordered = [];
 		function loop(c:TClass):Void {
-			for (cf in c.clOrderedFields) switch cf.cfKind {
+			for (cf in c.clFields) switch cf.cfKind {
 				case Var(_) if (hasClassFieldFlag(cf, CfFinal) && cf.cfExpr == null && !finalVars.exists(cf.cfName)):
 					finalVars.set(cf.cfName, false);
 					ordered.push({c: c, field: cf});
@@ -629,7 +629,7 @@ class Inheritance {
 				}
 			}
 		}
-		for (cf in intf.clFields) {
+		for (cf in intf.clFields.byName) {
 			checkField(cf);
 			if (hasClassFieldFlag(cf, CfOverload)) {
 				var overloads = cf.cfOverloads, i = overloads.length;

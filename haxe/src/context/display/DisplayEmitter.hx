@@ -224,7 +224,7 @@ class DisplayEmitter {
 		} else if (override_ != null && ctx.com.display.dmsKind == DMDefault) {
 			// port: upstream removes from the map it got, persistently; the map is new.
 			var missingFields = core.TOther.TClassTools.getAllSuperFields(c);
-			for (cf in c.clOrderedFields) missingFields.remove(cf.cfName);
+			for (cf in c.clFields) missingFields.remove(cf.cfName);
 			var l = missingFields.fold(function(e:{cls:TClass, field:TClassField}, fields:Array<CompletionItemData>) {
 				var origin = Parent(TClassDecl(e.cls));
 				follow(e.field.cfType);

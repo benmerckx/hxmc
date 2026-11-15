@@ -324,7 +324,7 @@ class TClassTools {
 	public static function getMemberFields(selfToo:Bool, c0:TClass, tl:TParams):OrderedMap<{cls:TClass, field:TClassField}> {
 		function loop(acc:OrderedMap<{cls:TClass, field:TClassField}>, c:TClass, tl:TParams):OrderedMap<{cls:TClass, field:TClassField}> {
 			var apply = function(t) return applyParams(c.clParams, tl, t);
-			if (selfToo || c != c0) for (cf in c.clOrderedFields) if (!acc.exists(cf.cfName)) {
+			if (selfToo || c != c0) for (cf in c.clFields) if (!acc.exists(cf.cfName)) {
 				if (tl.length != 0) {
 					var copy:TClassField = core.ds.Record.copy(cf);
 					copy.cfType = apply(cf.cfType);
@@ -357,11 +357,9 @@ class TClassTools {
 
 	public static function addField(c:TClass, cf:TClassField):Void {
 		if (hasClassFieldFlag(cf, CfStatic)) {
-			c.clStatics = c.clStatics.add(cf.cfName, cf);
-			c.clOrderedStatics.unshift(cf);
+			c.clStatics = c.clStatics.cons(cf.cfName, cf);
 		} else {
-			c.clFields = c.clFields.add(cf.cfName, cf);
-			c.clOrderedFields.unshift(cf);
+			c.clFields = c.clFields.cons(cf.cfName, cf);
 		}
 	}
 
@@ -385,7 +383,7 @@ class TClassTools {
 		}
 	}
 
-	public static function getSingularInterfaceField(fields:Array<TClassField>):Null<TClassField> {
+	public static function getSingularInterfaceField(fields:core.ds.SeqMap<TClassField>):Null<TClassField> {
 		// Re-declarations of java.lang.Object members (equals/hashCode/toString)
 		// on an interface must not count toward the SAM check — JLS §9.8.
 		// Matched by name+arity since these are unique on Object.

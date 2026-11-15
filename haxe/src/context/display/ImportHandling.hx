@@ -137,7 +137,7 @@ class ImportHandling {
 		// TODO: cleaner way to get module fields?
 		inline function staticNames():Array<String> {
 			if (md.mStatics == null) return [];
-			var statics = md.mStatics.clStatics, n = statics.size;
+			var statics = md.mStatics.clStatics.byName, n = statics.size;
 			return [for (i in 0...n) statics.keyAt(n - 1 - i)];
 		}
 		function failUsefully<R>(name:String, p:Pos):R {
@@ -220,12 +220,12 @@ class ImportHandling {
 										case TClassDecl(c): {
 												parent: "Class<" + Globals.sTypePath(c.clPath) + ">",
 												kind: "field",
-												names: c.clStatics.keyArray()
+												names: c.clStatics.byName.keyArray()
 											};
 										case TAbstractDecl(a) if (a.aImpl != null): {
 												parent: "Abstract<" + Globals.sTypePath(md.mPath) + ">",
 												kind: "field",
-												names: a.aImpl.clStatics.keyArray()
+												names: a.aImpl.clStatics.byName.keyArray()
 											};
 										case TEnumDecl(e): {
 												parent: "Enum<" + Globals.sTypePath(md.mPath) + ">",
@@ -257,7 +257,7 @@ class ImportHandling {
 								var c = md.mStatics;
 								try {
 									c.clBuild();
-									for (cf in c.clOrderedStatics) if (cf.cfName == subName) {
+									for (cf in c.clStatics) if (cf.cfName == subName) {
 										if (!hasClassFieldFlag(cf, CfPublic)) errorPrivate(p);
 										return staticFieldResolution(c, cf, alias, p);
 									}

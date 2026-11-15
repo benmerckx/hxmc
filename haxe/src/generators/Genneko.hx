@@ -589,14 +589,14 @@ class Genneko {
 		var tmp = new NExpr(EVars([{name: "@tmp", expr: call(p, builtin(p, "new"), [null_(p)])}]), p);
 		var estat = new NExpr(EBinop("=", stpath, ident(p, "@tmp")), p);
 		function genProps(props:Array<{name:String, field:String}>) return new NExpr(EObject(props.map(ns -> {name: bs(ns.name), expr: str(p, ns.field)})), p);
-		var sprops = (switch codegen.Codegen.getProperties(c.clOrderedStatics) {
+		var sprops = (switch codegen.Codegen.getProperties(c.clStatics.toArray()) {
 			case []: [];
 			case l: [{name: "__properties__", e: genProps(l)}];
 		});
-		var sfields = [{name: "prototype", e: clpath}].concat(sprops).concat(foldMethods(ctx, p, c.clStatics, fnew.concat(others))).map(build);
+		var sfields = [{name: "prototype", e: clpath}].concat(sprops).concat(foldMethods(ctx, p, c.clStatics.byName, fnew.concat(others))).map(build);
 		var eclass = new NExpr(EBinop("=", clpath, ident(p, "@tmp")), p);
-		var mfields = foldMethods(ctx, p, c.clFields, [fserialize].concat(fstring)).map(build);
-		var props = codegen.Codegen.getProperties(c.clOrderedFields);
+		var mfields = foldMethods(ctx, p, c.clFields.byName, [fserialize].concat(fstring)).map(build);
+		var props = codegen.Codegen.getProperties(c.clFields.toArray());
 		var emeta = [new NExpr(EBinop("=", field(p, clpath, "__class__"), stpath), p)].concat(switch props {
 			case []: [];
 			case _:
@@ -714,9 +714,9 @@ class Genneko {
 				if (hasClassFlag(c, CExtern)) return [];
 				// port: List.fold_right: the last static is processed first.
 				var acc = [];
-				var i = c.clOrderedStatics.length;
+				var i = c.clStatics.length;
 				while (i-- > 0) {
-					var f = c.clOrderedStatics[i];
+					var f = c.clStatics.at(i);
 					var e = f.cfExpr;
 					if (e == null) continue;
 					switch e.eexpr {

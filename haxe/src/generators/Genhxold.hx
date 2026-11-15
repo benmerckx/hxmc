@@ -290,8 +290,8 @@ class Genhxold {
 					}, a);
 					return a;
 				}
-				for (f in sort(c.clConstructor == null ? c.clOrderedFields : [c.clConstructor].concat(c.clOrderedFields))) printField(false, f);
-				for (f in sort(c.clOrderedStatics)) printField(true, f);
+				for (f in sort(c.clConstructor == null ? c.clFields.toArray() : [c.clConstructor].concat(c.clFields.toArray()))) printField(false, f);
+				for (f in sort(c.clStatics.toArray())) printField(true, f);
 				p("}\n");
 			case TEnumDecl(e):
 				printMeta(e.eMeta);
@@ -323,9 +323,8 @@ class Genhxold {
 				p(" {\n");
 				if (a.aImpl != null) {
 					var c = a.aImpl;
-					var fields = c.clOrderedStatics;
+					var fields = c.clStatics.toArray();
 					if (isEnum) {
-						fields = fields.copy();
 						Hlcode.ocamlArraySort((a:TClassField, b:TClassField) -> core.ds.Key.compareStrings(a.cfName, b.cfName), fields);
 					}
 					for (f in fields) {

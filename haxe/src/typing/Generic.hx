@@ -378,7 +378,7 @@ class Generic {
 			return field;
 		}
 		if (core.TOther.TClassTools.getClInit(c) != null) Error.raiseTypingError("This class can't be generic", p);
-		for (cf in c.clOrderedStatics) switch cf.cfKind {
+		for (cf in c.clStatics) switch cf.cfKind {
 			case Method(MethMacro) if (!ctx.com.isMacroContext):
 			case _:
 				Error.raiseTypingError("A generic class can't have static fields", cf.cfPos);
@@ -399,11 +399,13 @@ class Generic {
 			case TInst(c, tl): {cls: c, params: tl};
 			case _: throw "assert";
 		});
-		cg.clOrderedFields = c.clOrderedFields.map(function(f) {
+		// port: upstream maps the fields' list, adding each to the PMap as it goes, and assigns
+		// the list after: consed as built, reversed once (`cg` has no other fields).
+		for (f in c.clFields) {
 			var f = buildField(f);
-			cg.clFields = cg.clFields.add(f.cfName, f);
-			return f;
-		});
+			cg.clFields = cg.clFields.cons(f.cfName, f);
+		}
+		cg.clFields = cg.clFields.rev();
 		// In rare cases the class name can become too long, so let's shorten it (issue #3090).
 		if (cg.clPath.name.length > 254) {
 			var name = getShortName();
@@ -536,8 +538,7 @@ class Generic {
 				if (field != null) unifyExisting(field.cfType, field.cfPos);
 				else {
 					field = makeField(cf.cfName);
-					container.clStatics = container.clStatics.add(field.cfName, field);
-					container.clOrderedStatics.unshift(field);
+					container.clStatics = container.clStatics.cons(field.cfName, field);
 					finalize(container, field);
 				}
 				fa = core.ds.Record.withFields(fa,
@@ -545,16 +546,14 @@ class Generic {
 			} else if (stat) {
 				setTypeParameterDependencies(c.clModule, monos);
 				var field = makeField(name);
-				c.clStatics = c.clStatics.add(field.cfName, field);
-				c.clOrderedStatics.unshift(field);
+				c.clStatics = c.clStatics.cons(field.cfName, field);
 				finalize(c, field);
 				fa = core.ds.Record.withFields(fa, {faField: field});
 			} else {
 				setTypeParameterDependencies(c.clModule, monos);
 				var field = makeField(name);
 				if (hasClassFieldFlag(cf, CfOverride)) addClassFieldFlag(field, CfOverride);
-				c.clFields = c.clFields.add(field.cfName, field);
-				c.clOrderedFields.unshift(field);
+				c.clFields = c.clFields.cons(field.cfName, field);
 				finalize(c, field);
 				fa = core.ds.Record.withFields(fa, {faField: field});
 			}

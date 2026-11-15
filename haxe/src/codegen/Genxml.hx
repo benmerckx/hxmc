@@ -213,9 +213,9 @@ class Genxml {
 			case TClassDecl(c):
 				function visible(cf:TClassField):Bool return !Meta.has(Meta.GenericInstance, cf.cfMeta)
 					&& !Meta.has(Meta.NoDoc, cf.cfMeta);
-				var statics = c.clOrderedStatics.filter(cf -> cf.cfName != "__meta__" && visible(cf))
+				var statics = c.clStatics.toArray().filter(cf -> cf.cfName != "__meta__" && visible(cf))
 					.map(cf -> genField([attr("static", "1")], cf));
-				var fields = c.clOrderedFields.filter(visible)
+				var fields = c.clFields.toArray().filter(visible)
 					.map(cf -> genField(c.clSuper != null && fieldExists(cf, c.clSuper.cls) ? [attr("override", "1")] : [], cf));
 				var ctor = c.clConstructor == null ? [] : [genField([], c.clConstructor)];
 				var tree = c.clImplements.map(ct -> genClassPath(hasClassFlag(c, CInterface) ? "extends" : "implements", ct));

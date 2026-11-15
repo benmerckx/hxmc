@@ -2208,15 +2208,15 @@ class HxbWriter {
 				chunk.writeOption(c.clInit, writeClassFieldForward);
 
 				// Write in reverse order so reader can read tail-recursively without List.rev
-				inline function writeFields(cfl:Array<TClassField>):{n:Int, bytes:Bytes} {
+				inline function writeFields(cfl:core.ds.SeqMap<TClassField>):{n:Int, bytes:Bytes} {
 					var restore = startTemporaryChunk(256);
 					var i = cfl.length;
-					while (i-- > 0) writeClassFieldForward(cfl[i]);
+					while (i-- > 0) writeClassFieldForward(cfl.at(i));
 					var bytes = restore(function(newChunk) return newChunk.getBytes());
 					return {n: cfl.length, bytes: bytes};
 				}
-				var fields = writeFields(c.clOrderedFields);
-				var statics = writeFields(c.clOrderedStatics);
+				var fields = writeFields(c.clFields);
+				var statics = writeFields(c.clStatics);
 				chunk.writeUleb128(fields.n);
 				chunk.writeUleb128(statics.n);
 				chunk.writeBytes(fields.bytes);
@@ -2279,8 +2279,10 @@ class HxbWriter {
 				}
 				chunk.writeOption(c.clConstructor, function(cf) writeField(CfrConstructor, cf));
 				chunk.writeOption(c.clInit, function(cf) writeField(CfrInit, cf));
-				chunk.writeList(c.clOrderedFields, function(cf) writeField(CfrMember, cf));
-				chunk.writeList(c.clOrderedStatics, function(cf) writeField(CfrStatic, cf));
+				chunk.writeUleb128(c.clFields.length);
+				for (cf in c.clFields) writeField(CfrMember, cf);
+				chunk.writeUleb128(c.clStatics.length);
+				for (cf in c.clStatics) writeField(CfrStatic, cf);
 				if (cExprChunks.length > 0) exprChunks.push({c: c, l: cExprChunks});
 			});
 			if (exprChunks.length > 0) {

@@ -2014,7 +2014,7 @@ class Generator {
 	static function filterPyMetas(metas:Metadata):Metadata return metas.filter(m -> Meta.metaEq(core.MetaList.StrictMeta.Custom(":python"), m.meta));
 
 	static function getMembersWithInitExpr(c:TClass):Array<TClassField> {
-		return c.clOrderedFields.filter(cf -> switch cf.cfKind {
+		return c.clFields.toArray().filter(cf -> switch cf.cfKind {
 			case Var(_) if (!isPhysicalField(cf)): false;
 			case Var(_) if (cf.cfExpr == null): true;
 			case _: false;
@@ -2210,7 +2210,7 @@ class Generator {
 
 	static function genClassStatics(ctx:GenpyContext, c:TClass, p:String):Bool {
 		var methods = [], other = [];
-		for (cf in c.clOrderedStatics) {
+		for (cf in c.clStatics) {
 			var isMethod = switch cf.cfKind {
 				case Method(_): cf.cfExpr != null;
 				case _: false;
@@ -2274,7 +2274,7 @@ class Generator {
 			var mt = tInfos(TClassDecl(c));
 			var p = getPath(mt);
 			var pName = getFullName(mt);
-			var x = collectClassFieldData(c.clOrderedFields);
+			var x = collectClassFieldData(c.clFields.toArray());
 			var pSuper = if (c.clSuper == null) null else getPath(tInfos(TClassDecl(c.clSuper.cls)));
 			var pInterfaces = [for (i in c.clImplements) getPath(tInfos(TClassDecl(i.cls)))];
 
@@ -2315,7 +2315,7 @@ class Generator {
 				}
 
 				try {
-					var realFields = c.clOrderedFields.filter(f -> switch f.cfKind {
+					var realFields = c.clFields.toArray().filter(f -> switch f.cfKind {
 						case Method(MethDynamic): throw new GenpyExit(); /* if a class has dynamic method, we can't use __slots__ because python will complain */
 						case Var(_): isPhysicalField(f);
 						case _: false;
@@ -2334,7 +2334,7 @@ class Generator {
 				printField(x.cfdFields, "_hx_fields", true);
 				printField(x.cfdMethods, "_hx_methods", true);
 				/* TODO: It seems strange to have a separation for member fields but a plain _hx_statics for static ones */
-				printField(collectClassStaticsData(c.clOrderedStatics), "_hx_statics", true);
+				printField(collectClassStaticsData(c.clStatics.toArray()), "_hx_statics", true);
 				printField(pInterfaces, "_hx_interfaces", false);
 
 				if (hasFeature(ctx, "python._hx_super")) if (pSuper != null) {
@@ -2344,14 +2344,14 @@ class Generator {
 			}
 
 			if (c.clConstructor != null) genClassConstructor(ctx, c, c.clConstructor);
-			for (cf in c.clOrderedFields) genClassField(ctx, c, p, cf);
+			for (cf in c.clFields) genClassField(ctx, c, p, cf);
 
 			var hasInnerStatic = genClassStatics(ctx, c, p);
 
-			var hasEmptyConstructor = if (Meta.has(Meta.NativeGen, c.clMeta) || hasClassFlag(c, CInterface) || c.clOrderedFields.length == 0)
+			var hasEmptyConstructor = if (Meta.has(Meta.NativeGen, c.clMeta) || hasClassFlag(c, CInterface) || c.clFields.length == 0)
 				false
 			else {
-				genClassEmptyConstructor(ctx, p, c.clOrderedFields);
+				genClassEmptyConstructor(ctx, p, c.clFields.toArray());
 				hasFeature(ctx, "Type.createEmptyInstance");
 			};
 

@@ -141,17 +141,16 @@ class FixOverrides {
 	public static function fixOverrides(com:CommonContext, t:ModuleType):Void switch t {
 		case TClassDecl(c):
 			// overrides can be removed from interfaces
-			if (hasClassFlag(c, CInterface)) c.clOrderedFields = c.clOrderedFields.filter(function(f) {
+			if (hasClassFlag(c, CInterface)) c.clFields = c.clFields.filter(function(f) {
 				try {
 					if (findField(com, c, f) == f) throw "Not_found";
-					c.clFields = c.clFields.remove(f.cfName);
 					return false;
 				} catch (e:Dynamic) {
 					if (e != "Not_found") throw e;
 					return true;
 				}
-			});
-			for (f in c.clOrderedFields) switch [f.cfExpr, f.cfKind] {
+			}, fields -> c.clFields = fields);
+			for (f in c.clFields) switch [f.cfExpr, f.cfKind] {
 				case [{eexpr: TFunction(fd)}, Method(MethNormal | MethInline)]: fixOverride(com, c, f, fd);
 				case [null, Method(MethNormal | MethInline)] if (hasClassFlag(c, CInterface)): fixOverride(com, c, f, null);
 				case _:
@@ -165,14 +164,12 @@ class FixOverrides {
 	*/
 	public static function fixAbstractInheritance(com:CommonContext, t:ModuleType):Void switch t {
 		case TClassDecl(c) if (hasClassFlag(c, CInterface)):
-			c.clOrderedFields = c.clOrderedFields.filter(function(f) {
-				var b = try findField(com, c, f) == f catch (e:Dynamic) {
+			c.clFields = c.clFields.filter(function(f) {
+				return try findField(com, c, f) == f catch (e:Dynamic) {
 					if (e != "Not_found") throw e;
 					false;
 				};
-				if (!b) c.clFields = c.clFields.remove(f.cfName);
-				return b;
-			});
+			}, fields -> c.clFields = fields);
 		case _:
 	};
 }

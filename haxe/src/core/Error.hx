@@ -106,7 +106,7 @@ class Error {
 		case TAnon(a):
 			var fields = a.aFields, n = fields.size;
 			[for (i in 0...n) fields.valueAt(n - 1 - i).cfName];
-		case TAbstract(a, _) if (a.aImpl != null): [for (cf in a.aImpl.clOrderedStatics) cf.cfName];
+		case TAbstract(a, _) if (a.aImpl != null): [for (cf in a.aImpl.clStatics) cf.cfName];
 		case _: [];
 	};
 

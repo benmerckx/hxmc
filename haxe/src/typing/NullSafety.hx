@@ -1672,8 +1672,8 @@ class ClassChecker {
 			if (init != null) getChecker(NullSafety.getSafetyMode(clsMeta)).checkRootExpr(init);
 		}
 		if (cls.clConstructor != null) field(false, cls.clConstructor);
-		for (f in cls.clOrderedFields) field(false, f);
-		for (f in cls.clOrderedStatics) field(true, f);
+		for (f in cls.clFields) field(false, f);
+		for (f in cls.clStatics) field(true, f);
 	}
 
 	/**
@@ -1755,14 +1755,14 @@ class ClassChecker {
 				&& !checker.canPassExpr(f.cfExpr, f.cfType,
 					f.cfExpr.epos)) checker.error('Cannot set nullable initial value for not-nullable field "${f.cfName}".', [f.cfPos]);
 		}
-		for (f in cls.clOrderedFields) field(false, f);
-		for (f in cls.clOrderedStatics) field(true, f);
+		for (f in cls.clFields) field(false, f);
+		for (f in cls.clStatics) field(true, f);
 		checkStaticsInitialization();
 		checkFieldsInitializationInConstructor();
 	}
 
 	// port: the pending fields are an OCaml-ordered table, so errors come in upstream's Hashtbl.iter order
-	function pendingFields(fields:Array<TClassField>):OcamlHashtbl<String, TClassField> {
+	function pendingFields(fields:core.ds.SeqMap<TClassField>):OcamlHashtbl<String, TClassField> {
 		var pending = new OcamlHashtbl<String, TClassField>(OcamlHash.hashString, (a, b) -> a == b, 20);
 		for (f in fields) if (NullSafety.shouldBeInitialized(f)
 			&& !NullSafety.isNullableType(f.cfType)
@@ -1772,7 +1772,7 @@ class ClassChecker {
 	}
 
 	function checkStaticsInitialization():Void {
-		var pending = pendingFields(cls.clOrderedStatics);
+		var pending = pendingFields(cls.clStatics);
 		var init = core.TOther.TClassTools.getClInit(cls);
 		if (init != null) checkFieldsInitialization(pending, init, true, classSafetyMode());
 		var main = getMainTfExpr(mainExpr);
@@ -1784,7 +1784,7 @@ class ClassChecker {
 		Check instance fields without initial values are properly initialized in constructor
 	*/
 	function checkFieldsInitializationInConstructor():Void {
-		var pending = pendingFields(cls.clOrderedFields);
+		var pending = pendingFields(cls.clFields);
 		switch cls.clConstructor {
 			case {cfMeta: meta, cfExpr: {eexpr: TFunction({tfExpr: e})}}:
 				// Get the safety mode for the constructor

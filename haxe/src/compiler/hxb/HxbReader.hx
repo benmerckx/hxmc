@@ -1717,7 +1717,7 @@ class HxbReader {
 			readClassFieldAndOverloadsData(cf);
 			return true;
 		});
-		function loop(refKind:ClassFieldRefKind, num:Int, cfl:Array<TClassField>):Void {
+		function loop(refKind:ClassFieldRefKind, num:Int, cfl:core.ds.SeqMap<TClassField>):Void {
 			for (cf in cfl) {
 				if (!(num > 0)) throw "assert false";
 				readClassFieldAndOverloadsData(cf);
@@ -1725,7 +1725,7 @@ class HxbReader {
 			}
 			if (!(num == 0)) throw "assert false";
 		}
-		loop(CfrMember, uleb(), c.clOrderedFields);
+		loop(CfrMember, uleb(), c.clFields);
 		// port: diverges from upstream: an abstract's @:op(a()) overloads are the impl class's statics of
 		// ... the other operator functions, the same fields (typeloadFields.ml: `cf'.cf_overloads <- cf ::
 		// ... cf'.cf_overloads`). The writer refers to them by name, as those statics, and writes their
@@ -1738,7 +1738,7 @@ class HxbReader {
 		// ... CallOpOverloads, ModuleCacheCheck's callop, Conformance's callop-overloads, hxblib-callop).
 		switch c.clKind {
 			case KAbstractImpl(_):
-				for (cf in c.clOrderedStatics) {
+				for (cf in c.clStatics) {
 					var overloads = cf.cfOverloads;
 					for (i in 0...overloads.length) {
 						var cf2 = overloads[i];
@@ -1750,7 +1750,7 @@ class HxbReader {
 				}
 			case _:
 		}
-		loop(CfrStatic, uleb(), c.clOrderedStatics);
+		loop(CfrStatic, uleb(), c.clStatics);
 	}
 
 	public function readEnumFields(e:TEnum):Void {
@@ -2032,11 +2032,11 @@ class HxbReader {
 						case CfrStatic:
 							try {
 								c.clBuild();
-								try findMap(c.clStatics, name) catch (e:NotFound) {
+								try c.clStatics.find(name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
 									if (missingFieldHook == null || !missingFieldHook(c)) throw e;
-									findMap(c.clStatics, name);
+									c.clStatics.find(name);
 								}
 							} catch (_:NotFound) {
 								if (fieldFailureHook != null) fieldFailureHook(c, name, currentModule);
@@ -2045,11 +2045,11 @@ class HxbReader {
 						case CfrMember:
 							try {
 								c.clBuild();
-								try findMap(c.clFields, name) catch (e:NotFound) {
+								try c.clFields.find(name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
 									if (missingFieldHook == null || !missingFieldHook(c)) throw e;
-									findMap(c.clFields, name);
+									c.clFields.find(name);
 								}
 							} catch (_:NotFound) {
 								if (fieldFailureHook != null) fieldFailureHook(c, name, currentModule);
@@ -2305,24 +2305,19 @@ class HxbReader {
 					c.clInit = readOption(readField);
 					// port: upstream conses each field read onto the accumulator, so
 					// the list holds them in reverse reading order.
-					function readFields(i:Int):{l:Array<TClassField>, pm:TypeMap<TClassField>} {
-						var accL = [];
+					function readFields(i:Int):core.ds.SeqMap<TClassField> {
+						var acc = [];
 						while (i != 0) {
-							accL.push(readClassFieldForward());
+							acc.push(readClassFieldForward());
 							i--;
 						}
-						var pm = core.ds.PMap.ofArrays([for (cf in accL) cf.cfName], accL);
-						accL.reverse();
-						return {l: accL, pm: pm};
+						acc.reverse();
+						return TFunctions.classFieldsOf(acc);
 					}
 					var numFields = uleb();
 					var numStatics = uleb();
-					var r = readFields(numFields);
-					c.clOrderedFields = r.l;
-					c.clFields = r.pm;
-					var r = readFields(numStatics);
-					c.clOrderedStatics = r.l;
-					c.clStatics = r.pm;
+					c.clFields = readFields(numFields);
+					c.clStatics = readFields(numStatics);
 
 					TClassDecl(c);
 				case 1:

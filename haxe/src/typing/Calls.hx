@@ -212,8 +212,7 @@ class Calls {
 					if (wrapper == null) {
 						wrapper = core.ds.Record.copy(cf);
 						wrapper.cfKind = Method(MethNormal);
-						c2.clStatics = c2.clStatics.add(wrapper.cfName, wrapper);
-						c2.clOrderedStatics.unshift(wrapper);
+						c2.clStatics = c2.clStatics.cons(wrapper.cfName, wrapper);
 					}
 					var et = TyperBase.typeModuleType(ctx, TClassDecl(c2), p);
 					return FieldAccess.getFieldExpr(FieldAccess.create(et, wrapper, FHStatic(c2), true, p), FRead);

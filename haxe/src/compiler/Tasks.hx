@@ -22,8 +22,8 @@ class ClassMaintenanceTask extends ServerTask {
 		}
 		/* What we're doing here at the moment is free, so we can just do it in one task. If this ever gets more expensive,
 			we should spawn a task per-field. */
-		for (cf in c.clOrderedFields) field(cf);
-		for (cf in c.clOrderedStatics) field(cf);
+		for (cf in c.clFields) field(cf);
+		for (cf in c.clStatics) field(cf);
 		if (c.clConstructor != null) field(c.clConstructor);
 	}
 }

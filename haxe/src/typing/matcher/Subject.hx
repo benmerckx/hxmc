@@ -130,7 +130,7 @@ class Subject {
 					}
 					{kind: SKValue, finiteness: RunTimeFinite};
 				case TAbstract(a = {aImpl: c}, pl) if (c != null && a.aEnum):
-					if (!deep) for (cf in c.clOrderedStatics) {
+					if (!deep) for (cf in c.clStatics) {
 						follow(cf.cfType);
 						if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) {
 							var ctor = cf.cfExpr == null ? null : Constructor.extractCtor(cf.cfExpr);

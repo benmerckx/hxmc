@@ -670,9 +670,9 @@ class ModuleCache {
 								if (r) core.TFunctions.removeClassFieldFlag(cf, CfMaybeUsed);
 							}
 							add(c.clConstructor, "c|");
-							for (cf in c.clOrderedFields)
+							for (cf in c.clFields)
 								add(cf, "f|");
-							for (cf in c.clOrderedStatics)
+							for (cf in c.clStatics)
 								add(cf, "s|");
 						case _:
 					}
@@ -1736,9 +1736,9 @@ class ModuleCache {
 					for (i in c.clImplements)
 						b.add("i" + core.Globals.sTypePath(i.cls.clPath) + ";");
 					if (c.clConstructor != null) field("n", c.clConstructor);
-					for (f in c.clOrderedFields)
+					for (f in c.clFields)
 						field("f", f);
-					for (f in c.clOrderedStatics)
+					for (f in c.clStatics)
 						field("s", f);
 				case TEnumDecl(e):
 					b.add("E" + core.Globals.sTypePath(e.ePath) + "\n");

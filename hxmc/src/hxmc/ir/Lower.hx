@@ -146,7 +146,7 @@ class Lower {
 					// that of a class of another target (@:hxmc.android, ofTarget)
 					if (!ofTarget(c)) continue;
 					if (c.clInit != null) initClass(c);
-					for (cf in c.clOrderedStatics)
+					for (cf in c.clStatics)
 						if (cf.cfMeta.length > 0 && cf.cfKind.match(Method(_)) && hasMeta(":hxmc.export", cf.cfMeta)) {
 							var n = metaString(":hxmc.export", cf.cfMeta);
 							if (hostImpls.exists(n)) fail("two Haxe functions exported as " + n);
@@ -156,7 +156,7 @@ class Lower {
 				case TClassDecl(c) if (runtimeClass(c)):
 					if (c.clPath.name == "SpanSupport" && c.clPath.pack.length == 1) spanSupport = c;
 					if (!ofTarget(c)) continue;
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						if (cf.cfMeta.length == 0) continue;
 						// Data and TLS can be read by generated code's symbol alone,
 						// without any Haxe field access registering their storage.
@@ -585,9 +585,9 @@ class Lower {
 		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || runtimeClass(c) || !c.clKind.match(KNormal)) return false;
 		if (written(Keep, c.clMeta) || optimization.Dce.superForcesKeep(c)) return true;
 		if (core.Meta.has(Dce, c.clMeta)) return false;
-		for (cf in c.clOrderedFields)
+		for (cf in c.clFields)
 			if (written(Keep, cf.cfMeta)) return true;
-		for (cf in c.clOrderedStatics)
+		for (cf in c.clStatics)
 			if (written(Keep, cf.cfMeta)) return true;
 		return false;
 	}
@@ -607,7 +607,7 @@ class Lower {
 			// too: what its field holds before first use (Dyn.anonGetSlow)
 			while (methodsDone < tclasses.length) {
 				var tc = tclasses[methodsDone++];
-				for (f in tc.clOrderedFields)
+				for (f in tc.clFields)
 					if (f.cfKind.match(Method(MethNormal | MethInline | MethDynamic)) && funcOf(f) != null && !f.hasClassFieldFlag(CfExtern))
 						method(tc, f);
 			}
@@ -1032,7 +1032,7 @@ class Lower {
 		// and descriptor, Jni; where there is JNI, elsewhere a Haxe class)
 		if (Jni.available()) jniSide(c, ci, sup);
 		var own = [];
-		for (f in c.clOrderedFields)
+		for (f in c.clFields)
 			switch f.cfKind {
 				case Var(v) if (isPhysical(c, f, v)):
 					if (KernelCheck.spanOf(f.cfType) != null)
@@ -1370,7 +1370,7 @@ class Lower {
 			if (!ObjC.isProtocol(i.cls) && !ObjC.isId(i.cls))
 				throw new LowerError('Objective-C class $cname (@:hxmc.objc) implements the Haxe interface ${i.cls.clPath.name}: it implements Objective-C protocols only',
 					where);
-		for (cf in c.clOrderedFields)
+		for (cf in c.clFields)
 			if (cf.cfKind.match(Method(MethDynamic)))
 				throw new LowerError('Objective-C class $cname (@:hxmc.objc): the dynamic method ${cf.cfName} has no slot to hold its function', CInterop.posOf(cf.cfPos));
 		claimObjCName(ObjC.className(c), c);
@@ -2097,7 +2097,7 @@ class Lower {
 		var ci = classInfo(c);
 		if (ci.statics != null) return;
 		ci.statics = [];
-		for (cf in c.clOrderedStatics) {
+		for (cf in c.clStatics) {
 			if (cf.hasClassFieldFlag(CfExtern) || cf.hasClassFieldFlag(CfGeneric)) continue;
 			switch cf.cfKind {
 				// (a function taking or returning a struct is not reachable by name)

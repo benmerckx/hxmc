@@ -191,7 +191,7 @@ class TFunctions {
 
 	public static function classModuleType(c:TClass):TDef {
 		var path:core.Globals.GlobalTypePath = {pack: [], name: "Class<" + Globals.sTypePath(c.clPath) + ">"};
-		var t = mkAnon(ClassStatics(c), c.clStatics);
+		var t = mkAnon(ClassStatics(c), c.clStatics.byName);
 		var def = mkTypedef(c.clModule, path, c.clPos, Globals.nullPos, t);
 		def.tPrivate = true;
 		return def;
@@ -213,10 +213,8 @@ class TFunctions {
 			clUsing: [],
 			clSuper: null,
 			clImplements: [],
-			clFields: core.ds.PMap.empty(),
-			clOrderedStatics: [],
-			clOrderedFields: [],
-			clStatics: core.ds.PMap.empty(),
+			clFields: core.ds.SeqMap.empty(),
+			clStatics: core.ds.SeqMap.empty(),
 			clDynamic: null,
 			clArrayAccess: null,
 			clConstructor: null,
@@ -276,11 +274,16 @@ class TFunctions {
 
 	public static inline function findMap<V>(map:TypeMap<V>, name:String):V return map.find(name);
 
+	// port: a class's fields of a list of them: the list, and `List.fold_left (fun m f ->
+	// PMap.add f.cf_name f m) PMap.empty` of it (upstream's mk_pmap).
+	public static function classFieldsOf(cfs:Array<TClassField>):core.ds.SeqMap<TClassField>
+		return core.ds.SeqMap.ofArray([for (cf in cfs) cf.cfName], cfs);
+
 	public static function findField(c:TClass, name:String, kind:ClassFieldRefKind):TClassField {
 		var f = switch kind {
 			case CfrConstructor: c.clConstructor;
-			case CfrStatic: findMap(c.clStatics, name);
-			case CfrMember: findMap(c.clFields, name);
+			case CfrStatic: c.clStatics.find(name);
+			case CfrMember: c.clFields.find(name);
 			case CfrInit: c.clInit;
 		};
 		if (f == null) throw NotFound.raise();
@@ -882,7 +885,7 @@ class TFunctions {
 	public static function rawClassField(buildType:TClassField->T, c:TClass, tl:TParams, i:String):RawClassField {
 		var apply = function(t) return applyParams(c.clParams, tl, t);
 		try {
-			var f = findMap(c.clFields, i);
+			var f = c.clFields.find(i);
 			return {owner: {cls: c, params: tl}, type: buildType(f), field: f};
 		} catch (_:NotFound) {}
 		try {
@@ -928,10 +931,10 @@ class TFunctions {
 			result.owner == null ? FAnon(result.field) : FInstance(result.owner.cls, result.owner.params, result.field);
 		case TAnon(a): switch a.aStatus {
 				case EnumStatics(e): FEnum(e, findMap(e.eConstrs, n));
-				case ClassStatics(c): FStatic(c, findMap(c.clStatics, n));
+				case ClassStatics(c): FStatic(c, c.clStatics.find(n));
 				case AbstractStatics(a):
 					if (a.aImpl == null) throw NotFound.raise();
-					FStatic(a.aImpl, findMap(a.aImpl.clStatics, n)); // is that right?
+					FStatic(a.aImpl, a.aImpl.clStatics.find(n)); // is that right?
 				case _: FAnon(findMap(a.aFields, n));
 			}
 		case TDynamic(_): FDynamic(n);

@@ -145,7 +145,7 @@ class TypePathHandler {
 			}
 			var fields = if (statics == null) types else {
 				var c = statics;
-				types.concat(c.clOrderedStatics.filter(cf -> hasClassFieldFlag(cf, CfPublic)).map(makeFieldDoc.bind(c)));
+				types.concat(c.clStatics.toArray().filter(cf -> hasClassFieldFlag(cf, CfPublic)).map(makeFieldDoc.bind(c)));
 			};
 			var fields = if (enumStatics == null) fields else {
 				var en = enumStatics;

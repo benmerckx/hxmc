@@ -2191,7 +2191,7 @@ class Genswf9 {
 				j();
 		}
 		/* --- */
-		for (f in c.clFields) {
+		for (f in c.clFields.byName) {
 			switch [f.cfExpr, f.cfKind] {
 				case [null, _]:
 				case [{eexpr: TFunction(fdata)}, Method(MethDynamic)]:
@@ -2226,7 +2226,7 @@ class Genswf9 {
 	}
 
 	static function generate_class_statics(ctx:Context, c:TClass, const_:Bool):Void {
-		for (f in c.clOrderedStatics) {
+		for (f in c.clStatics) {
 			switch f.cfExpr {
 				case null:
 				case {eexpr: TFunction(_)} if (switch f.cfKind {
@@ -2244,7 +2244,7 @@ class Genswf9 {
 	}
 
 	static function need_init(ctx:Context, c:TClass):Bool {
-		return !ctx.swc && !hasClassFlag(c, CExtern) && Lambda.exists(c.clOrderedStatics, f -> switch f.cfExpr {
+		return !ctx.swc && !hasClassFlag(c, CExtern) && Lambda.exists(c.clStatics, f -> switch f.cfExpr {
 			case null: false;
 			case e: !is_const(e);
 		});
@@ -2305,7 +2305,7 @@ class Genswf9 {
 			write(ctx, HGetLex(type_path(ctx, sup_path)));
 		}
 		write(ctx, HClassDef(hc));
-		for (f in c.clOrderedStatics) {
+		for (f in c.clStatics) {
 			switch [f.cfExpr, f.cfKind] {
 				case [null, _]:
 				case [{eexpr: TFunction(fdata)}, Method(MethDynamic)]:
@@ -2683,7 +2683,7 @@ class Genswf9 {
 			function collect(cl:TClass) {
 				function loop(ci:TClass) {
 					if (!is_implemented_by_super(ci)) {
-						for (cf in ci.clOrderedFields) {
+						for (cf in ci.clFields) {
 							switch cf.cfKind {
 								case Var({vRead: read = (AccCall | AccPrivateCall | AccNever), vWrite: write = (AccCall | AccPrivateCall | AccNever)}):
 									switch h.findOpt(cf.cfName) {
@@ -2940,7 +2940,7 @@ class Genswf9 {
 		// port: PMap.fold visits the fields in ascending key order; the list is
 		// built by prepending (`acc` here is that list, most recent first).
 		var fields:Array<HlField> = [];
-		for (f in c.clFields) {
+		for (f in c.clFields.byName) {
 			fields = generate_prop(false, f, fields, () -> 0);
 			switch generate_field_kind(ctx, f, c, false) {
 				case null:
@@ -2975,7 +2975,7 @@ class Genswf9 {
 		var st_field_count = 0;
 		var st_meth_count = 0;
 		var statics:Array<HlField> = [];
-		for (f in c.clOrderedStatics) {
+		for (f in c.clStatics) {
 			statics = generate_prop(true, f, statics, () -> {
 				st_meth_count++;
 				st_meth_count;
@@ -3030,7 +3030,7 @@ class Genswf9 {
 					mark_has_protected(c); /* also mark this class with the meta for further child classes */
 				} else if (hasClassFlag(csup, CExtern)) {
 					function loop(csup:TClass) {
-						if (Lambda.exists(csup.clOrderedFields, is_cf_protected)) {
+						if (Lambda.exists(csup.clFields, is_cf_protected)) {
 							has_protected = make_class_ns(c);
 							mark_has_protected(c); /* also mark this class with the meta for further child classes */
 							mark_has_protected(csup); /* ALSO mark the extern class for faster future checks */

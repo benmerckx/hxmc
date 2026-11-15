@@ -515,10 +515,10 @@ typedef TInfos = {
 	public var clFlags:Int;
 	public var clSuper:Null<ClassAndParams>;
 	public var clImplements:Array<ClassAndParams>;
-	public var clFields:TypeMap<TClassField>;
-	public var clStatics:TypeMap<TClassField>;
-	public var clOrderedStatics:Array<TClassField>;
-	public var clOrderedFields:Array<TClassField>;
+	// port: `cl_fields` with `cl_ordered_fields`, `cl_statics` with `cl_ordered_statics`: the
+	// fields in upstream's list order, by name in `byName` (core.ds.SeqMap).
+	public var clFields:core.ds.SeqMap<TClassField>;
+	public var clStatics:core.ds.SeqMap<TClassField>;
 	public var clDynamic:Null<T>;
 	public var clArrayAccess:Null<T>;
 	public var clConstructor:Null<TClassField>;
@@ -550,8 +550,6 @@ typedef TInfos = {
 		clImplements: clImplements,
 		clFields: clFields,
 		clStatics: clStatics,
-		clOrderedStatics: clOrderedStatics,
-		clOrderedFields: clOrderedFields,
 		clDynamic: clDynamic,
 		clArrayAccess: clArrayAccess,
 		clConstructor: clConstructor,

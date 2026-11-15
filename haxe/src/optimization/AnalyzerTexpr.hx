@@ -1319,8 +1319,8 @@ class Purity {
 	}
 
 	public static function applyToClass(c:TClass):Void {
-		for (cf in c.clOrderedFields) applyToField(false, false, c, cf);
-		for (cf in c.clOrderedStatics) applyToField(false, true, c, cf);
+		for (cf in c.clFields) applyToField(false, false, c, cf);
+		for (cf in c.clStatics) applyToField(false, true, c, cf);
 		if (c.clConstructor != null) applyToField(true, false, c, c.clConstructor);
 	}
 

@@ -39,7 +39,7 @@ class InheritDoc {
 
 	public static function getClassField(c:TClass, fieldName:String):{cls:Null<TClass>, field:TClassField} {
 		try {
-			var cf = try findMap(c.clFields, fieldName) catch (_:NotFound) findMap(c.clStatics, fieldName);
+			var cf = try c.clFields.find(fieldName) catch (_:NotFound) c.clStatics.find(fieldName);
 			return {cls: c, field: cf};
 		} catch (_:NotFound) {
 			if (c.clSuper == null) throw NotFound.raise();

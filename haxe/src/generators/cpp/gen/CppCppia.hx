@@ -547,8 +547,8 @@ class CppCppia {
 				case _: false;
 			}
 		}
-		var orderedStatics = classDef.clOrderedStatics.filter(function(f) return nonDodgyFunction(false, f));
-		var orderedFields = classDef.clOrderedFields.filter(function(f) return nonDodgyFunction(true, f));
+		var orderedStatics = classDef.clStatics.toArray().filter(function(f) return nonDodgyFunction(false, f));
+		var orderedFields = classDef.clFields.toArray().filter(function(f) return nonDodgyFunction(true, f));
 		script.write(Std.string(orderedFields.length + orderedStatics.length + (if (classDef.clConstructor != null) 1 else 0)
 			+ (if (core.TOther.TClassTools.getClInit(classDef) != null) 1 else 0))
 			+ "\n");

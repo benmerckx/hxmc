@@ -254,7 +254,7 @@ class Gencpp {
 			case TClassDecl(classDef) if (!hasClassFlag(classDef, CInterface)):
 				function addOverride(toSuper:TClass):Void {
 					var className = (joinClassPath(toSuper.clPath, "."));
-					for (member in classDef.clOrderedFields) acc.set(className + "." + member.cfName, "virtual ");
+					for (member in classDef.clFields) acc.set(className + "." + member.cfName, "virtual ");
 					switch toSuper.clSuper {
 						case null:
 						case sup: addOverride(sup.cls);
@@ -450,7 +450,8 @@ class Gencpp {
 				mainField.cfExpr = e;
 				var classDef = nullClass.clone();
 				classDef.clPath = {pack: [], name: "@Main"};
-				classDef.clOrderedStatics = [mainField];
+				// port: upstream sets cl_ordered_statics alone; the map holds __main__ too
+				classDef.clStatics = core.TFunctions.classFieldsOf([mainField]);
 				mainDeps = CppReferences.findReferencedTypes(ctx, TClassDecl(classDef), ctx.ctxSuperDeps, ctx.ctxConstructorDeps, false, true, false);
 				CppGen.generateMain(ctx, ctx.ctxSuperDeps, classDef);
 		}

@@ -104,7 +104,7 @@ class TanonIdentification<A> {
 		try {
 			var monos:core.TType.TParams = switch follow(tc) {
 				case TInst(c, tl):
-					var others = pairUp(c.clFields);
+					var others = pairUp(c.clFields.byName);
 					var ms = pfm.pfmParams.map(function(_) return mkMono());
 					var i = n;
 					while (i > 0) {

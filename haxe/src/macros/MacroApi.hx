@@ -1607,14 +1607,14 @@ class MacroApiImpl {
 
 	public static function encodeTclass(c:TClass):Value {
 		protectTyping(() -> c.clBuild());
-		var overrides = encodeArray(c.clOrderedFields.filter(cf -> hasClassFieldFlag(cf, CfOverride)).map(encodeCfref));
+		var overrides = encodeArray(c.clFields.toArray().filter(cf -> hasClassFieldFlag(cf, CfOverride)).map(encodeCfref));
 		var init = switch core.TOther.TClassTools.getClInit(c) {
 			case null: vnull;
 			case e: encodeTexpr(e);
 		}
 		var constructor = c.clConstructor == null ? vnull : encodeCfref(c.clConstructor);
-		var statics = encodeRef(c.clOrderedStatics, l -> encodeAndMapArray(encodeCfield, l), () -> "class fields");
-		var fields = encodeRef(c.clOrderedFields, l -> encodeAndMapArray(encodeCfield, l), () -> "class fields");
+		var statics = encodeRef(c.clStatics, l -> encodeAndMapArray(encodeCfield, l.toArray()), () -> "class fields");
+		var fields = encodeRef(c.clFields, l -> encodeAndMapArray(encodeCfield, l.toArray()), () -> "class fields");
 		var interfaces = encodeArrayV(c.clImplements.mapToVector(i -> encodeClassAndParams(i.cls, i.params)));
 		var superClass = c.clSuper == null ? vnull : encodeClassAndParams(c.clSuper.cls, c.clSuper.params);
 		var isAbstract = vbool(hasClassFlag(c, CAbstract));

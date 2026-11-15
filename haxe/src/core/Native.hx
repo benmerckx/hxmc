@@ -50,14 +50,14 @@ class Native {
 						changed = true;
 					} catch (_:NotFound) {}
 				}
-				inline function fields(cfs:Array<TClassField>, old:TypeMap<TClassField>):TypeMap<TClassField> {
+				// port: renamed fields are mapped under their new names, from the list
+				inline function fields(old:core.ds.SeqMap<TClassField>):core.ds.SeqMap<TClassField> {
 					changed = false;
-					for (cf in cfs) field(cf);
-					if (!changed) return old;
-					return core.ds.PMap.ofArrays([for (cf in cfs) cf.cfName], cfs);
+					for (cf in old) field(cf);
+					return changed ? core.TFunctions.classFieldsOf(old.toArray()) : old;
 				}
-				c.clFields = fields(c.clOrderedFields, c.clFields);
-				c.clStatics = fields(c.clOrderedStatics, c.clStatics);
+				c.clFields = fields(c.clFields);
+				c.clStatics = fields(c.clStatics);
 				var r = real(c.clMeta, Globals.sTypePath(c.clPath));
 				c.clMeta = core.ds.VectorTools.cons(r.meta, c.clMeta);
 				c.clPath = Ast.parsePath(r.name);

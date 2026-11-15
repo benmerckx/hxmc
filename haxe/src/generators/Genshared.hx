@@ -303,8 +303,8 @@ class Preprocessor<A> {
 				case MStatic:
 			}
 		}
-		for (cf in c.clOrderedStatics) field(MStatic, cf);
-		for (cf in c.clOrderedFields) field(MInstance, cf);
+		for (cf in c.clStatics) field(MStatic, cf);
+		for (cf in c.clFields) field(MInstance, cf);
 		switch c.clConstructor {
 			case null:
 				try {
@@ -420,8 +420,8 @@ class TypedefInterfaces<A> {
 		if (fields.isEmpty()) throw new Unify_error([UnifyCustom("no fields")]);
 		var c = mkClass(nullModule, path, nullPos, nullPos);
 		addClassFlag(c, CInterface);
-		c.clFields = fields;
-		c.clOrderedFields = fields.foldCons(cf -> cf);
+		// port: cl_fields, and cl_ordered_fields as `PMap.fold (fun cf acc -> cf :: acc)` of it
+		c.clFields = core.TFunctions.classFieldsOf(fields.foldCons(cf -> cf));
 		if (isExtern) addClassFlag(c, CExtern);
 		interfaces.replace(pfm.pfmPath, c);
 		return c;

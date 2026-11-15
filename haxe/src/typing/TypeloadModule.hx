@@ -390,8 +390,8 @@ class TypeloadModule {
 				cf.cfMeta = StrictMeta.checkStrictMeta(ctx, cf.cfMeta).concat(cf.cfMeta);
 				for (f in cf.cfOverloads) field(f);
 			}
-			for (cf in c.clOrderedStatics) field(cf);
-			for (cf in c.clOrderedFields) field(cf);
+			for (cf in c.clStatics) field(cf);
+			for (cf in c.clFields) field(cf);
 			if (c.clConstructor != null) field(c.clConstructor);
 		});
 	}

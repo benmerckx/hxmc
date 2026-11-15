@@ -98,7 +98,7 @@ class Com {
 
 	// c's own methods, in declaration order (its slots after its bases')
 	static function own(c:TClass):Array<TClassField>
-		return [for (cf in c.clOrderedFields) if (cf.cfKind.match(Method(_))) cf];
+		return [for (cf in c.clFields) if (cf.cfKind.match(Method(_))) cf];
 
 	// every method's slot (IUnknown's three: 0 to 2, not declared)
 	public static function slots(c:TClass):Array<{cf:TClassField, slot:Int, owner:TClass}> {

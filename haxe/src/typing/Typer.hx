@@ -176,7 +176,7 @@ class Typer {
 						case TAbstract(a, _) if (a.aImpl != null && a.aEnum): {
 								isEnum: false,
 								path: a.aPath,
-								fields: a.aImpl.clOrderedStatics.filter(cf -> hasClassFieldFlag(cf, CfEnum)).map(cf -> cf.cfName),
+								fields: a.aImpl.clStatics.toArray().filter(cf -> hasClassFieldFlag(cf, CfEnum)).map(cf -> cf.cfName),
 								type: TAbstractDecl(a)
 							};
 						case TAbstract(a, pl) if (!Meta.has(MetaTag.CoreType, a.aMeta)):
@@ -379,7 +379,10 @@ class Typer {
 							cf.cfExpr = e;
 							cf.cfKind = Method(MethInline);
 							addClassFlag(c, CExtern);
-							c.clFields = core.ds.PMap.singleton(cf.cfName, cf);
+							// port: upstream sets cl_fields alone (cl_ordered_fields stays empty); a
+							// SeqMap holds the field in its sequence too. The class is a local stand-in for
+							// this access, in no module, which nothing walks the fields of.
+							c.clFields = core.ds.SeqMap.empty().cons(cf.cfName, cf);
 							var on = mk(TConst(TNull), TInst(c, vector()), p);
 							AKField(FieldAccessTools.create(on, cf, FHInstance(c, vector()), true, p));
 					}

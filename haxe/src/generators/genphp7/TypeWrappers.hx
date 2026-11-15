@@ -88,7 +88,7 @@ class ClassWrapper extends TypeWrapper {
 		if (hasClassFlag(cls, CInterface)) return false;
 		return switch TClassTools.getClInit(cls) {
 			case null:
-				Lambda.exists(cls.clOrderedStatics, field -> {
+				Lambda.exists(cls.clStatics, field -> {
 					/* Skip `inline var` fields */
 					!(Genphp7.isInlineVar(field)) && switch [field.cfKind, field.cfExpr] {
 						case [Var(_), null]: false;
@@ -130,10 +130,8 @@ class ClassWrapper extends TypeWrapper {
 				var path:GlobalTypePath = {pack: cls.clPath.pack, name: "_extern_" + cls.clPath.name};
 				var additionalCls = core.ds.Record.copy(cls);
 				additionalCls.clPath = path;
-				additionalCls.clFields = core.ds.PMap.empty();
-				additionalCls.clStatics = core.ds.PMap.empty();
-				additionalCls.clOrderedFields = [];
-				additionalCls.clOrderedStatics = [];
+				additionalCls.clFields = core.ds.SeqMap.empty();
+				additionalCls.clStatics = core.ds.SeqMap.empty();
 				additionalCls.clConstructor = null;
 				// port: `{ cls with ... }` shares cl_init's field; set_cl_init then replaces its cf_expr in place
 				// (the same body), which this copy reproduces.

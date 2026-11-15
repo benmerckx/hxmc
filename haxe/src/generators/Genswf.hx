@@ -289,8 +289,8 @@ class Genswf {
 		}
 		switch t {
 			case TClassDecl(c) if (!hasClassFlag(c, CExtern)):
-				for (f in c.clOrderedFields) add_field(f);
-				for (f in c.clOrderedStatics) add_field(f);
+				for (f in c.clFields) add_field(f);
+				for (f in c.clStatics) add_field(f);
 				switch c.clConstructor {
 					case null:
 					case f:

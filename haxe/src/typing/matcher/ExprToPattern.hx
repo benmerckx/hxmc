@@ -142,7 +142,7 @@ class ExprToPattern {
 		inline function enumerable():Array<String> return switch follow(t) {
 			case TEnum(en, _): en.eNames;
 			case TAbstract(a = {aImpl: c}, _) if (c != null && a.aEnum): [
-					for (cf in c.clOrderedStatics) if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) cf.cfName
+					for (cf in c.clStatics) if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) cf.cfName
 				];
 			case _: [];
 		};
@@ -384,7 +384,7 @@ class ExprToPattern {
 						function loopClass(c:TClass, tl:core.TType.TParams):Void {
 							if (c.clSuper != null) loopClass(c.clSuper.cls,
 								c.clSuper.params.map(function(t) return applyParams(c.clParams, tl, t)));
-							for (cf in c.clOrderedFields) if (canAccess(ctx, c, cf,
+							for (cf in c.clFields) if (canAccess(ctx, c, cf,
 								false)) collectField(cf, applyParams(c.clParams, tl, cf.cfType), filter);
 						}
 						loopClass(c, tl);
@@ -400,7 +400,7 @@ class ExprToPattern {
 								filter.indexOf(s) >= 0);
 							collectFields(core.Abstract.getUnderlyingType(a, tl), filtered);
 						}
-						for (cf in c.clOrderedStatics) if (hasClassFieldFlag(cf,
+						for (cf in c.clStatics) if (hasClassFieldFlag(cf,
 							CfImpl)) collectField(cf, applyParams(a.aParams, tl, cf.cfType), filter);
 					case _:
 						core.Error.raiseTypingError("Cannot field-match against "

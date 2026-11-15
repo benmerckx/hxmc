@@ -714,7 +714,7 @@ class Fields {
 			});
 			return core.ds.PMap.ofArrays([for (cf in cfs) cf.cfName], cfs);
 		}
-		return c.clFields.filterMap(function(cf) return switch cf.cfKind {
+		return c.clFields.byName.filterMap(function(cf) return switch cf.cfKind {
 			case Var(_):
 				var copy:TClassField = core.ds.Record.copy(cf);
 				copy.cfType = applyParams(c.clParams, tl, cf.cfType);

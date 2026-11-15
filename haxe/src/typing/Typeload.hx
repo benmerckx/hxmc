@@ -1010,8 +1010,8 @@ class Typeload {
 					&& !hasClassFieldFlag(f, CfOverride)) raiseTypingError("Public field " + name + " is not part of core type", p);
 			}
 		}
-		checkFields(ccore.clFields, c.clFields);
-		checkFields(ccore.clStatics, c.clStatics);
+		checkFields(ccore.clFields.byName, c.clFields.byName);
+		checkFields(ccore.clStatics.byName, c.clStatics.byName);
 		var a = ccore.clConstructor, b = c.clConstructor;
 		if (a == null && b == null) return;
 		if (a != null && !hasClassFieldFlag(a, CfPublic)) return;

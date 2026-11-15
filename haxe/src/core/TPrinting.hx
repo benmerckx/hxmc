@@ -480,11 +480,11 @@ class Printer {
 		],
 		[
 			"cl_ordered_fields",
-			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clOrderedFields)
+			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clFields.toArray())
 		],
 		[
 			"cl_ordered_statics",
-			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clOrderedStatics)
+			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clStatics.toArray())
 		]
 	]);
 

@@ -824,7 +824,7 @@ class TUnification {
 						case _:
 					}
 					var fields = switch a1.aStatus {
-						case ClassStatics(c): c.clStatics;
+						case ClassStatics(c): c.clStatics.byName;
 						case _: a1.aFields;
 					};
 					fields.iter(function(n, f1) {
@@ -1273,7 +1273,7 @@ class TUnification {
 					return false;
 				});
 			case [ClassStatics(c1), _]:
-				unifyFields(c1.clStatics, function(f1) {
+				unifyFields(c1.clStatics.byName, function(f1) {
 					if (maybeUsedHook != null) maybeUsedHook(null, f1, null);
 					addClassFieldFlag(f1, CfMaybeUsed);
 				}, function(_) return false);

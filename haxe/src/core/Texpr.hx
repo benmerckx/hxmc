@@ -1226,7 +1226,7 @@ class Texpr {
 		var statics:Array<{name:String, meta:Metadata}>;
 		switch t {
 			case TClassDecl(c):
-				var fs = c.clOrderedFields.copy();
+				var fs = c.clFields.toArray();
 				if (c.clConstructor != null) {
 					var cf = core.ds.Record.copy(c.clConstructor);
 					cf.cfName = "_";
@@ -1235,7 +1235,7 @@ class Texpr {
 				p = c.clPos;
 				meta = [{name: "", meta: c.clMeta}];
 				fields = fs.map(f -> {name: f.cfName, meta: f.cfMeta});
-				statics = c.clOrderedStatics.map(f -> {name: f.cfName, meta: f.cfMeta});
+				statics = c.clStatics.mapToArray(f -> {name: f.cfName, meta: f.cfMeta});
 			case TEnumDecl(e):
 				p = e.ePos;
 				meta = [{name: "", meta: e.eMeta}];

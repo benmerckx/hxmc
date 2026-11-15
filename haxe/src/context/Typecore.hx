@@ -1001,8 +1001,8 @@ class Typecore {
 				if (other != null) cf.cfDoc = other.cfDoc;
 			}
 		}
-		for (cf in c.clOrderedFields) maybeMerge(core.clFields, cf);
-		for (cf in c.clOrderedStatics) maybeMerge(core.clStatics, cf);
+		for (cf in c.clFields) maybeMerge(core.clFields.byName, cf);
+		for (cf in c.clStatics) maybeMerge(core.clStatics.byName, cf);
 		if (c.clConstructor != null && c.clConstructor.cfDoc == null && core.clConstructor != null)
 			c.clConstructor.cfDoc = core.clConstructor.cfDoc;
 	}

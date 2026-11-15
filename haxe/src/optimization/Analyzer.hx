@@ -1083,8 +1083,8 @@ class Run {
 				fields.push(cf);
 				for (overloadedField in cf.cfOverloads) fields.push(overloadedField);
 		}
-		for (cf in c.clOrderedFields) processField(false, cf);
-		for (cf in c.clOrderedStatics) processField(true, cf);
+		for (cf in c.clFields) processField(false, cf);
+		for (cf in c.clStatics) processField(true, cf);
 		if (c.clConstructor != null) processField(false, c.clConstructor);
 		context.Parallel.ParallelArray.iter(pool, function(cf) runOnFieldInternal(com, out, config, c, cf), fields);
 		var init = core.TOther.TClassTools.getClInit(c);

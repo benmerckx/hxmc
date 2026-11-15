@@ -376,10 +376,12 @@ class TypeloadFields {
 			doc = new StringBuf();
 		var args:Array<{variable:TVar, defaultValue:Null<TExpr>}> = [],
 			el:Array<TExpr> = [],
-			tl:Array<{name:String, optional:Bool, type:T}> = [],
-			ordered = c.clOrderedFields.copy();
-		ordered.reverse();
-		for (cf in ordered) if (isPhysicalVarField(cf)) {
+			tl:Array<{name:String, optional:Bool, type:T}> = [];
+		// port: upstream walks `List.rev c.cl_ordered_fields`
+		var i = c.clFields.length;
+		while (i > 0) {
+			var cf = c.clFields.at(--i);
+			if (!isPhysicalVarField(cf)) continue;
 			var hasDefault = fieldHasDefault(cf.cfName),
 				opt = hasDefault || MetadataTools.has(Optional, cf.cfMeta),
 				t = opt ? ctx.t.tnull(cf.cfType) : cf.cfType;
@@ -1381,8 +1383,7 @@ class TypeloadFields {
 				}
 				if (hasClassFlag(c, CInterface)) {
 					var cf = generate();
-					c.clFields = c.clFields.add(cf.cfName, cf);
-					c.clOrderedFields.unshift(cf);
+					c.clFields = c.clFields.cons(cf.cfName, cf);
 				} else if (context.display.Diagnostics.errorInDiagnosticsRun(ctx.com, f.cffPos)) {
 					var cfAccessor = generate();
 					removeClassFieldFlag(cfAccessor, CfPublic);
@@ -1551,8 +1552,8 @@ class TypeloadFields {
 				for (candidate in all) ok = ok && checkOverload(ctx, candidate, all, isExtern);
 			}
 		}
-		for (f in c.clOrderedFields) checkField(f);
-		for (f in c.clOrderedStatics) checkField(f);
+		for (f in c.clFields) checkField(f);
+		for (f in c.clStatics) checkField(f);
 		if (c.clConstructor != null) checkField(c.clConstructor);
 	}
 
@@ -1736,11 +1737,11 @@ class TypeloadFields {
 			a.aUnops.reverse();
 			a.aArray.reverse();
 		}
-		c.clOrderedStatics.reverse();
-		c.clOrderedFields.reverse();
+		c.clStatics = c.clStatics.rev();
+		c.clFields = c.clFields.rev();
 		delay(ctxC.g, PConnectField, function() switch follow(c.clType) {
 			case TAnon(an):
-				an.aFields = c.clStatics;
+				an.aFields = c.clStatics.byName;
 			case _:
 				throw new haxe.Exception("Invalid class static type");
 		});

@@ -228,7 +228,7 @@ class ResolutionList {
 			case RClassFieldImport(alias, c, cf):
 				out = out.add(alias, {type: TClassDecl(c), name: cf.cfName, pos: res.rPos});
 			case RClassStatics(c):
-				for (cf in c.clOrderedStatics) {
+				for (cf in c.clStatics) {
 					var imported = Resolution.asImportableStatic(c, cf, Globals.nullPos);
 					if (imported != null) out = out.add(imported.name,
 						{type: TClassDecl(c), name: cf.cfName, pos: imported.resolution.rPos});

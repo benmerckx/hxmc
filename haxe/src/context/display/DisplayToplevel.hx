@@ -412,7 +412,7 @@ class DisplayToplevel {
 						case KAbstractImpl(a) if (a.aImpl != null):
 							var c = a.aImpl;
 							var origin = Self(TAbstractDecl(a));
-							for (cf in c.clOrderedStatics) {
+							for (cf in c.clStatics) {
 								if (hasClassFieldFlag(cf, CfImpl)) {
 									if (ctx.e.curfun == FunStatic) {} else {
 										var cf = Typecore.prepareUsingField(cf);
@@ -421,7 +421,7 @@ class DisplayToplevel {
 								} else maybeAddField(CFSStatic, origin, cf);
 							}
 						case _:
-							for (cf in ctx.c.curclass.clOrderedStatics) maybeAddField(CFSStatic, Self(TClassDecl(ctx.c.curclass)), cf);
+							for (cf in ctx.c.curclass.clStatics) maybeAddField(CFSStatic, Self(TClassDecl(ctx.c.curclass)), cf);
 					}
 					return null;
 				}, null);
@@ -433,7 +433,7 @@ class DisplayToplevel {
 							case TAbstractDecl(a) if (a.aImpl != null && a.aEnum && !cctx.pathExists(a.aPath) && ctx.c.curclass != a.aImpl):
 								var c = a.aImpl;
 								cctx.addPath(a.aPath);
-								for (cf in c.clOrderedStatics) {
+								for (cf in c.clStatics) {
 									var ccf = CompletionClassField.make(cf, CFSMember, Self(CompletionItem.declOfClass(c)), true);
 									if (hasClassFieldFlag(cf, CfEnum)
 										&& !Meta.has(MetaTag.NoCompletion,

@@ -125,8 +125,8 @@ class Dump {
 					if (c.clArrayAccess != null) buf.add(" implements ArrayAccess<" + st(c.clArrayAccess) + ">");
 					buf.add(" {\n");
 					if (c.clConstructor != null) printField(false, c.clConstructor);
-					for (f in c.clOrderedFields) printField(false, f);
-					for (f in c.clOrderedStatics) printField(true, f);
+					for (f in c.clFields) printField(false, f);
+					for (f in c.clStatics) printField(true, f);
 					var init = TClassTools.getClInit(c);
 					if (init != null) buf.add("\n\tstatic function __init__() " + se(init) + "\n");
 					buf.add("}");
@@ -199,8 +199,8 @@ class Dump {
 					if (cf.cfExpr != null) out.buffer.add(core.Texpr.dumpWithPos("\t", cf.cfExpr) + "\n");
 				}
 				if (c.clConstructor != null) field(c.clConstructor);
-				for (cf in c.clOrderedStatics) field(cf);
-				for (cf in c.clOrderedFields) field(cf);
+				for (cf in c.clStatics) field(cf);
+				for (cf in c.clFields) field(cf);
 				out.close();
 			case _:
 		};

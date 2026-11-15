@@ -64,7 +64,7 @@ class CppReferences {
 		function allVirtualFunctions(clazz:TClass):Array<{field:TClassField, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T}> {
 			function currentVirtualFunctionsRev(clazz:TClass, baseFunctions:Array<{field:TClassField, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T}>) {
 				var result = baseFunctions;
-				for (elem in clazz.clOrderedFields) {
+				for (elem in clazz.clFields) {
 					result = switch [follow(elem.cfType), elem.cfKind] {
 						case [_, Method(MethDynamic)]: result;
 						case [TFun(sig), Method(_)]:
@@ -252,7 +252,7 @@ class CppReferences {
 			}
 		}
 		function visitClass(classDef:TClass):Void {
-			var fields = classDef.clOrderedFields.concat(classDef.clOrderedStatics);
+			var fields = classDef.clFields.toArray().concat(classDef.clStatics.toArray());
 			var fieldsAndConstructor = fields.concat(switch classDef.clConstructor {
 				case null: [];
 				case expr: [expr];

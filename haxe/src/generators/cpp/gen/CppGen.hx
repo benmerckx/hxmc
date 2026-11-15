@@ -507,7 +507,7 @@ class CppGen {
 	public static function generateMain(ctx:Context, superDeps:PathMap<Array<GlobalTypePath>>, classDef:TClass):Void {
 		var commonCtx = ctx.ctxCommon;
 		/* main routine should be a single static function */
-		var mainExpression = switch classDef.clOrderedStatics {
+		var mainExpression = switch classDef.clStatics.toArray() {
 			case [{cfExpr: expression}] if (expression != null): expression;
 			case _: die("", "cppGen.ml");
 		}

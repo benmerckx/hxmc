@@ -643,7 +643,7 @@ class CppRetyper {
 			}
 		}
 
-		function filterMap<A, B>(f:A->Null<B>, l:Array<A>):Array<B> {
+		function filterMap<A, B>(f:A->Null<B>, l:Iterable<A>):Array<B> {
 			var r = [];
 			for (x in l) {
 				var y = f(x);
@@ -656,23 +656,23 @@ class CppRetyper {
 		var id = idr.id;
 		var ids = idr.ids;
 
-		var staticFunctions = filterMap(function(f) return filterFunctions(true, f), classDef.clOrderedStatics);
+		var staticFunctions = filterMap(function(f) return filterFunctions(true, f), classDef.clStatics);
 
-		var staticDynamicFunctions = filterMap(function(f) return filterDynamicFunctions(true, f), classDef.clOrderedStatics);
+		var staticDynamicFunctions = filterMap(function(f) return filterDynamicFunctions(true, f), classDef.clStatics);
 
-		var staticVariables = filterMap(filterVariables, classDef.clOrderedStatics.filter(function(field) return field.cfName != "__meta__"
+		var staticVariables = filterMap(filterVariables, classDef.clStatics.toArray().filter(function(field) return field.cfName != "__meta__"
 			&& field.cfName != "__rtti"));
 
-		var staticProperties = filterMap(filterProperties, classDef.clOrderedStatics.filter(function(field) return field.cfName != "__meta__"
+		var staticProperties = filterMap(filterProperties, classDef.clStatics.toArray().filter(function(field) return field.cfName != "__meta__"
 			&& field.cfName != "__rtti"));
 
-		var functions = filterMap(function(f) return filterFunctions(true, f), classDef.clOrderedFields);
+		var functions = filterMap(function(f) return filterFunctions(true, f), classDef.clFields);
 
-		var dynamicFunctions = filterMap(function(f) return filterDynamicFunctions(false, f), classDef.clOrderedFields);
+		var dynamicFunctions = filterMap(function(f) return filterDynamicFunctions(false, f), classDef.clFields);
 
-		var variables = filterMap(filterVariables, classDef.clOrderedFields);
+		var variables = filterMap(filterVariables, classDef.clFields);
 
-		var properties = filterMap(filterProperties, classDef.clOrderedFields);
+		var properties = filterMap(filterProperties, classDef.clFields);
 
 		var constructor = switch classDef.clConstructor {
 			case null:
@@ -762,9 +762,9 @@ class CppRetyper {
 		if (hasCompareField(classDef)) flags = setTcppClassFlag(flags, Compare);
 		if (hasBootField(classDef) || wantsClosures) flags = setTcppClassFlag(flags, Boot);
 
-		var metaField = Lambda.find(classDef.clOrderedStatics, function(field) return field.cfName == "__meta__");
+		var metaField = Lambda.find(classDef.clStatics, function(field) return field.cfName == "__meta__");
 		var metaExpr = metaField == null ? null : optionGet(metaField.cfExpr);
-		var rttiField = Lambda.find(classDef.clOrderedStatics, function(field) return field.cfName == "__rtti");
+		var rttiField = Lambda.find(classDef.clStatics, function(field) return field.cfName == "__rtti");
 		var rttiExpr = rttiField == null ? null : optionGet(rttiField.cfExpr);
 
 		var cls:TcppClass = {
@@ -830,9 +830,9 @@ class CppRetyper {
 		}
 
 		var debugLevel = if (Meta.has(Meta.NoDebug, classDef.clMeta) || Gctx.defined(ctx.ctxCommon, Define.NoDebug)) 0 else ctx.ctxDebugLevel;
-		var metaField = Lambda.find(classDef.clOrderedStatics, function(field) return field.cfName == "__meta__");
+		var metaField = Lambda.find(classDef.clStatics, function(field) return field.cfName == "__meta__");
 		var metaExpr = metaField == null ? null : optionGet(metaField.cfExpr);
-		var rttiField = Lambda.find(classDef.clOrderedStatics, function(field) return field.cfName == "__rtti");
+		var rttiField = Lambda.find(classDef.clStatics, function(field) return field.cfName == "__rtti");
 		var rttiExpr = rttiField == null ? null : optionGet(rttiField.cfExpr);
 		var ext = switch classDef.clSuper {
 			case null:
@@ -844,7 +844,7 @@ class CppRetyper {
 		var ext:Null<TcppInterface> = ext.iface;
 
 		var acc = {slots: slots, fields: []};
-		for (f in classDef.clOrderedFields) acc = functionFilter(withStackValueType, acc, f);
+		for (f in classDef.clFields) acc = functionFilter(withStackValueType, acc, f);
 		var functions = acc.fields.copy();
 		functions.reverse();
 
@@ -854,7 +854,7 @@ class CppRetyper {
 			ifHash: CppStrings.genHash(0, joinClassPath(classDef.clPath, "::")),
 			ifDebugLevel: debugLevel,
 			ifFunctions: functions,
-			ifVariables: classDef.clOrderedFields.filter(variableFilter),
+			ifVariables: classDef.clFields.toArray().filter(variableFilter),
 			ifMeta: metaExpr,
 			ifRtti: rttiExpr,
 			ifExtends: ext,

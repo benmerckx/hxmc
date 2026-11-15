@@ -714,7 +714,7 @@ class Genhl {
 				}
 				var pfields:Array<HField> = [];
 				for (i in c.clImplements) pfields = loop(i.cls).concat(pfields);
-				var fields = c.clFields.foldCons(cf -> cfieldType(ctx, cf));
+				var fields = c.clFields.byName.foldCons(cf -> cfieldType(ctx, cf));
 				return concatUniq(fields, pfields);
 			}
 			var fields = loop(c);
@@ -767,7 +767,7 @@ class Genhl {
 			});
 			return fid;
 		}
-		if (!hasClassFlag(c, CExtern)) for (f in (if (statics) c.clOrderedStatics else c.clOrderedFields)) {
+		if (!hasClassFlag(c, CExtern)) for (f in (statics ? c.clStatics : c.clFields)) {
 			if (isExternField(f) || (statics && f.cfName == "__meta__")) continue;
 			var fid:Null<Int> = switch f.cfKind {
 				case Method(m) if (m != MethDynamic && !statics):
@@ -3942,7 +3942,7 @@ class Genhl {
 					/*
 						init dynamic functions
 					 */
-					for (f in c.clOrderedFields) {
+					for (f in c.clFields) {
 						switch f.cfKind {
 							case Method(MethDynamic):
 								var idx = try getIndex(f.cfName, o) catch (_:NotFound) die("", "genhl.ml");
@@ -3995,9 +3995,9 @@ class Genhl {
 		switch t {
 			case TClassDecl(c) if (hasClassFlag(c, CInterface)):
 			case TClassDecl(c) if (hasClassFlag(c, CExtern)):
-				for (f in c.clOrderedStatics) for (m in f.cfMeta) if (Meta.metaEq(Meta.HlNative, m.meta)) generateStatic(ctx, c, f);
+				for (f in c.clStatics) for (m in f.cfMeta) if (Meta.metaEq(Meta.HlNative, m.meta)) generateStatic(ctx, c, f);
 			case TClassDecl(c):
-				for (f in c.clOrderedStatics) generateStatic(ctx, c, f);
+				for (f in c.clStatics) generateStatic(ctx, c, f);
 				switch c.clConstructor {
 					case null:
 					case f:
@@ -4030,7 +4030,7 @@ class Genhl {
 						f2.cfExpr = mergeInits(f.cfExpr);
 						generateMember(ctx, c, f2);
 				}
-				for (f in c.clOrderedFields) generateMember(ctx, c, f);
+				for (f in c.clFields) generateMember(ctx, c, f);
 			case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 		}
 	}
@@ -4259,7 +4259,7 @@ class Genhl {
 			}
 			switch t {
 				case TClassDecl(c) if (!hasClassFlag(c, CExtern) && !isExcluded(c)):
-					for (f in c.clOrderedStatics) {
+					for (f in c.clStatics) {
 						switch [f.cfKind, f.cfExpr] {
 							case [Var(_), e] if (e != null):
 								var p = e.epos;
@@ -4744,7 +4744,7 @@ class Genhl {
 							Inline methods are excluded because they cannot be overridden.
 						 */
 						function loopCl(c:TClass):Void {
-							for (f in c.clOrderedFields) {
+							for (f in c.clFields) {
 								switch f.cfKind {
 									case Method(MethInline):
 									case _: loop({cls: c, params: vector()}, f);
@@ -4754,7 +4754,7 @@ class Genhl {
 						}
 						loopCl(c);
 					} else
-						for (f in c.clOrderedFields) if (hasClassFieldFlag(f, CfOverride)) loop(c.clSuper, f);
+						for (f in c.clFields) if (hasClassFieldFlag(f, CfOverride)) loop(c.clSuper, f);
 					for (m in c.clMeta) {
 						if (Meta.metaEq(Meta.HlNative, m.meta)) {
 							var p = m.pos;
@@ -4771,7 +4771,7 @@ class Genhl {
 									prefix = null;
 							}
 							/* adds :hlNative for all empty methods */
-							for (f in c.clOrderedStatics) {
+							for (f in c.clStatics) {
 								switch f.cfKind {
 									case Method(MethNormal) if (!core.ds.ArrayTools.exists(f.cfMeta, m -> Meta.metaEq(Meta.HlNative, m.meta))):
 										var empty = switch f.cfExpr {

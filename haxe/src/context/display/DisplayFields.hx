@@ -137,7 +137,7 @@ class DisplayFields {
 		function loop(acc:PMap<CompletionItemData>, l:Array<{cls:TClass, pos:Pos}>):PMap<CompletionItemData> {
 			for (u in l) {
 				var c = u.cls;
-				for (f in c.clOrderedStatics) {
+				for (f in c.clStatics) {
 					if (Meta.has(MetaTag.NoUsing, f.cfMeta)
 						|| Meta.has(MetaTag.NoCompletion, f.cfMeta)
 						|| hasClassFieldFlag(f, CfImpl)
@@ -210,7 +210,7 @@ class DisplayFields {
 			function browseInterfaces(c:TClass, acc:PMap<CompletionItemData>):PMap<CompletionItemData> {
 				for (i in c.clImplements) {
 					var c = i.cls;
-					for (cf in c.clOrderedFields) {
+					for (cf in c.clFields) {
 						if (isNewItem(acc, cf.cfName)) {
 							var origin = Parent(TClassDecl(c));
 							var item = makeClassField(origin, cf);
@@ -284,7 +284,7 @@ class DisplayFields {
 					Display.mergeCoreDoc(ctx, TAbstractDecl(a));
 					// Abstracts should show all their @:impl fields minus the constructor.
 					var items = items;
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						if (hasClassFieldFlag(cf, CfImpl) && !hasClassFieldFlag(cf, CfEnum) && shouldAccess(c, cf, false)
 							&& isNewItem(items, cf.cfName)) {
 							var origin = Self(TAbstractDecl(a));
@@ -324,7 +324,7 @@ class DisplayFields {
 							switch follow(aThis) {
 								case TInst(c, _):
 									var items = items;
-									for (cf in c.clOrderedStatics) {
+									for (cf in c.clStatics) {
 										if (shouldAccess(c, cf, true) && isNewItem(items, cf.cfName)) {
 											var origin = Self(TClassDecl(c));
 											var item = makeClassField(origin, cf);
@@ -359,15 +359,15 @@ class DisplayFields {
 								return if (hasClassFieldFlag(ccf.field,
 									CfEnum)) CompletionItem.makeCiEnumAbstractField(a, ccf, t) else CompletionItem.makeCiClassField(ccf, t);
 							}
-							iterFields(Self(TClassDecl(c)), c.clStatics, fAllow, fMake);
+							iterFields(Self(TClassDecl(c)), c.clStatics.byName, fAllow, fMake);
 						case ClassStatics(c):
 							Display.mergeCoreDoc(ctx, TClassDecl(c));
 							function fAllow(cf:TClassField):Bool return shouldAccess(c, cf, true);
-							iterFields(Self(TClassDecl(c)), c.clStatics, fAllow, CompletionItem.makeCiClassField);
+							iterFields(Self(TClassDecl(c)), c.clStatics.byName, fAllow, CompletionItem.makeCiClassField);
 						case AbstractStatics(a = {aImpl: c}) if (c != null):
 							Display.mergeCoreDoc(ctx, TAbstractDecl(a));
 							function fAllow(cf:TClassField):Bool return shouldAccess(c, cf, true);
-							iterFields(Self(TAbstractDecl(a)), c.clStatics, fAllow, CompletionItem.makeCiClassField);
+							iterFields(Self(TAbstractDecl(a)), c.clStatics.byName, fAllow, CompletionItem.makeCiClassField);
 						case EnumStatics(en):
 							en.eConstrs.fold(function(ef:TEnumField, acc:PMap<CompletionItemData>) {
 								var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(ef.efMeta), ef.efType);
