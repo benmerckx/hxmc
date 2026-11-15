@@ -543,10 +543,14 @@ class Regalloc {
 						break;
 					}
 			if (choice < 0) {
-				// the register whose overlapping intervals cost least to spill
-				// (weight per position covered), if less than this one
+				// the register whose overlapping intervals cost least to spill,
+				// if less than this one: their weights, the uses each spill
+				// makes loads and stores (no splitting: a long interval spilled
+				// is spilled at every use; by weight per position covered, a
+				// short value taking a callee-saved register across a call
+				// evicted an interpreter's pc, used in every case)
 				var best = -1;
-				var bestCost = r >= noSpillFrom ? 1e300 : lateRound ? -1.0 : weight[r] / len[r];
+				var bestCost = r >= noSpillFrom ? 1e300 : lateRound ? -1.0 : weight[r];
 				for (c in regs) {
 					if (masked(c) || fixedOverlapSegs(c, r)) continue;
 					var cost = 0.0;
@@ -557,7 +561,7 @@ class Regalloc {
 							ok = false;
 							break;
 						}
-						cost += weight[a] / len[a];
+						cost += weight[a];
 					}
 					if (ok && cost < bestCost) {
 						best = c;
