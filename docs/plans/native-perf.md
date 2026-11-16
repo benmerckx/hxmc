@@ -142,6 +142,9 @@ each):
 | 41a92a40 | Dyn.dynEq: two of the program's types, neither a closure, are not equal unless the same | tshx -0.09% |
 | da044454 | Dyn.findField, findMethod inline | json -0.66%, formatter -0.29% |
 | cddcf639 | MemLower: a Bool boxed inline (rt_bool_boxes + 8 + 16 * (b != 0)) | json -0.40%, cycles -3.6% |
+| 8586cbf3 | Names: a field name's String read without the lock (a block of its capacity and entries, never freed) | json cycles -1.2% |
+| 7c1f971e | Dyn.overflowSet: an anonymous object's added fields in storage twice as long when full, not one pair longer each time | json -1.0%, cycles -4.3% |
+| 566b9780 | JsonParser.parseString: Str.range, not substr | json -1.9%, cycles -3.9% |
 
 The Linux session's commits of the same evening (00ebb086 to d998d104,
 merged in 07ced548: guarded LICM, unswitching, strEq of a literal, the
@@ -207,11 +210,22 @@ Also tried and left out this session (built, measured, reverted):
 | a string's width test in charCodeAt with the one-byte side as the false (fall-through) one | tshx +0.14% instructions, .text the same | the layout did not change |
 | LoopVersion.tryStrings also for a string dereferenced before the loop (the copy entered for one byte per unit only) | tshx -0.44% instructions, .text +0.18% | cycles +1.2% (15 runs): the copies' code |
 | a shadow-stack slot's load after its store in the block forwarded in Opt.lowered (after Frames' merge) | tshx -0.01%, .text -3 KB | rare |
+| JsonPrinter: an object's fields by id (Dyn.fieldIds, the names from the ids, the values by id) | json +13.5% instructions | the lookup by name is faster than it looks |
+| @:hxmc.cold (a call of such a function makes its block a slow path after the lowering), on Str.hashSlow | tshx +0.03% | StringMap.get's spills come from the key comparison's call, not the hash's |
 | the remembered set's slots touched 8 entries ahead (a load, as a prefetch would) in Gc.forwardRemembered | tshx +0.64% instructions; cycles -6.7% and +1.4% in two series | not measurable here: memory-bound functions move by 25% from run to run under WSL's load; worth a prefetch op on a quiet machine |
 
 (A tool built from the sources while an edit was being made took the
 edit in: two measurements made against it, one of them the inline Bool
 boxing first left out here, were redone against a clean build.)
+
+At the end of the session (566b9780), Windows natively: the corpus
+373/373; GapBench against LLVM release built from the same sources (best
+of 5; 9 for sha256, nbody): formatter 0.91x, binarytrees 0.96x, nbody
+1.00x, sha256 1.00x, mandelbrot 1.01x, alloc 1.02x, bcrypt 1.03x, json
+1.03x, mandelbrot_anon 1.03x, sha512 1.05x. WSL2 (loaded; LLVM's binaries
+from 19:00, before the evening's runtime changes): tshx 9.48 G
+instructions against O2's 9.60 G and O3's 9.47 G, cycles native +1.9%
+against O2.
 
 Windows, the merged branch (07ced548: this session's and the Linux
 session's commits), natively: the corpus 373/373; GapBench wall times
