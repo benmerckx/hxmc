@@ -1,4 +1,4 @@
-// A declaration that disagrees with its header (make header-check: must fail):
+// A declaration that disagrees with its header (make native-check NATIVE=header: must fail):
 // a struct field of the wrong size, a parameter of the wrong width, a second
 // declaration of a function with a span too short for what C writes, a span
 // of bytes whose length C counts in structs, passed alone or with its count.

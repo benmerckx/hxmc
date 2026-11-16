@@ -6,7 +6,7 @@ import core.Ast;
 import core.TType;
 import core.TFunctions;
 import core.TFunctions.*;
-import haxe.ds.StringMap;
+import core.ds.OrderedMap;
 import core.ds.VectorTools.vector;
 import haxe.ds.Vector;
 
@@ -49,10 +49,7 @@ class TExprToExpr {
 						vector(TPType({type: tpath(e.ePath, e.ePath, vector()), pos: Globals.nullPos})));
 				case _:
 					var fields:Array<ClassField> = [];
-					var names = [for (name in a.aFields.keys()) name];
-					names.sort(core.ds.Key.compareStrings);
-					for (name in names) {
-						var f = a.aFields.get(name);
+					for (f in a.aFields) {
 						var access:Array<PlacedAccess> = [];
 						inline function add(flag:Access):Void access.unshift({access: flag, pos: Globals.nullPos});
 						add(hasClassFieldFlag(f, CfPublic) ? APublic : APrivate);
@@ -281,8 +278,7 @@ class TOther {
 		eRestore: function() {},
 		ePrivate: false,
 		eFlags: 0,
-		eConstrs: new StringMap(),
-		eNames: [],
+		eConstrs: core.ds.SeqMap.empty(),
 		eType: mkMono()
 	};
 
@@ -322,10 +318,12 @@ class TOther {
 
 // port: `TClass` is also the typed record name; the helper module uses a distinct name.
 class TClassTools {
-	public static function getMemberFields(selfToo:Bool, c0:TClass, tl:TParams):StringMap<{cls:TClass, field:TClassField}> {
-		function loop(acc:StringMap<{cls:TClass, field:TClassField}>, c:TClass, tl:TParams):StringMap<{cls:TClass, field:TClassField}> {
+	// port: a new map per call, which upstream builds as a PMap; nothing keeps it, so
+	// it is filled in place.
+	public static function getMemberFields(selfToo:Bool, c0:TClass, tl:TParams):OrderedMap<{cls:TClass, field:TClassField}> {
+		function loop(acc:OrderedMap<{cls:TClass, field:TClassField}>, c:TClass, tl:TParams):OrderedMap<{cls:TClass, field:TClassField}> {
 			var apply = function(t) return applyParams(c.clParams, tl, t);
-			if (selfToo || c != c0) for (cf in c.clOrderedFields) if (!acc.exists(cf.cfName)) {
+			if (selfToo || c != c0) for (cf in c.clFields) if (!acc.exists(cf.cfName)) {
 				if (tl.length != 0) {
 					var copy:TClassField = core.ds.Record.copy(cf);
 					copy.cfType = apply(cf.cfType);
@@ -337,14 +335,14 @@ class TClassTools {
 			else if (c.clSuper != null) acc = loop(acc, c.clSuper.cls, c.clSuper.params.map(apply));
 			return acc;
 		}
-		return loop(new StringMap(), c0, tl);
+		return loop(new OrderedMap(), c0, tl);
 	}
 
-	public static function getAllSuperFields(c:TClass):StringMap<{cls:TClass, field:TClassField}> return getMemberFields(false, c,
+	public static function getAllSuperFields(c:TClass):OrderedMap<{cls:TClass, field:TClassField}> return getMemberFields(false, c,
 		extractParamTypes(c.clParams));
 
 	public static function getAllFields(c:TClass,
-			tl:TParams):StringMap<{cls:TClass, field:TClassField}> return getMemberFields(true, c, tl);
+			tl:TParams):OrderedMap<{cls:TClass, field:TClassField}> return getMemberFields(true, c, tl);
 
 	public static function getOverriddenFields(c:TClass, cf:TClassField):Array<TClassField> {
 		var acc = [];
@@ -358,11 +356,9 @@ class TClassTools {
 
 	public static function addField(c:TClass, cf:TClassField):Void {
 		if (hasClassFieldFlag(cf, CfStatic)) {
-			c.clStatics.set(cf.cfName, cf);
-			c.clOrderedStatics.unshift(cf);
+			c.clStatics = c.clStatics.cons(cf.cfName, cf);
 		} else {
-			c.clFields.set(cf.cfName, cf);
-			c.clOrderedFields.unshift(cf);
+			c.clFields = c.clFields.cons(cf.cfName, cf);
 		}
 	}
 
@@ -386,7 +382,7 @@ class TClassTools {
 		}
 	}
 
-	public static function getSingularInterfaceField(fields:Array<TClassField>):Null<TClassField> {
+	public static function getSingularInterfaceField(fields:core.ds.SeqMap<TClassField>):Null<TClassField> {
 		// Re-declarations of java.lang.Object members (equals/hashCode/toString)
 		// on an interface must not count toward the SAM check — JLS §9.8.
 		// Matched by name+arity since these are unique on Object.

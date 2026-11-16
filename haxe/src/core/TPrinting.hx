@@ -107,15 +107,14 @@ class TPrinting {
 				case EnumStatics(e): '{ EnumStatics ${Globals.sTypePath(e.ePath)} }';
 				case AbstractStatics(a): '{ AbstractStatics ${Globals.sTypePath(a.aPath)} }';
 				case _:
-					var names = [for (name in a.aFields.keys()) name];
-					names.sort(core.ds.Key.compareStrings);
-					names.reverse();
-					"{" + [
-						for (name in names) {
-							var f = a.aFields.get(name);
-							(Meta.has(Meta.Optional, f.cfMeta) ? " ?" : " ") + f.cfName + " : " + sType(ctx, f.cfType);
-						}
-					].join(",") + " }";
+					// port: upstream prints the fields' types in key order (monomorphs are numbered
+					// as they are met) and conses the strings: they are joined in reverse.
+					var fields = a.aFields, n = fields.size, fl = new haxe.ds.Vector<String>(n);
+					for (i in 0...n) {
+						var f = fields.valueAt(i);
+						fl[n - 1 - i] = (Meta.has(Meta.Optional, f.cfMeta) ? " ?" : " ") + f.cfName + " : " + sType(ctx, f.cfType);
+					}
+					"{" + fl.join(",") + " }";
 			}
 		case TDynamic(null): "Dynamic";
 		case TDynamic(t2): "Dynamic" + sTypeParams(ctx, vector(t2));
@@ -481,11 +480,11 @@ class Printer {
 		],
 		[
 			"cl_ordered_fields",
-			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clOrderedFields)
+			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clFields.toArray())
 		],
 		[
 			"cl_ordered_statics",
-			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clOrderedStatics)
+			sList("\n\t", function(cf) return sTclassField(tabs + "\t", cf), c.clStatics.toArray())
 		]
 	]);
 
@@ -513,9 +512,8 @@ class Printer {
 	]);
 
 	public static function sTenum(tabs:String, en:TEnum):String {
-		var names = [for (name in en.eConstrs.keys()) name];
-		names.sort(core.ds.Key.compareStrings);
-		names.reverse();
+		var constrs = en.eConstrs.byName.valueArray();
+		constrs.reverse();
 		return record(tabs, [
 			["e_path", Globals.sTypePath(en.ePath)],
 			["e_module", Globals.sTypePath(en.eModule.mPath)],
@@ -529,9 +527,9 @@ class Printer {
 			["e_extern", Std.string(hasEnumFlag(en, EnExtern))],
 			[
 				"e_constrs",
-				sList("\n\t", function(ef) return sTenumField(tabs + "\t", ef), [for (n in names) en.eConstrs.get(n)])
+				sList("\n\t", function(ef) return sTenumField(tabs + "\t", ef), constrs)
 			],
-			["e_names", en.eNames.join(", ")]
+			["e_names", en.eConstrs.keyArray().join(", ")]
 		]);
 	}
 

@@ -1,4 +1,4 @@
-// The smallest iOS app's executable (make macho-check; a packager bundles it):
+// The smallest iOS app's executable (make native-check NATIVE=macho; a packager bundles it):
 // no UIKit, the program's main run by hxmc's generated main as on any other
 // target; it prints a line and returns, and the process ends.
 class IosHello {

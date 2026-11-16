@@ -446,9 +446,9 @@ class CppGenClassImplementation {
 			var cname = cppInterfaceImplName(classDef);
 			var implName = cppClassName(classDef);
 
-			function foldInterface(acc:{glued:haxe.ds.StringMap<String>, calls:Array<String>}, iface:TcppInterface) {
-				function genInterfaceFuncs(iface:TcppInterface):{glued:haxe.ds.StringMap<String>, funcs:Array<String>} {
-					function foldField(acc:{glued:haxe.ds.StringMap<String>, funcs:Array<String>}, func:TcppInterfaceFunction) {
+			function foldInterface(acc:{glued:core.ds.PMap<String>, calls:Array<String>}, iface:TcppInterface) {
+				function genInterfaceFuncs(iface:TcppInterface):{glued:core.ds.PMap<String>, funcs:Array<String>} {
+					function foldField(acc:{glued:core.ds.PMap<String>, funcs:Array<String>}, func:TcppInterfaceFunction) {
 						var castStr = cppTfunSignature(false, func.iffArgs, func.iffReturn);
 						var realName = cppMemberNameOf(func.iffField);
 
@@ -470,9 +470,7 @@ class CppGenClassImplementation {
 								var returnType = tcppToString(func.iffReturn);
 								var returnStr = if (returnType == "void") "" else "return ";
 								var cppCode = '$returnType $className::$glue($argList) { $returnStr$realName(${printArgNames(func.iffArgs)}); }\n';
-								var g = acc.glued.copy();
-								g.set(castKey, cppCode);
-								g;
+								acc.glued.add(castKey, cppCode);
 							}
 							{glued: glued, funcs: ['\t${castStr}&$implName::$glue'].concat(acc.funcs)};
 						}
@@ -496,11 +494,11 @@ class CppGenClassImplementation {
 				return {glued: g.glued, calls: [call].concat(acc.calls)};
 			}
 
-			var acc = {glued: new haxe.ds.StringMap<String>(), calls: []};
+			var acc = {glued: core.ds.PMap.empty(), calls: []};
 			for (iface in tcppClass.tclHaxeInterfaces) acc = foldInterface(acc, iface);
 
 			outputCpp(acc.calls.join("\n"));
-			outputCpp([for (k in core.ds.PMap.keys(acc.glued)) acc.glued.get(k)].join("\n"));
+			outputCpp(acc.glued.valueArray().join("\n"));
 
 			outputCpp("void *" + className + "::_hx_getInterface(int inHash) {\n");
 			outputCpp("\tswitch(inHash) {\n");

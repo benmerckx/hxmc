@@ -5,7 +5,7 @@ import hxmc.objc.ObjCClass;
 import hxmc.objc.Strings;
 import hxmc.unsafe.*;
 
-// A UIKit app (make uikit-check, in a bundle: the iOS simulator, iPhone and
+// A UIKit app (make native-check NATIVE=uikit, in a bundle: the iOS simulator, iPhone and
 // iPad, and Mac Catalyst): the program defines hxmc_ui_main (DataGen.UI_MAIN),
 // which runs UIApplicationMain with a Haxe delegate; the delegate makes the
 // window, then runs the program's body (hx_main_body), which checks the

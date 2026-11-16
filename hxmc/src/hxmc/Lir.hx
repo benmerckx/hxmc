@@ -121,20 +121,17 @@ class LFunc {
 	// the target's jump). The instructions that emit nothing (isNop: a move
 	// of a register to itself, once registers are allocated) go first, and
 	// the blocks no branch reaches any more after (the entry is reached).
-	// (HXMC_DUP_DISPATCH=0: off) a small block ending with a jump table (a
+	// A small block ending with a jump table (a
 	// switch's dispatch: an interpreter's loop) copied into each block that
 	// jumps to it, after the allocation: each copy's own indirect jump, no
 	// jump to it first (isJump: an unconditional jump, isTable: a jump
 	// table's jump; the copies of a table's address share its table)
-	public static var dupDispatch = true; // (the build's, Options.apply)
-
-	public static var minTable = 64;
+	static inline var MIN_TABLE = 64;
 
 	public function duplicateDispatch(isJump:LIns->Bool, isTable:LIns->Bool, maxIns:Int) {
-		if (!dupDispatch) return;
 		for (d in blocks) {
 			var n = d.ins.length;
-			if (n == 0 || n > maxIns || !isTable(d.ins[n - 1]) || d.ins[n - 1].table.length < minTable) continue;
+			if (n == 0 || n > maxIns || !isTable(d.ins[n - 1]) || d.ins[n - 1].table.length < MIN_TABLE) continue;
 			for (b in blocks) {
 				if (b == d || b.ins.length == 0) continue;
 				var j = b.ins[b.ins.length - 1];
@@ -168,7 +165,7 @@ class LFunc {
 		prune();
 	}
 
-	// (HXMC_DUP_TESTS=0: off) loop rotation: a loop's head that only tests
+	// Loop rotation: a loop's head that only tests
 	// and branches (at most maxTests comparisons, isTest, then a conditional
 	// branch and a jump) copied into each block outside the slow paths that
 	// jumps back to it: the back edge tests and branches into the loop
@@ -176,10 +173,7 @@ class LFunc {
 	// condition inverted, invert, so that the branch goes on into the loop:
 	// to a block laid out between). Forward jumps to such blocks (joins that
 	// test) stay: in tshx they saved 0.2% more instructions for 0.9% more code.
-	public static var dupTests = true; // (the build's, Options.apply)
-
 	public function duplicateTests(isJump:LIns->Bool, isCond:LIns->Bool, isTest:LIns->Bool, invert:LIns->Void, maxTests:Int) {
-		if (!dupTests) return;
 		var n = blocks.length;
 		for (k in 0...n)
 			blocks[k].id = k;
@@ -212,7 +206,7 @@ class LFunc {
 		if (any) prune();
 	}
 
-	// (HXMC_DUP_RETURNS=0: off) a short block that returns (a function with
+	// A short block that returns (a function with
 	// a frame returns through one block: the frame's pop, the return; at most
 	// maxIns instructions, no branch but the return) copied into each block
 	// outside the slow paths that jumps to it (but the one laid out just
@@ -220,10 +214,7 @@ class LFunc {
 	// each return outside the slow paths (x64.Emit): a return path without a
 	// jump (tshx: 4.5% fewer taken branches, 2.6% fewer cycles, 1.4% more
 	// code; each alone gains next to nothing, the other's jump staying)
-	public static var dupReturns = true; // (the build's, Options.apply)
-
 	public function duplicateReturns(isJump:LIns->Bool, isRet:LIns->Bool, maxIns:Int) {
-		if (!dupReturns) return;
 		var any = false;
 		for (bi in 0...blocks.length) {
 			var b = blocks[bi];

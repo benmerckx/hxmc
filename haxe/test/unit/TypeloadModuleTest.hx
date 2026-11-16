@@ -121,7 +121,7 @@ class TypeloadModuleTest {
 
 		var overloadClass = firstClass(fixture("Overloads"));
 		// Extern overloads are typed, then dropped by the extern-field filter before generation.
-		if (overloadClass.clOrderedStatics.length != 0) throw "Extern overload fields were not removed";
+		if (overloadClass.clStatics.length != 0) throw "Extern overload fields were not removed";
 
 		var keyValueLoopClass = firstClass(fixture("KeyValueLoop"));
 		if (keyValueLoopClass.clStatics.get("visit").cfExpr == null) throw "Key/value loop was not typed";

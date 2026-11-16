@@ -1,5 +1,5 @@
 // What the header check compiles hxmc's own typed bindings for (make
-// header-check): a program reaching the std's system calls, its time,
+// native-check NATIVE=header): a program reaching the std's system calls, its time,
 // sleep, files and sockets.
 class HeaderStd {
 	static function main() {

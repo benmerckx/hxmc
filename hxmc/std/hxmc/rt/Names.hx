@@ -31,6 +31,8 @@ class Names {
 
 	// Dyn.fid's cache of (hash, fid + 1) entries
 	@:hxmc.bss(32768, "rt_fid_cache") public static var fidCache:Ptr;
+	// Dyn.accessorFid's cache of (key + 1, fid + 2) entries
+	@:hxmc.bss(32768) public static var accessorCache:Ptr;
 	// spin locks of the runtime's Haxe code (int32): 0 PosixNet's resolver, 3 and 4 WinNet's, 8 this table
 	@:hxmc.bss(64, "rt_spin") public static var spin:Ptr;
 	// the added names: chunk pointers (CHUNKS), each CHUNK C strings

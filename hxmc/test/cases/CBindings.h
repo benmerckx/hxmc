@@ -1,5 +1,5 @@
 // The C library CBindings.hx binds: what the header check compiles its
-// declarations against (make header-check), and what CBindings.c defines.
+// declarations against (make native-check NATIVE=header), and what CBindings.c defines.
 #include <stddef.h>
 #include <stdint.h>
 

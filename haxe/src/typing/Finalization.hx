@@ -197,10 +197,7 @@ class Finalization {
 			var init = TClassTools.getClInit(c);
 			if (init != null) walkExpr(p, sortExpr(c, null, init));
 			// port: upstream PMap.iter is key-ordered, not insertion/hash order.
-			var names = [for (name in c.clStatics.keys()) name];
-			names.sort(core.ds.Key.compareStrings);
-			for (name in names) {
-				var f = c.clStatics.get(name);
+			for (f in c.clStatics.byName) {
 				if (f.cfExpr != null) switch f.cfExpr.eexpr {
 					case TFunction(_):
 					case _:

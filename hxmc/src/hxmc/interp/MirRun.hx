@@ -368,7 +368,7 @@ class MirRun {
 					if (ci == null || ci.tindex < 0 || hxmc.macro.BundleFacts.runtimeClass(c)) continue;
 					var sym = e.typeNames[ci.tindex];
 					if (!bySym.exists(sym) || shared(sym)) continue;
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						var g = l.staticVars.get(cf);
 						if (g != null) own.set(e.globalNames[g], true);
 					}

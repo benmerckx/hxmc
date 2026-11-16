@@ -352,7 +352,7 @@ class CoroToTexpr {
 	// These fields only exist when BaseContinuation is compiled with coro.stack-traces, which may
 	// not be the case if it was loaded from a cache built with different defines.
 	public static function findStackTraceField(cont:ContinuationApi, name:String, p:Pos):TClassField {
-		var cf = PMap.findOpt(name, cont.baseContinuationClass.clFields);
+		var cf = cont.baseContinuationClass.clFields.get(name);
 		if (cf == null)
 			core.Error.raiseTypingError('haxe.coro.BaseContinuation has no field $name, was it compiled without -D coro.stack-traces?', p);
 		return cf;
@@ -404,7 +404,7 @@ class CoroToTexpr {
 		var unwrap:TExpr->TExpr;
 		switch (com.basic.texception : T) {
 			case TInst(c, _):
-				var cf = PMap.find("unwrap", c.clFields);
+				var cf = c.clFields.find("unwrap");
 				unwrap = function(e) return b.call(b.instanceField(e, c, vector(), cf, cf.cfType), vector(), com.basic.tany);
 				getCaught = function(e) return Builder.resolveAndMakeStaticCall(c, "caught", vector(e), e.epos);
 			case _:

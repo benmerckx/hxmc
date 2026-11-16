@@ -142,16 +142,14 @@ class Opt {
 			}
 		}
 		if (nullsDropped) dce();
-		if (licmOn) {
-			var moved = false;
-			for (_ in 0...3)
-				if (licm()) moved = true else break;
-			// (loads moved out of a loop's arms together, before it: the same
-			// value, once)
-			if (moved) redundancy(f.cfg());
-		}
+		var moved = false;
+		for (_ in 0...3)
+			if (licm()) moved = true else break;
+		// (loads moved out of a loop's arms together, before it: the same
+		// value, once)
+		if (moved) redundancy(f.cfg());
 		// (a branch LICM made invariant: the loop copied for each way)
-		if (unswitchOn && unswitch()) {
+		if (unswitch()) {
 			simplifyCfg();
 			dce();
 		}
@@ -183,10 +181,6 @@ class Opt {
 		rewrite();
 		dce();
 	}
-
-	static var licmOn = true; // (the build's, Options.apply)
-	public static var unswitchOn = true; // (the build's, Options.apply)
-	public static var slotsOn = true; // (the build's, Options.apply)
 
 	// ---- unswitching
 
@@ -2950,7 +2944,7 @@ class Opt {
 		}
 		if (any) o.rewrite();
 		// (a rooted local's slot read where paths meet: its value)
-		if (slotsOn) o.promoteSlots();
+		o.promoteSlots();
 		o.negatedSubs();
 		o.zeroExtensions();
 		o.indexed();

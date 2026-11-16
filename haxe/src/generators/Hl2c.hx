@@ -2615,9 +2615,7 @@ class Hl2c {
 			}, []);
 			line('"libs" : [${libs.join(",")}],');
 			var defines = new StringBuf();
-			var keys = [for (k in com.defines.values.keys()) k];
-			haxe.ds.ArraySort.sort(keys, strCompare);
-			for (key in keys) defines.add('\n\t\t"${ocamlEscaped(key)}" : "${ocamlEscaped(com.defines.values.get(key))}",');
+			for (key => value in com.defines.values) defines.add('\n\t\t"${ocamlEscaped(key)}" : "${ocamlEscaped(value)}",');
 			var defines = defines.toString();
 			var defines = defines.substr(0, defines.length - 1);
 			line('"defines" : {$defines\n\t},');

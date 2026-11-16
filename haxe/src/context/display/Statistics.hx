@@ -88,7 +88,7 @@ class Statistics {
 					if (hasClassFlag(c1, CInterface)) addRelation(c.clNamePos, {r: Extended, p: c1.clNamePos})
 					else {
 						addRelation(c.clNamePos, {r: Implemented, p: c1.clNamePos});
-						for (cf in c.clOrderedFields) {
+						for (cf in c.clFields) {
 							var cf_ = c1.clFields.get(cf.cfName);
 							if (cf_ != null) addRelation(cf.cfNamePos, {r: Implemented, p: cf_.cfNamePos});
 						}
@@ -250,15 +250,15 @@ class Statistics {
 						}
 					}
 					if (c.clConstructor != null) field(c.clConstructor);
-					for (cf in c.clOrderedFields) {
+					for (cf in c.clFields) {
 						if (hasClassFieldFlag(cf, CfOverride)) checkOverride(c, cf);
 						field(cf);
 					}
-					for (cf in c.clOrderedStatics) field(cf);
+					for (cf in c.clStatics) field(cf);
 				case TEnumDecl(en):
 					checkModule(en.eModule);
 					declare(SKEnum(en), en.eNamePos);
-					core.ds.PMap.iter(function(_, ef:TEnumField) declare(SKEnumField(ef), ef.efNamePos), en.eConstrs);
+					for (ef in en.eConstrs.byName) declare(SKEnumField(ef), ef.efNamePos);
 				case TTypeDecl(td):
 					checkModule(td.tModule);
 					declare(SKTypedef(td), td.tNamePos);

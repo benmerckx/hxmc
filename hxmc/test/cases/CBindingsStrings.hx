@@ -4,7 +4,7 @@ import hxmc.unsafe.*;
 // C strings at typed bindings (docs/interop.md, "Typed bindings"): a String
 // argument is a NUL-terminated UTF-8 copy for the call (NULL for null), a
 // String result C's string copied (null for NULL), borrowed or freed by the
-// function @:hxmc.free names; make header-check checks them as char *.
+// function @:hxmc.free names; make native-check NATIVE=header checks them as char *.
 @:hxmc.c @:hxmc.fast @:hxmc.safe @:hxmc.header("CBindingsStrings.h") extern class S {
 	static function cs_len(s:String):Int;
 	static function cs_greet():String;

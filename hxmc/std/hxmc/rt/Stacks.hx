@@ -18,7 +18,7 @@ import hxmc.unsafe.*;
 // C code (the C library's start, a thread's entry, a callback's caller) and
 // never follows a frame pointer it cannot trust; with an empty table (the
 // program names no stacks, -D hxmc.no-stacks) or no frame records
-// (-D hxmc.no-frame-pointers, WebAssembly) the stacks are empty.
+// (-D hxmc.frame-pointers=0, WebAssembly) the stacks are empty.
 @:hxmc.native @:keep @:allow(hxmc.rt) @:access(hxmc.rt.Interp)
 class Stacks {
 	// the frames a stack keeps at most

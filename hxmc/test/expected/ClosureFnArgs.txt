@@ -1,0 +1,10 @@
+exit 0
+ClosureFnArgs.hx:38: direct, 6, true
+ClosureFnArgs.hx:38: through a static's closure, 5, true
+ClosureFnArgs.hx:38: through a local closure, 1, true
+ClosureFnArgs.hx:38: a Float, 1.5, true
+ClosureFnArgs.hx:38: a Bool, true, true
+ClosureFnArgs.hx:38: Dynamic, [1,2], true
+ClosureFnArgs.hx:38: through a structure's field, 103, true
+ClosureFnArgs.hx:40: true, null, false
+ClosureFnArgs.hx:45: 7, 8

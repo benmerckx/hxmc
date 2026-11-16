@@ -20,15 +20,6 @@ class Fold {
 	// stores have no write barrier (Opt.freshTargets)
 	static inline var MAX_BYTES = 4096;
 
-	public static var on = true; // (the build's, Options.apply)
-	// (HXMC_FOLD_WHY=1: what stops each allocation's chain, counted: Driver's stats)
-	public static var whyOn = false;
-
-	public var why = new Map<String, Int>();
-
-	function count(k:String)
-		why.set(k, (why.exists(k) ? why.get(k) : 0) + 1);
-
 	var f:MFunc;
 	var vals:Array<MIns>;
 
@@ -46,7 +37,6 @@ class Fold {
 			var b = f.blocks[i];
 			var s = site(b);
 			if (s != null) chain(s);
-			else if (whyOn && dynHead(b) != null) count("run-time size first: " + whyNot(dynHead(b)));
 			i++;
 		}
 		if (folded > 0) f.blocks = [for (b in f.blocks) if (!removed.exists(b.id)) b];
@@ -59,75 +49,9 @@ class Fold {
 	function chain(s:Site) {
 		while (true) {
 			var next = following(s);
-			if (next == null || s.total + next.bytes > MAX_BYTES) {
-				if (whyOn) count("constant first: " + (next != null ? "too big" : whyNot(s.join)));
-				return;
-			}
+			if (next == null || s.total + next.bytes > MAX_BYTES) return;
 			fold(s, next);
 		}
-	}
-
-	// (diagnostics) the join of an allocation of a size known at run time headed by b, or null
-	function dynHead(b:MBlock):Null<MBlock> {
-		var br = b.term();
-		if (br == null || br.op != Br || b.succs.length != 2) return null;
-		var cmp = vals[br.a];
-		if (cmp.op != Cmp || cmp.imm != (CGe : Int) || vals[cmp.b].op == Const) return null;
-		var sub = vals[cmp.a];
-		if (sub.op != Sub || vals[sub.b].op != TlsLoad || vals[sub.b].sym != "rt_young_ptr") return null;
-		var fast = br.targets[0];
-		return fast.succs.length == 1 ? fast.succs[0] : null;
-	}
-
-	// (diagnostics) what stops the next allocation after the join from folding:
-	// the first thing on the way
-	function whyNot(join:MBlock):String {
-		var b = join;
-		var seen = 0;
-		while (seen++ < 64) {
-			for (i in b.ins) {
-				if (i.dead || i.op == Phi) continue;
-				switch i.op {
-					case TlsLoad if (i.sym == "rt_young_ptr"):
-						return dynHead(b) != null ? "a run-time size next" : site(b) != null ? "a constant next (?)" : "the pointer read";
-					case Call:
-						return i.keepsFrame ? "a call that cannot collect (" + i.sym + ")" : "a call";
-					case Ret | Unreachable:
-						return "the end";
-					case _:
-				}
-			}
-			var t = b.term();
-			if (t == null) return "the end";
-			if (t.op != Jmp) return allocAhead(b) ? "an allocation after a branch" : "a branch, no allocation after";
-			b = b.succs[0];
-			if (b.preds.length != 1) return allocAhead(b) ? "an allocation after a merge" : "a merge, no allocation after";
-			if (b.cold) return "a cold block";
-		}
-		return "too far";
-	}
-
-	// (diagnostics) whether an allocation comes from b on some way before a call
-	function allocAhead(b:MBlock):Bool {
-		var seen = new Map<Int, Bool>(), todo = [b], n = 0;
-		while (todo.length > 0 && n++ < 64) {
-			var x = todo.pop();
-			if (seen.exists(x.id) || x.cold) continue;
-			seen.set(x.id, true);
-			var stop = false;
-			for (i in x.ins) {
-				if (i.dead) continue;
-				if (i.op == TlsLoad && i.sym == "rt_young_ptr") return true;
-				if (i.op == Call || i.op == Ret || i.op == Unreachable) {
-					stop = true;
-					break;
-				}
-			}
-			if (!stop)
-				for (y in x.succs)
-					todo.push(y);
-		}
-		return false;
 	}
 
 	// the allocation that follows s's on a straight line (each block the only

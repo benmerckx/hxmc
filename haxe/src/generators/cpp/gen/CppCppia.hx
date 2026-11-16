@@ -547,8 +547,8 @@ class CppCppia {
 				case _: false;
 			}
 		}
-		var orderedStatics = classDef.clOrderedStatics.filter(function(f) return nonDodgyFunction(false, f));
-		var orderedFields = classDef.clOrderedFields.filter(function(f) return nonDodgyFunction(true, f));
+		var orderedStatics = classDef.clStatics.toArray().filter(function(f) return nonDodgyFunction(false, f));
+		var orderedFields = classDef.clFields.toArray().filter(function(f) return nonDodgyFunction(true, f));
 		script.write(Std.string(orderedFields.length + orderedStatics.length + (if (classDef.clConstructor != null) 1 else 0)
 			+ (if (core.TOther.TClassTools.getClInit(classDef) != null) 1 else 0))
 			+ "\n");
@@ -622,7 +622,7 @@ class CppCppia {
 
 	public static function generateScriptEnum(script:ScriptWriter, enumDef:TEnum, meta:Null<TExpr>):Void {
 		script.incClasses();
-		var sortedItems = listSort(function(f1:TEnumField, f2:TEnumField) return f1.efIndex - f2.efIndex, CppContext.pmapValues(enumDef.eConstrs));
+		var sortedItems = listSort(function(f1:TEnumField, f2:TEnumField) return f1.efIndex - f2.efIndex, CppContext.pmapValues(enumDef.eConstrs.byName));
 		script.writeList(script.op(IaEnum) + script.enumText(enumDef), sortedItems.length);
 
 		for (constructor in sortedItems) {

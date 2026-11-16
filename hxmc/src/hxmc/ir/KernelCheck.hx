@@ -46,7 +46,7 @@ using core.TFunctions;
 //     (Lower.reflectStatics); no span of proofs, no static or struct field
 //     of one (Lower, CInterop).
 class KernelCheck {
-	var l:LowerQueries;
+	var l:Lower;
 	var fi:FuncInfo;
 	var errors:Array<String> = [];
 	var seen = new Map<String, Bool>();
@@ -93,7 +93,7 @@ class KernelCheck {
 	// the seconds spent checking (HXMC_STATS)
 	public static var seconds = 0.0;
 
-	public static function check(l:LowerQueries, fi:FuncInfo, tf:TFunc) {
+	public static function check(l:Lower, fi:FuncInfo, tf:TFunc) {
 		var t0 = haxe.Timer.stamp();
 		var c = new KernelCheck(l, fi);
 		c.ret = tf.tfType;
@@ -392,7 +392,7 @@ class KernelCheck {
 		return switch t.follow() {
 			case TInst(c, _) if (CInterop.isStruct(c)):
 				var all = true;
-				for (cf in c.clOrderedFields)
+				for (cf in c.clFields)
 					if (cf.cfKind.match(Var(_)) && !plain(cf.cfType, depth + 1)) all = false;
 				all;
 			case _: false;

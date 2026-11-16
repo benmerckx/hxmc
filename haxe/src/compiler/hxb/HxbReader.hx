@@ -1717,7 +1717,7 @@ class HxbReader {
 			readClassFieldAndOverloadsData(cf);
 			return true;
 		});
-		function loop(refKind:ClassFieldRefKind, num:Int, cfl:Array<TClassField>):Void {
+		function loop(refKind:ClassFieldRefKind, num:Int, cfl:core.ds.SeqMap<TClassField>):Void {
 			for (cf in cfl) {
 				if (!(num > 0)) throw "assert false";
 				readClassFieldAndOverloadsData(cf);
@@ -1725,7 +1725,7 @@ class HxbReader {
 			}
 			if (!(num == 0)) throw "assert false";
 		}
-		loop(CfrMember, uleb(), c.clOrderedFields);
+		loop(CfrMember, uleb(), c.clFields);
 		// port: diverges from upstream: an abstract's @:op(a()) overloads are the impl class's statics of
 		// ... the other operator functions, the same fields (typeloadFields.ml: `cf'.cf_overloads <- cf ::
 		// ... cf'.cf_overloads`). The writer refers to them by name, as those statics, and writes their
@@ -1738,7 +1738,7 @@ class HxbReader {
 		// ... CallOpOverloads, ModuleCacheCheck's callop, Conformance's callop-overloads, hxblib-callop).
 		switch c.clKind {
 			case KAbstractImpl(_):
-				for (cf in c.clOrderedStatics) {
+				for (cf in c.clStatics) {
 					var overloads = cf.cfOverloads;
 					for (i in 0...overloads.length) {
 						var cf2 = overloads[i];
@@ -1750,14 +1750,14 @@ class HxbReader {
 				}
 			case _:
 		}
-		loop(CfrStatic, uleb(), c.clOrderedStatics);
+		loop(CfrStatic, uleb(), c.clStatics);
 	}
 
 	public function readEnumFields(e:TEnum):Void {
 		typeTypeParameters = e.eParams.copy();
 		readList(function() {
 			var name = readString();
-			var ef = findMap(e.eConstrs, name);
+			var ef = e.eConstrs.find(name);
 			ef.efParams = readFieldTypeParameters();
 			ef.efType = readTypeInstance();
 			ef.efDoc = readOption(readDocumentation);
@@ -1938,7 +1938,9 @@ class HxbReader {
 	public function readEnum(e:TEnum):Void {
 		readCommonModuleType(TEnumDecl(e));
 		e.eFlags = uleb();
-		e.eNames = readList(readString);
+		// port: e_names: the constructors (read with the forward declarations) in that order
+		var names = readList(readString), constrs = e.eConstrs;
+		e.eConstrs = core.ds.SeqMap.ofArray(names, [for (n in names) constrs.find(n)]);
 	}
 
 	public function readTypedef(td:TDef):Void {
@@ -1974,7 +1976,7 @@ class HxbReader {
 				var name = readString();
 				AtomicLazy.fromFun(function() {
 					var en = en.force();
-					return findMap(en.eConstrs, name);
+					return en.eConstrs.find(name);
 				});
 			}
 		enumFields = a;
@@ -2032,11 +2034,11 @@ class HxbReader {
 						case CfrStatic:
 							try {
 								c.clBuild();
-								try findMap(c.clStatics, name) catch (e:NotFound) {
+								try c.clStatics.find(name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
 									if (missingFieldHook == null || !missingFieldHook(c)) throw e;
-									findMap(c.clStatics, name);
+									c.clStatics.find(name);
 								}
 							} catch (_:NotFound) {
 								if (fieldFailureHook != null) fieldFailureHook(c, name, currentModule);
@@ -2045,11 +2047,11 @@ class HxbReader {
 						case CfrMember:
 							try {
 								c.clBuild();
-								try findMap(c.clFields, name) catch (e:NotFound) {
+								try c.clFields.find(name) catch (e:NotFound) {
 									// port: hxmc's module cache: a class typed from its source in this build, its
 									// ... fields made by the passes still pending (an interface's accessors)
 									if (missingFieldHook == null || !missingFieldHook(c)) throw e;
-									findMap(c.clFields, name);
+									c.clFields.find(name);
 								}
 							} catch (_:NotFound) {
 								if (fieldFailureHook != null) fieldFailureHook(c, name, currentModule);
@@ -2167,14 +2169,15 @@ class HxbReader {
 
 	public function readAnon(an:TAnon):Void {
 		function readFields():Void {
-			var acc = new haxe.ds.StringMap<TClassField>();
+			var names = [], cfs = [];
 			var i = uleb();
 			while (i != 0) {
 				var cf = readAnonFieldRef();
-				acc.set(cf.cfName, cf);
+				names.push(cf.cfName);
+				cfs.push(cf);
 				i--;
 			}
-			an.aFields = acc;
+			an.aFields = core.ds.PMap.ofArrays(names, cfs);
 		}
 
 		switch readByte() {
@@ -2304,26 +2307,19 @@ class HxbReader {
 					c.clInit = readOption(readField);
 					// port: upstream conses each field read onto the accumulator, so
 					// the list holds them in reverse reading order.
-					function readFields(i:Int):{l:Array<TClassField>, pm:haxe.ds.StringMap<TClassField>} {
-						var accL = [];
-						var accPm = new haxe.ds.StringMap<TClassField>();
+					function readFields(i:Int):core.ds.SeqMap<TClassField> {
+						var acc = [];
 						while (i != 0) {
-							var cf = readClassFieldForward();
-							accL.push(cf);
-							accPm.set(cf.cfName, cf);
+							acc.push(readClassFieldForward());
 							i--;
 						}
-						accL.reverse();
-						return {l: accL, pm: accPm};
+						acc.reverse();
+						return TFunctions.classFieldsOf(acc);
 					}
 					var numFields = uleb();
 					var numStatics = uleb();
-					var r = readFields(numFields);
-					c.clOrderedFields = r.l;
-					c.clFields = r.pm;
-					var r = readFields(numStatics);
-					c.clOrderedStatics = r.l;
-					c.clStatics = r.pm;
+					c.clFields = readFields(numFields);
+					c.clStatics = readFields(numStatics);
 
 					TClassDecl(c);
 				case 1:
@@ -2345,14 +2341,15 @@ class HxbReader {
 						ef.efMeta = vector();
 						return ef;
 					}
-					var acc = new haxe.ds.StringMap<TEnumField>();
+					var names = [], efs = [];
 					var i = uleb();
 					while (i != 0) {
 						var ef = readField();
-						acc.set(ef.efName, ef);
+						names.push(ef.efName);
+						efs.push(ef);
 						i--;
 					}
-					en.eConstrs = acc;
+					en.eConstrs = core.ds.SeqMap.ofArray(names, efs);
 					TEnumDecl(en);
 				case 2:
 					var td = mkTypedef(currentModule, path, pos, namePos, mkMono());
@@ -2379,7 +2376,7 @@ class HxbReader {
 		anons = new Vector<TAnon>(l);
 		for (i in 0...l)
 			anons[i] = ({
-				aFields:new haxe.ds.StringMap(), aStatus:Closed
+				aFields:core.ds.PMap.empty(), aStatus:Closed
 			} : TAnon);
 		var l = uleb();
 		tmonos = new Vector<T>(l);

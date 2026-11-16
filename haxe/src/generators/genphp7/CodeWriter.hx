@@ -495,7 +495,7 @@ class CodeWriter {
 			return {
 				eexpr: TCall({
 					eexpr: TField({eexpr: TTypeExpr(TClassDecl(ctx.pgcBoot)), etype: expr.etype, epos: expr.epos},
-						FStatic(ctx.pgcBoot, core.ds.PMap.find("deref", ctx.pgcBoot.clStatics))),
+						FStatic(ctx.pgcBoot, ctx.pgcBoot.clStatics.find("deref"))),
 					etype: expr.etype,
 					epos: expr.epos
 				}, vector(expr)),

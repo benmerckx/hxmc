@@ -64,7 +64,7 @@ class CppReferences {
 		function allVirtualFunctions(clazz:TClass):Array<{field:TClassField, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T}> {
 			function currentVirtualFunctionsRev(clazz:TClass, baseFunctions:Array<{field:TClassField, args:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, ret:T}>) {
 				var result = baseFunctions;
-				for (elem in clazz.clOrderedFields) {
+				for (elem in clazz.clFields) {
 					result = switch [follow(elem.cfType), elem.cfKind] {
 						case [_, Method(MethDynamic)]: result;
 						case [TFun(sig), Method(_)]:
@@ -252,7 +252,7 @@ class CppReferences {
 			}
 		}
 		function visitClass(classDef:TClass):Void {
-			var fields = classDef.clOrderedFields.concat(classDef.clOrderedStatics);
+			var fields = classDef.clFields.toArray().concat(classDef.clStatics.toArray());
 			var fieldsAndConstructor = fields.concat(switch classDef.clConstructor {
 				case null: [];
 				case expr: [expr];
@@ -271,8 +271,7 @@ class CppReferences {
 		}
 		function visitEnum(enumDef:TEnum):Void {
 			addType(enumDef.ePath);
-			for (name in core.ds.PMap.keys(enumDef.eConstrs)) {
-				var constructor = enumDef.eConstrs.get(name);
+			for (constructor in enumDef.eConstrs.byName) {
 				switch constructor.efType {
 					case TFun(sig): for (a in sig.args) visitType(a.type);
 					case _:

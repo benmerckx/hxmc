@@ -18,7 +18,8 @@ class Abi {
 	// payload - 8; 16 to 31 are arrays, the other types records
 	public static inline var HDR_TINDEX = -8;
 	public static inline var T_FIRST = 32;
-	public static inline var T_BOXINT = 2; // boxed Int, Float, Bool (hxmc.rt.Types; MemLower.unboxTo)
+	// the boxes of Int and Float (hxmc.rt.Types): their number at 0
+	public static inline var T_BOXINT = 2;
 	public static inline var T_BOXFLOAT = 3;
 	public static inline var T_BOXBOOL = 4;
 	public static inline var T_ARRAY = 5;
@@ -101,7 +102,7 @@ class Abi {
 	public var exports:Array<String> = [];
 	// every function keeps a frame record, linked through the frame pointer
 	// (rbp; x29): arm64 always (Apple's ABI requires it, and its prologue is
-	// the record), x86-64 unless -D hxmc.no-frame-pointers (Options.framePointers)
+	// the record), x86-64 unless -D hxmc.frame-pointers=0 (Options.framePointers)
 	public var framePointers = false;
 
 	function new(name, arm, os, size, prev, sp, align, setjmp, prefix) {

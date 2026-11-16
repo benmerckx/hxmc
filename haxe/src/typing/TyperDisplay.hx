@@ -635,8 +635,8 @@ class TyperDisplay {
 					var r = ForLoop.IterationKind.trySyncIterator(ctx, "keyValueIterator", e, true);
 					switch follow(r.t) {
 						case TAnon(a):
-							var key = core.ds.PMap.find("key", a.aFields);
-							var value = core.ds.PMap.find("value", a.aFields);
+							var key = a.aFields.find("key");
+							var value = a.aFields.find("value");
 							{key: key.cfType, value: value.cfType};
 						case _:
 							null;
@@ -811,13 +811,11 @@ class TyperDisplay {
 		} else return f();
 	}
 
-	public static function handleStructureDisplay(ctx:TyperContext, e:Expr, fields:haxe.ds.StringMap<TClassField>,
+	public static function handleStructureDisplay(ctx:TyperContext, e:Expr, fieldMap:TypeMap<TClassField>,
 			origin:ClassFieldOrigin):TExpr {
 		var p = e.pos;
-		var fields = core.ds.PMap.foldi(function(_, cf:TClassField, acc:Array<TClassField>) {
-			acc.unshift(cf);
-			return acc;
-		}, fields, []);
+		// port: PMap.foldi consing the fields: in reverse key order (the sort below is stable)
+		var fields = fieldMap.foldCons(cf -> cf);
 		haxe.ds.ArraySort.sort(fields, (cf1, cf2) -> -Reflect.compare(cf1.cfPos.pmin, cf2.cfPos.pmin));
 		function makeFieldItem(cf:TClassField):CompletionItemData {
 			return CompletionItem.makeCiClassField(CompletionClassField.make(cf, CFSMember, origin, true),

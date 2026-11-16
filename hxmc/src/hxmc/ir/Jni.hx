@@ -286,7 +286,7 @@ class Jni {
 		var r = [];
 		var seen = new Map<String, Bool>();
 		for (i in is)
-			for (cf in i.clOrderedFields) {
+			for (cf in i.clFields) {
 				if (!cf.cfKind.match(Method(_))) continue;
 				var s = switch TFunctions.follow(cf.cfType) {
 					case TFun(s): s;

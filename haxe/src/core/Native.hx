@@ -50,25 +50,20 @@ class Native {
 						changed = true;
 					} catch (_:NotFound) {}
 				}
-				inline function fields(cfs:Array<TClassField>, old:haxe.ds.StringMap<TClassField>):haxe.ds.StringMap<TClassField> {
+				// port: renamed fields are mapped under their new names, from the list
+				inline function fields(old:core.ds.SeqMap<TClassField>):core.ds.SeqMap<TClassField> {
 					changed = false;
-					for (cf in cfs) field(cf);
-					if (!changed) return old;
-					var result = new haxe.ds.StringMap<TClassField>();
-					for (cf in cfs) result.set(cf.cfName, cf);
-					return result;
+					for (cf in old) field(cf);
+					return changed ? core.TFunctions.classFieldsOf(old.toArray()) : old;
 				}
-				c.clFields = fields(c.clOrderedFields, c.clFields);
-				c.clStatics = fields(c.clOrderedStatics, c.clStatics);
+				c.clFields = fields(c.clFields);
+				c.clStatics = fields(c.clStatics);
 				var r = real(c.clMeta, Globals.sTypePath(c.clPath));
 				c.clMeta = core.ds.VectorTools.cons(r.meta, c.clMeta);
 				c.clPath = Ast.parsePath(r.name);
 			case TEnumDecl(e):
 				var changed = false;
-				var keys = [for (k in e.eConstrs.keys()) k];
-				keys.sort(core.ds.Key.compareStrings);
-				for (k in keys) {
-					var ef = e.eConstrs.get(k);
+				for (ef in e.eConstrs.byName) {
 					try {
 						var r = real(ef.efMeta, ef.efName);
 						ef.efName = r.name;
@@ -77,15 +72,10 @@ class Native {
 					} catch (_:NotFound) {}
 				}
 				if (changed) {
-					var names = [];
-					var result = new haxe.ds.StringMap<TEnumField>();
-					for (k in keys) {
-						var ef = e.eConstrs.get(k);
-						names.unshift(ef.efName);
-						result.set(ef.efName, ef);
-					}
-					e.eConstrs = result;
-					e.eNames = names;
+					// port: upstream rebuilds the map under the new names, consing them in the old
+					// key order: e_names in reverse key order (not the declaration's any more).
+					var efs = e.eConstrs.byName.foldCons(ef -> ef);
+					e.eConstrs = core.ds.SeqMap.ofArray([for (ef in efs) ef.efName], efs);
 				}
 				var r = real(e.eMeta, Globals.sTypePath(e.ePath));
 				e.eMeta = core.ds.VectorTools.cons(r.meta, e.eMeta);

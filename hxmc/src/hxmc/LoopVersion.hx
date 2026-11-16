@@ -44,17 +44,6 @@ class LoopVersion {
 	// at most this many instructions in a loop copied for its strings (tryStrings)
 	static inline var MAX_STR_SIZE = 150;
 
-	// (Options.loopVersion, loopVersionWhy: set by Driver)
-	public static var on = true;
-	// (-D hxmc.loop-version=why: why each loop is left alone, by the number of its test in try1)
-	public static var why = false;
-	var curHead = -1;
-
-	function no(k:Int):Bool {
-		if (why) Sys.println('hxmc: LoopVersion: ${f.name} b${curHead}: no (${k})');
-		return false;
-	}
-
 	var f:MFunc;
 	var done = new Map<Int, Bool>(); // headers (of originals and copies) already looked at
 
@@ -98,7 +87,6 @@ class LoopVersion {
 		if (cfg.irreducible) return false;
 		var order = cfg.rpo;
 		var bodies = cfg.loopBodies();
-		if (why) Sys.println('hxmc: LoopVersion: ${f.name} loops: ' + [for (k in 0...order.length) if (bodies[k] != null) "b" + order[k].id + "(" + bodies[k].length + ")"].join(" "));
 		var k = order.length;
 		while (k-- > 1) { // inner loops first
 			var h = order[k];
@@ -127,10 +115,9 @@ class LoopVersion {
 	}
 
 	function try1(h:MBlock, members:Array<MBlock>, cfg:Cfg<MBlock>):Bool {
-		curHead = h.id;
 		var inL = new Map<Int, Bool>();
 		for (b in members) {
-			if (b.handler) return no(0);
+			if (b.handler) return false;
 			inL.set(b.id, true);
 		}
 		function inLoop(b:Null<MBlock>):Bool
@@ -139,23 +126,23 @@ class LoopVersion {
 			return id >= 0 && !inLoop(v(id).block);
 		if (tryStrings(h, members, inLoop, cfg)) return true;
 		// one way in, one way back
-		if (h.preds.length != 2) return no(1);
+		if (h.preds.length != 2) return false;
 		var pre = -1, latch = -1;
 		for (k in 0...2)
 			if (inLoop(h.preds[k])) latch = k else pre = k;
-		if (pre < 0 || latch < 0) return no(2);
+		if (pre < 0 || latch < 0) return false;
 		// the header's branch, one of its edges out of the loop (others may leave too: breaks)
 		var t = h.term();
-		if (t == null || t.op != Br) return no(3);
+		if (t == null || t.op != Br) return false;
 		var exitK = -1;
 		for (k in 0...2)
 			if (!inLoop(t.targets[k])) {
-				if (exitK >= 0) return no(4);
+				if (exitK >= 0) return false;
 				exitK = k;
 			}
-		if (exitK < 0) return no(5);
+		if (exitK < 0) return false;
 		var exitB = t.targets[exitK];
-		if (exitB == t.targets[1 - exitK]) return no(7);
+		if (exitB == t.targets[1 - exitK]) return false;
 		// what the loop does
 		var size = 0;
 		var gets:Array<MIns> = [];
@@ -164,7 +151,7 @@ class LoopVersion {
 			for (i in b.ins) {
 				if (i.dead) continue;
 				size++;
-				if (i.info != null && i.info.cold) return no(12);
+				if (i.info != null && i.info.cold) return false;
 				switch i.op {
 					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
 					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet:
@@ -174,13 +161,13 @@ class LoopVersion {
 						gets.push(i);
 					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
 					case _:
-						return no(13);
+						return false;
 				}
 			}
-		if (size > MAX_SIZE || gets.length == 0) return no(14);
+		if (size > MAX_SIZE || gets.length == 0) return false;
 		// the test: counter < limit to stay (cmp lt), counter >= limit to leave (cmp ge)
 		var c = v(t.a);
-		if (c.op != Cmp || c.block != h) return no(8);
+		if (c.op != Cmp || c.block != h) return false;
 		var iv = -1, limit = -1;
 		if (c.imm == (CLt : Int) && exitK == 1 || c.imm == (CGe : Int) && exitK == 0) {
 			iv = c.a;
@@ -189,7 +176,7 @@ class LoopVersion {
 			iv = c.b;
 			limit = c.a;
 		} else
-			return no(9);
+			return false;
 		// (the test may be of counter + c, c a small constant: the body then
 		// runs while counter + c < limit, so counter + d is in range for d <= c)
 		var ahead = 0;
@@ -197,23 +184,23 @@ class LoopVersion {
 			var x = v(iv);
 			if (x.op == Add && x.block == h && constOf(x.b) != null) {
 				ahead = constOf(x.b);
-				if (ahead < 0 || ahead > MAX_STEP) return no(17);
+				if (ahead < 0 || ahead > MAX_STEP) return false;
 				iv = x.a;
 			}
 		}
 		var phi = v(iv);
-		if (phi.op != Phi || phi.block != h || phi.ty != I32 || phi.args.length != 2 || v(limit).ty != I32) return no(10);
+		if (phi.op != Phi || phi.block != h || phi.ty != I32 || phi.args.length != 2 || v(limit).ty != I32) return false;
 		// the limit: from before the loop, or an array's length the loop cannot change
 		var limitArr:Null<Arr> = null;
 		if (!outside(limit)) {
 			var l = v(limit);
-			if (l.op != ArrayLength) return no(18);
+			if (l.op != ArrayLength) return false;
 			limitArr = arrayOf(l.a, inLoop, fieldsWritten);
-			if (limitArr == null) return no(19);
+			if (limitArr == null) return false;
 		}
 		var start = phi.args[pre], next = v(phi.args[latch]);
 		var step = next.op == Add && next.a == iv && inLoop(next.block) ? constOf(next.b) : null;
-		if (step == null || step < 1 || step > MAX_STEP) return no(11);
+		if (step == null || step < 1 || step > MAX_STEP) return false;
 		// the reads the copy takes: their arrays, and the indices they need
 		var arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}> = [];
 		var taken:Array<MIns> = [];
@@ -235,10 +222,10 @@ class LoopVersion {
 			if (off != null) found.upto = true else if (found.idx.indexOf(g.b) < 0) found.idx.push(g.b);
 			taken.push(g);
 		}
-		if (taken.length == 0) return no(15);
+		if (taken.length == 0) return false;
 		// (a reference read left with its slow path writes everything: no gain then)
 		for (g in gets)
-			if (taken.indexOf(g) < 0 && Opt.ptrElem(g.info.t)) return no(16);
+			if (taken.indexOf(g) < 0 && Opt.ptrElem(g.info.t)) return false;
 		version(h, members, inLoop, cfg, pre, start, limit, limitArr, arrays, taken);
 		return true;
 	}
@@ -255,23 +242,23 @@ class LoopVersion {
 		var pre = -1;
 		for (k in 0...h.preds.length)
 			if (!inLoop(h.preds[k])) {
-				if (pre >= 0) return no(20);
+				if (pre >= 0) return false;
 				pre = k;
 			}
-		if (pre < 0) return no(21);
+		if (pre < 0) return false;
 		var size = 0;
 		var strs:Array<Int> = [], widths:Array<Int> = [];
 		for (b in members)
 			for (i in b.ins) {
 				if (i.dead) continue;
 				size++;
-				if (i.info != null && i.info.cold) return no(22);
+				if (i.info != null && i.info.cold) return false;
 				switch i.op {
 					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
 					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet | SetField:
 					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
 					case _:
-						return no(23);
+						return false;
 				}
 				if (i.op == Load && i.mem == Opt.MConst && i.imm == 0 && i.size == 4 && i.b < 0 && i.ty == I32 && i.a >= 0 && !inLoop(v(i.a).block)
 					&& strs.indexOf(i.a) < 0)
@@ -280,7 +267,7 @@ class LoopVersion {
 					&& widths.indexOf(i.a) < 0)
 					widths.push(i.a);
 			}
-		if (size > MAX_STR_SIZE) return no(24);
+		if (size > MAX_STR_SIZE) return false;
 		// (not those dereferenced in a block before the loop that every way to it passes)
 		var preB = h.preds[pre], at = cfg.index(preB);
 		strs = strs.filter(o -> {
@@ -291,7 +278,7 @@ class LoopVersion {
 			}
 			true;
 		});
-		if (strs.length == 0) return no(25);
+		if (strs.length == 0) return false;
 		version(h, members, inLoop, cfg, pre, -1, -1, null, [], [], strs, widths);
 		return true;
 	}

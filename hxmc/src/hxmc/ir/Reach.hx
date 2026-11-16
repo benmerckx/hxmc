@@ -94,14 +94,10 @@ class Reach {
 		this.stats = stats;
 	}
 
-	// (HXMC_REACH=0: every function stays, as the lowering made them)
-	static var on = true;
-
 	public static function run(p:Program, stats:Bool) {
 		var r = new Reach(p, stats);
 		r.analyze();
 		if (whyName != null) r.explain();
-		if (!on) return;
 		r.apply();
 	}
 
@@ -111,6 +107,8 @@ class Reach {
 	static inline var NAMES_FID_STR = "hxmc_rt_Names_fidStr";
 	static inline var DYN_GET = "hxmc_rt_Dyn_dynGet";
 	static inline var DYN_CALL_FIELD = "hxmc_rt_Dyn_dynCallField";
+	static inline var DYN_GET_PROPERTY = "hxmc_rt_Dyn_getProperty";
+	static inline var DYN_SET_PROPERTY = "hxmc_rt_Dyn_setProperty";
 	static inline var STR_CONCAT = "hxmc_rt_Str_concat";
 	static inline var STR_OR_NULL = "hxmc_rt_Str_orNull";
 	// the functions returning names from the tables: those of the fields,
@@ -365,13 +363,19 @@ class Reach {
 	// lookup of a name (Names.fidSlow, Names.fidFind: its literals are names);
 	// `methodSinks`, to a lookup that may find a method (Dyn.dynGet,
 	// Dyn.dynCallField: Reflect.field, Reflect.callMethod's target, Dynamic
-	// access; setting, testing or deleting a field never runs one);
+	// access; Dyn.getProperty and setProperty, with their accessors' prefixes;
+	// setting, testing or deleting a field never runs one);
 	// `arraySinks`, an array parameter whose elements go to such a lookup
 	function findSinks() {
 		for (f in p.funcs)
 			switch f.name {
 				case NAMES_FID_SLOW | NAMES_FID_FIND: add(sinks, f, 0);
 				case DYN_GET | DYN_CALL_FIELD: addMethod(f, 1, "");
+				// (Reflect.getProperty, setProperty: the accessor's name made in the runtime)
+				case DYN_GET_PROPERTY:
+					addMethod(f, 1, "");
+					addMethod(f, 1, "get_");
+				case DYN_SET_PROPERTY: addMethod(f, 1, "set_");
 				case _:
 			}
 		// (the direct calls, in the order of the bodies, found once: the rounds go over them)

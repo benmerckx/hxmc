@@ -389,6 +389,60 @@ class Unwind {
 	public static inline function ehFrameHdrSize(n:Int):Int
 		return 12 + 8 * n;
 
+	// ---- Mach-O's __unwind_info (compact unwind, mach-o/compact_unwind_encoding.h)
+
+	// the entries a regular second-level page holds (ld64's: a 4 KB page)
+	public static inline var UNWIND_PAGE_ENTRIES = 511;
+
+	// __unwind_info of these functions (ascending starts, relative to the
+	// image; fde: the offset of the function's FDE in __eh_frame, -1 none)
+	// up to end, as ld64 writes it of functions without a compact encoding:
+	// each entry in DWARF mode (UNWIND_ARM64_MODE_DWARF,
+	// UNWIND_X86_64_MODE_DWARF) naming its FDE, whose CIE gives the
+	// personality and the language-specific data; a function without an FDE
+	// encoding 0 (none: the unwinder looks in __eh_frame, as without the
+	// section). The system's unwinder, the crash reporter and lldb read this
+	// first; no common encodings, personalities or LSDA entries (an FDE's own),
+	// regular second-level pages, an index entry each and the end's
+	public static function unwindInfo(funcs:Array<{start:Int, fde:Int}>, end:Int, arm:Bool):Buf {
+		var mode = arm ? 0x03000000 : 0x04000000;
+		var n = funcs.length, per = UNWIND_PAGE_ENTRIES;
+		var pages = Std.int((n + per - 1) / per);
+		var b = new Buf(64 + 12 * (pages + 1) + 8 * (n + pages));
+		var index = 28, lsda = index + 12 * (pages + 1);
+		b.u32(1); // version
+		b.u32(index); // common encodings: none
+		b.u32(0);
+		b.u32(index); // personalities: none
+		b.u32(0);
+		b.u32(index);
+		b.u32(pages + 1);
+		var at = lsda; // (no LSDA entries: the pages start there)
+		for (p in 0...pages) {
+			var count = n - p * per < per ? n - p * per : per;
+			b.u32(funcs[p * per].start);
+			b.u32(at);
+			b.u32(lsda);
+			at += 8 + 8 * count;
+		}
+		b.u32(end); // the end: no page
+		b.u32(0);
+		b.u32(lsda);
+		for (p in 0...pages) {
+			var count = n - p * per < per ? n - p * per : per;
+			b.u32(2); // UNWIND_SECOND_LEVEL_REGULAR
+			b.u16(8); // the entries' offset in the page
+			b.u16(count);
+			for (k in p * per...p * per + count) {
+				var f = funcs[k];
+				if (f.fde >= 0x1000000) throw "hxmc: link: __eh_frame over 16 MB (an FDE beyond compact unwind's reach)";
+				b.u32(f.start);
+				b.u32(f.fde < 0 ? 0 : mode | f.fde);
+			}
+		}
+		return b;
+	}
+
 	// ---- Windows
 
 	// the UNWIND_INFO of an x86-64 function (null: a leaf function that

@@ -28,8 +28,6 @@ class Driver {
 		prep = new Prep(prog);
 		abi = Abi.get(o.target);
 		abi.setLibc(o.libc);
-		if (o.segAlign > 0) abi.segAlign = o.segAlign;
-		if (o.pic) abi.reloc = Pic;
 		abi.framePointers = !abi.wasm && (abi.arm || o.framePointers);
 		if (o.shared && (abi.os == "macos" || abi.os == "windows")) {
 			// (macOS and iOS: a Mach-O dylib, LinkMachO; Windows: a DLL, LinkPE; the code is position-independent already)
@@ -43,8 +41,6 @@ class Driver {
 		}
 		for (e in o.exports)
 			if (abi.exports.indexOf(e) < 0) abi.exports.push(e);
-		LoopVersion.on = o.loopVersion;
-		LoopVersion.why = o.loopVersionWhy;
 		dumpSet = o.dump == null ? null : [for (n in o.dump.split(",")) n => true];
 		if (o.interp != null) interp = new hxmc.interp.InterpGen.InterpSet(o.interp, prep);
 	}
@@ -114,9 +110,6 @@ class Driver {
 		}
 		if (failure != null) throw failure;
 	}
-	static var sroa = true; // (the build's, Options.apply)
-	static var nogc = false;
-	static var wasmStackKb:Null<String> = null;
 	var raRounds = 0;
 	var escRemoved = 0;
 	var escFolds = 0;
@@ -129,7 +122,6 @@ class Driver {
 	var mirBefore = 0;
 	var mirAfter = 0;
 	var devirtualized = 0; // (Inline.devirtualize)
-	var foldWhy = new Map<String, Int>(); // (Fold.whyOn)
 	var escTime = 0.0;
 	var escSlow:Array<{name:String, t:Float}> = [];
 	var raInsns = 0;
@@ -247,14 +239,14 @@ class Driver {
 				// Escape may replace the closure (not for code loaded at run time
 				// compiled to native code, interp.Tier: the closure's frame
 				// stays in stacks, as when interpreted)
-				if (Escape.on && (interp == null || (!interp.wants(fn) && interp.nativeNow != fn)) && mf.allocs > 0 && Escape.part("closures") && Escape.allowed(name)) {
+				if ((interp == null || (!interp.wants(fn) && interp.nativeNow != fn)) && mf.allocs > 0) {
 					var todo = [];
 					for (c in Escape.closureCalls(mf, g -> g.module == fn.module && MirBuild.inlineCands.exists(g), prep.funcSym))
 						todo.push(c);
 					rounds(todo);
 				}
 				// virtual calls on objects made here: direct, then inlined where they may be
-				if (Inline.devirtOn && mf.allocs > 0) {
+				if (mf.allocs > 0) {
 					var d = Inline.devirtualize(mf, fn.module, prep.p.selectors, prep.funcSym);
 					if (d.length > 0) {
 						lock.acquire();
@@ -265,7 +257,7 @@ class Driver {
 				}
 			}
 			// (not for the interpreter: no gain there, measured on the macro benchmarks, and a third of the passes' time)
-			if (o.opt && Escape.on && (interp == null || !interp.wants(fn))) {
+			if (o.opt && (interp == null || !interp.wants(fn))) {
 				var es = new Escape(mf);
 				var te = haxe.Timer.stamp();
 				es.run();
@@ -281,11 +273,9 @@ class Driver {
 			// replaced first), then the frame's slots nothing reads; after the
 			// lowering only allocation folding, the CFG's cleanup and
 			// dead code
-			if (o.opt && sroa) new Sroa(mf).run();
-			// (HXMC_DUMP with HXMC_DUMP_OBJ=1: the object-level Mir before Opt too)
-			if (dumpSet != null && dumpSet.exists(name) && Sys.getEnv("HXMC_DUMP_OBJ") == "1") Sys.println("(object level)\n" + mf.dump());
+			if (o.opt) new Sroa(mf).run();
 			// (Array reads in counted loops tested once before them)
-			if (o.opt && LoopVersion.on && (interp == null || !interp.wants(fn))) {
+			if (o.opt && (interp == null || !interp.wants(fn))) {
 				var lv = new LoopVersion(mf);
 				lv.run();
 				if (lv.versioned > 0) {
@@ -299,13 +289,11 @@ class Driver {
 				op.run();
 				// (slots whose address the optimizer made one again, as a phi of
 				// the slots of a branch it decided: promoted, and optimized again)
-				if (sroa) {
-					var s2 = new Sroa(mf);
-					s2.run();
-					if (s2.promoted > 0) {
-						op = new Opt(mf);
-						op.run();
-					}
+				var s2 = new Sroa(mf);
+				s2.run();
+				if (s2.promoted > 0) {
+					op = new Opt(mf);
+					op.run();
 				}
 				// (the rooted locals' slots nothing reads any more)
 				var fs = new Frames(mf);
@@ -320,14 +308,12 @@ class Driver {
 				}
 			}
 			mb.lower();
-			if (o.opt && Fold.on && mf.allocs > 1) {
+			if (o.opt && mf.allocs > 1) {
 				var fo = new Fold(mf);
 				fo.run();
-				if (fo.folded > 0 || Fold.whyOn) {
+				if (fo.folded > 0) {
 					lock.acquire();
 					allocsFolded += fo.folded;
-					for (k => v in fo.why)
-						foldWhy.set(k, (foldWhy.exists(k) ? foldWhy.get(k) : 0) + v);
 					lock.release();
 				}
 			}
@@ -489,10 +475,6 @@ class Driver {
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed, $framesMerged inlined frames merged; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
-		var ks = [for (k in foldWhy.keys()) k];
-		ks.sort((a, b) -> foldWhy.get(b) - foldWhy.get(a));
-		for (k in ks)
-			Sys.println('hxmc: fold: ${foldWhy.get(k)} stopped by $k');
 		escSlow.sort((a, b) -> a.t < b.t ? 1 : -1);
 		for (x in escSlow.slice(0, 8))
 			Sys.println('  escape ${ms(x.t)}\t${x.name}');
@@ -517,15 +499,13 @@ class Driver {
 	public static function outputKey(kind:CacheKind, out:String):CacheKey
 		return CacheKey.of(kind, "hxmc-out|" + (try sys.FileSystem.absolutePath(out) catch (_:Dynamic) out));
 
-	// (+strhash=fnv: the program's std hashes strings with FNV-1a, FnLower.wordHash;
-	// a string switch lowered for one hash is wrong with the other)
 	// (+pgo=: the LLVM profile's path, time and size: codeKey has only the flag)
 	function toolKey():String {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
 		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
-			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey + (hxmc.ir.FnLower.wordHash ? "" : "+strhash=fnv")
+			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey
 			+ (o.llvm != null && o.llvmPgo != null && o.llvmPgo != "gen" ? "+pgo=" + o.llvmPgo + "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
 	}
 
@@ -781,9 +761,8 @@ class Driver {
 		if (o.stats) Sys.println('hxmc: data: ' + [for (x in dg.sizes) '${x.part} ${x.bytes} bytes'].join(", "));
 		var t3 = haxe.Timer.stamp();
 		if (abi.wasm) {
-			var stack = wasmStackKb;
 			// (the linker's stack runs rt_init only: the runtime's takes over, wasm/Gc.hx)
-			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), stack != null ? Std.parseInt(stack) << 10 : 64 << 10);
+			var lw = new hxmc.wasm.LinkWasm([data].concat(objs), 64 << 10);
 			lw.nameSection = !o.strip;
 			lw.legacyEh = o.wasmLegacyEh;
 			lw.maxPages = o.wasmMemoryMaxMb << 4;
@@ -889,7 +868,7 @@ class Driver {
 		// the runtime objects' sections and the runtime's Haxe functions that
 		// nothing reaches are left out (LinkCore.gc; a Mir host: every runtime
 		// function stays, for the code it loads)
-		var collect = !nogc && !o.mirHost ? rts : null;
+		var collect = !o.mirHost ? rts : null;
 		var exe = abi.os == "windows" ? {
 			var l = new LinkPE(all, abi.arm);
 			if (abi.output == SharedLibrary) {
@@ -915,12 +894,16 @@ class Driver {
 				l.minos = o.iosMinos;
 				l.sdk = o.iosSdk;
 			}
+			l.fixupChains = o.fixupChains;
+			l.wantDsym = o.dsym;
 			if (o.codesigned()) {
 				inline function file(p:Null<String>) return p != null ? sys.io.File.getBytes(p) : null;
 				l.sign = CodeSign.adhoc(o.codesignId ?? haxe.io.Path.withoutExtension(haxe.io.Path.withoutDirectory(out)), file(o.codesignInfoPlist),
 					file(o.codesignResources), file(o.codesignEntitlements));
 			}
-			l.link("main");
+			var exe = l.link("main");
+			if (l.dsym != null) writeDsym(out, l.dsym);
+			exe;
 		} : {
 			var l = if (abi.linksDynamically()) {
 				var d = new LinkDyn(all, abi);
@@ -947,12 +930,6 @@ class Driver {
 		var manifest = hxmc.ir.Jni.manifest([for (ci in prep.p.classes) if (ci.jniProxy != null && prep.p.isLive(ci.jniProxy.desc)) ci]);
 		if (manifest != null) sys.io.File.saveContent(out + ".jni.json", manifest);
 		if (o.stats && prep.p.stacks) Sys.println('hxmc: stack table: ' + StackTable.stats + ', flags ' + StackTable.flags(prep.p));
-		if (hxmc.x64.Emit.sizeStats) {
-			var ks = [for (k in hxmc.x64.Emit.statBytes.keys()) k];
-			ks.sort((x, y) -> hxmc.x64.Emit.statBytes.get(y) - hxmc.x64.Emit.statBytes.get(x));
-			for (k in ks)
-				Sys.println('  size ${hxmc.x64.Emit.statBytes.get(k)}\t$k');
-		}
 		if (o.stats) {
 			Sys.println('hxmc: modules ${order.length}: ${hits} cached, ${misses} compiled (keys and reading ${ms(tKey)})');
 			// (which, the first ten in module order)
@@ -977,6 +954,35 @@ class Driver {
 	// ld64 does, the new file goes next to it and replaces it (a rename). On
 	// Windows (a running .exe cannot be replaced; rename does not overwrite)
 	// and WASI in place
+	// <output>.dSYM, as dsymutil writes the bundle: Contents/Info.plist,
+	// Contents/Resources/DWARF/<output's name> (LinkMachO.dsymFile)
+	static function writeDsym(out:String, bytes:haxe.io.Bytes) {
+		var name = haxe.io.Path.withoutDirectory(out), dir = out + ".dSYM/Contents";
+		sys.FileSystem.createDirectory(dir + "/Resources/DWARF");
+		sys.io.File.saveContent(dir + "/Info.plist", '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.xcode.dsym.$name</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>dSYM</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+</dict>
+</plist>
+');
+		sys.io.File.saveBytes(dir + "/Resources/DWARF/" + name, bytes);
+	}
+
 	public static function writeExecutable(path:String, bytes:haxe.io.Bytes) {
 		var host = Sys.systemName();
 		if (host == "Windows" || host == "Wasi" || !sys.FileSystem.exists(path)) {

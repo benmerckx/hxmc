@@ -168,7 +168,7 @@ class TFunctions {
 	public static final tDynamic:T = TDynamic(null);
 
 	public static function mkAnon(status:AnonStatus,
-			?fields:TypeMap<TClassField>):T return TAnon({aFields: fields == null ? new StringMap() : fields, aStatus: status});
+			?fields:TypeMap<TClassField>):T return TAnon({aFields: fields == null ? core.ds.PMap.empty() : fields, aStatus: status});
 
 	public static function tfun(pl:TParams, r:T):T return TFun({args: pl.map(t -> {name: "", optional: false, type: t}), ret: r});
 
@@ -191,7 +191,7 @@ class TFunctions {
 
 	public static function classModuleType(c:TClass):TDef {
 		var path:core.Globals.GlobalTypePath = {pack: [], name: "Class<" + Globals.sTypePath(c.clPath) + ">"};
-		var t = mkAnon(ClassStatics(c), c.clStatics);
+		var t = mkAnon(ClassStatics(c), c.clStatics.byName);
 		var def = mkTypedef(c.clModule, path, c.clPos, Globals.nullPos, t);
 		def.tPrivate = true;
 		return def;
@@ -213,10 +213,8 @@ class TFunctions {
 			clUsing: [],
 			clSuper: null,
 			clImplements: [],
-			clFields: new StringMap(),
-			clOrderedStatics: [],
-			clOrderedFields: [],
-			clStatics: new StringMap(),
+			clFields: core.ds.SeqMap.empty(),
+			clStatics: core.ds.SeqMap.empty(),
 			clDynamic: null,
 			clArrayAccess: null,
 			clConstructor: null,
@@ -274,16 +272,16 @@ class TFunctions {
 		};
 	}
 
-	public static function findMap<V>(map:StringMap<V>, name:String):V {
-		if (!map.exists(name)) throw NotFound.raise();
-		return map.get(name);
-	}
+	// port: a class's fields of a list of them: the list, and `List.fold_left (fun m f ->
+	// PMap.add f.cf_name f m) PMap.empty` of it (upstream's mk_pmap).
+	public static function classFieldsOf(cfs:Array<TClassField>):core.ds.SeqMap<TClassField>
+		return core.ds.SeqMap.ofArray([for (cf in cfs) cf.cfName], cfs);
 
 	public static function findField(c:TClass, name:String, kind:ClassFieldRefKind):TClassField {
 		var f = switch kind {
 			case CfrConstructor: c.clConstructor;
-			case CfrStatic: findMap(c.clStatics, name);
-			case CfrMember: findMap(c.clFields, name);
+			case CfrStatic: c.clStatics.find(name);
+			case CfrMember: c.clFields.find(name);
 			case CfrInit: c.clInit;
 		};
 		if (f == null) throw NotFound.raise();
@@ -314,7 +312,7 @@ class TFunctions {
 		return t;
 	}
 
-	public static final nullTanon:TAnon = {aFields: new StringMap(), aStatus: Closed};
+	public static final nullTanon:TAnon = {aFields: core.ds.PMap.empty(), aStatus: Closed};
 	public static final nullEnum:TEnum = {
 		ePath: {pack: [], name: ""},
 		eModule: nullModule,
@@ -328,8 +326,7 @@ class TFunctions {
 		eRestore: function() {},
 		eType: tDynamic,
 		eFlags: 0,
-		eConstrs: new StringMap(),
-		eNames: []
+		eConstrs: core.ds.SeqMap.empty()
 	};
 	public static final nullField:TClassField = mkField("", tDynamic, Globals.nullPos, Globals.nullPos);
 	public static final nullEnumField:TEnumField = {
@@ -513,12 +510,11 @@ class TFunctions {
 		case TAbstract(a, tl): TAbstract(a, tl.map(loop));
 		case TFun(s): TFun({args: s.args.map(a -> {name: a.name, optional: a.optional, type: loop(a.type)}), ret: loop(s.ret)});
 		case TAnon(a):
-			var fields = new StringMap<TClassField>();
-			for (name => f in a.aFields) {
+			var fields = a.aFields.map(function(f) {
 				var copy:TClassField = core.ds.Record.copy(f);
 				copy.cfType = loop(f.cfType);
-				fields.set(name, copy);
-			}
+				return copy;
+			});
 			TAnon(core.TType.TAnon.withStatusRef(fields, a.aStatusRef));
 		case TLazy(f):
 			var ft = lazyType(f);
@@ -886,7 +882,7 @@ class TFunctions {
 	public static function rawClassField(buildType:TClassField->T, c:TClass, tl:TParams, i:String):RawClassField {
 		var apply = function(t) return applyParams(c.clParams, tl, t);
 		try {
-			var f = findMap(c.clFields, i);
+			var f = c.clFields.find(i);
 			return {owner: {cls: c, params: tl}, type: buildType(f), field: f};
 		} catch (_:NotFound) {}
 		try {
@@ -903,7 +899,7 @@ class TFunctions {
 			case KTypeParameter(ttp):
 				for (t in getConstraints(ttp)) switch follow(t) {
 					case TAnon(a): try {
-							var f = findMap(a.aFields, i);
+							var f = a.aFields.find(i);
 							return {owner: null, type: buildType(f), field: f};
 						} catch (_:NotFound) {}
 					case TInst(c, tl): try {
@@ -931,12 +927,12 @@ class TFunctions {
 			var result = rawClassField(function(f) return f.cfType, c, tl, n);
 			result.owner == null ? FAnon(result.field) : FInstance(result.owner.cls, result.owner.params, result.field);
 		case TAnon(a): switch a.aStatus {
-				case EnumStatics(e): FEnum(e, findMap(e.eConstrs, n));
-				case ClassStatics(c): FStatic(c, findMap(c.clStatics, n));
+				case EnumStatics(e): FEnum(e, e.eConstrs.find(n));
+				case ClassStatics(c): FStatic(c, c.clStatics.find(n));
 				case AbstractStatics(a):
 					if (a.aImpl == null) throw NotFound.raise();
-					FStatic(a.aImpl, findMap(a.aImpl.clStatics, n)); // is that right?
-				case _: FAnon(findMap(a.aFields, n));
+					FStatic(a.aImpl, a.aImpl.clStatics.find(n)); // is that right?
+				case _: FAnon(a.aFields.find(n));
 			}
 		case TDynamic(_): FDynamic(n);
 		case TEnum(_) | TMono(_) | TAbstract(_, _) | TFun(_): throw NotFound.raise();
