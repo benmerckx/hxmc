@@ -142,6 +142,9 @@ each):
 | 41a92a40 | Dyn.dynEq: two of the program's types, neither a closure, are not equal unless the same | tshx -0.09% |
 | da044454 | Dyn.findField, findMethod inline | json -0.66%, formatter -0.29% |
 | cddcf639 | MemLower: a Bool boxed inline (rt_bool_boxes + 8 + 16 * (b != 0)) | json -0.40%, cycles -3.6% |
+| 8586cbf3 | Names: a field name's String read without the lock (a block of its capacity and entries, never freed) | json cycles -1.2% |
+| 7c1f971e | Dyn.overflowSet: an anonymous object's added fields in storage twice as long when full, not one pair longer each time | json -1.0%, cycles -4.3% |
+| 566b9780 | JsonParser.parseString: Str.range, not substr | json -1.9%, cycles -3.9% |
 
 The Linux session's commits of the same evening (00ebb086 to d998d104,
 merged in 07ced548: guarded LICM, unswitching, strEq of a literal, the
@@ -207,11 +210,22 @@ Also tried and left out this session (built, measured, reverted):
 | a string's width test in charCodeAt with the one-byte side as the false (fall-through) one | tshx +0.14% instructions, .text the same | the layout did not change |
 | LoopVersion.tryStrings also for a string dereferenced before the loop (the copy entered for one byte per unit only) | tshx -0.44% instructions, .text +0.18% | cycles +1.2% (15 runs): the copies' code |
 | a shadow-stack slot's load after its store in the block forwarded in Opt.lowered (after Frames' merge) | tshx -0.01%, .text -3 KB | rare |
+| JsonPrinter: an object's fields by id (Dyn.fieldIds, the names from the ids, the values by id) | json +13.5% instructions | the lookup by name is faster than it looks |
+| @:hxmc.cold (a call of such a function makes its block a slow path after the lowering), on Str.hashSlow | tshx +0.03% | StringMap.get's spills come from the key comparison's call, not the hash's |
 | the remembered set's slots touched 8 entries ahead (a load, as a prefetch would) in Gc.forwardRemembered | tshx +0.64% instructions; cycles -6.7% and +1.4% in two series | not measurable here: memory-bound functions move by 25% from run to run under WSL's load; worth a prefetch op on a quiet machine |
 
 (A tool built from the sources while an edit was being made took the
 edit in: two measurements made against it, one of them the inline Bool
 boxing first left out here, were redone against a clean build.)
+
+At the end of the session (566b9780), Windows natively: the corpus
+373/373; GapBench against LLVM release built from the same sources (best
+of 5; 9 for sha256, nbody): formatter 0.91x, binarytrees 0.96x, nbody
+1.00x, sha256 1.00x, mandelbrot 1.01x, alloc 1.02x, bcrypt 1.03x, json
+1.03x, mandelbrot_anon 1.03x, sha512 1.05x. WSL2 (loaded; LLVM's binaries
+from 19:00, before the evening's runtime changes): tshx 9.48 G
+instructions against O2's 9.60 G and O3's 9.47 G, cycles native +1.9%
+against O2.
 
 Windows, the merged branch (07ced548: this session's and the Linux
 session's commits), natively: the corpus 373/373; GapBench wall times
@@ -223,7 +237,7 @@ against 4-18 s.
 ## Progress (2026-11-15, fourth session, a Linux cloud VM)
 
 A parallel session to the third (both on this branch from fe536a4d, merged
-twice: f573648, 07ced54). No hardware counters there (a VM without a PMU):
+five times: f573648, 07ced54, 067b5cc, 90cbf7b, 28172b2). No hardware counters there (a VM without a PMU):
 instructions counted by valgrind (`cachegrind --cache-sim=no`: exact and
 the same under load; every thread, so tshx counts about 0.35 G more than
 `perf stat`'s user instructions), per instruction by `callgrind
@@ -243,14 +257,18 @@ declarations as in Setup, its output and every file compared each time.
 | 91d6d27 | Opt.lowered: x - k of a k no instruction takes is x + -k (lea) | json -2.3% |
 | d998d10 | Opt.nonNegativeSum (a counter's x + c below a constant bound: its SExt a copy), Opt.nonNeg of more forms, DivConst of a non-negative dividend (`i % 256`: and), `x + 0` and the like folded | sha512 -5.5%, alloc -0.75%, bcrypt -0.31% |
 | 08b8add | Opt.promoteSlots: a loop header's load of a rooted local's slot is a phi of the values its predecessors leave (`-D hxmc.slots=0`) | tshx -0.12% (NameResolver.Resolve -3.0%: its pass-through loop's `location` no longer through the slot each round: cycles more than instructions) |
+| 6842fe5 | Str.eqSlow: one width compared without its widths tested again (StrView.sameUnits takes it), the bytes `n << !one`; Opt.lowered: a comparison's `c ? 1 : 0` is c, `c ? 0 : 1` is `c ^ 1` | tshx -0.05% (hx_str_eq_slow -15%) |
+| 5dc8c87 | Str.across12 (and lastAcross12, dcfb335): a pattern with a unit above 0xFF is in no one-byte string (-1 at once) | tshx -0.30% (Str.find 36.6 -> 5.7 M) |
+| dcfb335 | Boxes.f2iSlow: a Float to Int out of range below 2^63 is its 64-bit truncation's low half (f % 2^32's), fmod only beyond | tshx -0.30% (LibM.fmod 29.8 M gone) |
 
-At 08b8add (valgrind instructions; the LLVM release builds, and the
-numbers in parentheses, of fe536a4d, this session's start):
+At dcfb335, the third session's commits merged in (valgrind instructions;
+the LLVM release builds, and the numbers in parentheses, of fe536a4d, this
+session's start):
 
 | | native | LLVM release (O2) | |
 | --- | --- | --- | --- |
-| tshx | 9.965 G (10.098 G at fe536a4d) | 10.371 G | native -3.9% |
-| json | 3.077 G (3.362) | 2.921 G | +5.3% |
+| tshx | 9.883 G (10.098 G) | 10.371 G | native -4.7% |
+| json | 2.925 G (3.362) | 2.921 G | +0.1% |
 | alloc | 5.977 G (6.042) | 5.749 G | +4.0% |
 | bcrypt | 10.177 G (11.019) | 9.886 G | +2.9% |
 | binarytrees | 8.682 G (8.752) | 8.570 G | +1.3% |
@@ -258,7 +276,7 @@ numbers in parentheses, of fe536a4d, this session's start):
 | nbody | 8.570 G (8.570) | 8.510 G | +0.7% |
 | sha256 | 2.532 G (2.553) | 2.502 G | +1.2% |
 | sha512 | 0.160 G (0.193) | 0.144 G | +11% |
-| formatter | 44.52 G (44.63) | 48.07 G | native -7.4% |
+| formatter | 44.39 G (44.63) | 48.07 G | native -7.6% |
 
 The tool's own workload, the port's self-compile to HXB (this branch's
 `haxe/src` with each tool, the archives' contents identical): main's tool
@@ -277,13 +295,20 @@ Also tried and left out (built, measured, reverted):
 | the guard rotated with the test kept in the header (the guard entering the loop's first block) | tshx -0.02% | two phis per header value, not coalesced (a copy and a jump each round) |
 | unswitching without a frequency guess / of a block that dominates the latches only | tshx -0.04% / 0 | a hash probe's width test under its equality (SymbolTableImpl.get +11 M: spills, the whole function); a string scan's width test is under its bounds test |
 | Opt.promoteSlots through every join (SsaReader) | tshx +5.8%, .text +8.6% | a function's rooted locals kept as values through it: linear scan without splitting spills them |
+| jump threading of a join of phis, a comparison and a branch where an edge into it decides the comparison (implied by the branches dominating it; a join of only phis jumping into it folded first; SsaReader for the phis) | the decoder pattern -21%; tshx: none (.text the same) | the compiler built with it miscompiled itself (a build of tshx did not end): a case not found |
+| an Array's first capacity 4, not 2 (Boxes.grownCap) | tshx -0.11% (hx_apush_slow -11%) | peak RSS +1.05% |
 
 Notes: `cg_annotate` hides functions under 0.1% (10 M of tshx): one that
 crosses that line looks gone, not inlined (`--threshold=0.001`). The
+module cache (~/.cache/hxmc) is keyed by the compiler's sources, not its
+binary: a tool those sources built wrong (here by a pass under test) leaves
+entries the tool they build right reads (builds of tshx wrong until the
+cache was cleared, with the pass off): give such experiments their own
+HXMC_CACHE. The
 other session's tool at 50ac87d built in one stage by main's compiler
 mis-lexes `#if` (`Unknown token`); built by this branch's compiler (the
-merge) it is right: new runtime code that main's compiler gets wrong, or a
-bootstrap order, not looked into.
+merge) it is right: new runtime code that main's compiler gets wrong, a
+bootstrap order, or the shared module cache above, not looked into.
 
 ## Next
 
@@ -308,3 +333,7 @@ bootstrap order, not looked into.
 7. Opt.promoteSlots at other joins once spills are cheaper; json's word
    loop still sign-extends its counter (`k < m - 7`, k += 8: a bound not a
    constant).
+8. Jump threading (tried above): the decoder pattern's 21% is real, the
+   miscompile of the compiler built with it is to find first (its own
+   HXMC_CACHE; the fixpoint's tool building tshx), and tshx's decoders did
+   not take it (their joins hold more than phis).
