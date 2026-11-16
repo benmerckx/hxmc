@@ -133,8 +133,8 @@ class DeprecationCheck {
 				if (c.clConstructor != null) runOnField(ctx, c.clConstructor);
 				var init = core.TOther.TClassTools.getClInit(c);
 				if (init != null) runOnExpr(ctx, init);
-				for (cf in c.clOrderedStatics) runOnField(ctx, cf);
-				for (cf in c.clOrderedFields) runOnField(ctx, cf);
+				for (cf in c.clStatics) runOnField(ctx, cf);
+				for (cf in c.clFields) runOnField(ctx, cf);
 			case _:
 		}
 	}

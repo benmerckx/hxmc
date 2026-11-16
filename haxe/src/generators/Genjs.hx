@@ -1400,7 +1400,7 @@ class Genjs {
 		var hasPropertyReflection = (hasFeature(ctx, "Reflect.getProperty")) || (hasFeature(ctx, "Reflect.setProperty"));
 
 		if (hasPropertyReflection) {
-			switch codegen.Codegen.getProperties(c.clOrderedStatics) {
+			switch codegen.Codegen.getProperties(c.clStatics.toArray()) {
 				case []:
 				case props:
 					print(ctx, p + ".__properties__ = {" + genProps(props, ":") + "}");
@@ -1409,11 +1409,11 @@ class Genjs {
 			}
 		}
 
-		for (f in c.clOrderedStatics) genClassStaticField(ctx, c, clPath, f);
+		for (f in c.clStatics) genClassStaticField(ctx, c, clPath, f);
 
 		var hasClass = hasFeature(ctx, "js.Boot.getClass")
-			&& (c.clSuper != null || c.clOrderedFields.length > 0 || c.clConstructor != null);
-		var hasPrototype = c.clSuper != null || hasClass || Lambda.exists(c.clOrderedFields, f -> canGenClassField(ctx, f));
+			&& (c.clSuper != null || c.clFields.length > 0 || c.clConstructor != null);
+		var hasPrototype = c.clSuper != null || hasClass || Lambda.exists(c.clFields, f -> canGenClassField(ctx, f));
 		if (hasPrototype) {
 			switch c.clSuper {
 				case null:
@@ -1426,14 +1426,14 @@ class Genjs {
 			}
 
 			var bend = openBlock(ctx);
-			for (f in c.clOrderedFields) if (canGenClassField(ctx, f)) genClassField(ctx, c, f);
+			for (f in c.clFields) if (canGenClassField(ctx, f)) genClassField(ctx, c, f);
 			if (hasClass) {
 				newprop(ctx);
 				print(ctx, "__class__: " + p);
 			}
 
 			if (hasPropertyReflection) {
-				var props = codegen.Codegen.getProperties(c.clOrderedFields);
+				var props = codegen.Codegen.getProperties(c.clFields.toArray());
 				switch c.clSuper {
 					case _ if (props.length == 0):
 					case sup if (sup != null && codegen.Codegen.hasProperties(sup.cls)):
@@ -1487,7 +1487,7 @@ class Genjs {
 
 		function methodDefName(cf:TClassField):String return if (validJsIdent(cf.cfName)) cf.cfName else "\"" + cf.cfName + "\"";
 
-		var nonmethodFields = c.clOrderedFields.filter(function(cf) {
+		var nonmethodFields = c.clFields.toArray().filter(function(cf) {
 			return switch [cf.cfKind, cf.cfExpr] {
 				case [Method(_), {eexpr: TFunction(f), epos: pos}]:
 					checkFieldName(c, cf);
@@ -1501,7 +1501,7 @@ class Genjs {
 		});
 
 		var exposedStaticMethods:Array<{path:String, name:String}> = [];
-		var nonmethodStatics = c.clOrderedStatics.filter(function(cf) {
+		var nonmethodStatics = c.clStatics.toArray().filter(function(cf) {
 			return switch [cf.cfKind, cf.cfExpr] {
 				case [Method(_), {eexpr: TFunction(f), epos: pos}]:
 					checkFieldName(c, cf);
@@ -1581,10 +1581,10 @@ class Genjs {
 				}
 				
 				var hasClass = hasFeature(ctx, "js.Boot.getClass")
-			&& (c.clSuper != null || c.clOrderedFields.length > 0 || c.clConstructor != null);
-		var propsToGenerate = if (hasPropertyReflection) codegen.Codegen.getProperties(c.clOrderedFields) else [];
+			&& (c.clSuper != null || c.clFields.length > 0 || c.clConstructor != null);
+		var propsToGenerate = if (hasPropertyReflection) codegen.Codegen.getProperties(c.clFields.toArray()) else [];
 		var fieldsToGenerate = if (hasFeature(ctx, "Type.getInstanceFields")) {
-			if ((hasClassFlag(c, CInterface))) c.clOrderedFields.filter(isPhysicalField) else nonmethodFields.filter(isPhysicalVarField);
+			if ((hasClassFlag(c, CInterface))) c.clFields.toArray().filter(isPhysicalField) else nonmethodFields.filter(isPhysicalVarField);
 		} else [];
 
 		if (hasClass || propsToGenerate.length > 0 || fieldsToGenerate.length > 0) {
@@ -1628,7 +1628,7 @@ class Genjs {
 		}
 		switch c.clKind {
 			case KModuleFields(m):
-				genModuleFields(ctx, m, c, c.clOrderedStatics);
+				genModuleFields(ctx, m, c, c.clStatics.toArray());
 			case _:
 				if (ctx.esVersion >= 6) generateClassEs6(ctx, c) else generateClassEs5(ctx, c);
 		}
@@ -1645,7 +1645,7 @@ class Genjs {
 			"$hxClasses[\"" + dotp + "\"] = "));
 		spr(ctx, "{");
 		if (hasFeature(ctx, "js.Boot.isEnum")) print(ctx, " __ename__:" + (if (hasFeature(ctx, "Type.getEnumName")) "\"" + dotp + "\"" else "true") + ",");
-		if (asObjects) print(ctx, "__constructs__:null") else print(ctx, "__constructs__:[" + ([for (s in e.eNames) '"$s"'].join(",")) + "]");
+		if (asObjects) print(ctx, "__constructs__:null") else print(ctx, "__constructs__:[" + ([for (s in e.eConstrs.names()) '"$s"'].join(",")) + "]");
 		var bend = if (!asObjects) {
 			spr(ctx, " }");
 			ctx.separator = true;
@@ -1654,8 +1654,8 @@ class Genjs {
 		} else {
 			openBlock(ctx);
 		};
-		for (n in e.eNames) {
-			var f = core.ds.PMap.find(n, e.eConstrs);
+		for (n in e.eConstrs.names()) {
+			var f = e.eConstrs.find(n);
 			if (asObjects) {
 				newprop(ctx);
 				print(ctx, anonField(f.efName) + ": ");
@@ -1694,12 +1694,12 @@ class Genjs {
 			spr(ctx, "\n}");
 			ctx.separator = true;
 			newline(ctx);
-			print(ctx, p + ".__constructs__ = [" + ([for (s in e.eNames) p + field(s)].join(",")) + "]");
+			print(ctx, p + ".__constructs__ = [" + ([for (s in e.eConstrs.names()) p + field(s)].join(",")) + "]");
 			newline(ctx);
 		}
 		if (hasFeature(ctx, "Type.allEnums")) {
-			var ctorsWithoutArgs = e.eNames.filter(function(s) {
-				var ef = core.ds.PMap.find(s, e.eConstrs);
+			var ctorsWithoutArgs = e.eConstrs.keyArray().filter(function(s) {
+				var ef = e.eConstrs.find(s);
 				return switch follow(ef.efType) {
 					case TFun(_): false;
 					case _: true;
@@ -1770,7 +1770,7 @@ class Genjs {
 				var p = sPath(ctx, c.clPath);
 				if (p == "Math") generateClass__name__(ctx, c.clPath);
 				/* Another special case for Std because we do not want to generate it if it's empty. */
-				if (p == "Std" && c.clOrderedStatics.length == 0) {} else if (!(hasClassFlag(c, CExtern))) {
+				if (p == "Std" && c.clStatics.length == 0) {} else if (!(hasClassFlag(c, CExtern))) {
 					if ((!(hasClassFlag(c, CInterface))) || (needToGenerateInterface(ctx, c))) generateClass(ctx, c);
 				} else if (Meta.has(Meta.JsRequire, c.clMeta) && Gctx.isDirectlyUsed(ctx.com, c.clMeta)) generateRequire(ctx,
 					getGeneratedClassPath(c), c.clMeta);
@@ -1948,7 +1948,7 @@ class Genjs {
 									processExpose(c.clMeta, () -> path, add);
 									function(f:TClassField) return path + "." + f.cfName;
 							}
-							for (f in c.clOrderedStatics) processExpose(f.cfMeta, () -> getExposePath(f), add);
+							for (f in c.clStatics) processExpose(f.cfMeta, () -> getExposePath(f), add);
 						case _:
 					}
 					r;

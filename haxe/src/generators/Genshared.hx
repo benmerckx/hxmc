@@ -303,8 +303,8 @@ class Preprocessor<A> {
 				case MStatic:
 			}
 		}
-		for (cf in c.clOrderedStatics) field(MStatic, cf);
-		for (cf in c.clOrderedFields) field(MInstance, cf);
+		for (cf in c.clStatics) field(MStatic, cf);
+		for (cf in c.clFields) field(MInstance, cf);
 		switch c.clConstructor {
 			case null:
 				try {
@@ -413,28 +413,15 @@ class TypedefInterfaces<A> {
 		var pathInner:GlobalTypePath = {pack: pfm.pfmPath.pack, name: pfm.pfmPath.name + "$Interface"};
 		var found = interfaces.findOpt(pathInner);
 		if (found != null) return found;
-		// port: PMap.foldi visits the keys in increasing order
-		var names = [for (n in pfm.pfmFields.keys()) n];
-		names.sort(compareStrings);
-		var fields = new haxe.ds.StringMap<TClassField>();
-		var sortedNames = [];
-		for (name in names) {
-			var cf = pfm.pfmFields.get(name);
-			switch cf.cfKind {
-				case Method(MethNormal | MethInline):
-					fields.set(name, cf);
-					sortedNames.push(name);
-				case _:
-			}
-		}
-		if (sortedNames.length == 0) throw new Unify_error([UnifyCustom("no fields")]);
+		var fields = pfm.pfmFields.filterMap(cf -> switch cf.cfKind {
+			case Method(MethNormal | MethInline): cf;
+			case _: null;
+		});
+		if (fields.isEmpty()) throw new Unify_error([UnifyCustom("no fields")]);
 		var c = mkClass(nullModule, path, nullPos, nullPos);
 		addClassFlag(c, CInterface);
-		c.clFields = fields;
-		// port: PMap.fold (fun cf acc -> cf :: acc): the fields in decreasing key order
-		var ordered = [for (n in sortedNames) fields.get(n)];
-		ordered.reverse();
-		c.clOrderedFields = ordered;
+		// port: cl_fields, and cl_ordered_fields as `PMap.fold (fun cf acc -> cf :: acc)` of it
+		c.clFields = core.TFunctions.classFieldsOf(fields.foldCons(cf -> cf));
 		if (isExtern) addClassFlag(c, CExtern);
 		interfaces.replace(pfm.pfmPath, c);
 		return c;

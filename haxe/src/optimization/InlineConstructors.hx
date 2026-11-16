@@ -511,7 +511,7 @@ private class ConstructorInlining {
 				io.ioDependentVars = args.vars;
 				function fields(c:TClass, tl:TParams):Void {
 					function apply(t:T):T return applyParams(c.clParams, tl, t);
-					for (cf in c.clOrderedFields) switch cf.cfKind {
+					for (cf in c.clFields) switch cf.cfKind {
 						case Var(_):
 							allocIoField(io, cf.cfName, apply(cf.cfType), v.vPos);
 						case _:

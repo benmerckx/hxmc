@@ -400,10 +400,10 @@ class DisplayToplevel {
 					// member fields
 					if (ctx.e.curfun != FunStatic) {
 						var allFields = core.TOther.TClassTools.getAllFields(ctx.c.curclass, extractParamTypes(ctx.c.curclass.clParams));
-						core.ds.PMap.iter(function(_, e:{cls:TClass, field:TClassField}) {
+						allFields.iter(function(_, e:{cls:TClass, field:TClassField}) {
 							var origin = e.cls == ctx.c.curclass ? Self(TClassDecl(e.cls)) : Parent(TClassDecl(e.cls));
 							maybeAddField(CFSMember, origin, e.field);
-						}, allFields);
+						});
 						// TODO: local using?
 					}
 
@@ -412,7 +412,7 @@ class DisplayToplevel {
 						case KAbstractImpl(a) if (a.aImpl != null):
 							var c = a.aImpl;
 							var origin = Self(TAbstractDecl(a));
-							for (cf in c.clOrderedStatics) {
+							for (cf in c.clStatics) {
 								if (hasClassFieldFlag(cf, CfImpl)) {
 									if (ctx.e.curfun == FunStatic) {} else {
 										var cf = Typecore.prepareUsingField(cf);
@@ -421,7 +421,7 @@ class DisplayToplevel {
 								} else maybeAddField(CFSStatic, origin, cf);
 							}
 						case _:
-							for (cf in ctx.c.curclass.clOrderedStatics) maybeAddField(CFSStatic, Self(TClassDecl(ctx.c.curclass)), cf);
+							for (cf in ctx.c.curclass.clStatics) maybeAddField(CFSStatic, Self(TClassDecl(ctx.c.curclass)), cf);
 					}
 					return null;
 				}, null);
@@ -433,7 +433,7 @@ class DisplayToplevel {
 							case TAbstractDecl(a) if (a.aImpl != null && a.aEnum && !cctx.pathExists(a.aPath) && ctx.c.curclass != a.aImpl):
 								var c = a.aImpl;
 								cctx.addPath(a.aPath);
-								for (cf in c.clOrderedStatics) {
+								for (cf in c.clStatics) {
 									var ccf = CompletionClassField.make(cf, CFSMember, Self(CompletionItem.declOfClass(c)), true);
 									if (hasClassFieldFlag(cf, CfEnum)
 										&& !Meta.has(MetaTag.NoCompletion,
@@ -447,11 +447,11 @@ class DisplayToplevel {
 							case TEnumDecl(e) if (!cctx.pathExists(e.ePath)):
 								cctx.addPath(e.ePath);
 								var origin = Self(TEnumDecl(e));
-								core.ds.PMap.iter(function(_, ef:TEnumField) {
+								for (ef in e.eConstrs.byName) {
 									var isQualified = cctx.isQualified(ef.efName);
 									add(CompletionItem.makeCiEnumField(CompletionEnumField.make(ef, origin, isQualified), tpair(ef.efType)),
 										ef.efName);
-								}, e.eConstrs);
+								}
 							case _:
 						}
 					}
@@ -475,7 +475,7 @@ class DisplayToplevel {
 						try {
 							var isQualified = cctx.isQualified(name);
 							function classImport(c:TClass):Void {
-								var cf = core.ds.PMap.find(s, c.clStatics);
+								var cf = c.clStatics.find(s);
 								var cf = if (name == cf.cfName) cf else {
 									var cf2 = cf.clone();
 									cf2.cfName = name;
@@ -500,7 +500,7 @@ class DisplayToplevel {
 								case TClassDecl(c):
 									classImport(c);
 								case TEnumDecl(en):
-									var ef = core.ds.PMap.find(s, en.eConstrs);
+									var ef = en.eConstrs.find(s);
 									var ef = if (name == ef.efName) ef else {
 										var ef2 = ef.clone();
 										ef2.efName = name;

@@ -40,7 +40,7 @@ class OverloadResolution {
 	public static function tryFunctionalInterfaceMatch(tParam:T, tArg:T):Bool {
 		return switch [follow(tParam), follow(tArg)] {
 			case [TInst(c, tl), TFun(_)] if (hasClassFlag(c, CFunctionalInterface)):
-				var cf = TClassTools.getSingularInterfaceField(c.clOrderedFields);
+				var cf = TClassTools.getSingularInterfaceField(c.clFields);
 				if (cf == null) false else {
 					var monos = cf.cfParams.map(function(_) return mkMono());
 					var expected = applyParams(c.clParams, tl, applyParams(cf.cfParams, monos, cf.cfType));

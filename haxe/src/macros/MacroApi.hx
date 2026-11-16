@@ -322,6 +322,10 @@ class MacroApiImpl {
 	static inline function encodeStringMap<A>(convert:A->Value,
 			m:StringMap<A>):Value return nativeValues ? MacroNativeValues.encodeStringMap(convert, m) : macros.eval.EvalEncode.encodeStringMap(convert, m);
 
+	// port: encode_string_map of a PMap (in key order already)
+	static inline function encodePMap<A>(convert:A->Value,
+			m:core.ds.PMap<A>):Value return nativeValues ? MacroNativeValues.encodePMap(convert, m) : macros.eval.EvalEncode.encodePMap(convert, m);
+
 	static inline function encodeTdecl(t:ModuleType):Value return nativeValues ? ((t : Dynamic) : Value) : macros.eval.EvalEncode.encodeTdecl(t);
 
 	static inline function encodeLazytype(t:TLazy, f:Void->Value):Value return nativeValues ? MacroNativeValues.encodeLazytype(t, f) : macros.eval.EvalEncode.encodeLazytype(t, f);
@@ -1344,11 +1348,7 @@ class MacroApiImpl {
 	// ---------------------------------------------------------------------- //
 	// TYPE ENCODING
 
-	static function encodePmapArray<A>(convert:A->Value, m:StringMap<A>):Value {
-		var l = [];
-		PMap.iter((_, v) -> l.push(convert(v)), m);
-		return encodeArray(l);
-	}
+	static inline function encodePmapArray<A>(convert:A->Value, m:core.ds.PMap<A>):Value return encodeArray(m.mapToArray(convert));
 
 	static function encodeAndMapArray<A>(convert:A->Value, l:Array<A>):Value return encodeArrayV(l.mapToVector(convert));
 
@@ -1433,8 +1433,8 @@ class MacroApiImpl {
 	}
 
 	public static function encodeTenum(e:TEnum):Value {
-		var names = encodeArrayV(e.eNames.mapToVector(encodeString));
-		var constructs = encodeStringMap(encodeEfield, e.eConstrs);
+		var names = encodeArray([for (n in e.eConstrs.names()) encodeString(n)]);
+		var constructs = encodePMap(encodeEfield, e.eConstrs.byName);
 		var exclude = vfun0(() -> {
 			addEnumFlag(e, EnExcluded);
 			vnull;
@@ -1607,14 +1607,14 @@ class MacroApiImpl {
 
 	public static function encodeTclass(c:TClass):Value {
 		protectTyping(() -> c.clBuild());
-		var overrides = encodeArray(c.clOrderedFields.filter(cf -> hasClassFieldFlag(cf, CfOverride)).map(encodeCfref));
+		var overrides = encodeArray(c.clFields.toArray().filter(cf -> hasClassFieldFlag(cf, CfOverride)).map(encodeCfref));
 		var init = switch core.TOther.TClassTools.getClInit(c) {
 			case null: vnull;
 			case e: encodeTexpr(e);
 		}
 		var constructor = c.clConstructor == null ? vnull : encodeCfref(c.clConstructor);
-		var statics = encodeRef(c.clOrderedStatics, l -> encodeAndMapArray(encodeCfield, l), () -> "class fields");
-		var fields = encodeRef(c.clOrderedFields, l -> encodeAndMapArray(encodeCfield, l), () -> "class fields");
+		var statics = encodeRef(c.clStatics, l -> encodeAndMapArray(encodeCfield, l.toArray()), () -> "class fields");
+		var fields = encodeRef(c.clFields, l -> encodeAndMapArray(encodeCfield, l.toArray()), () -> "class fields");
 		var interfaces = encodeArrayV(c.clImplements.mapToVector(i -> encodeClassAndParams(i.cls, i.params)));
 		var superClass = c.clSuper == null ? vnull : encodeClassAndParams(c.clSuper.cls, c.clSuper.params);
 		var isAbstract = vbool(hasClassFlag(c, CAbstract));
@@ -2039,7 +2039,7 @@ class MacroApiImpl {
 		var name = decodeString(field(v, "name"));
 		try {
 			var enm = getEnum(decodeType(field(v, "type")));
-			return PMap.find(name, enm.eConstrs);
+			return enm.eConstrs.find(name);
 		} catch (_:NotFound) {
 			throw InvalidExpr.raise();
 		}
@@ -3517,6 +3517,13 @@ class MacroNativeValues {
 	}
 
 	public static function encodeStringMap<A>(convert:A->Dynamic, m:StringMap<A>):Dynamic {
+		var r = new StringMap<Dynamic>();
+		for (k => v in m)
+			r.set(k, convert(v));
+		return r;
+	}
+
+	public static function encodePMap<A>(convert:A->Dynamic, m:core.ds.PMap<A>):Dynamic {
 		var r = new StringMap<Dynamic>();
 		for (k => v in m)
 			r.set(k, convert(v));

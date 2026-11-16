@@ -201,7 +201,7 @@ class Resolution {
 		// method's signature so specificity ordering still works between two
 		// SAM-parametered overloads.
 		case [TInst(cf, tlf), TFun(_)] if (hasClassFlag(cf, CFunctionalInterface)):
-			var sam = core.TOther.TClassTools.getSingularInterfaceField(cf.clOrderedFields);
+			var sam = core.TOther.TClassTools.getSingularInterfaceField(cf.clFields);
 			if (sam == null) throw NotFound.raise();
 			rateConv(cacc + 1, applyParams(cf.clParams, tlf, sam.cfType), targ);
 		case _: throw NotFound.raise();

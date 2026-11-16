@@ -48,7 +48,7 @@ class InstanceBuilder {
 				var resolved:GlobalTypePath;
 				if (ctx.c.curclass.clStatics.exists(i)) resolved = ctx.c.curclass.clPath;
 				else {
-					var imported = ctx.m.importResolution.extractFieldImports().findOpt(i);
+					var imported = ctx.m.importResolution.extractFieldImports().get(i);
 					if (imported == null) raiseTypingError("Invalid macro call", p);
 					resolved = tPath(imported.type);
 				}

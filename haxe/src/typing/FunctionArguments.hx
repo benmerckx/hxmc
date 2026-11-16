@@ -102,7 +102,7 @@ class FunctionArguments {
 			function loop(e:TExpr):Void {
 				if (found) return;
 				switch e.eexpr {
-					case TLocal(v) if (ctx.f.locals.findOpt(v.vName) == v):
+					case TLocal(v) if (ctx.f.locals.get(v.vName) == v):
 						found = true;
 					case _:
 						core.Texpr.iter(loop, e);

@@ -343,7 +343,7 @@ class RuntimeSymbols {
 		for (t in m.mTypes)
 			switch t {
 				case TClassDecl(c) if (Lower.runtimeClass(c) && Lower.ofTarget(c)):
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						if (cf.cfMeta.length == 0) continue;
 						if (cf.cfKind.match(Method(_))) {
 							add(Lower.metaString(":hxmc.export", cf.cfMeta), (1 << FUNC) | (1 << IMPL));

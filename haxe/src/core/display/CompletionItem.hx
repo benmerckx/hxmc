@@ -651,10 +651,7 @@ class CompletionType {
 				case TAnon(an):
 					function afield(af:TClassField):CtAnonymousField return {ctfField: af, ctfType: fromType__(empty, af.cfType)};
 					CTAnonymous({
-						ctFields: core.ds.PMap.fold(function(cf:TClassField, acc:Array<CtAnonymousField>) {
-							acc.unshift(afield(cf));
-							return acc;
-						}, an.aFields, []),
+						ctFields: an.aFields.foldCons(afield),
 						ctStatus: an.aStatus
 					});
 				case TDynamic(null):

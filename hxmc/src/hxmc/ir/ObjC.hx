@@ -250,7 +250,7 @@ class ObjC {
 	public static function ivars(c:TClass):Array<Ivar> {
 		var r:Array<Ivar> = [];
 		var name = c.clPath.name;
-		for (cf in c.clOrderedFields) {
+		for (cf in c.clFields) {
 			switch cf.cfKind {
 				// (a property without storage: its accessors are methods)
 				case Var(v) if (Lower.isPhysical(c, cf, v)):
@@ -677,7 +677,7 @@ class ObjC {
 		var r = [];
 		// (the receiver: the method's first argument, a static has none)
 		var first = statics ? 0 : 1;
-		for (cf in (statics ? c.clOrderedStatics : c.clOrderedFields)) {
+		for (cf in (statics ? c.clStatics : c.clFields)) {
 			if (!cf.cfKind.match(Method(MethNormal | MethDynamic))) continue;
 			// (a protocol's optional method the class leaves out: none, TypeloadCheck's
 			// stand-in, extern and without a body)

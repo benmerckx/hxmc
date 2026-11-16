@@ -670,9 +670,9 @@ class ModuleCache {
 								if (r) core.TFunctions.removeClassFieldFlag(cf, CfMaybeUsed);
 							}
 							add(c.clConstructor, "c|");
-							for (cf in c.clOrderedFields)
+							for (cf in c.clFields)
 								add(cf, "f|");
-							for (cf in c.clOrderedStatics)
+							for (cf in c.clStatics)
 								add(cf, "s|");
 						case _:
 					}
@@ -1070,7 +1070,7 @@ class ModuleCache {
 
 	// the macros' context's defines, as MacroContext.createMacroContext
 	// makes them
-	static function predictMacroDefines(com:CommonContext):{sign:String, values:haxe.ds.StringMap<String>} {
+	static function predictMacroDefines(com:CommonContext):{sign:String, values:core.ds.PMap<String>} {
 		var c = Common.clone(com, true);
 		var d = Common.adaptDefinesToMacroContext(c.defines);
 		c.defines.values = d.values;
@@ -1736,13 +1736,13 @@ class ModuleCache {
 					for (i in c.clImplements)
 						b.add("i" + core.Globals.sTypePath(i.cls.clPath) + ";");
 					if (c.clConstructor != null) field("n", c.clConstructor);
-					for (f in c.clOrderedFields)
+					for (f in c.clFields)
 						field("f", f);
-					for (f in c.clOrderedStatics)
+					for (f in c.clStatics)
 						field("s", f);
 				case TEnumDecl(e):
 					b.add("E" + core.Globals.sTypePath(e.ePath) + "\n");
-					for (n in e.eNames) {
+					for (n in e.eConstrs.names()) {
 						b.add(n + ":");
 						ty(e.eConstrs.get(n).efType, 0);
 						b.add(";");

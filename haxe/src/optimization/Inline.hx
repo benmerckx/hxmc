@@ -574,7 +574,7 @@ class Inline {
 		var cparams = extractParamTypes(c.clParams);
 		var thisExpr = mk(TConst(TThis), TInst(c, cparams), c.clPos);
 		var inits = [];
-		for (cf in c.clOrderedFields) switch [cf.cfKind, cf.cfExpr] {
+		for (cf in c.clFields) switch [cf.cfKind, cf.cfExpr] {
 			case [Var({vRead: _, vWrite: _}), e] if (e != null):
 				var lhs = mk(TField(thisExpr, FInstance(c, cparams, cf)), cf.cfType, e.epos);
 				inits.push(mk(TBinop(OpAssign, lhs, e), cf.cfType, e.epos));

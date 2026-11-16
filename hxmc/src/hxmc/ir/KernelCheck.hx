@@ -392,7 +392,7 @@ class KernelCheck {
 		return switch t.follow() {
 			case TInst(c, _) if (CInterop.isStruct(c)):
 				var all = true;
-				for (cf in c.clOrderedFields)
+				for (cf in c.clFields)
 					if (cf.cfKind.match(Var(_)) && !plain(cf.cfType, depth + 1)) all = false;
 				all;
 			case _: false;

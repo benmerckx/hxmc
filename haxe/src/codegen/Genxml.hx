@@ -122,11 +122,9 @@ class Genxml {
 			}
 			node("f", attributes, sig.args.mapToArray(a -> genType(a.optional ? followParam(a.type) : a.type)).concat([genType(sig.ret)]));
 		case TAnon(a):
-			var names = [for (name in a.aFields.keys()) name];
-			names.sort(core.ds.Key.compareStrings);
 			var children = [];
-			for (name in names) {
-				var cf = core.ds.Record.copy(a.aFields.get(name));
+			for (f in a.aFields) {
+				var cf = core.ds.Record.copy(f);
 				removeClassFieldFlag(cf, CfPublic);
 				children.unshift(genField([], cf));
 			}
@@ -215,9 +213,9 @@ class Genxml {
 			case TClassDecl(c):
 				function visible(cf:TClassField):Bool return !Meta.has(Meta.GenericInstance, cf.cfMeta)
 					&& !Meta.has(Meta.NoDoc, cf.cfMeta);
-				var statics = c.clOrderedStatics.filter(cf -> cf.cfName != "__meta__" && visible(cf))
+				var statics = c.clStatics.toArray().filter(cf -> cf.cfName != "__meta__" && visible(cf))
 					.map(cf -> genField([attr("static", "1")], cf));
-				var fields = c.clOrderedFields.filter(visible)
+				var fields = c.clFields.toArray().filter(visible)
 					.map(cf -> genField(c.clSuper != null && fieldExists(cf, c.clSuper.cls) ? [attr("override", "1")] : [], cf));
 				var ctor = c.clConstructor == null ? [] : [genField([], c.clConstructor)];
 				var tree = c.clImplements.map(ct -> genClassPath(hasClassFlag(c, CInterface) ? "extends" : "implements", ct));
@@ -229,7 +227,7 @@ class Genxml {
 				if (hasClassFlag(c, CAbstract)) attrs.push(attr("abstract", "1"));
 				node("class", attrs, tree.concat(statics).concat(fields).concat(ctor).concat(genDocOpt(c.clDoc)).concat(genMeta(c.clMeta)));
 			case TEnumDecl(e): node("enum", genTypeParams(includePos, e.ePrivate, tpath(t), e.eParams, e.ePos, m),
-					e.eNames.map(name -> genConstr(core.ds.PMap.find(name, e.eConstrs)))
+					e.eConstrs.keyArray().map(name -> genConstr(e.eConstrs.find(name)))
 						.concat(genDocOpt(e.eDoc))
 						.concat(genMeta(e.eMeta)));
 			case TTypeDecl(d): node("typedef", genTypeParams(includePos, d.tPrivate, d.tPath, d.tParams, d.tPos, m),

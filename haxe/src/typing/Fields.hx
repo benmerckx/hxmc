@@ -662,7 +662,7 @@ class Fields {
 		Generates a list of fields for `@:structInit` class `c` with type params `tl`
 		as it's needed for anonymous object syntax.
 	*/
-	public static function getStructInitAnonFields(c:TClass, tl:TParams):haxe.ds.StringMap<TClassField> {
+	public static function getStructInitAnonFields(c:TClass, tl:TParams):TypeMap<TClassField> {
 		var args:Null<Array<{
 			name:String,
 			optional:Bool,
@@ -688,8 +688,8 @@ class Fields {
 									break;
 								}
 							case _:
-								if (c.clFields.exists(name)) {
-									var field = c.clFields.get(name);
+								var field = c.clFields.get(name);
+								if (field != null) {
 									p = field.cfNamePos;
 									doc = genDocTextOpt(field.cfDoc);
 								}
@@ -705,20 +705,21 @@ class Fields {
 				case _:
 			}
 		}
-		var fields = new haxe.ds.StringMap<TClassField>();
-		if (args != null) for (arg in args) {
-			var cf = mkField(arg.name, arg.type, arg.pos, arg.pos);
-			if (arg.optional) cf.cfMeta = vector(({meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry));
-			cf.cfDoc = docFromStringOpt(arg.doc);
-			fields.set(cf.cfName, cf);
+		if (args != null) {
+			var cfs = args.map(function(arg) {
+				var cf = mkField(arg.name, arg.type, arg.pos, arg.pos);
+				if (arg.optional) cf.cfMeta = vector(({meta: MetaTag.Optional, exprs: vector(), pos: Globals.nullPos} : core.Ast.MetadataEntry));
+				cf.cfDoc = docFromStringOpt(arg.doc);
+				return cf;
+			});
+			return core.ds.PMap.ofArrays([for (cf in cfs) cf.cfName], cfs);
 		}
-		else for (cf in c.clFields) switch cf.cfKind {
+		return c.clFields.byName.filterMap(function(cf) return switch cf.cfKind {
 			case Var(_):
 				var copy:TClassField = core.ds.Record.copy(cf);
 				copy.cfType = applyParams(c.clParams, tl, cf.cfType);
-				fields.set(copy.cfName, copy);
-			case _:
-		}
-		return fields;
+				copy;
+			case _: null;
+		});
 	}
 }

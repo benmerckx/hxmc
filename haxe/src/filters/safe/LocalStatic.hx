@@ -27,8 +27,14 @@ class LocalStatic {
 	public static function promoteLocalStatic(lsctx:LsContext, run:TExpr->TExpr, v:TVar, eo:Null<TExpr>):Void {
 		var name = lsctx.scom.curfield.cfName + "_" + v.vName;
 		var c:TClass = lsctx.scom.curclass;
-		if (c.clStatics.exists(name)) {
-			var conflicting = c.clStatics.get(name);
+		// port: upstream has added the statics promoted so far to `cl_statics` already
+		// (their list follows in run): they are looked up beside it.
+		var conflicting = c.clStatics.get(name);
+		if (conflicting == null) for (cf in lsctx.addedFields) if (cf.cfName == name) {
+			conflicting = cf;
+			break;
+		}
+		if (conflicting != null) {
 			Error.raiseTypingErrorExt(Error.makeError(Custom("The expanded name of this local ("
 				+ name
 				+ ") conflicts with another static field"), v.vPos, [
@@ -83,7 +89,7 @@ class LocalStatic {
 		}
 		lsctx.addedFields.unshift(cf);
 		// Add to lookup early so that the duplication check works.
-		c.clStatics.set(cf.cfName, cf);
+		// port: addedFields is that lookup (promoteLocalStatic), both sides added in run.
 		lsctx.lut.set(v.vId, cf);
 	}
 
@@ -113,7 +119,7 @@ class LocalStatic {
 		}
 		var e = run(e);
 		// Add to ordered list in reverse order
-		for (cf in lsctx.addedFields) c.clOrderedStatics.unshift(cf);
+		for (cf in lsctx.addedFields) c.clStatics = c.clStatics.cons(cf.cfName, cf);
 		return e;
 	}
 }

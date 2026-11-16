@@ -130,7 +130,7 @@ class TexprConverter {
 					return switch con.kind {
 						case ConConst(_) | ConEnum(_, _):
 							var found = null;
-							for (cf in c.clOrderedStatics) if (cf.cfExpr != null) {
+							for (cf in c.clStatics) if (cf.cfExpr != null) {
 								var ctor = Constructor.extractCtor(cf.cfExpr);
 								if (ctor != null && Constructor.equal({kind: ctor, pos: nullPos}, con)) {
 									found = cf;

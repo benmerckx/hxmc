@@ -173,7 +173,7 @@ class TyperBase {
 			var v = ctx.f.vthis;
 			if (v == null) {
 				if (ctx.e.curfun == FunMemberAbstractLocal) {
-					v = ctx.f.locals.findOpt("this");
+					v = ctx.f.locals.get("this");
 					if (v == null) throw core.ds.NotFound.raise();
 					addVarFlag(v, VUsedByTyper);
 				} else v = addLocal(ctx, VGenerated, genLocalPrefix + "this", ctx.c.tthis, p);
@@ -181,7 +181,7 @@ class TyperBase {
 			} else ctx.f.locals = ctx.f.locals.add(v.vName, v);
 			mk(TLocal(v), ctx.c.tthis, p);
 		case FunMemberAbstract:
-			var v = ctx.f.locals.findOpt("this");
+			var v = ctx.f.locals.get("this");
 			if (v == null) raiseTypingError("Cannot reference this abstract here", p);
 			mk(TLocal(v), v.vType, p);
 		case FunConstructor | FunMember if (TyperManager.isCoroutineContext(ctx)):

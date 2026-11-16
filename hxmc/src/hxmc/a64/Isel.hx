@@ -47,6 +47,7 @@ enum abstract AOp(Int) to Int from Int {
 	var TLSLOAD; // d <- thread-local sym (s2 >= 0: at its offset from the TLS base s2)
 	var TLSSTORE; // thread-local sym <- s1 (s2: as TLSLOAD)
 	var TEBLOAD; // d <- [x18 + imm] (Windows: the thread environment block)
+	var TLSBASE; // d <- the image's thread-local block (Apple: Emit's inline TLV access, x16/x17 its scratch)
 	var BRK;
 	// (hxmc.unsafe: MirBuild.intrinsic)
 	var LDAR; // d <- [s1], acquire (size)
@@ -95,6 +96,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		opCall = CALL;
 		opRet = RET;
 		opTeb = TEBLOAD;
+		opTlsBase = TLSBASE;
 	}
 
 	// ---- RegTarget
@@ -130,7 +132,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				u(i.s2);
 				u(i.s3);
 			case DMB:
-			case MOVI | MOVF | CSET | TLSLOAD | TEBLOAD:
+			case MOVI | MOVF | CSET | TLSLOAD | TEBLOAD | TLSBASE:
 				defs.push(i.d);
 				u(i.s2);
 			case LEA | LOAD:

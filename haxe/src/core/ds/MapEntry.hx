@@ -1,6 +1,6 @@
 package core.ds;
 
-// port: a key/value binding of Hashtbl and PersistentMap (a class, so static
+// port: a key/value binding of Hashtbl (a class, so static
 // targets access it directly).
 @:structInit class MapEntry<K, V> {
 	public var key:K;

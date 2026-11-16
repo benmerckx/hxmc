@@ -76,7 +76,7 @@ class ArrayAccess {
 
 	// The length of an abstract: its get_length, or the length of its underlying type if @:forward forwards it.
 	public static function getAbstractLength(a:TAbstract, c:TClass, tl:TParams):ArrayLength {
-		var cfLength = try core.ds.PMap.find("get_length", c.clStatics) catch (_:NotFound) null;
+		var cfLength = c.clStatics.get("get_length");
 		if (cfLength != null) {
 			switch follow(cfLength.cfType) {
 				case TFun(s): switch follow(s.ret) {

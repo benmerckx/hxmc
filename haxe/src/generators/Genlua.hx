@@ -355,7 +355,7 @@ class Genlua {
 	static function mkMrBox(ctx:LuaCtx, e:TExpr):TExpr {
 		var sFields = switch follow(e.etype) {
 			case TInst(c, _):
-				c.clOrderedFields.map(f -> "\"" + f.cfName + "\"").join(", ");
+				c.clFields.mapToArray(f -> "\"" + f.cfName + "\"").join(", ");
 			case _: Globals.die("", "genlua.ml");
 		}
 		addFeature(ctx, "use._hx_box_mr");
@@ -368,7 +368,7 @@ class Genlua {
 	static function mkMrSelect(com:BasicTypes, e:TExpr, ecall:TExpr, name:String):TExpr {
 		var i = switch follow(ecall.etype) {
 			case TInst(c, _):
-				indexOf((f:TClassField) -> f.cfName == name, c.clOrderedFields);
+				indexOf((f:TClassField) -> f.cfName == name, c.clFields.toArray());
 			case _:
 				Globals.die("", "genlua.ml");
 		}
@@ -1136,7 +1136,7 @@ class Genlua {
 								var name = varName;
 								var names = switch follow(v.vType) {
 									case TInst(c, _):
-										c.clOrderedFields.map(f -> id + "_" + name + "_" + f.cfName);
+										c.clFields.mapToArray(f -> id + "_" + name + "_" + f.cfName);
 									case _:
 										Globals.die("", "genlua.ml");
 								}
@@ -1859,10 +1859,10 @@ class Genlua {
 
 	static function hasClass(ctx:LuaCtx, c:TClass):Bool
 		return hasFeature(ctx, "lua.Boot.getClass")
-			&& (c.clSuper != null || c.clOrderedFields.length > 0 || c.clConstructor != null);
+			&& (c.clSuper != null || c.clFields.length > 0 || c.clConstructor != null);
 
 	static function hasPrototype(ctx:LuaCtx, c:TClass):Bool
-		return c.clSuper != null || (hasClass(ctx, c)) || Lambda.exists(c.clOrderedFields, canGenClassField.bind(ctx, _));
+		return c.clSuper != null || (hasClass(ctx, c)) || Lambda.exists(c.clFields, canGenClassField.bind(ctx, _));
 
 	static function canGenClassField(ctx:LuaCtx, f:TClassField):Bool {
 		return switch f {
@@ -1877,8 +1877,8 @@ class Genlua {
 		switch c {
 			case _ if (Meta.has(MultiReturn, c.clMeta)):
 				if (!(hasClassFlag(c, CExtern))) raiseTypingError("MultiReturns must be externs",
-					c.clPos) else if (c.clOrderedStatics.length > 0) raiseTypingError("MultiReturns must not contain static fields",
-					c.clPos) else if ((Lambda.exists(c.clOrderedFields, cf -> switch cf.cfKind {
+					c.clPos) else if (c.clStatics.length > 0) raiseTypingError("MultiReturns must not contain static fields",
+					c.clPos) else if ((Lambda.exists(c.clFields, cf -> switch cf.cfKind {
 					case Method(_): true;
 					case _: false;
 				}))) raiseTypingError("MultiReturns must not contain methods", c.clPos);
@@ -2049,25 +2049,25 @@ class Genlua {
 		var hasPropertyReflection = (hasFeature(ctx, "Reflect.getProperty")) || (hasFeature(ctx, "Reflect.setProperty"));
 
 		if (hasPropertyReflection) {
-			switch codegen.Codegen.getProperties(c.clOrderedStatics) {
+			switch codegen.Codegen.getProperties(c.clStatics.toArray()) {
 				case []:
 				case props:
 					println(ctx, p + ".__properties__ = {" + genProps(props) + "}");
 			}
 		}
 
-		for (f in c.clOrderedStatics) genClassStaticField(ctx, c, f);
+		for (f in c.clStatics) genClassStaticField(ctx, c, f);
 
 		if ((hasPrototype(ctx, c))) {
 			println(ctx, p + ".prototype = _hx_e();");
-			for (f in c.clOrderedFields) if (canGenClassField(ctx, f)) (genClassField(ctx, c, f));
+			for (f in c.clFields) if (canGenClassField(ctx, f)) (genClassField(ctx, c, f));
 			if ((hasClass(ctx, c))) {
 				newline(ctx);
 				println(ctx, p + ".prototype.__class__ =  " + p);
 			}
 
 			if (hasPropertyReflection) {
-				var props = codegen.Codegen.getProperties(c.clOrderedFields);
+				var props = codegen.Codegen.getProperties(c.clFields.toArray());
 				switch c.clSuper {
 					case _ if (props.length == 0):
 					case _:
@@ -2105,11 +2105,11 @@ class Genlua {
 			print(ctx, "_hxClasses[\"" + dotPath(e.ePath) + "\"] = {");
 			print(ctx, " __ename__ = " + (if (hasFeature(ctx, "Type.getEnumName")) "\"" + ename.join(".") + "\"" else "true") + ",");
 			spr(ctx, " __constructs__ = _hx_tab_array({");
-			if (e.eNames.length > 0) {
+			if (e.eConstrs.length > 0) {
 				spr(ctx, "[0]=");
-				spr(ctx, e.eNames.map(s -> '"$s"').join(","));
+				spr(ctx, e.eConstrs.keyArray().map(s -> '"$s"').join(","));
 			}
-			print(ctx, "}," + e.eNames.length + ")}");
+			print(ctx, "}," + e.eConstrs.length + ")}");
 			ctx.separator = true;
 			newline(ctx);
 		}
@@ -2118,7 +2118,7 @@ class Genlua {
 			print(ctx, p + " = _hxClasses[\"" + dotPath(e.ePath) + "\"];");
 
 		newline(ctx);
-		for (n in e.eNames) {
+		for (n in e.eConstrs.names()) {
 			var f = e.eConstrs.get(n);
 			if (f == null) throw core.ds.NotFound.raise();
 			print(ctx, p + field(f.efName) + " = ");
@@ -2142,7 +2142,7 @@ class Genlua {
 			newline(ctx);
 		}
 		if (hasFeature(ctx, "Type.allEnums")) {
-			var ctorsWithoutArgs = e.eNames.filter(function(s) {
+			var ctorsWithoutArgs = e.eConstrs.keyArray().filter(function(s) {
 				var ef = e.eConstrs.get(s);
 				if (ef == null) throw core.ds.NotFound.raise();
 				return switch follow(ef.efType) {
@@ -2218,7 +2218,7 @@ class Genlua {
 				}
 				var p = sPath(ctx, c.clPath);
 				/* A special case for Std because we do not want to generate it if it's empty. */
-				if (p == "Std" && c.clOrderedStatics.length == 0) {} else if ((!(hasClassFlag(c, CExtern))) && Meta.has(LuaDotMethod, c.clMeta))
+				if (p == "Std" && c.clStatics.length == 0) {} else if ((!(hasClassFlag(c, CExtern))) && Meta.has(LuaDotMethod, c.clMeta))
 					raiseTypingError("LuaDotMethod is valid for externs only", c.clPos)
 				else if (!(hasClassFlag(c, CExtern))) generateClass(ctx, c);
 				checkMultireturn(ctx, c);
@@ -2359,8 +2359,8 @@ class Genlua {
 							f.cfExpr = (loop(e));
 					}
 				}
-				for (f in c.clOrderedFields) transformField(f);
-				for (f in c.clOrderedStatics) transformField(f);
+				for (f in c.clFields) transformField(f);
+				for (f in c.clStatics) transformField(f);
 				if (c.clConstructor != null) transformField(c.clConstructor);
 				/* Also transform __init__ expressions */
 				switch TClassTools.getClInit(c) {
@@ -2424,7 +2424,7 @@ class Genlua {
 				case TClassDecl(c):
 					var path = dotPath(c.clPath);
 					var classExposed = getExposed(ctx, path, c.clMeta);
-					var staticExposed = c.clOrderedStatics.map(f -> getExposed(ctx, path + staticField(c, f.cfName), f.cfMeta));
+					var staticExposed = c.clStatics.mapToArray(f -> getExposed(ctx, path + staticField(c, f.cfName), f.cfMeta));
 					exposed = exposed.concat(classExposed);
 					for (l in staticExposed) exposed = exposed.concat(l);
 				case _:

@@ -128,7 +128,7 @@ class AbstractCast {
 						found;
 					}
 				case [TInst(c, tl), TFun(_)] if (core.TFunctions.hasClassFlag(c, CFunctionalInterface)):
-					var cf = core.TOther.TClassTools.getSingularInterfaceField(c.clOrderedFields);
+					var cf = core.TOther.TClassTools.getSingularInterfaceField(c.clFields);
 					if (cf == null) throw NotFound.raise();
 					function map(t:T):T return core.TFunctions.applyParams(c.clParams, tl, t);
 					var monos = Monomorph.spawnConstrainedMonos(map, cf.cfParams);
