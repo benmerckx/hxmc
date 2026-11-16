@@ -247,6 +247,8 @@ class NekoError {
 	public var stack:Null<Array<Dynamic>>;
 	// the depth it was thrown at
 	public var depth = 0;
+	// thrown by $rethrow: the caught stack keeps the previous one
+	public var rethrown = false;
 
 	public function new(v:Dynamic)
 		this.value = v;

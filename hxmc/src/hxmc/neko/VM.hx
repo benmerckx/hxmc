@@ -323,9 +323,12 @@ class VM {
 					sp = top;
 					pc += 5;
 				case F.TAILCALL:
-					fpcs[depth] = pc;
+					// (Neko's tail call leaves this frame first: the callee
+					// takes its place, the caller's call its position)
 					sp = fp + code[pc + 2];
+					depth--;
 					var r = callOp(acc, vthis, code[pc + 1]);
+					depth++;
 					if (trap >= 0) trapState = RETURNED;
 					return r;
 				case F.APPLY:
@@ -563,10 +566,17 @@ class VM {
 					stack[fp + code[pc + 3]] = acc;
 					pc += code[pc + 4];
 				case F.BUILTIN:
-					fpcs[depth] = pc;
+					// (n + 8: a tail call, which leaves this frame first as TAILCALL)
 					var n = code[pc + 2], d = fp + code[pc + 3];
+					var tail = n >= 8;
+					if (tail) {
+						n -= 8;
+						depth--;
+					} else
+						fpcs[depth] = pc;
 					var r:Dynamic = builtin(code[pc + 1], d - n);
 					if (r == NOT_RUN) r = callAt(m.consts[code[pc + 4]], vthis, n, d);
+					if (tail) depth++;
 					acc = r;
 					sp = top;
 					pc += 5;
@@ -698,8 +708,12 @@ class VM {
 			var d:Int = stack[t + 3];
 			resumePc = stack[t];
 			resumeThis = stack[t + 1];
-			// (the frames between the throw and the trap, not the trap's own)
-			excStack = ne.stack.slice(0, ne.depth - d);
+			// (Neko's calls since the trap, outermost first: the frames from the
+			// trap's own, whose call or throw is among them, to the throw's;
+			// after a $rethrow, the stack caught before follows)
+			var st = ne.stack.slice(0, ne.depth - d + 1);
+			st.reverse();
+			excStack = ne.rethrown ? st.concat(excStack) : st;
 			depth = d;
 			trapState = ENDED;
 			return ne.value;
@@ -718,6 +732,17 @@ class VM {
 		}
 		ne.stack = st;
 		ne.depth = depth;
+	}
+
+	// $callstack: every frame's call, outermost first (the last: the call of
+	// $callstack itself)
+	public function callStack():Array<Dynamic> {
+		var st:Array<Dynamic> = [];
+		for (k in 0...depth + 1) {
+			var m = Module.byId(fmods[k]);
+			st.push(m == null ? null : m.position(m.oldOf[fpcs[k]]));
+		}
+		return st;
 	}
 
 	function errorAt(m:Module, pc:Int, msg:String):NekoError {

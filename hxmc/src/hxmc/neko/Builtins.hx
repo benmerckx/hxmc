@@ -354,7 +354,9 @@ class Builtins {
 		add("istrue", 1, (vm, a) -> !VM.isFalse(a[0]));
 		add("throw", 1, (vm, a) -> throw new NekoError(a[0]));
 		add("rethrow", 1, (vm, a) -> {
-			throw new NekoError(a[0]);
+			var ne = new NekoError(a[0]);
+			ne.rethrown = true;
+			throw ne;
 		});
 		add("nargs", 1, (vm, a) -> a[0].fun().nargs);
 		add("call", 3, (vm, a) -> vm.callEx(a[1], a[0], a[2].arr().copy()));
@@ -404,10 +406,7 @@ class Builtins {
 			return Std.int((a[0] : Int) / (a[1] : Int));
 		});
 		add("excstack", 0, (vm, a) -> vm.excStack.copy());
-		add("callstack", 0, (vm, a) -> {
-			var r:Array<Dynamic> = [];
-			return r;
-		});
+		add("callstack", 0, (vm, a) -> vm.callStack());
 		add("version", 0, (vm, a) -> 240);
 		add("neko_build_year", 0, (vm, a) -> 2024);
 		add("setresolver", 1, (vm, a) -> {

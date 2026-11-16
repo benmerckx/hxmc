@@ -81,7 +81,7 @@ class F {
 	public static inline var SLOTRET = 61; // s
 	public static inline var CALLGFPUSH = 62; // g, id, n, d, d2, len
 	public static inline var CALLPUSH = 63; // n, d, d2, len
-	public static inline var BUILTIN = 64; // which (Frame.BUILTINS), n, d, kidx: AccBuiltin $x, Call n
+	public static inline var BUILTIN = 64; // which (Frame.BUILTINS), n, d, kidx: AccBuiltin $x, Call n (n + 8: TailCall n)
 
 	// an instruction's slots
 	public static function size(code:Array<Int>, pc:Int):Int {
@@ -120,7 +120,7 @@ class Frame {
 
 	// sequences of the translated code as one instruction, where no
 	// instruction but the first is a jump's target
-	static function peephole(code:Array<Int>, entries:Array<Int>) {
+	static function peephole(code:Array<Int>, oldOf:Array<Int>, entries:Array<Int>) {
 		var target = new Map<Int, Bool>();
 		for (e in entries)
 			target.set(e, true);
@@ -148,6 +148,8 @@ class Frame {
 			switch code[pc] {
 				case F.ASLOT:
 					var s = code[pc + 1], q = pc + 2;
+					// (the operation's position)
+					if (at(q, F.OPIMMJUMP) || at(q, F.OPIMM)) oldOf[pc] = oldOf[q];
 					if (at(q, F.OPIMMJUMP)) {
 						// s, op, flag, k, kidx, t (8 slots)
 						var op = code[q + 1], flag = code[q + 2], k = code[q + 3], kidx = code[q + 4], t = code[q + 5];
@@ -340,13 +342,15 @@ class Frame {
 					emit(i, [F.AFALSE]);
 				case Op.AccThis:
 					emit(i, [F.ATHIS]);
+				// (a fused instruction's position: the original that calls or fails,
+				// as Neko's stacks and errors give it; here the Call)
 				case Op.AccBuiltin if (free(i + 2) && op(i + 2) == Op.Call && builtinOf(m.consts[p], code[i + 3]) >= 0):
-					emit(i, [F.BUILTIN, builtinOf(m.consts[p], code[i + 3]), code[i + 3], d, p]);
+					emit(i + 2, [F.BUILTIN, builtinOf(m.consts[p], code[i + 3]), code[i + 3], d, p]);
 					n = 4;
 				// (return $x(...): a tail call)
 				case Op.AccBuiltin if (free(i + 2) && op(i + 2) == Op.TailCall && builtinOf(m.consts[p], code[i + 3] & 7) >= 0):
-					emit(i, [F.BUILTIN, builtinOf(m.consts[p], code[i + 3] & 7), code[i + 3] & 7, d, p]);
-					emit(i, [F.RET]);
+					emit(i + 2, [F.BUILTIN, builtinOf(m.consts[p], code[i + 3] & 7), (code[i + 3] & 7) + 8, d, p]);
+					emit(i + 2, [F.RET]);
 					n = 4;
 				case Op.AccInt | Op.AccBuiltin:
 					if (free(i + 2) && op(i + 2) == Op.Push && !immAfter(i + 2)) {
@@ -365,7 +369,7 @@ class Frame {
 				case Op.AccGlobal:
 					// (a static's method called: AccGlobal g, Push, AccField f, ObjCall n)
 					if (free(i + 2) && op(i + 2) == Op.Push && free(i + 3) && op(i + 3) == Op.AccField && free(i + 5) && op(i + 5) == Op.ObjCall) {
-						emit(i, [F.CALLGF, p, code[i + 4], code[i + 6], d]);
+						emit(i + 5, [F.CALLGF, p, code[i + 4], code[i + 6], d]);
 						n = 7;
 					} else if (free(i + 2) && op(i + 2) == Op.Push && !immAfter(i + 2)) {
 						emit(i, [F.GLOBALPUSH, p, d]);
@@ -404,11 +408,11 @@ class Frame {
 						var k:Int = m.consts[code[i + 2]];
 						var cmp = op(i + 3);
 						if (isCmp(cmp) && free(i + 4) && (op(i + 4) == Op.JumpIf || op(i + 4) == Op.JumpIfNot)) {
-							emit(i, [F.OPIMMJUMP, cmp, op(i + 4) == Op.JumpIf ? 1 : 0, k, code[i + 2]]);
+							emit(i + 3, [F.OPIMMJUMP, cmp, op(i + 4) == Op.JumpIf ? 1 : 0, k, code[i + 2]]);
 							jumpTo(code[i + 5]);
 							n = 6;
 						} else {
-							emit(i, [F.OPIMM, cmp, k, code[i + 2]]);
+							emit(i + 3, [F.OPIMM, cmp, k, code[i + 2]]);
 							n = 4;
 						}
 					} else
@@ -506,7 +510,7 @@ class Frame {
 			out[fix[k]] = t;
 			k += 2;
 		}
-		peephole(out, [for (e in entries) map[e]]);
+		peephole(out, oldOf, [for (e in entries) map[e]]);
 		var frameMax = new Vector<Int>(out.length + 1, 0);
 		for (e => size in frameOf)
 			frameMax[map[e]] = size;
