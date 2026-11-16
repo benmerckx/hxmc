@@ -542,11 +542,12 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case Store:
 				// a store that publishes a reference: the stores before it first
 				// (dmb ishst; the reader's loads through it are ordered by their
-				// address dependency)
-				if (i.release) emit(DMB).cond = 1;
+				// address dependency; null publishes nothing)
+				var v = useZ(i.c);
+				if (i.release && v != ZR) emit(DMB).cond = 1;
 				var x = emit(STORE);
 				x.size = i.size;
-				x.s1 = useZ(i.c);
+				x.s1 = v;
 				memOf(x, i.a, i.b, i.imm2, i.imm, i.size);
 			case Call if (i.sym != null && StringTools.startsWith(i.sym, hxmc.MirBuild.SPECIAL)):
 				special(i);

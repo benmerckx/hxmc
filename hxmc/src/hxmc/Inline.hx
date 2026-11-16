@@ -148,8 +148,10 @@ class Inline {
 	// the instructions of f outside slow paths once lowered, from its
 	// object-level Mir: an object-level operation counts what MemLower makes
 	// of it outside slow paths (opSize), the others one each but constants
-	// and addresses, which fold into their users (-1: never inlined)
-	public static function size(f:MFunc):Int {
+	// and addresses, which fold into their users (-1: never inlined). A
+	// constructor's stores into `this` (ctor) count without their barrier:
+	// inlined after its allocation, the object is young there (freshTargets)
+	public static function size(f:MFunc, ctor = false):Int {
 		var n = 0, ends = ending(f);
 		for (b in f.blocks)
 			if (!b.cold && !ends.exists(b.id))
@@ -158,7 +160,7 @@ class Inline {
 					// (a float32 conversion: one instruction beside its load or store)
 					if (i.op == Call && (i.sym == MirBuild.SPECIAL + "f64_to_f32" || i.sym == MirBuild.SPECIAL + "f32_to_f64")) continue;
 					if (i.op != Const && i.op != ConstF && i.op != SymAddr && i.op != StackAddr && i.op != Param)
-						n += !i.isObj() ? 1 : opSize(i);
+						n += !i.isObj() ? 1 : ctor && i.op == SetField && f.vals[i.a].op == Param && f.vals[i.a].imm == 0 ? 1 : opSize(i);
 				}
 		return n;
 	}
@@ -247,7 +249,7 @@ class Inline {
 			new Sroa(sized).run();
 			new Opt(sized).run();
 		}
-		var n = size(sized), max = maxSize(false, true, false);
+		var n = size(sized, MirBuild.isCtor(fn)), max = maxSize(false, true, false);
 		return n >= 0 && n <= (once && max < MAX_ONCE ? MAX_ONCE : max) ? {mf: mf, sites: mb.inlineSites, size: n} : null;
 	}
 
