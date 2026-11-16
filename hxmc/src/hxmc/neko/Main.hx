@@ -50,15 +50,15 @@ class Main {
 	// report: the stack, then the exception
 	public static function report(vm:VM, e:NekoError, isExc:Bool) {
 		var b = new BytesBuffer();
-		var st:Array<Dynamic> = e.stack == null ? [] : e.stack.copy();
+		var st:NArr = e.stack == null ? [] : e.stack.copy();
 		st.reverse();
 		for (s in st) {
 			b.addString("Called from ");
 			if (s == null) b.addString("a C function") else if (Tag.isString(s)) {
-				b.add((s : NStr).b);
+				b.add(s.asStr().b);
 				b.addString(" (no debug available)");
-			} else if (Tag.isArray(s) && (s : Array<Dynamic>).length == 2) {
-				var a:Array<Dynamic> = s;
+			} else if (Tag.isArray(s) && s.asArr().length == 2) {
+				var a = s.asArr();
 				vm.buffer(b, a[0], []);
 				b.addString(" line ");
 				vm.buffer(b, a[1], []);

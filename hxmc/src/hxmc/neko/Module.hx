@@ -117,26 +117,26 @@ class Module {
 	// AccField's inline caches, by the field's code index (VM.interp)
 	public var icObj:Vector<NObj>;
 	public var icIdx:Vector<Int>;
-	public var globals:Vector<Dynamic>;
+	public var globals:Vector<NValue>;
 	public var code:Vector<Int>;
 	// AccBuiltin's values, by the index in the code
-	public var consts:Vector<Dynamic>;
+	public var consts:Vector<NValue>;
 	public var exports:NObj;
 	public var loader:NObj;
 	public var fields:Array<String> = [];
 	// the debug position of each code index: an index of dbgTbl, -1: none
 	public var dbgIdx:Null<Vector<Int>>;
-	public var dbgTbl:Array<Dynamic> = [];
+	public var dbgTbl:NArr = [];
 
 	function new() {}
 
-	public function position(pc:Int):Dynamic {
+	public function position(pc:Int):NValue {
 		if (dbgIdx == null || pc < 0 || pc >= dbgIdx.length) return name;
 		var i = dbgIdx[pc];
 		return i < 0 ? name : dbgTbl[i];
 	}
 
-	static function invalid():Dynamic
+	static function invalid():NValue
 		throw new ReadError();
 
 	// neko_read_module
@@ -171,8 +171,8 @@ class Module {
 		m.loader = loader;
 		m.exports = new NObj();
 		m.exports.set(Fields.id("__module"), new NAbs("module", m));
-		m.globals = new Vector<Dynamic>(nglobals);
-		var consts:Array<Dynamic> = [];
+		m.globals = new Vector<NValue>(nglobals);
+		var consts:NArr = [];
 		var version = 1;
 		var funcs = [];
 		for (i in 0...nglobals) {
@@ -246,11 +246,11 @@ class Module {
 				case Op.AccInt:
 					// (boxed once: the interpreter reads the value from consts)
 					code[i + 1] = consts.length;
-					consts.push((param : Dynamic));
+					consts.push((param : NValue));
 				case Op.AccIndex | Op.AccStack:
 					code[i + 1] = param + 2;
 				case Op.AccBuiltin:
-					var v:Dynamic = if (param == Fields.idLoader) loader else if (param == Fields.idExports) m.exports else {
+					var v:NValue = if (param == Fields.idLoader) loader else if (param == Fields.idExports) m.exports else {
 						var o = Builtins.get();
 						if (!o.has(param)) throw new NekoError(NStr.of("Builtin not found : " + Fields.name(param)));
 						o.get(param);
@@ -320,7 +320,7 @@ class Module {
 			switch c {
 				case Op.Push if (free(i + 1) && op(i + 1) == Op.AccInt && free(i + 3) && isImmOp(op(i + 3))
 					&& Tag.isInt(m.consts[code[i + 2]])):
-					var k:Int = m.consts[code[i + 2]];
+					var k = m.consts[code[i + 2]].asInt();
 					var cmp = op(i + 3);
 					if (isCmp(cmp) && free(i + 4) && (op(i + 4) == Op.JumpIf || op(i + 4) == Op.JumpIfNot)) {
 						var t = code[i + 5];
@@ -394,10 +394,10 @@ class Module {
 		p += 4;
 		if (npos != codesize) invalid();
 		var idx = new Vector<Int>(npos, -1);
-		var tbl:Array<Dynamic> = [];
+		var tbl:NArr = [];
 		var curfile = files[0];
 		var curline = 0;
-		var pp:Null<Array<Dynamic>> = null;
+		var pp:Null<NArr> = null;
 		var i = 0;
 		inline function add() {
 			pp = [curfile, curline];

@@ -59,7 +59,7 @@ class ZlibPrims {
 	}
 
 	// (zlib_error: "ZLib Error : " and zlib's message for the code)
-	static function zerror(err:Int):Dynamic {
+	static function zerror(err:Int):NekoError {
 		var msg = switch err {
 			case -2: "stream error";
 			case -5: "buffer error";
@@ -142,7 +142,7 @@ class ZlibPrims {
 				case "BLOCK": libs.extc.Zlib.Z_BLOCK;
 				case _: throw Builtins.failure;
 			}
-			if (Tag.isAbstract(a[0]) && (a[0] : NAbs).kind == "zlib_deflate") ((a[0] : NAbs).data : Deflater).flush = f else
+			if (Tag.isAbstract(a[0]) && a[0].asAbs().kind == "zlib_deflate") (a[0].asAbs().data : Deflater).flush = f else
 				a[0].abs("zlib_inflate");
 			return null;
 		});

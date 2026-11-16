@@ -17,20 +17,20 @@ class VM {
 
 	static final tls = new sys.thread.Tls<VM>();
 
-	public var stack:Vector<Dynamic>;
+	public var stack:Vector<NValue>;
 	public var sp = 0;
-	public var vthis:Dynamic = null;
+	public var vthis:NValue = null;
 	public var lastPrim:Null<NFun> = null;
-	public var env:Dynamic = [];
+	public var env:NValue = [];
 	public var depth = 0;
-	public var resolver:Dynamic = null;
-	public var excStack:Array<Dynamic> = [];
+	public var resolver:NValue = null;
+	public var excStack:NArr = [];
 	// each depth's module and the pc of its current call (neko's csp frames)
 	final fmods = new Vector<Int>(MAX_DEPTH + 2, -1);
 	final fpcs = new Vector<Int>(MAX_DEPTH + 2, 0);
 	// what $print writes to
 	public var print:Bytes->Void;
-	public var custom:Map<String, Dynamic> = new Map();
+	public var custom:Map<String, NValue> = new Map();
 
 	public function new() {
 		stack = new Vector(1 << 12);
@@ -52,22 +52,22 @@ class VM {
 	// ---- errors
 
 	// the boxes of the small Ints, made once
-	static final smallInts:Vector<Dynamic> = {
-		var v = new Vector<Dynamic>(2048);
+	static final smallInts:Vector<NValue> = {
+		var v = new Vector<NValue>(2048);
 		for (i in 0...2048)
-			v[i] = (i - 1024 : Dynamic);
+			v[i] = (i - 1024 : NValue);
 		v;
 	};
 
-	public static inline function box(i:Int):Dynamic
-		return i >= -1024 && i < 1024 ? smallInts[i + 1024] : (i : Dynamic);
+	public static inline function box(i:Int):NValue
+		return i >= -1024 && i < 1024 ? smallInts[i + 1024] : (i : NValue);
 
 	public static inline function error(msg:String):NekoError
 		return new NekoError(NStr.of(msg));
 
 	// ---- the stack
 
-	inline function push(v:Dynamic) {
+	inline function push(v:NValue) {
 		if (sp == stack.length) grow();
 		stack[sp++] = v;
 	}
@@ -79,7 +79,7 @@ class VM {
 
 	function grow() {
 		if (stack.length >= 1 << 24) throw error("Stack Overflow");
-		var n = new Vector<Dynamic>(stack.length * 2);
+		var n = new Vector<NValue>(stack.length * 2);
 		Vector.blit(stack, 0, n, 0, sp);
 		stack = n;
 	}
@@ -92,7 +92,7 @@ class VM {
 	// ---- calls
 
 	// val_callEx: f called on `thisv` (`keepThis`: the current `this`)
-	public function callEx(thisv:Dynamic, f:Dynamic, args:Array<Dynamic>, keepThis = false):Dynamic {
+	public function callEx(thisv:NValue, f:NValue, args:NArr, keepThis = false):NValue {
 		var oldThis = vthis, oldEnv = env, oldSp = sp, oldDepth = depth;
 		try {
 			for (a in args)
@@ -114,16 +114,16 @@ class VM {
 		}
 	}
 
-	public inline function callN(f:Dynamic, args:Array<Dynamic>):Dynamic
+	public inline function callN(f:NValue, args:NArr):NValue
 		return callEx(null, f, args, true);
 
 	// a call with nargs arguments on the stack, which it pops
-	public function callOp(f:Dynamic, thisv:Dynamic, nargs:Int):Dynamic {
+	public function callOp(f:NValue, thisv:NValue, nargs:Int):NValue {
 		if (!Tag.isFunction(f)) {
 			pop(nargs);
 			throw error("Invalid call");
 		}
-		var fn:NFun = f;
+		var fn = f.asFun();
 		if (fn.prim == null) {
 			if (fn.nargs != nargs) {
 				pop(nargs);
@@ -150,7 +150,7 @@ class VM {
 			pop(nargs);
 			throw error("Invalid call");
 		}
-		var args = new Vector<Dynamic>(nargs);
+		var args = new Vector<NValue>(nargs);
 		for (i in 0...nargs)
 			args[i] = stack[sp - nargs + i];
 		pop(nargs);
@@ -169,7 +169,7 @@ class VM {
 	}
 
 	// a module's code from its start (neko_vm_execute)
-	public function execute(m:Module):Dynamic {
+	public function execute(m:Module):NValue {
 		var fp = sp;
 		var top = fp + m.frameMax[0];
 		if (top + 8 > stack.length) growTo(top + 8);
@@ -186,7 +186,7 @@ class VM {
 	// for a call, back after it); trap >= 0: the part of the frame under the
 	// trap whose six slots start there (protect), which ends at its EndTrap
 	// (trapState ENDED, resumePc) or with the function (RETURNED)
-	function interp(m:Module, pc:Int, acc:Dynamic, trap:Int, vthis:Dynamic, env:Dynamic, fp:Int, top:Int):Dynamic {
+	function interp(m:Module, pc:Int, acc:NValue, trap:Int, vthis:NValue, env:NValue, fp:Int, top:Int):NValue {
 		final code = m.vcode;
 		fmods[depth] = m.id;
 		while (true) {
@@ -213,7 +213,7 @@ class VM {
 					acc = m.globals[code[pc + 1]];
 					pc += 2;
 				case F.AENV:
-					var e:Array<Dynamic> = env;
+					var e = env.asArr();
 					var i = code[pc + 1];
 					if (i >= e.length) throw errorAt(m, pc, "Reading Outside Env");
 					acc = e[i];
@@ -224,13 +224,13 @@ class VM {
 					pc += 2;
 				case F.AARRAY:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[fp + code[pc + 1] - 1];
+					var a:NValue = stack[fp + code[pc + 1] - 1];
 					if (Tag.isInt(acc) && Tag.isArray(a)) {
-						var arr:Array<Dynamic> = a;
-						var k:Int = acc;
+						var arr = a.asArr();
+						var k = acc.asInt();
 						acc = k < 0 || k >= arr.length ? null : arr[k];
 					} else if (Tag.isObject(a))
-						acc = objectOp(a, acc, Fields.idGet, "Unsupported operation")
+						acc = objectOp(a.asObj(), acc, Fields.idGet, "Unsupported operation")
 					else
 						throw errorAt(m, pc, "Invalid array access");
 					pc += 2;
@@ -245,26 +245,26 @@ class VM {
 					m.globals[code[pc + 1]] = acc;
 					pc += 2;
 				case F.SENV:
-					var e:Array<Dynamic> = env;
+					var e = env.asArr();
 					var i = code[pc + 1];
 					if (i >= e.length) throw errorAt(m, pc, "Writing Outside Env");
 					e[i] = acc;
 					pc += 2;
 				case F.SFIELD:
-					var o:Dynamic = stack[fp + code[pc + 2] - 1];
-					if (Tag.isObject(o)) (o : NObj).set(code[pc + 1], acc) else throw invalidFieldAt(m, pc, code[pc + 1]);
+					var o:NValue = stack[fp + code[pc + 2] - 1];
+					if (Tag.isObject(o)) o.asObj().set(code[pc + 1], acc) else throw invalidFieldAt(m, pc, code[pc + 1]);
 					pc += 3;
 				case F.SARRAY:
 					fpcs[depth] = pc;
 					var d = fp + code[pc + 1];
-					var a:Dynamic = stack[d - 1];
-					var k:Dynamic = stack[d - 2];
+					var a:NValue = stack[d - 1];
+					var k:NValue = stack[d - 2];
 					if (Tag.isArray(a) && Tag.isInt(k)) {
-						var arr:Array<Dynamic> = a;
-						var i:Int = k;
+						var arr = a.asArr();
+						var i = k.asInt();
 						if (i >= 0 && i < arr.length) arr[i] = acc;
 					} else if (Tag.isObject(a)) {
-						var o:NObj = a;
+						var o = a.asObj();
 						var f = o.get(Fields.idSet);
 						if (f == null) throw errorAt(m, pc, "Unsupported operation");
 						callEx(o, f, [k, acc]);
@@ -273,13 +273,13 @@ class VM {
 					pc += 2;
 				case F.SINDEX:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[fp + code[pc + 2] - 1];
+					var a:NValue = stack[fp + code[pc + 2] - 1];
 					var i = code[pc + 1];
 					if (Tag.isArray(a)) {
-						var arr:Array<Dynamic> = a;
+						var arr = a.asArr();
 						if (i >= 0 && i < arr.length) arr[i] = acc;
 					} else if (Tag.isObject(a)) {
-						var o:NObj = a;
+						var o = a.asObj();
 						var f = o.get(Fields.idSet);
 						if (f == null) throw errorAt(m, pc, "Unsupported operation");
 						callEx(o, f, [i, acc]);
@@ -318,7 +318,7 @@ class VM {
 				case F.CALLGF:
 					// (a static's method: the class from a global, the method by the field's cache)
 					fpcs[depth] = pc;
-					var o:Dynamic = m.globals[code[pc + 1]];
+					var o:NValue = m.globals[code[pc + 1]];
 					acc = callAt(field(m, pc, o, code[pc + 2], vthis), o, code[pc + 3], fp + code[pc + 4]);
 					sp = top;
 					pc += 5;
@@ -334,7 +334,7 @@ class VM {
 				case F.APPLY:
 					fpcs[depth] = pc;
 					if (!Tag.isFunction(acc)) throw errorAt(m, pc, "$apply");
-					var fn:NFun = acc;
+					var fn = acc.asFun();
 					var n = code[pc + 1], d = fp + code[pc + 2];
 					if (fn.nargs == n || fn.nargs == -1) {
 						sp = d;
@@ -342,7 +342,7 @@ class VM {
 						sp = top;
 					} else {
 						if (n > fn.nargs) throw errorAt(m, pc, "$apply");
-						var e:Array<Dynamic> = [for (_ in 0...fn.nargs + 1) null];
+						var e:NArr = [for (_ in 0...fn.nargs + 1) null];
 						e[0] = fn;
 						for (i in 0...n)
 							e[i + 1] = stack[d - n + i];
@@ -352,9 +352,9 @@ class VM {
 				case F.JUMP:
 					pc = code[pc + 1];
 				case F.JIF:
-					if (Tag.isBool(acc) && (acc : Bool)) pc = code[pc + 1] else pc += 2;
+					if (Tag.isBool(acc) && acc.asBool()) pc = code[pc + 1] else pc += 2;
 				case F.JIFNOT:
-					if (Tag.isBool(acc) && (acc : Bool)) pc += 2 else pc = code[pc + 1];
+					if (Tag.isBool(acc) && acc.asBool()) pc += 2 else pc = code[pc + 1];
 				case F.TRAP:
 					var t = fp + code[pc + 2];
 					stack[t] = code[pc + 1];
@@ -382,16 +382,16 @@ class VM {
 					return acc;
 				case F.MAKEENV:
 					var n = code[pc + 1], d = fp + code[pc + 2];
-					var e:Array<Dynamic> = [for (_ in 0...n) null];
+					var e:NArr = [for (_ in 0...n) null];
 					for (i in 0...n)
 						e[i] = stack[d - n + i];
-					if (!Tag.isFunction(acc) || (acc : NFun).prim != null) throw errorAt(m, pc, "Invalid environment");
-					var f:NFun = acc;
+					if (!Tag.isFunction(acc) || acc.asFun().prim != null) throw errorAt(m, pc, "Invalid environment");
+					var f = acc.asFun();
 					acc = new NFun(f.nargs, e, f.module, f.addr, null, null);
 					pc += 3;
 				case F.MAKEARRAY:
 					var n = code[pc + 1], d = fp + code[pc + 2];
-					var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
+					var a:NArr = [for (_ in 0...n + 1) null];
 					a[0] = acc;
 					for (i in 0...n)
 						a[i + 1] = stack[d - n + i];
@@ -399,7 +399,7 @@ class VM {
 					pc += 3;
 				case F.MAKEARRAY2:
 					var n = code[pc + 1], d = fp + code[pc + 2];
-					var a:Array<Dynamic> = [for (_ in 0...n + 1) null];
+					var a:NArr = [for (_ in 0...n + 1) null];
 					for (i in 0...n)
 						a[i] = stack[d - n + i];
 					a[n] = acc;
@@ -422,28 +422,28 @@ class VM {
 					pc++;
 				case F.HASH:
 					if (!Tag.isString(acc)) throw errorAt(m, pc, "$hash");
-					acc = Fields.idBytes((acc : NStr).b);
+					acc = Fields.idBytes(acc.asStr().b);
 					pc++;
 				case F.NEW:
 					acc = newObject(acc);
 					pc++;
 				case F.ADD:
-					var a:Dynamic = stack[fp + code[pc + 1] - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box((a : Int) + (acc : Int)) else {
+					var a:NValue = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box(a.asInt() + acc.asInt()) else {
 						fpcs[depth] = pc;
 						acc = add(a, acc);
 					}
 					pc += 2;
 				case F.SUB:
-					var a:Dynamic = stack[fp + code[pc + 1] - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box((a : Int) - (acc : Int)) else {
+					var a:NValue = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box(a.asInt() - acc.asInt()) else {
 						fpcs[depth] = pc;
 						acc = numberOp(a, acc, Op.Sub);
 					}
 					pc += 2;
 				case F.MULT:
-					var a:Dynamic = stack[fp + code[pc + 1] - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box((a : Int) * (acc : Int)) else {
+					var a:NValue = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = box(a.asInt() * acc.asInt()) else {
 						fpcs[depth] = pc;
 						acc = numberOp(a, acc, Op.Mult);
 					}
@@ -454,15 +454,15 @@ class VM {
 					pc += 2;
 				case F.MOD:
 					fpcs[depth] = pc;
-					var a:Dynamic = stack[fp + code[pc + 1] - 1];
-					if (Tag.isInt(acc) && (acc : Int) == 0 && Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (%)");
+					var a:NValue = stack[fp + code[pc + 1] - 1];
+					if (Tag.isInt(acc) && acc.asInt() == 0 && Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (%)");
 					acc = numberOp(a, acc, Op.Mod);
 					pc += 2;
 				case F.BITOP:
 					var op = code[pc + 1];
-					var a:Dynamic = stack[fp + code[pc + 2] - 1];
+					var a:NValue = stack[fp + code[pc + 2] - 1];
 					if (!Tag.isInt(acc) || !Tag.isInt(a)) throw errorAt(m, pc, "Invalid operation (" + opName(op) + ")");
-					var x:Int = a, y:Int = acc;
+					var x = a.asInt(), y = acc.asInt();
 					acc = switch op {
 						case Op.Shl: x << y;
 						case Op.Shr: x >> y;
@@ -473,8 +473,8 @@ class VM {
 					}
 					pc += 3;
 				case F.CMP:
-					var a:Dynamic = stack[fp + code[pc + 2] - 1];
-					if (Tag.isInt(a) && Tag.isInt(acc)) acc = intCmp(code[pc + 1], a, acc) else {
+					var a:NValue = stack[fp + code[pc + 2] - 1];
+					if (Tag.isInt(a) && Tag.isInt(acc)) acc = intCmp(code[pc + 1], a.asInt(), acc.asInt()) else {
 						fpcs[depth] = pc;
 						acc = anyCmp(code[pc + 1], a, acc);
 					}
@@ -489,18 +489,18 @@ class VM {
 					pc += 2;
 				case F.JUMPTABLE:
 					var n = code[pc + 1];
-					if (Tag.isInt(acc) && (acc : Int) >= 0 && (acc : Int) < n) pc = code[pc + 3 + (acc : Int)] else pc = code[pc + 2];
+					if (Tag.isInt(acc) && acc.asInt() >= 0 && acc.asInt() < n) pc = code[pc + 3 + acc.asInt()] else pc = code[pc + 2];
 				case F.OPIMM:
 					var op = code[pc + 1], k = code[pc + 2];
-					if (Tag.isInt(acc)) acc = intOp(op, acc, k) else {
+					if (Tag.isInt(acc)) acc = intOp(op, acc.asInt(), k) else {
 						fpcs[depth] = pc;
 						acc = anyOp(op, acc, m.consts[code[pc + 3]]);
 					}
 					pc += 4;
 				case F.CMPJUMP:
-					var a:Dynamic = stack[fp + code[pc + 4] - 1];
+					var a:NValue = stack[fp + code[pc + 4] - 1];
 					var b = false;
-					if (Tag.isInt(a) && Tag.isInt(acc)) b = intCmp(code[pc + 1], a, acc) else {
+					if (Tag.isInt(a) && Tag.isInt(acc)) b = intCmp(code[pc + 1], a.asInt(), acc.asInt()) else {
 						fpcs[depth] = pc;
 						b = anyCmp(code[pc + 1], a, acc);
 					}
@@ -508,24 +508,24 @@ class VM {
 					if (b == (code[pc + 2] == 1)) pc = code[pc + 3] else pc += 5;
 				case F.OPIMMJUMP:
 					var b = false;
-					if (Tag.isInt(acc)) b = intCmp(code[pc + 1], acc, code[pc + 3]) else {
+					if (Tag.isInt(acc)) b = intCmp(code[pc + 1], acc.asInt(), code[pc + 3]) else {
 						fpcs[depth] = pc;
 						b = anyCmp(code[pc + 1], acc, m.consts[code[pc + 4]]);
 					}
 					acc = b;
 					if (b == (code[pc + 2] == 1)) pc = code[pc + 5] else pc += 6;
 				case F.SLOTOPIMM:
-					var a:Dynamic = stack[fp + code[pc + 1]];
+					var a:NValue = stack[fp + code[pc + 1]];
 					var op = code[pc + 2];
-					if (Tag.isInt(a)) acc = intOp(op, a, code[pc + 3]) else {
+					if (Tag.isInt(a)) acc = intOp(op, a.asInt(), code[pc + 3]) else {
 						fpcs[depth] = pc;
 						acc = anyOp(op, a, m.consts[code[pc + 4]]);
 					}
 					pc += code[pc + 5];
 				case F.SLOTOPIMMJUMP:
-					var a:Dynamic = stack[fp + code[pc + 1]];
+					var a:NValue = stack[fp + code[pc + 1]];
 					var b = false;
-					if (Tag.isInt(a)) b = intCmp(code[pc + 2], a, code[pc + 4]) else {
+					if (Tag.isInt(a)) b = intCmp(code[pc + 2], a.asInt(), code[pc + 4]) else {
 						fpcs[depth] = pc;
 						b = anyCmp(code[pc + 2], a, m.consts[code[pc + 5]]);
 					}
@@ -533,16 +533,16 @@ class VM {
 					if (b == (code[pc + 3] == 1)) pc = code[pc + 6] else pc += 8;
 				case F.OPIMMPUSH:
 					var op = code[pc + 1];
-					if (Tag.isInt(acc)) acc = intOp(op, acc, code[pc + 2]) else {
+					if (Tag.isInt(acc)) acc = intOp(op, acc.asInt(), code[pc + 2]) else {
 						fpcs[depth] = pc;
 						acc = anyOp(op, acc, m.consts[code[pc + 3]]);
 					}
 					stack[fp + code[pc + 4]] = acc;
 					pc += code[pc + 5];
 				case F.SLOTOPIMMPUSH:
-					var a:Dynamic = stack[fp + code[pc + 1]];
+					var a:NValue = stack[fp + code[pc + 1]];
 					var op = code[pc + 2];
-					if (Tag.isInt(a)) acc = intOp(op, a, code[pc + 3]) else {
+					if (Tag.isInt(a)) acc = intOp(op, a.asInt(), code[pc + 3]) else {
 						fpcs[depth] = pc;
 						acc = anyOp(op, a, m.consts[code[pc + 4]]);
 					}
@@ -554,7 +554,7 @@ class VM {
 					return acc;
 				case F.CALLGFPUSH:
 					fpcs[depth] = pc;
-					var o:Dynamic = m.globals[code[pc + 1]];
+					var o:NValue = m.globals[code[pc + 1]];
 					acc = callAt(field(m, pc, o, code[pc + 2], vthis), o, code[pc + 3], fp + code[pc + 4]);
 					sp = top;
 					stack[fp + code[pc + 5]] = acc;
@@ -574,7 +574,7 @@ class VM {
 						depth--;
 					} else
 						fpcs[depth] = pc;
-					var r:Dynamic = builtin(code[pc + 1], d - n);
+					var r:NValue = builtin(code[pc + 1], d - n);
 					if (r == NOT_RUN) r = callAt(m.consts[code[pc + 4]], vthis, n, d);
 					if (tail) depth++;
 					acc = r;
@@ -588,8 +588,8 @@ class VM {
 
 	// a call of f with n arguments up to argTop: a function of the code
 	// entered here (no callOp's frame between the two interps), any other by callOp
-	inline function callAt(f:Dynamic, thisv:Dynamic, n:Int, argTop:Int):Dynamic {
-		var fn:NFun = Std.isOfType(f, NFun) ? f : null;
+	inline function callAt(f:NValue, thisv:NValue, n:Int, argTop:Int):NValue {
+		var fn:NFun = Std.isOfType(f, NFun) ? f.asFun() : null;
 		return if (fn != null && fn.prim == null && fn.nargs == n && depth < MAX_DEPTH) {
 			var fp = argTop - n;
 			var cm = fn.module;
@@ -611,35 +611,35 @@ class VM {
 	// argument: its error; a comparison function given)
 	static final NOT_RUN = new NVal(-1);
 
-	function builtin(which:Int, base:Int):Dynamic {
-		var a0:Dynamic = stack[base];
+	function builtin(which:Int, base:Int):NValue {
+		var a0:NValue = stack[base];
 		switch which {
 			case 0: // $sget
-				var p:Dynamic = stack[base + 1];
+				var p:NValue = stack[base + 1];
 				if (Tag.isString(a0) && Tag.isInt(p)) {
-					var b = (a0 : NStr).b, i:Int = p;
+					var b = a0.asStr().b, i = p.asInt();
 					return i < 0 || i >= b.length ? null : b.get(i);
 				}
 			case 1: // $sset
-				var p:Dynamic = stack[base + 1], c:Dynamic = stack[base + 2];
+				var p:NValue = stack[base + 1], c:NValue = stack[base + 2];
 				if (Tag.isString(a0) && Tag.isInt(p) && Tag.isInt(c)) {
-					var b = (a0 : NStr).b, i:Int = p;
+					var b = a0.asStr().b, i = p.asInt();
 					if (i < 0 || i >= b.length) return null;
-					var v = (c : Int) & 0xFF;
+					var v = c.asInt() & 0xFF;
 					b.set(i, v);
 					return v;
 				}
 			case 2: // $ssize
-				if (Tag.isString(a0)) return (a0 : NStr).b.length;
+				if (Tag.isString(a0)) return a0.asStr().b.length;
 			case 3: // $asize
-				if (Tag.isArray(a0)) return (a0 : Array<Dynamic>).length;
+				if (Tag.isArray(a0)) return a0.asArr().length;
 			case 4: // $typeof
 				return Tag.of(a0);
 			case 5 | 6 | 7: // $hget, $hset, $hmem (no comparison function)
-				var cmp:Dynamic = stack[base + (which == 6 ? 3 : 2)];
-				if (cmp == null && Tag.isAbstract(a0) && (a0 : NAbs).kind == "hash") {
-					var h:Builtins.NHash = (a0 : NAbs).data;
-					var k:Dynamic = stack[base + 1];
+				var cmp:NValue = stack[base + (which == 6 ? 3 : 2)];
+				if (cmp == null && Tag.isAbstract(a0) && a0.asAbs().kind == "hash") {
+					var h:Builtins.NHash = a0.asAbs().data;
+					var k:NValue = stack[base + 1];
 					return switch which {
 						case 5: h.get(this, k, null);
 						case 6: h.set(this, k, stack[base + 2], null);
@@ -647,12 +647,12 @@ class VM {
 					}
 				}
 			case 8: // $objget
-				var f:Dynamic = stack[base + 1];
+				var f:NValue = stack[base + 1];
 				if (!Tag.isObject(a0)) return null;
-				if (Tag.isInt(f)) return (a0 : NObj).get(f);
+				if (Tag.isInt(f)) return a0.asObj().get(f.asInt());
 			case 9: // $objfield
-				var f:Dynamic = stack[base + 1];
-				if (Tag.isInt(f)) return Tag.isObject(a0) && (a0 : NObj).hasOwn(f);
+				var f:NValue = stack[base + 1];
+				if (Tag.isInt(f)) return Tag.isObject(a0) && a0.asObj().hasOwn(f.asInt());
 			case 10: // $istrue
 				return !isFalse(a0);
 			case 11: // $not
@@ -664,16 +664,16 @@ class VM {
 	// o's field id (AccField): an inline cache by the code index of the
 	// object and its field's slot, an own field's or its prototype's, checked
 	// against the slot's id (the slots move)
-	inline function field(m:Module, pc:Int, o:Dynamic, id:Int, vthis:Dynamic):Dynamic {
+	inline function field(m:Module, pc:Int, o:NValue, id:Int, vthis:NValue):NValue {
 		if (!Tag.isObject(o)) throw invalidFieldAt(m, pc, id);
-		var obj:NObj = o;
+		var obj = o.asObj();
 		var k = m.icIdx[pc];
 		var c = m.icObj[pc];
 		return if (c == obj && k < obj.n && obj.ids[k] == id) obj.vals[k] else if (c != null && c == obj.proto && k < c.n
 			&& c.ids[k] == id && obj.find(id) < 0) c.vals[k] else fieldSlow(m, pc, obj, id, vthis);
 	}
 
-	function fieldSlow(m:Module, pc:Int, o:NObj, id:Int, vthis:Dynamic):Dynamic {
+	function fieldSlow(m:Module, pc:Int, o:NObj, id:Int, vthis:NValue):NValue {
 		var k = o.find(id);
 		var p = o.proto;
 		if (k >= 0) {
@@ -695,18 +695,18 @@ class VM {
 
 	var trapState = 0;
 	var resumePc = 0;
-	var resumeThis:Dynamic = null;
+	var resumeThis:NValue = null;
 
 	// the code under a trap: an exception restores the trap's state and goes on
 	// at its handler
-	function protect(m:Module, pc:Int, acc:Dynamic, t:Int, vthis:Dynamic, env:Dynamic, fp:Int, top:Int):Dynamic {
+	function protect(m:Module, pc:Int, acc:NValue, t:Int, vthis:NValue, env:NValue, fp:Int, top:Int):NValue {
 		try {
 			return interp(m, pc, acc, t, vthis, env, fp, top);
 		} catch (e:Dynamic) {
 			var ne = wrap(e);
 			capture(ne);
-			var d:Int = stack[t + 3];
-			resumePc = stack[t];
+			var d = stack[t + 3].asInt();
+			resumePc = stack[t].asInt();
 			resumeThis = stack[t + 1];
 			// (Neko's calls since the trap, outermost first: the frames from the
 			// trap's own, whose call or throw is among them, to the throw's;
@@ -723,7 +723,7 @@ class VM {
 	// the positions of the frames when it was thrown, innermost first
 	public function capture(ne:NekoError) {
 		if (ne.stack != null) return;
-		var st:Array<Dynamic> = [];
+		var st:NArr = [];
 		var k = depth;
 		while (k >= 0) {
 			var m = Module.byId(fmods[k]);
@@ -736,8 +736,8 @@ class VM {
 
 	// $callstack: every frame's call, outermost first (the last: the call of
 	// $callstack itself)
-	public function callStack():Array<Dynamic> {
-		var st:Array<Dynamic> = [];
+	public function callStack():NArr {
+		var st:NArr = [];
 		for (k in 0...depth + 1) {
 			var m = Module.byId(fmods[k]);
 			st.push(m == null ? null : m.position(m.oldOf[fpcs[k]]));
@@ -756,7 +756,7 @@ class VM {
 	}
 
 	// a binary operation of an Int and a constant (OpImm)
-	inline function intOp(op:Int, a:Int, k:Int):Dynamic {
+	inline function intOp(op:Int, a:Int, k:Int):NValue {
 		return switch op {
 			case Op.Add: box(a + k);
 			case Op.Sub: box(a - k);
@@ -776,7 +776,7 @@ class VM {
 		}
 	}
 
-	function anyOp(op:Int, a:Dynamic, b:Dynamic):Dynamic {
+	function anyOp(op:Int, a:NValue, b:NValue):NValue {
 		return switch op {
 			case Op.Add: add(a, b);
 			case Op.Sub | Op.Mult: numberOp(a, b, op);
@@ -784,7 +784,7 @@ class VM {
 		}
 	}
 
-	function anyCmp(op:Int, a:Dynamic, b:Dynamic):Bool {
+	function anyCmp(op:Int, a:NValue, b:NValue):Bool {
 		var c = compare(a, b);
 		return switch op {
 			case Op.Eq: c == 0;
@@ -825,39 +825,39 @@ class VM {
 		return error("Invalid field access : " + n.toString());
 	}
 
-	inline function index(acc:Dynamic, i:Int):Dynamic {
+	inline function index(acc:NValue, i:Int):NValue {
 		return if (Tag.isArray(acc)) {
-			var arr:Array<Dynamic> = acc;
+			var arr = acc.asArr();
 			i < 0 || i >= arr.length ? null : arr[i];
-		} else if (Tag.isObject(acc)) objectOp(acc, i, Fields.idGet, "Unsupported operation") else throw error("Invalid array access");
+		} else if (Tag.isObject(acc)) objectOp(acc.asObj(), i, Fields.idGet, "Unsupported operation") else throw error("Invalid array access");
 	}
 
-	public static inline function isFalse(v:Dynamic):Bool {
-		return v == null || (Tag.isBool(v) && !(v : Bool)) || (Tag.isInt(v) && (v : Int) == 0);
+	public static inline function isFalse(v:NValue):Bool {
+		return v == null || (Tag.isBool(v) && !v.asBool()) || (Tag.isInt(v) && v.asInt() == 0);
 	}
 
-	public static function newObject(p:Dynamic):NObj {
+	public static function newObject(p:NValue):NObj {
 		if (p == null) return new NObj();
 		if (!Tag.isObject(p)) throw error("$new");
-		return (p : NObj).copy();
+		return p.asObj().copy();
 	}
 
-	function objectOp(o:NObj, arg:Dynamic, id:Int, err:String):Dynamic {
+	function objectOp(o:NObj, arg:NValue, id:Int, err:String):NValue {
 		var f = o.get(id);
 		if (f == null) throw error(err);
 		return callEx(o, f, [arg]);
 	}
 
 	// a field function of o if any (ObjectOpGen's test)
-	inline function opField(o:Dynamic, id:Int):Dynamic
-		return Tag.isObject(o) ? (o : NObj).get(id) : null;
+	inline function opField(o:NValue, id:Int):NValue
+		return Tag.isObject(o) ? o.asObj().get(id) : null;
 
-	function add(a:Dynamic, b:Dynamic):Dynamic {
+	function add(a:NValue, b:NValue):NValue {
 		var ka = Tag.kind(a), kb = Tag.kind(b);
-		if (ka == 1 && kb == 1) return (a : Int) + (b : Int);
-		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return (a : Float) + (b : Float);
-		if (ka == 1 && Tag.isString(b)) return concat(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
-		if (kb == 1 && Tag.isString(a)) return concat((a : NStr).b, Bytes.ofString(Std.string((b : Int))));
+		if (ka == 1 && kb == 1) return a.asInt() + b.asInt();
+		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return a.asFloat() + b.asFloat();
+		if (ka == 1 && Tag.isString(b)) return concat(Bytes.ofString(Std.string(a.asInt())), b.asStr().b);
+		if (kb == 1 && Tag.isString(a)) return concat(a.asStr().b, Bytes.ofString(Std.string(b.asInt())));
 		var f = opField(a, Fields.idAdd);
 		if (f != null) return callEx(a, f, [b]);
 		f = opField(b, Fields.idRadd);
@@ -873,10 +873,10 @@ class VM {
 		return new NStr(r);
 	}
 
-	function numberOp(a:Dynamic, b:Dynamic, op:Int):Dynamic {
+	function numberOp(a:NValue, b:NValue, op:Int):NValue {
 		var ka = Tag.kind(a), kb = Tag.kind(b);
 		if (ka == 1 && kb == 1) {
-			var x:Int = a, y:Int = b;
+			var x = a.asInt(), y = b.asInt();
 			return switch op {
 				case Op.Sub: x - y;
 				case Op.Mult: x * y;
@@ -884,7 +884,7 @@ class VM {
 			}
 		}
 		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) {
-			var x:Float = a, y:Float = b;
+			var x = a.asFloat(), y = b.asFloat();
 			return switch op {
 				case Op.Sub: x - y;
 				case Op.Mult: x * y;
@@ -910,9 +910,9 @@ class VM {
 		throw error("Invalid operation (" + opName(op) + ")");
 	}
 
-	function div(a:Dynamic, b:Dynamic):Dynamic {
+	function div(a:NValue, b:NValue):NValue {
 		var ka = Tag.kind(a), kb = Tag.kind(b);
-		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return (a : Float) / (b : Float);
+		if ((ka == 1 || ka == 2) && (kb == 1 || kb == 2)) return a.asFloat() / b.asFloat();
 		var f = opField(a, Fields.idDiv);
 		if (f != null) return callEx(a, f, [b]);
 		f = opField(b, Fields.idRdiv);
@@ -937,31 +937,31 @@ class VM {
 	static final FALSE = Bytes.ofString("false");
 
 	// val_compare
-	public function compare(a:Dynamic, b:Dynamic):Int {
+	public function compare(a:NValue, b:NValue):Int {
 		var ka = Tag.kind(a), kb = Tag.kind(b);
 		if (ka == 1) {
-			if (kb == 1) return icmp(a, b);
-			if (kb == 2) return fcmp((a : Int), (b : Float));
-			if (Tag.isString(b)) return scmp(Bytes.ofString(Std.string((a : Int))), (b : NStr).b);
+			if (kb == 1) return icmp(a.asInt(), b.asInt());
+			if (kb == 2) return fcmp(a.asInt(), b.asFloat());
+			if (Tag.isString(b)) return scmp(Bytes.ofString(Std.string(a.asInt())), b.asStr().b);
 		} else if (ka == 2) {
-			if (kb == 1) return fcmp((a : Float), (b : Int));
-			if (kb == 2) return fcmp(a, b);
-			if (Tag.isString(b)) return scmp(Bytes.ofString(formatFloat(a)), (b : NStr).b);
+			if (kb == 1) return fcmp(a.asFloat(), b.asInt());
+			if (kb == 2) return fcmp(a.asFloat(), b.asFloat());
+			if (Tag.isString(b)) return scmp(Bytes.ofString(formatFloat(a.asFloat())), b.asStr().b);
 		} else if (Tag.isString(a)) {
-			var sa = (a : NStr).b;
-			if (kb == 1) return scmp(sa, Bytes.ofString(Std.string((b : Int))));
-			if (kb == 2) return scmp(sa, Bytes.ofString(formatFloat(b)));
-			if (kb == 3) return scmp(sa, (b : Bool) ? TRUE : FALSE);
-			if (Tag.isString(b)) return scmp(sa, (b : NStr).b);
+			var sa = a.asStr().b;
+			if (kb == 1) return scmp(sa, Bytes.ofString(Std.string(b.asInt())));
+			if (kb == 2) return scmp(sa, Bytes.ofString(formatFloat(b.asFloat())));
+			if (kb == 3) return scmp(sa, b.asBool() ? TRUE : FALSE);
+			if (Tag.isString(b)) return scmp(sa, b.asStr().b);
 		} else if (ka == 3) {
-			if (kb == 3) return (a : Bool) == (b : Bool) ? 0 : ((a : Bool) ? 1 : -1);
-			if (Tag.isString(b)) return scmp((a : Bool) ? TRUE : FALSE, (b : NStr).b);
+			if (kb == 3) return a.asBool() == b.asBool() ? 0 : (a.asBool() ? 1 : -1);
+			if (Tag.isString(b)) return scmp(a.asBool() ? TRUE : FALSE, b.asStr().b);
 		} else if (Tag.isObject(a) && Tag.isObject(b)) {
 			if (a == b) return 0;
-			var f = (a : NObj).get(Fields.idCompare);
+			var f = a.asObj().get(Fields.idCompare);
 			if (f == null) return INVALID;
 			var r = callEx(a, f, [b]);
-			return Tag.isInt(r) ? (r : Int) : INVALID;
+			return Tag.isInt(r) ? r.asInt() : INVALID;
 		}
 		if (ka == 0 && kb == 0) return 0;
 		if (ka == 0 || kb == 0) return INVALID;
@@ -969,33 +969,33 @@ class VM {
 	}
 
 	// physical equality
-	public static function same(a:Dynamic, b:Dynamic):Bool {
+	public static function same(a:NValue, b:NValue):Bool {
 		var ka = hxmc.Native.typeKind(a);
 		if (ka != hxmc.Native.typeKind(b)) return false;
 		return switch ka {
 			case 0: true;
-			case 1: (a : Int) == (b : Int);
-			case 3: (a : Bool) == (b : Bool);
+			case 1: a.asInt() == b.asInt();
+			case 3: a.asBool() == b.asBool();
 			case 2: false;
 			case _: a == b;
 		}
 	}
 
-	static function physCompare(a:Dynamic, b:Dynamic):Int {
-		if (Tag.isInt(a) && Tag.isInt(b)) return icmp(a, b);
+	static function physCompare(a:NValue, b:NValue):Int {
+		if (Tag.isInt(a) && Tag.isInt(b)) return icmp(a.asInt(), b.asInt());
 		return same(a, b) ? 0 : 1;
 	}
 
 	// ---- printing (val_buffer)
 
-	public function toBytes(v:Dynamic):Bytes {
-		if (Tag.isString(v)) return (v : NStr).b;
+	public function toBytes(v:NValue):Bytes {
+		if (Tag.isString(v)) return v.asStr().b;
 		var b = new BytesBuffer();
 		buffer(b, v, []);
 		return b.getBytes();
 	}
 
-	public function buffer(b:BytesBuffer, v:Dynamic, stack:Array<Dynamic>) {
+	public function buffer(b:BytesBuffer, v:NValue, stack:NArr) {
 		for (s in stack)
 			if (s == v) {
 				b.addString("...");
@@ -1003,22 +1003,22 @@ class VM {
 			}
 		switch Tag.of(v) {
 			case Tag.TINT:
-				b.addString(Std.string((v : Int)));
+				b.addString(Std.string(v.asInt()));
 			case Tag.TSTRING:
-				b.add((v : NStr).b);
+				b.add(v.asStr().b);
 			case Tag.TFLOAT:
-				b.addString(formatFloat(v));
+				b.addString(formatFloat(v.asFloat()));
 			case Tag.TNULL:
 				b.addString("null");
 			case Tag.TBOOL:
-				b.addString((v : Bool) ? "true" : "false");
+				b.addString(v.asBool() ? "true" : "false");
 			case Tag.TFUNCTION:
-				b.addString("#function:" + (v : NFun).nargs);
+				b.addString("#function:" + v.asFun().nargs);
 			case Tag.TOBJECT:
-				var o:NObj = v;
+				var o = v.asObj();
 				var f = o.get(Fields.idString);
-				var s:Dynamic = f == null ? null : callEx(o, f, []);
-				if (Tag.isString(s)) b.add((s : NStr).b) else {
+				var s:NValue = f == null ? null : callEx(o, f, []);
+				if (Tag.isString(s)) b.add(s.asStr().b) else {
 					stack.push(v);
 					b.addString("{");
 					var first = true;
@@ -1034,7 +1034,7 @@ class VM {
 					stack.pop();
 				}
 			case Tag.TARRAY:
-				var a:Array<Dynamic> = v;
+				var a = v.asArr();
 				b.addString("[");
 				stack.push(v);
 				for (i in 0...a.length) {

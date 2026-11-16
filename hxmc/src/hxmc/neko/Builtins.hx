@@ -7,49 +7,49 @@ using hxmc.neko.Builtins.Check;
 
 // argument checks: neko_error() throws the primitive's name
 class Check {
-	public static inline function int(v:Dynamic):Int {
+	public static inline function int(v:NValue):Int {
 		if (!Tag.isInt(v)) throw Builtins.failure;
-		return v;
+		return v.asInt();
 	}
 
-	public static inline function str(v:Dynamic):NStr {
+	public static inline function str(v:NValue):NStr {
 		if (!Tag.isString(v)) throw Builtins.failure;
-		return v;
+		return v.asStr();
 	}
 
-	public static inline function arr(v:Dynamic):Array<Dynamic> {
+	public static inline function arr(v:NValue):NArr {
 		if (!Tag.isArray(v)) throw Builtins.failure;
-		return v;
+		return v.asArr();
 	}
 
-	public static inline function obj(v:Dynamic):NObj {
+	public static inline function obj(v:NValue):NObj {
 		if (!Tag.isObject(v)) throw Builtins.failure;
-		return v;
+		return v.asObj();
 	}
 
-	public static inline function fun(v:Dynamic):NFun {
+	public static inline function fun(v:NValue):NFun {
 		if (!Tag.isFunction(v)) throw Builtins.failure;
-		return v;
+		return v.asFun();
 	}
 
-	public static inline function float(v:Dynamic):Float {
+	public static inline function float(v:NValue):Float {
 		if (!Tag.isFloat(v)) throw Builtins.failure;
-		return v;
+		return v.asFloat();
 	}
 
-	public static inline function number(v:Dynamic):Float {
+	public static inline function number(v:NValue):Float {
 		if (!Tag.isFloat(v) && !Tag.isInt(v)) throw Builtins.failure;
-		return v;
+		return v.asFloat();
 	}
 
-	public static inline function bool(v:Dynamic):Bool {
+	public static inline function bool(v:NValue):Bool {
 		if (!Tag.isBool(v)) throw Builtins.failure;
-		return v;
+		return v.asBool();
 	}
 
-	public static inline function abs(v:Dynamic, kind:String):Dynamic {
-		if (!Tag.isAbstract(v) || (v : NAbs).kind != kind) throw Builtins.failure;
-		return (v : NAbs).data;
+	public static inline function abs(v:NValue, kind:String):Dynamic {
+		if (!Tag.isAbstract(v) || v.asAbs().kind != kind) throw Builtins.failure;
+		return v.asAbs().data;
 	}
 }
 
@@ -86,7 +86,7 @@ class Builtins {
 		add("amake", 1, (vm, a) -> {
 			var n = a[0].int();
 			if (n < 0) throw failure;
-			var r:Array<Dynamic> = [for (_ in 0...n) null];
+			var r:NArr = [for (_ in 0...n) null];
 			return r;
 		});
 		add("acopy", 1, (vm, a) -> a[0].arr().copy());
@@ -109,7 +109,7 @@ class Builtins {
 			return null;
 		});
 		add("aconcat", 1, (vm, a) -> {
-			var r:Array<Dynamic> = [];
+			var r:NArr = [];
 			for (x in a[0].arr())
 				r = r.concat(x.arr());
 			return r;
@@ -134,7 +134,7 @@ class Builtins {
 		});
 		add("sset", 3, (vm, a) -> {
 			var s = a[0].str().b, p = a[1].int(), c = a[2].int();
-			if (p < 0 || p >= s.length) return (null : Dynamic);
+			if (p < 0 || p >= s.length) return (null : NValue);
 			s.set(p, c & 0xFF);
 			return c & 0xFF;
 		});
@@ -155,35 +155,35 @@ class Builtins {
 						ok = false;
 						break;
 					}
-				if (ok) return (p : Dynamic);
+				if (ok) return (p : NValue);
 				p++;
 			}
 			return null;
 		});
 		add("sget16", 3, (vm, a) -> {
 			var s = a[0].str().b, p = a[1].int();
-			if (p < 0 || p + 2 > s.length) return (null : Dynamic);
+			if (p < 0 || p + 2 > s.length) return (null : NValue);
 			var v = s.getUInt16(p);
 			if (a[2] == true) v = ((v & 0xFF) << 8) | (v >> 8);
 			return v;
 		});
 		add("sget32", 3, (vm, a) -> {
 			var s = a[0].str().b, p = a[1].int();
-			if (p < 0 || p + 4 > s.length) return (null : Dynamic);
+			if (p < 0 || p + 4 > s.length) return (null : NValue);
 			var v = s.getInt32(p);
 			if (a[2] == true) v = swap32(v);
 			return v;
 		});
 		add("sgetf", 3, (vm, a) -> {
 			var s = a[0].str().b, p = a[1].int();
-			if (p < 0 || p + 4 > s.length) return (null : Dynamic);
+			if (p < 0 || p + 4 > s.length) return (null : NValue);
 			var v = s.getInt32(p);
 			if (a[2] == true) v = swap32(v);
 			return (haxe.io.FPHelper.i32ToFloat(v) : Float);
 		});
 		add("sgetd", 3, (vm, a) -> {
 			var s = a[0].str().b, p = a[1].int();
-			if (p < 0 || p + 8 > s.length) return (null : Dynamic);
+			if (p < 0 || p + 8 > s.length) return (null : NValue);
 			var lo = s.getInt32(p), hi = s.getInt32(p + 4);
 			if (a[2] == true) {
 				var t = swap32(lo);
@@ -266,28 +266,28 @@ class Builtins {
 			return VM.newObject(a[0]);
 		});
 		add("objget", 2, (vm, a) -> {
-			if (!Tag.isObject(a[0])) return (null : Dynamic);
-			return (a[0] : NObj).get(a[1].int());
+			if (!Tag.isObject(a[0])) return (null : NValue);
+			return a[0].asObj().get(a[1].int());
 		});
 		add("objset", 3, (vm, a) -> {
-			if (!Tag.isObject(a[0])) return (null : Dynamic);
-			(a[0] : NObj).set(a[1].int(), a[2]);
+			if (!Tag.isObject(a[0])) return (null : NValue);
+			a[0].asObj().set(a[1].int(), a[2]);
 			return a[2];
 		});
 		add("objcall", 3, (vm, a) -> {
-			if (!Tag.isObject(a[0])) return (null : Dynamic);
-			var o:NObj = a[0];
+			if (!Tag.isObject(a[0])) return (null : NValue);
+			var o = a[0].asObj();
 			var f = o.get(a[1].int());
 			return vm.callEx(o, f, a[2].arr().copy());
 		});
 		add("objfield", 2, (vm, a) -> {
 			var id = a[1].int();
-			return Tag.isObject(a[0]) && (a[0] : NObj).hasOwn(id);
+			return Tag.isObject(a[0]) && a[0].asObj().hasOwn(id);
 		});
 		add("objremove", 2, (vm, a) -> a[0].obj().remove(a[1].int()));
 		add("objfields", 1, (vm, a) -> {
 			var o = a[0].obj();
-			var r:Array<Dynamic> = [for (i in 0...o.n) o.ids[i]];
+			var r:NArr = [for (i in 0...o.n) o.ids[i]];
 			return r;
 		});
 		add("hash", 1, (vm, a) -> Fields.idBytes(a[0].str().b));
@@ -304,9 +304,9 @@ class Builtins {
 		add("objgetproto", 1, (vm, a) -> a[0].obj().proto);
 		add("int", 1, (vm, a) -> toInt(a[0]));
 		add("float", 1, (vm, a) -> {
-			var v:Dynamic = a[0];
-			if (Tag.isString(v)) return strtod((v : NStr).b);
-			if (Tag.isInt(v) || Tag.isFloat(v)) return ((v : Float) : Dynamic);
+			var v:NValue = a[0];
+			if (Tag.isString(v)) return strtod(v.asStr().b);
+			if (Tag.isInt(v) || Tag.isFloat(v)) return (v.asFloat() : NValue);
 			return null;
 		});
 		add("string", 1, (vm, a) -> {
@@ -327,7 +327,7 @@ class Builtins {
 			if (args.length == 0) return f;
 			if (f.nargs == args.length || f.nargs == -1) return vm.callN(f, args);
 			if (args.length > f.nargs) throw failure;
-			var env:Array<Dynamic> = [f];
+			var env:NArr = [f];
 			for (x in args)
 				env.push(x);
 			while (env.length < f.nargs + 1)
@@ -345,7 +345,7 @@ class Builtins {
 		});
 		add("pcompare", 2, (vm, a) -> {
 			if (Tag.isInt(a[0]) && Tag.isInt(a[1])) {
-				var x:Int = a[0], y:Int = a[1];
+				var x = a[0].asInt(), y = a[1].asInt();
 				return x == y ? 0 : (x < y ? -1 : 1);
 			}
 			return VM.same(a[0], a[1]) ? 0 : 1;
@@ -360,15 +360,15 @@ class Builtins {
 		});
 		add("nargs", 1, (vm, a) -> a[0].fun().nargs);
 		add("call", 3, (vm, a) -> vm.callEx(a[1], a[0], a[2].arr().copy()));
-		add("isnan", 1, (vm, a) -> Tag.isFloat(a[0]) && Math.isNaN(a[0]));
-		add("isinfinite", 1, (vm, a) -> Tag.isFloat(a[0]) && !Math.isNaN(a[0]) && !Math.isFinite(a[0]));
+		add("isnan", 1, (vm, a) -> Tag.isFloat(a[0]) && Math.isNaN(a[0].asFloat()));
+		add("isinfinite", 1, (vm, a) -> Tag.isFloat(a[0]) && !Math.isNaN(a[0].asFloat()) && !Math.isFinite(a[0].asFloat()));
 		add("getkind", 1, (vm, a) -> {
 			if (!Tag.isAbstract(a[0])) throw failure;
-			return new NAbs("kind", (a[0] : NAbs).kind);
+			return new NAbs("kind", a[0].asAbs().kind);
 		});
 		add("iskind", 2, (vm, a) -> {
 			var k = a[1].abs("kind");
-			return Tag.isAbstract(a[0]) && (a[0] : NAbs).kind == k;
+			return Tag.isAbstract(a[0]) && a[0].asAbs().kind == k;
 		});
 		add("hnew", 1, (vm, a) -> new NAbs("hash", new NHash(a[0].int())));
 		add("hget", 3, (vm, a) -> a[0].abs("hash").get(vm, a[1], cmpFun(a[2])));
@@ -398,12 +398,12 @@ class Builtins {
 			}
 			return null;
 		});
-		add("iadd", 2, (vm, a) -> (a[0] : Int) + (a[1] : Int));
-		add("isub", 2, (vm, a) -> (a[0] : Int) - (a[1] : Int));
-		add("imult", 2, (vm, a) -> (a[0] : Int) * (a[1] : Int));
+		add("iadd", 2, (vm, a) -> a[0].asInt() + a[1].asInt());
+		add("isub", 2, (vm, a) -> a[0].asInt() - a[1].asInt());
+		add("imult", 2, (vm, a) -> a[0].asInt() * a[1].asInt());
 		add("idiv", 2, (vm, a) -> {
-			if ((a[1] : Int) == 0) throw failure;
-			return Std.int((a[0] : Int) / (a[1] : Int));
+			if (a[1].asInt() == 0) throw failure;
+			return Std.int(a[0].asInt() / a[1].asInt());
 		});
 		add("excstack", 0, (vm, a) -> vm.excStack.copy());
 		add("callstack", 0, (vm, a) -> vm.callStack());
@@ -416,12 +416,12 @@ class Builtins {
 		return o;
 	}
 
-	static function cmpFun(v:Dynamic):Dynamic {
+	static function cmpFun(v:NValue):NValue {
 		if (v != null) v.fun();
 		return v;
 	}
 
-	public static function prim(name:String, nargs:Int, f:Prim, ?env:Dynamic):NFun {
+	public static function prim(name:String, nargs:Int, f:Prim, ?env:NValue):NFun {
 		// (a Failure thrown is the primitive's name: VM.wrap, by the primitive the VM called last)
 		return NFun.primitive(name, nargs, f, env);
 	}
@@ -429,21 +429,21 @@ class Builtins {
 	static inline function swap32(v:Int):Int
 		return ((v >>> 24) & 0xFF) | ((v >> 8) & 0xFF00) | ((v & 0xFF00) << 8) | (v << 24);
 
-	static function closureCallback(vm:VM, args:haxe.ds.Vector<Dynamic>):Dynamic {
-		var env:Array<Dynamic> = vm.env;
-		var f:NFun = env[0];
-		var o:Dynamic = env[1];
+	static function closureCallback(vm:VM, args:haxe.ds.Vector<NValue>):NValue {
+		var env = vm.env.asArr();
+		var f = env[0].asFun();
+		var o:NValue = env[1];
 		var cargs = env.length - 2;
-		if (f.nargs != cargs + args.length && f.nargs != -1) return (null : Dynamic);
+		if (f.nargs != cargs + args.length && f.nargs != -1) return (null : NValue);
 		var a = env.slice(2).concat(args.toArray());
 		return vm.callEx(o, f, a);
 	}
 
 	// a partial application: env = [f, the given arguments, the missing ones]
-	public static function applyClosure(nargs:Int, env:Array<Dynamic>):NFun {
+	public static function applyClosure(nargs:Int, env:NArr):NFun {
 		if (nargs < 1 || nargs > 5) throw VM.error("Too many apply arguments");
 		return NFun.primitive("apply", nargs, (vm, args) -> {
-			var e:Array<Dynamic> = vm.env;
+			var e = vm.env.asArr();
 			var a = e.slice(1);
 			var n = a.length;
 			for (i in 0...args.length)
@@ -453,9 +453,9 @@ class Builtins {
 	}
 
 	// $int
-	public static function toInt(v:Dynamic):Dynamic {
+	public static function toInt(v:NValue):NValue {
 		if (Tag.isFloat(v)) {
-			var f:Float = v;
+			var f = v.asFloat();
 			// (fmod by 2^32, then to unsigned: the low 32 bits)
 			if (Math.isNaN(f) || !Math.isFinite(f)) return 0;
 			var m = f % 4294967296.0;
@@ -464,7 +464,7 @@ class Builtins {
 			return t >= 2147483648.0 ? Std.int(t - 4294967296.0) : Std.int(t);
 		}
 		if (Tag.isString(v)) {
-			var s = (v : NStr).b;
+			var s = v.asStr().b;
 			var i = 0;
 			while (i < s.length && isSpace(s.get(i)))
 				i++;
@@ -489,7 +489,7 @@ class Builtins {
 				h = h * 10 + (s.get(j) - "0".code);
 				j++;
 			}
-			if (j == start) return (null : Dynamic);
+			if (j == start) return (null : NValue);
 			if (neg) h = -h;
 			// (strtol saturates at long's range, then the int cast keeps the low bits)
 			if (h > 9223372036854775807.0) h = 9223372036854775807.0;
@@ -511,7 +511,7 @@ class Builtins {
 		return c == " ".code || (c >= 9 && c <= 13);
 
 	// strtod's longest prefix, null when there is none
-	public static function strtod(s:Bytes):Dynamic {
+	public static function strtod(s:Bytes):NValue {
 		var i = 0;
 		while (i < s.length && isSpace(s.get(i)))
 			i++;
@@ -534,7 +534,7 @@ class Builtins {
 				digits++;
 			}
 		}
-		if (digits == 0) return (null : Dynamic);
+		if (digits == 0) return (null : NValue);
 		if (i < s.length && (s.get(i) == "e".code || s.get(i) == "E".code)) {
 			var j = i + 1;
 			if (j < s.length && (s.get(j) == "-".code || s.get(j) == "+".code)) j++;
@@ -550,8 +550,8 @@ class Builtins {
 
 class HCell {
 	public var hkey:Int;
-	public var key:Dynamic;
-	public var val:Dynamic;
+	public var key:NValue;
+	public var val:NValue;
 	public var next:Null<HCell>;
 
 	public function new(hkey, key, val, next) {
@@ -572,7 +572,7 @@ class NHash {
 		cells = [for (_ in 0...size) null];
 	}
 
-	public static function hashOf(v:Dynamic):Int {
+	public static function hashOf(v:NValue):Int {
 		var h = [0];
 		hashRec(v, h, []);
 		return h[0] & 0x3FFFFFFF;
@@ -588,14 +588,14 @@ class NHash {
 	static inline function schar(c:Int):Int
 		return c >= 128 ? c - 256 : c;
 
-	static function hashRec(v:Dynamic, h:Array<Int>, l:Array<Dynamic>) {
+	static function hashRec(v:NValue, h:Array<Int>, l:NArr) {
 		switch Tag.of(v) {
 			case Tag.TINT:
-				big(h, v);
+				big(h, v.asInt());
 			case Tag.TNULL:
 				small(h, 0);
 			case Tag.TFLOAT:
-				var i = haxe.io.FPHelper.doubleToI64(v);
+				var i = haxe.io.FPHelper.doubleToI64(v.asFloat());
 				var k = 8;
 				while (k > 0) {
 					k--;
@@ -603,9 +603,9 @@ class NHash {
 					small(h, schar((w >>> ((k & 3) * 8)) & 0xFF));
 				}
 			case Tag.TBOOL:
-				small(h, (v : Bool) ? 1 : 0);
+				small(h, v.asBool() ? 1 : 0);
 			case Tag.TSTRING:
-				var b = (v : NStr).b;
+				var b = v.asStr().b;
 				var k = b.length;
 				while (k > 0)
 					small(h, schar(b.get(--k)));
@@ -617,14 +617,14 @@ class NHash {
 					}
 				l.push(v);
 				if (Tag.isObject(v)) {
-					var o:NObj = v;
+					var o = v.asObj();
 					for (i in 0...o.n) {
 						big(h, o.ids[i]);
 						hashRec(o.vals[i], h, l);
 					}
 					if (o.proto != null) hashRec(o.proto, h, l);
 				} else {
-					var a:Array<Dynamic> = v;
+					var a = v.asArr();
 					var k = a.length;
 					while (k > 0)
 						hashRec(a[--k], h, l);
@@ -634,13 +634,13 @@ class NHash {
 		}
 	}
 
-	function same(vm:VM, key:Dynamic, k:Dynamic, cmp:Dynamic):Bool {
+	function same(vm:VM, key:NValue, k:NValue, cmp:NValue):Bool {
 		if (cmp == null) return vm.compare(key, k) == 0;
 		var r = vm.callN(cmp, [key, k]);
-		return Tag.isInt(r) && (r : Int) == 0;
+		return Tag.isInt(r) && r.asInt() == 0;
 	}
 
-	public function get(vm:VM, key:Dynamic, cmp:Dynamic):Dynamic {
+	public function get(vm:VM, key:NValue, cmp:NValue):NValue {
 		var c = cells[hashOf(key) % cells.length];
 		while (c != null) {
 			if (same(vm, key, c.key, cmp)) return c.val;
@@ -649,7 +649,7 @@ class NHash {
 		return null;
 	}
 
-	public function mem(vm:VM, key:Dynamic, cmp:Dynamic):Bool {
+	public function mem(vm:VM, key:NValue, cmp:NValue):Bool {
 		var c = cells[hashOf(key) % cells.length];
 		while (c != null) {
 			if (same(vm, key, c.key, cmp)) return true;
@@ -658,7 +658,7 @@ class NHash {
 		return false;
 	}
 
-	public function remove(vm:VM, key:Dynamic, cmp:Dynamic):Bool {
+	public function remove(vm:VM, key:NValue, cmp:NValue):Bool {
 		var k = hashOf(key) % cells.length;
 		var c = cells[k], prev:HCell = null;
 		while (c != null) {
@@ -673,7 +673,7 @@ class NHash {
 		return false;
 	}
 
-	public function set(vm:VM, key:Dynamic, val:Dynamic, cmp:Dynamic):Bool {
+	public function set(vm:VM, key:NValue, val:NValue, cmp:NValue):Bool {
 		var hkey = hashOf(key);
 		var c = cells[hkey % cells.length];
 		while (c != null) {
@@ -687,11 +687,11 @@ class NHash {
 		return true;
 	}
 
-	public function add(vm:VM, key:Dynamic, val:Dynamic) {
+	public function add(vm:VM, key:NValue, val:NValue) {
 		insert(hashOf(key), key, val);
 	}
 
-	function insert(hkey:Int, key:Dynamic, val:Dynamic) {
+	function insert(hkey:Int, key:NValue, val:NValue) {
 		if (nitems >= cells.length << 1) resize(cells.length << 1);
 		var k = hkey % cells.length;
 		cells[k] = new HCell(hkey, key, val, cells[k]);

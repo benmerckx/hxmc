@@ -3,9 +3,47 @@ package hxmc.neko;
 import haxe.io.Bytes;
 
 // Neko's values (neko/vm/neko.h): null, Bool, Int and Float are Haxe's own
-// (an Int is Neko's int or int32, whichever its value needs), an array is a
-// Haxe Array<Dynamic> of fixed length; the rest are the classes below, their
-// tag the number $typeof answers.
+// (an Int is Neko's int or int32, whichever its value needs), an array is an
+// NArr of fixed length; the rest are the classes below, their tag the number
+// $typeof answers.
+typedef NArr = Array<NValue>;
+
+// a Neko value. No operators: Neko's semantics are the VM's (VM.add,
+// VM.compare, ...), not Haxe's dynamic ones. Its contents are taken by a test
+// (Tag.isInt ...) then an unchecked view (asInt ...), or by Check's tests.
+abstract NValue(Dynamic) from Int from Float from Bool from NVal from NArr {
+	public inline function asInt():Int
+		return this;
+
+	public inline function asFloat():Float
+		return this;
+
+	public inline function asBool():Bool
+		return this;
+
+	public inline function asStr():NStr
+		return this;
+
+	public inline function asObj():NObj
+		return this;
+
+	public inline function asFun():NFun
+		return this;
+
+	public inline function asAbs():NAbs
+		return this;
+
+	public inline function asArr():NArr
+		return this;
+
+	public inline function asVal():NVal
+		return this;
+
+	// (for Haxe's own APIs: hxmc.Native's tests, Std.string)
+	public inline function raw():Dynamic
+		return this;
+}
+
 class Tag {
 	public static inline var TNULL = 0;
 	public static inline var TINT = 1;
@@ -17,44 +55,44 @@ class Tag {
 	public static inline var TFUNCTION = 7;
 	public static inline var TABSTRACT = 8;
 
-	public static function of(v:Dynamic):Int {
+	public static function of(v:NValue):Int {
 		if (v == null) return TNULL;
 		if (isInt(v)) return TINT;
 		if (isFloat(v)) return TFLOAT;
 		if (isBool(v)) return TBOOL;
-		if (Std.isOfType(v, NVal)) return (v : NVal).tag;
+		if (Std.isOfType(v.raw(), NVal)) return v.asVal().tag;
 		if (isArray(v)) return TARRAY;
-		throw 'neko: a foreign value (kind ${hxmc.Native.typeKind(v)})';
+		throw 'neko: a foreign value (kind ${hxmc.Native.typeKind(v.raw())})';
 	}
 
 	// (the number boxes tested exactly and inline: a Float of an integer's
 	// value is no Int; the classes by Std.isOfType's inline range test)
-	public static inline function isInt(v:Dynamic):Bool
-		return hxmc.Native.isIntBox(v);
+	public static inline function isInt(v:NValue):Bool
+		return hxmc.Native.isIntBox(v.raw());
 
-	public static inline function isFloat(v:Dynamic):Bool
-		return hxmc.Native.isFloatBox(v);
+	public static inline function isFloat(v:NValue):Bool
+		return hxmc.Native.isFloatBox(v.raw());
 
-	public static inline function isBool(v:Dynamic):Bool
-		return hxmc.Native.isBoolBox(v);
+	public static inline function isBool(v:NValue):Bool
+		return hxmc.Native.isBoolBox(v.raw());
 
-	public static inline function isArray(v:Dynamic):Bool
-		return hxmc.Native.typeKind(v) == 9;
+	public static inline function isArray(v:NValue):Bool
+		return hxmc.Native.typeKind(v.raw()) == 9;
 
-	public static inline function isString(v:Dynamic):Bool
-		return Std.isOfType(v, NStr);
+	public static inline function isString(v:NValue):Bool
+		return Std.isOfType(v.raw(), NStr);
 
-	public static inline function isObject(v:Dynamic):Bool
-		return Std.isOfType(v, NObj);
+	public static inline function isObject(v:NValue):Bool
+		return Std.isOfType(v.raw(), NObj);
 
-	public static inline function isFunction(v:Dynamic):Bool
-		return Std.isOfType(v, NFun);
+	public static inline function isFunction(v:NValue):Bool
+		return Std.isOfType(v.raw(), NFun);
 
-	public static inline function isAbstract(v:Dynamic):Bool
-		return Std.isOfType(v, NAbs);
+	public static inline function isAbstract(v:NValue):Bool
+		return Std.isOfType(v.raw(), NAbs);
 
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 another value
-	public static inline function kind(v:Dynamic):Int
+	public static inline function kind(v:NValue):Int
 		return v == null ? 0 : isInt(v) ? 1 : isFloat(v) ? 2 : isBool(v) ? 3 : 4;
 
 	// an Int that does not fit Neko's 31 bits is an int32 (alloc_best_int)
@@ -92,10 +130,10 @@ class NStr extends NVal {
 // first n slots of ids and vals (their capacity grows by doubling)
 class NObj extends NVal {
 	static final NO_IDS = new haxe.ds.Vector<Int>(0);
-	static final NO_VALS = new haxe.ds.Vector<Dynamic>(0);
+	static final NO_VALS = new haxe.ds.Vector<NValue>(0);
 
 	public var ids:haxe.ds.Vector<Int>;
-	public var vals:haxe.ds.Vector<Dynamic>;
+	public var vals:haxe.ds.Vector<NValue>;
 	public var n = 0;
 	public var proto:Null<NObj>;
 
@@ -121,7 +159,7 @@ class NObj extends NVal {
 	}
 
 	// the field of this object or a prototype, or undefined: `has` tells
-	public function get(id:Int):Dynamic {
+	public function get(id:Int):NValue {
 		var o = this;
 		while (o != null) {
 			var i = o.find(id);
@@ -134,7 +172,7 @@ class NObj extends NVal {
 	public function hasOwn(id:Int):Bool
 		return find(id) >= 0;
 
-	public function getOwn(id:Int):Dynamic {
+	public function getOwn(id:Int):NValue {
 		var i = find(id);
 		return i >= 0 ? vals[i] : null;
 	}
@@ -148,7 +186,7 @@ class NObj extends NVal {
 		return false;
 	}
 
-	public function set(id:Int, v:Dynamic):Void {
+	public function set(id:Int, v:NValue):Void {
 		var min = 0, max = n;
 		while (min < max) {
 			var mid = (min + max) >> 1;
@@ -160,7 +198,7 @@ class NObj extends NVal {
 		}
 		if (n == ids.length) {
 			var cap = n == 0 ? 4 : n * 2;
-			var ni = new haxe.ds.Vector<Int>(cap), nv = new haxe.ds.Vector<Dynamic>(cap);
+			var ni = new haxe.ds.Vector<Int>(cap), nv = new haxe.ds.Vector<NValue>(cap);
 			haxe.ds.Vector.blit(ids, 0, ni, 0, n);
 			haxe.ds.Vector.blit(vals, 0, nv, 0, n);
 			ids = ni;
@@ -193,7 +231,7 @@ class NObj extends NVal {
 		var o = new NObj(proto);
 		if (n > 0) {
 			o.ids = new haxe.ds.Vector<Int>(n);
-			o.vals = new haxe.ds.Vector<Dynamic>(n);
+			o.vals = new haxe.ds.Vector<NValue>(n);
 			haxe.ds.Vector.blit(ids, 0, o.ids, 0, n);
 			haxe.ds.Vector.blit(vals, 0, o.vals, 0, n);
 			o.n = n;
@@ -203,18 +241,18 @@ class NObj extends NVal {
 }
 
 // (the arguments: a Vector, one allocation of their number)
-typedef Prim = (vm:VM, args:haxe.ds.Vector<Dynamic>) -> Dynamic;
+typedef Prim = (vm:VM, args:haxe.ds.Vector<NValue>) -> NValue;
 
 // a function of a module's code (prim == null) or a primitive; nargs -1: any
 class NFun extends NVal {
 	public var nargs:Int;
-	public var env:Dynamic;
+	public var env:NValue;
 	public var module:Null<Module>;
 	public var addr:Int;
 	public var prim:Null<Prim>;
 	public var name:String;
 
-	public function new(nargs:Int, env:Dynamic, module:Module, addr:Int, prim:Prim, name:String) {
+	public function new(nargs:Int, env:NValue, module:Module, addr:Int, prim:Prim, name:String) {
 		super(Tag.TFUNCTION);
 		this.nargs = nargs;
 		this.env = env;
@@ -224,7 +262,7 @@ class NFun extends NVal {
 		this.name = name;
 	}
 
-	public static inline function primitive(name:String, nargs:Int, f:Prim, ?env:Dynamic):NFun
+	public static inline function primitive(name:String, nargs:Int, f:Prim, ?env:NValue):NFun
 		return new NFun(nargs, env, null, 0, f, name);
 }
 
@@ -242,17 +280,17 @@ class NAbs extends NVal {
 
 // what $throw and a failing operation raise
 class NekoError {
-	public var value:Dynamic;
+	public var value:NValue;
 	// the positions it went through, innermost first
-	public var stack:Null<Array<Dynamic>>;
+	public var stack:Null<NArr>;
 	// the depth it was thrown at
 	public var depth = 0;
 	// thrown by $rethrow: the caught stack keeps the previous one
 	public var rethrown = false;
 
-	public function new(v:Dynamic)
+	public function new(v:NValue)
 		this.value = v;
 
 	public function toString():String
-		return Std.string(value);
+		return Std.string(value.raw());
 }

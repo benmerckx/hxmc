@@ -22,7 +22,7 @@ class SocketPrims {
 	static inline function swap(v:Int):Int
 		return ((v >>> 24) & 0xFF) | ((v >> 8) & 0xFF00) | ((v & 0xFF00) << 8) | (v << 24);
 
-	public static function sock(v:Dynamic):NSocket
+	public static function sock(v:NValue):NSocket
 		return v.abs("socket");
 
 	// block_error: "Blocking" when the call would block, else the failure
@@ -105,10 +105,10 @@ class SocketPrims {
 			return true;
 		});
 		r("socket_accept", 1, (vm, a) -> new NAbs("socket", new NSocket(check(NativeNet.accept(sock(a[0]).fd)))));
-		function addr(s:NSocket, peer:Bool):Dynamic {
+		function addr(s:NSocket, peer:Bool):NValue {
 			var r = NativeNet.sockName(s.fd, peer);
 			if (r == null) throw Builtins.failure;
-			var arr:Array<Dynamic> = [swap(r[0]), r[1]];
+			var arr:NArr = [swap(r[0]), r[1]];
 			return arr;
 		}
 		r("socket_peer", 1, (vm, a) -> addr(sock(a[0]), true));
@@ -135,16 +135,16 @@ class SocketPrims {
 			return true;
 		});
 		r("socket_select", 4, (vm, a) -> {
-			function socks(v:Dynamic):Array<Dynamic>
+			function socks(v:NValue):NArr
 				return v == null ? [] : v.arr();
 			var rs = socks(a[0]), ws = socks(a[1]), os = socks(a[2]);
 			var rf = [for (s in rs) sock(s).fd], wf = [for (s in ws) sock(s).fd], of = [for (s in os) sock(s).fd];
 			var n = NativeNet.select(rf, wf, of, a[3] == null ? -1.0 : a[3].number());
 			if (n < 0) throw Builtins.failure;
 			// (NativeNet.select sets the descriptors that are not ready to -1)
-			function keep(all:Array<Dynamic>, fds:Array<Int>):Array<Dynamic>
+			function keep(all:NArr, fds:Array<Int>):NArr
 				return [for (i in 0...all.length) if (fds[i] >= 0) all[i]];
-			var res:Array<Dynamic> = [keep(rs, rf), keep(ws, wf), keep(os, of)];
+			var res:NArr = [keep(rs, rf), keep(ws, wf), keep(os, of)];
 			return res;
 		});
 		r("host_resolve", 1, (vm, a) -> {

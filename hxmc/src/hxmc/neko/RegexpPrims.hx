@@ -125,7 +125,7 @@ class RegexpPrims {
 		return s;
 	}
 
-	static function re(v:Dynamic):NRegexp
+	static function re(v:NValue):NRegexp
 		return v.abs("regexp");
 
 	static function make(pattern:NStr, opts:String):NAbs {
@@ -169,7 +169,7 @@ class RegexpPrims {
 			var d = re(a[0]), m = a[1].int();
 			if (m < 0 || m >= d.re.ngroups || d.str == null) throw Builtins.failure;
 			var start = d.cap(m * 2), end = d.cap(m * 2 + 1);
-			if (start < 0) return (null : Dynamic);
+			if (start < 0) return (null : NValue);
 			return new NStr(d.str.b.sub(start, end - start));
 		});
 		r("regexp_matched_pos", 2, (vm, a) -> {
@@ -185,7 +185,7 @@ class RegexpPrims {
 			var d = re(a[0]);
 			return d.str == null ? -1 : d.re.ngroups;
 		});
-		function replace(vm:VM, a:haxe.ds.Vector<Dynamic>, all:Bool, f:Null<NFun>):Dynamic {
+		function replace(vm:VM, a:haxe.ds.Vector<NValue>, all:Bool, f:Null<NFun>):NValue {
 			var d = re(a[0]), s = a[1].str();
 			var by = f == null ? a[2].str().b : null;
 			var sj = subject(d, s.b);

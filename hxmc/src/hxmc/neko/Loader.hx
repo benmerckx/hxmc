@@ -13,16 +13,16 @@ class Loader {
 		var o = new NObj();
 		o.set(Fields.id("path"), initPath(Sys.getEnv("NEKOPATH")));
 		o.set(Fields.id("cache"), new NObj());
-		o.set(Fields.id("args"), ([for (a in args) NStr.of(a)] : Array<Dynamic>));
+		o.set(Fields.id("args"), ([for (a in args) NStr.of(a)] : NArr));
 		o.set(Fields.id("loadprim"), Builtins.prim("loadprim", 2, loadprim));
 		o.set(Fields.id("loadmodule"), Builtins.prim("loadmodule", 2, loadmodule));
 		return o;
 	}
 
 	// a list [dir, next] of the directories, each with a trailing slash
-	static function initPath(path:Null<String>):Dynamic {
+	static function initPath(path:Null<String>):NValue {
 		if (path == null) path = "/usr/lib/neko:/usr/local/lib/neko:/usr/local/bin:/usr/bin";
-		var l:Dynamic = null;
+		var l:NValue = null;
 		var parts = [];
 		var cur = new StringBuf();
 		var i = 0;
@@ -46,21 +46,21 @@ class Loader {
 		for (p in parts) {
 			var last = p.length == 0 ? "" : p.charAt(p.length - 1);
 			var d = last != "/" && last != "\\" ? p + "/" : p;
-			var cell:Array<Dynamic> = [NStr.of(d), l];
+			var cell:NArr = [NStr.of(d), l];
 			l = cell;
 		}
 		return l;
 	}
 
 	// neko_select_file
-	public static function selectFile(path:Dynamic, file:String, ext:String):String {
+	public static function selectFile(path:NValue, file:String, ext:String):String {
 		var ff = file + ext;
 		if (sys.FileSystem.exists(ff)) {
 			if (file.indexOf("/") >= 0 || file.indexOf("\\") >= 0) return ff;
 			return "./" + ff;
 		}
-		while (Tag.isArray(path) && (path : Array<Dynamic>).length == 2) {
-			var a:Array<Dynamic> = path;
+		while (Tag.isArray(path) && path.asArr().length == 2) {
+			var a = path.asArr();
 			path = a[1];
 			var p = VM.current().toBytes(a[0]).toString() + ff;
 			if (sys.FileSystem.exists(p)) return p;
@@ -68,7 +68,7 @@ class Loader {
 		return ff;
 	}
 
-	static function loadprim(vm:VM, a:haxe.ds.Vector<Dynamic>):Dynamic {
+	static function loadprim(vm:VM, a:haxe.ds.Vector<NValue>):NValue {
 		var o = vm.vthis.obj();
 		var name = a[0].str().toString();
 		var nargs = a[1].int();
@@ -78,14 +78,14 @@ class Loader {
 		return f;
 	}
 
-	static function loadmodule(vm:VM, a:haxe.ds.Vector<Dynamic>):Dynamic {
+	static function loadmodule(vm:VM, a:haxe.ds.Vector<NValue>):NValue {
 		var o = vm.vthis.obj();
 		var mname = a[0].str();
 		var vthis = a[1].obj();
 		var cache = o.get(Fields.id("cache")).obj();
 		var mid = Fields.idBytes(mname.b);
 		var mv = cache.get(mid);
-		if (Tag.isAbstract(mv) && (mv : NAbs).kind == "module") return ((mv : NAbs).data : Module).exports;
+		if (Tag.isAbstract(mv) && mv.asAbs().kind == "module") return (mv.asAbs().data : Module).exports;
 		var name = mname.toString();
 		var file = StringTools.endsWith(name, ".n") ? selectFile(o.get(Fields.id("path")), name, "") : selectFile(o.get(Fields.id("path")), name, ".n");
 		var bytes = try sys.io.File.getBytes(file) catch (_:Dynamic) throw VM.error("Module not found : " + name);

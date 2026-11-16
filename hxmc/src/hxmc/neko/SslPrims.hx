@@ -20,7 +20,7 @@ class SslPrims {
 		return new NekoError(NStr.of("Blocking"));
 
 	// an mbedtls result: the BIO's system error, Blocking, or the error's text
-	static function result(ssl:Dynamic, r:Int):Int {
+	static function result(ssl:NValue, r:Int):Int {
 		var err = NativeSsl.bioError(ssl);
 		if (err != 0) {
 			if (hxmc.NativeNet.blocked()) throw blocking();
@@ -30,7 +30,7 @@ class SslPrims {
 		return r;
 	}
 
-	static function cert(v:Dynamic):sys.ssl.Certificate
+	static function cert(v:NValue):sys.ssl.Certificate
 		return v.abs("ssl_cert");
 
 	public static function register(add:Register) {
@@ -80,12 +80,12 @@ class SslPrims {
 			var c = NativeSsl.sslGetPeerCert(a[0].abs("ssl"));
 			return c == null ? null : new NAbs("ssl_cert", @:privateAccess new sys.ssl.Certificate(c));
 		});
-		function send(ssl:Dynamic, b:Bytes, p:Int, l:Int):Int {
+		function send(ssl:NValue, b:Bytes, p:Int, l:Int):Int {
 			var n = result(ssl, NativeSsl.sslWrite(ssl, b, p, l));
 			if (n < 0) throw VM.error(NativeSsl.strerror(n));
 			return n;
 		}
-		function recv(ssl:Dynamic, b:Bytes, p:Int, l:Int):Int {
+		function recv(ssl:NValue, b:Bytes, p:Int, l:Int):Int {
 			var n = NativeSsl.sslRead(ssl, b, p, l);
 			if (n == ERR_SSL_PEER_CLOSE_NOTIFY || n == ERR_SSL_RECEIVED_NEW_SESSION_TICKET) return 0;
 			n = result(ssl, n);
@@ -139,7 +139,7 @@ class SslPrims {
 			return v == 0;
 		});
 		// keys and digests (Neko: an abstract of kind pkey; digests by name)
-		function key(data:NStr, isPublic:Bool, pass:Dynamic, pem:Bool):NAbs {
+		function key(data:NStr, isPublic:Bool, pass:NValue, pem:Bool):NAbs {
 			var pk = NativeSsl.pkInit();
 			var e = NativeSsl.pkParse(pk, data.b, isPublic, pass == null ? null : pass.str().toString(), pem);
 			if (e != 0) throw VM.error(NativeSsl.strerror(e));
@@ -147,7 +147,7 @@ class SslPrims {
 		}
 		r("key_from_der", 2, (vm, a) -> key(a[0].str(), a[1].bool(), null, false));
 		r("key_from_pem", 3, (vm, a) -> key(a[0].str(), a[1].bool(), a[2], true));
-		function alg(v:Dynamic):String {
+		function alg(v:NValue):String {
 			var name = v.str().toString();
 			if (NativeSsl.mdSize(name) == 0) throw VM.error("Invalid hash algorithm");
 			return name;
@@ -184,16 +184,16 @@ class SslPrims {
 		// (a list of [name, next] pairs, null after the last)
 		r("cert_get_altnames", 1, (vm, a) -> {
 			var names = cert(a[0]).altNames;
-			var l:Dynamic = null;
+			var l:NValue = null;
 			var i = names.length;
 			while (i-- > 0) {
-				var cell:Array<Dynamic> = [NStr.of(names[i]), l];
+				var cell:NArr = [NStr.of(names[i]), l];
 				l = cell;
 			}
 			return l;
 		});
-		function date(d:Date):Dynamic {
-			var r:Array<Dynamic> = [
+		function date(d:Date):NValue {
+			var r:NArr = [
 				d.getUTCFullYear(),
 				d.getUTCMonth() + 1,
 				d.getUTCDate(),

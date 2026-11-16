@@ -112,9 +112,9 @@ class Frame {
 
 	// the change of the depth (neko's stack_table; P: the parameter)
 	// the index in BUILTINS of a builtin called with its own count of arguments, else -1
-	static function builtinOf(v:Dynamic, n:Int):Int {
+	static function builtinOf(v:NValue, n:Int):Int {
 		if (!Std.isOfType(v, NFun)) return -1;
-		var k = BUILTINS.indexOf((v : NFun).name);
+		var k = BUILTINS.indexOf(v.asFun().name);
 		return k >= 0 && BUILTIN_ARGS[k] == n ? k : -1;
 	}
 
@@ -224,7 +224,7 @@ class Frame {
 		}
 	}
 
-	static inline function invalid():Dynamic
+	static inline function invalid():NValue
 		throw new Module.ReadError();
 
 	public static function translate(m:Module, code:Vector<Int>, codesize:Int, funcs:Array<NFun>) {
@@ -405,7 +405,7 @@ class Frame {
 					emit(i, [F.STHIS]);
 				case Op.Push:
 					if (immAfter(i)) {
-						var k:Int = m.consts[code[i + 2]];
+						var k = m.consts[code[i + 2]].asInt();
 						var cmp = op(i + 3);
 						if (isCmp(cmp) && free(i + 4) && (op(i + 4) == Op.JumpIf || op(i + 4) == Op.JumpIfNot)) {
 							emit(i + 3, [F.OPIMMJUMP, cmp, op(i + 4) == Op.JumpIf ? 1 : 0, k, code[i + 2]]);

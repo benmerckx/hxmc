@@ -60,7 +60,7 @@ class NThread {
 	public static final tls = new sys.thread.Tls<NThread>();
 	static var main:NThread;
 
-	public final messages = new sys.thread.Deque<Dynamic>();
+	public final messages = new sys.thread.Deque<NValue>();
 	public final handle:NAbs;
 
 	public function new()
@@ -91,22 +91,22 @@ class StdPrims {
 		return NStr.of(s);
 
 	// a list [v, next] of the values (neko's sys_read_dir, string_split)
-	static function list(a:Array<Dynamic>):Dynamic {
-		var l:Dynamic = null;
+	static function list(a:NArr):NValue {
+		var l:NValue = null;
 		var i = a.length;
 		while (i-- > 0) {
-			var cell:Array<Dynamic> = [a[i], l];
+			var cell:NArr = [a[i], l];
 			l = cell;
 		}
 		return l;
 	}
 
 	static function fileError(msg:String, f:String):NekoError {
-		var a:Array<Dynamic> = [str(msg), str(f)];
+		var a:NArr = [str(msg), str(f)];
 		return new NekoError(a);
 	}
 
-	static function file(v:Dynamic):NFile
+	static function file(v:NValue):NFile
 		return v.abs("file");
 
 	public static function register(add:Register) {
@@ -127,7 +127,7 @@ class StdPrims {
 	}
 
 	static function buffer(add:Register) {
-		inline function buf(v:Dynamic):NBuf
+		inline function buf(v:NValue):NBuf
 			return v.abs("buffer");
 		add("buffer_new", 0, (vm, a) -> new NAbs("buffer", new NBuf()));
 		add("buffer_add", 2, (vm, a) -> {
@@ -172,12 +172,12 @@ class StdPrims {
 		add("math_pow", 2, (vm, a) -> Math.pow(a[0].number(), a[1].number()));
 		add("math_abs", 1, (vm, a) -> {
 			if (Tag.isInt(a[0])) {
-				var i:Int = a[0];
-				return (i < 0 ? -i : i : Dynamic);
+				var i = a[0].asInt();
+				return (i < 0 ? -i : i : NValue);
 			}
 			return Math.abs(a[0].float());
 		});
-		inline function toInt(f:Float):Dynamic
+		inline function toInt(f:Float):NValue
 			return Builtins.toInt(f);
 		add("math_ceil", 1, (vm, a) -> Tag.isInt(a[0]) ? a[0] : toInt(Math.fceil(a[0].float())));
 		add("math_floor", 1, (vm, a) -> Tag.isInt(a[0]) ? a[0] : toInt(Math.ffloor(a[0].float())));
@@ -196,7 +196,7 @@ class StdPrims {
 		add("string_split", 2, (vm, a) -> {
 			var o = a[0].str().b, s = a[1].str().b;
 			var ilen = o.length, slen = s.length;
-			var out:Array<Dynamic> = [];
+			var out:NArr = [];
 			var start = 0;
 			var pos = slen == 0 ? 1 : 0;
 			while (pos <= ilen - slen) {
@@ -357,12 +357,12 @@ class StdPrims {
 		add("same_closure", 2, (vm, a) -> {
 			var f1 = a[0], f2 = a[1];
 			if (!Tag.isFunction(f1) || !Tag.isFunction(f2)) return false;
-			var x:NFun = f1, y:NFun = f2;
+			var x = f1.asFun(), y = f2.asFun();
 			if (x == y) return true;
 			if (x.nargs != y.nargs || x.module != y.module || x.addr != y.addr || x.prim != y.prim) {
 				// closures of $closure: the same function on the same object
 				if (x.name == "closure_callback" && y.name == "closure_callback") {
-					var e1:Array<Dynamic> = x.env, e2:Array<Dynamic> = y.env;
+					var e1 = x.env.asArr(), e2 = y.env.asArr();
 					if (e1.length != e2.length) return false;
 					for (i in 0...e1.length)
 						if (!VM.same(e1[i], e2[i])) return false;
@@ -371,7 +371,7 @@ class StdPrims {
 				return false;
 			}
 			if (!Tag.isArray(x.env) || !Tag.isArray(y.env)) return VM.same(x.env, y.env);
-			var e1:Array<Dynamic> = x.env, e2:Array<Dynamic> = y.env;
+			var e1 = x.env.asArr(), e2 = y.env.asArr();
 			if (e1.length != e2.length) return false;
 			for (i in 0...e1.length)
 				if (!VM.same(e1[i], e2[i])) return false;
@@ -390,7 +390,7 @@ class StdPrims {
 		add("unserialize", 2, (vm, a) -> throw VM.error("unserialize is not supported"));
 	}
 
-	static function mergeSort(vm:VM, a:Array<Dynamic>, cmp:NFun) {
+	static function mergeSort(vm:VM, a:NArr, cmp:NFun) {
 		if (a.length < 2) return;
 		var mid = a.length >> 1;
 		var l = a.slice(0, mid), r = a.slice(mid);
@@ -398,9 +398,9 @@ class StdPrims {
 		mergeSort(vm, r, cmp);
 		var i = 0, j = 0, k = 0;
 		while (i < l.length && j < r.length) {
-			var c:Dynamic = vm.callN(cmp, [l[i], r[j]]);
+			var c:NValue = vm.callN(cmp, [l[i], r[j]]);
 			if (!Tag.isInt(c)) throw Builtins.failure;
-			if ((c : Int) <= 0) a[k++] = l[i++] else a[k++] = r[j++];
+			if (c.asInt() <= 0) a[k++] = l[i++] else a[k++] = r[j++];
 		}
 		while (i < l.length)
 			a[k++] = l[i++];
@@ -647,12 +647,12 @@ class StdPrims {
 		add("sys_exe_path", 0, (vm, a) -> str(Sys.programPath()));
 		add("sys_program_path", 0, (vm, a) -> programPath == null ? null : str(programPath));
 		add("sys_env", 0, (vm, a) -> {
-			var l:Dynamic = null;
+			var l:NValue = null;
 			var env = Sys.environment();
 			var keys = [for (k in env.keys()) k];
 			var i = keys.length;
 			while (i-- > 0) {
-				var cell:Array<Dynamic> = [str(keys[i]), str(env.get(keys[i])), l];
+				var cell:NArr = [str(keys[i]), str(env.get(keys[i])), l];
 				l = cell;
 			}
 			return l;
@@ -679,15 +679,15 @@ class StdPrims {
 	}
 
 	static function process(add:Register) {
-		inline function proc(v:Dynamic):sys.io.Process
+		inline function proc(v:NValue):sys.io.Process
 			return v.abs("process");
 		add("process_run", 2, (vm, a) -> {
 			var cmd = a[0].str().toString();
-			var args:Array<String> = a[1] == null ? null : [for (x in a[1].arr()) (x : Dynamic).str().toString()];
+			var args:Array<String> = a[1] == null ? null : [for (x in a[1].arr()) (x : NValue).str().toString()];
 			var p = try new sys.io.Process(cmd, args) catch (e:Dynamic) throw Builtins.failure;
 			return new NAbs("process", p);
 		});
-		function read(p:haxe.io.Input, a:haxe.ds.Vector<Dynamic>):Dynamic {
+		function read(p:haxe.io.Input, a:haxe.ds.Vector<NValue>):NValue {
 			var s = a[1].str().b, pos = a[2].int(), len = a[3].int();
 			if (pos < 0 || len < 0 || pos + len > s.length) throw Builtins.failure;
 			var n = try p.readBytes(s, pos, len) catch (e:Dynamic) 0;
@@ -747,7 +747,7 @@ class StdPrims {
 		});
 		add("thread_read_message", 1, (vm, a) -> NThread.current().messages.pop(a[0] == true));
 		add("thread_stack", 1, (vm, a) -> {
-			var r:Array<Dynamic> = [];
+			var r:NArr = [];
 			return r;
 		});
 		add("lock_create", 0, (vm, a) -> new NAbs("lock", new sys.thread.Lock()));
@@ -759,10 +759,10 @@ class StdPrims {
 			var l:sys.thread.Lock = a[0].abs("lock");
 			return a[1] == null ? l.wait() : l.wait(a[1].number());
 		});
-		add("tls_create", 0, (vm, a) -> new NAbs("tls", new sys.thread.Tls<Dynamic>()));
-		add("tls_get", 1, (vm, a) -> (a[0].abs("tls") : sys.thread.Tls<Dynamic>).value);
+		add("tls_create", 0, (vm, a) -> new NAbs("tls", new sys.thread.Tls<NValue>()));
+		add("tls_get", 1, (vm, a) -> (a[0].abs("tls") : sys.thread.Tls<NValue>).value);
 		add("tls_set", 2, (vm, a) -> {
-			(a[0].abs("tls") : sys.thread.Tls<Dynamic>).value = a[1];
+			(a[0].abs("tls") : sys.thread.Tls<NValue>).value = a[1];
 			return null;
 		});
 		add("mutex_create", 0, (vm, a) -> new NAbs("mutex", new sys.thread.Mutex()));
@@ -775,16 +775,16 @@ class StdPrims {
 			(a[0].abs("mutex") : sys.thread.Mutex).release();
 			return null;
 		});
-		add("deque_create", 0, (vm, a) -> new NAbs("deque", new sys.thread.Deque<Dynamic>()));
+		add("deque_create", 0, (vm, a) -> new NAbs("deque", new sys.thread.Deque<NValue>()));
 		add("deque_add", 2, (vm, a) -> {
-			(a[0].abs("deque") : sys.thread.Deque<Dynamic>).add(a[1]);
+			(a[0].abs("deque") : sys.thread.Deque<NValue>).add(a[1]);
 			return null;
 		});
 		add("deque_push", 2, (vm, a) -> {
-			(a[0].abs("deque") : sys.thread.Deque<Dynamic>).push(a[1]);
+			(a[0].abs("deque") : sys.thread.Deque<NValue>).push(a[1]);
 			return null;
 		});
-		add("deque_pop", 2, (vm, a) -> (a[0].abs("deque") : sys.thread.Deque<Dynamic>).pop(a[1] == true));
+		add("deque_pop", 2, (vm, a) -> (a[0].abs("deque") : sys.thread.Deque<NValue>).pop(a[1] == true));
 		add("cond_create", 0, (vm, a) -> new NAbs("condition", new sys.thread.Condition()));
 		add("cond_acquire", 1, (vm, a) -> {
 			(a[0].abs("condition") : sys.thread.Condition).acquire();
@@ -811,7 +811,7 @@ class StdPrims {
 
 	// a date: an Int, the seconds since the epoch
 	static function dates(add:Register) {
-		inline function date(v:Dynamic):Date
+		inline function date(v:NValue):Date
 			return Date.fromTime((v.int() : Float) * 1000);
 		inline function secs(d:Date):Int
 			return Std.int(d.getTime() / 1000);
@@ -866,9 +866,9 @@ class StdPrims {
 	}
 
 	static function int32(add:Register) {
-		inline function i(v:Dynamic):Int {
+		inline function i(v:NValue):Int {
 			if (!Tag.isInt(v)) throw Builtins.failure;
-			return v;
+			return v.asInt();
 		}
 		add("int32_new", 1, (vm, a) -> Tag.isFloat(a[0]) ? Builtins.toInt(a[0]) : i(a[0]));
 		add("int32_to_int", 1, (vm, a) -> i(a[0]));
@@ -999,9 +999,9 @@ class StdPrims {
 
 	// neko.vm.Module
 	static function modules(add:Register) {
-		inline function mod(v:Dynamic):Module
+		inline function mod(v:NValue):Module
 			return v.abs("module");
-		function load(vm:VM, bytes:Bytes, loader:Dynamic):Dynamic {
+		function load(vm:VM, bytes:Bytes, loader:NValue):NValue {
 			var m = try Module.read(bytes, loader == null ? null : loader.obj()) catch (e:Module.ReadError) throw Builtins.failure;
 			m.name = str("");
 			return new NAbs("module", m);
@@ -1011,9 +1011,9 @@ class StdPrims {
 			var b = new NBuf();
 			var chunk = new NStr(Bytes.alloc(4096));
 			while (true) {
-				var n:Dynamic = vm.callN(f, [chunk, 0, 4096]);
-				if (!Tag.isInt(n) || (n : Int) <= 0) break;
-				b.addBytes(chunk.b, 0, n);
+				var n:NValue = vm.callN(f, [chunk, 0, 4096]);
+				if (!Tag.isInt(n) || n.asInt() <= 0) break;
+				b.addBytes(chunk.b, 0, n.asInt());
 			}
 			return load(vm, b.bytes(), a[1]);
 		});
@@ -1022,7 +1022,7 @@ class StdPrims {
 			var name = a[1].str().toString();
 			var file = Loader.selectFile(a[0], name, StringTools.endsWith(name, ".n") ? "" : ".n");
 			var bytes = try sys.io.File.getBytes(file) catch (e:Dynamic) throw VM.error("Module not found : " + name);
-			var m:NAbs = load(vm, bytes, a[2]);
+			var m = load(vm, bytes, a[2]).asAbs();
 			(m.data : Module).name = str(name);
 			return m;
 		});
