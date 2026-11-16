@@ -509,6 +509,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.s2 = useZ(i.c);
 				x.cond = cc;
 				x.size = sz(i.ty);
+			case SExt | ZExt if (zeroExtended(i.a, i.op == SExt)):
+				mov(reg(i.id), use(i.a), 8);
 			case SExt:
 				var x = emit(SXTW);
 				x.d = reg(i.id);
