@@ -792,6 +792,9 @@ class Str {
 	@:hxmc.kernel static function lastAcross12(c:ReadOnlySpan<UInt8>, d:ReadOnlySpan<UInt16>, from:Int):Int {
 		var n = c.length, m = d.length;
 		if (m < 1 || m > n || from > n - m) return -1;
+		// (as across12)
+		for (k in 0...m)
+			if ((d[k] : Int) > 0xFF) return -1;
 		var i = from;
 		while (i >= 0) {
 			var k = 0;
