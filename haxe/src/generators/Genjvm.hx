@@ -846,7 +846,7 @@ class Genjvm {
 			jmCtor.return_();
 		}
 		var inits:Array<{jmStatic:JvmMethodBuilder, jcCtor:JvmClassBuilder}> = [];
-		var names = en.eNames.map(function(name) {
+		var names = en.eConstrs.keyArray().map(function(name) {
 			var ef = en.eConstrs.get(name);
 			if (ef == null) throw NotFound.raise();
 			var args = switch TFunctions.follow(ef.efType) {
@@ -1024,7 +1024,7 @@ class Genjvm {
 				case null:
 				case c:
 					jc.addInterface(c.clPath, []);
-					for (cf in c.clOrderedFields) {
+					for (cf in c.clFields) {
 						var jsigCf = jsignatureOfType(gctx, cf.cfType);
 						var jm = jc.spawnMethod(cf.cfName, jsigCf, [MPublic]);
 						var sig = switch followWithCoro(cf.cfType) {
@@ -3171,14 +3171,14 @@ class TexprToJvm {
 			case TObjectDecl(fl):
 				var hadInvalidFieldName = false;
 				/* We cannot rely on e.etype because it might have optional field shit, so we need to build a concrete type from the fields... */
-				var fields = new haxe.ds.StringMap<TClassField>();
+				var names = [], cfs = [];
 				for (f in fl) {
 					var name = f.key.name, e = f.expr;
-					var cf = mkField(name, e.etype, e.epos, e.epos);
 					if (!syntax.Lexer.isValidIdentifier(name)) hadInvalidFieldName = true;
-					fields.set(name, cf);
+					names.push(name);
+					cfs.push(mkField(name, e.etype, e.epos, e.epos));
 				}
-				var t = mkAnon(Closed, fields);
+				var t = mkAnon(Closed, core.ds.PMap.ofArrays(names, cfs));
 				var td = gctx.anonIdentification.identify(AnonIdMode.defaultMode, true, t);
 				switch td {
 					case pfm if (pfm != null && !hadInvalidFieldName):
@@ -3351,7 +3351,7 @@ class TclassToJvm {
 				function check(cf:TClassField) {
 					if (hasClassFieldFlag(cf, CfOverride)) checkOverride(cf);
 				}
-				for (cf in c.clOrderedFields) ifMethod(check, cf);
+				for (cf in c.clFields) ifMethod(check, cf);
 		}
 		function checkInterface(mapType0:T->T, ci:ClassAndParams):Void {
 			var cInt = ci.cls, tl = ci.params;
@@ -3363,7 +3363,7 @@ class TclassToJvm {
 						compareFields(r.field, cf);
 				}
 			}
-			for (cf in cInt.clOrderedFields) ifMethod(check, cf);
+			for (cf in cInt.clFields) ifMethod(check, cf);
 			for (i in cInt.clImplements) checkInterface(mapType, i);
 		}
 		for (i in c.clImplements) checkInterface(function(t) return t, i);
@@ -3631,8 +3631,8 @@ class TclassToJvm {
 			case ep:
 				if (ep.cls == c) generateMain(ep.expr);
 		}
-		for (cf in c.clOrderedStatics) field(MethodType.MStatic, cf);
-		for (cf in c.clOrderedFields) field(MInstance, cf);
+		for (cf in c.clStatics) field(MethodType.MStatic, cf);
+		for (cf in c.clFields) field(MInstance, cf);
 		switch [c.clConstructor, c.clSuper] {
 			case [cf, _] if (cf != null): field(MConstructor, cf);
 			case _:
@@ -3679,7 +3679,7 @@ class TclassToJvm {
 		}
 		generateSignature();
 		if (gctx.dynamicLevel > 0 && !core.Meta.has(MetaTag.NativeGen, c.clMeta) && !hasClassFlag(c, CInterface))
-			Genjvm.generateDynamicAccess(gctx, jc, c.clOrderedFields.filter(function(cf) return Genjvm.dynamicFieldOwner(c, cf) == c).map(function(cf) return {
+			Genjvm.generateDynamicAccess(gctx, jc, c.clFields.toArray().filter(function(cf) return Genjvm.dynamicFieldOwner(c, cf) == c).map(function(cf) return {
 				name: cf.cfName,
 				jsig: Genjvm.jsignatureOfType(gctx, cf.cfType),
 				kind: cf.cfKind
@@ -3728,7 +3728,7 @@ class JvmPreprocessor {
 	}
 
 	public static function checkFunctionalInterface(gctx:GenerationContext, c:TClass):Void {
-		switch TClassTools.getSingularInterfaceField(c.clOrderedFields) {
+		switch TClassTools.getSingularInterfaceField(c.clFields) {
 			case null:
 			case cf:
 				switch Genjvm.jsignatureOfType(gctx, cf.cfType) {
@@ -3793,8 +3793,8 @@ class JvmPreprocessor {
 					if (cf.cfExpr != null) noteFiInExpr(cf.cfExpr);
 					for (cf in cf.cfOverloads) scan(cf);
 				}
-				for (cf in c.clOrderedFields) scan(cf);
-				for (cf in c.clOrderedStatics) scan(cf);
+				for (cf in c.clFields) scan(cf);
+				for (cf in c.clStatics) scan(cf);
 				if (c.clConstructor != null) scan(c.clConstructor);
 			}
 		}
@@ -3842,8 +3842,8 @@ class JvmPreprocessor {
 			function apply(cf:TClassField) {
 				Genshared.patchOptional(gctx.gctx.basic, cf);
 			}
-			for (cf in c.clOrderedFields) apply(cf);
-			for (cf in c.clOrderedStatics) apply(cf);
+			for (cf in c.clFields) apply(cf);
+			for (cf in c.clStatics) apply(cf);
 			if (c.clConstructor != null) apply(c.clConstructor);
 		}
 		for (mt in gctx.gctx.types) switch mt {

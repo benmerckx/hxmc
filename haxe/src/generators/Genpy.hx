@@ -247,9 +247,7 @@ class Transformer {
 	static function checkUnification(e:TExpr, t:T):TExpr {
 		switch [follow(e.etype), follow(t)] {
 			case [TAnon(an1), TAnon(an2)]:
-				core.ds.PMap.iter(function(s, cf) {
-					if (!an1.aFields.exists(s)) an1.aFields = core.ds.PMap.add(s, cf, an1.aFields);
-				}, an2.aFields);
+				for (s => cf in an2.aFields) if (!an1.aFields.exists(s)) an1.aFields = an1.aFields.add(s, cf);
 				return e;
 			case _:
 				return e;
@@ -547,7 +545,7 @@ class Transformer {
 				case TInst(c, _): c;
 				case _: die("", "genpy.ml Transformer.transform_string_switch");
 			};
-			var cfLength = core.ds.PMap.find("length", cString.clFields);
+			var cfLength = cString.clFields.find("length");
 			var ef = mk(TField(e1, FInstance(cString, vector(), cfLength)), tInt, e1.epos);
 			var resVar = allocVar(ae.aNextId(), ef.etype, ef.epos);
 			var resLocal = withExpr(ef, TLocal(resVar));
@@ -1788,30 +1786,28 @@ class Printer {
 	}
 
 	static function printCall(pctx:PrintContext, e1:TExpr, el:Vector<TExpr>, callExpr:TExpr):String {
-		function getNativeFields(t:T):haxe.ds.StringMap<String> {
+		function getNativeFields(t:T):core.ds.PMap<String> {
 			return switch follow(t) {
 				case TAnon(a):
-					function fold(f:String, cf:TClassField, acc:haxe.ds.StringMap<String>) {
+					a.aFields.filterMap(function(cf):Null<String> {
 						return if (Meta.has(Meta.Native, cf.cfMeta)) {
 							var m = Meta.get(Meta.Native, cf.cfMeta);
 							switch m.exprs {
-								case [{expr: EConst(String(s, _))}]: core.ds.PMap.add(f, s, acc);
-								case _: acc;
+								case [{expr: EConst(String(s, _))}]: s;
+								case _: null;
 							}
-						} else acc;
-					}
-					var mapping = core.ds.PMap.foldi(fold, a.aFields, core.ds.PMap.empty());
-					mapping;
+						} else null;
+					});
 				case _:
 					core.ds.PMap.empty();
 			}
 		}
-		function nativeFieldsStr(nativeFields:haxe.ds.StringMap<String>):String {
+		function nativeFieldsStr(nativeFields:core.ds.PMap<String>):String {
 			function foldDict(k:String, v:String, acc:String) {
 				var prefix = if (acc == "") "" else ",";
 				return acc + prefix + "\"" + handleKeywords(k) + "\":\"" + v + "\"";
 			}
-			return core.ds.PMap.foldi(foldDict, nativeFields, "");
+			return nativeFields.foldi(foldDict, "");
 		}
 		switch [e1.eexpr, el] {
 			case [TIdent("`trace"), [e, infos]]:
@@ -1835,7 +1831,7 @@ class Printer {
 					case _: die("", "genpy.ml Printer.print_call");
 				};
 				var nativeFields = getNativeFields(t);
-				if (core.ds.PMap.isEmpty(nativeFields))
+				if (nativeFields.isEmpty())
 					return printCall2(pctx, e1, el);
 				else {
 					var s1 = nativeFieldsStr(nativeFields);
@@ -1843,7 +1839,7 @@ class Printer {
 				}
 			case [TField(_, FStatic({clPath: {pack: ["python", "_KwArgs"], name: "KwArgs_Impl_"}}, {cfName: "toDictHelper"})), [e2, et]]:
 				var nativeFields = getNativeFields(et.etype);
-				if (core.ds.PMap.isEmpty(nativeFields))
+				if (nativeFields.isEmpty())
 					return printCall2(pctx, e1, el);
 				else {
 					var s1 = nativeFieldsStr(nativeFields);
@@ -2018,7 +2014,7 @@ class Generator {
 	static function filterPyMetas(metas:Metadata):Metadata return metas.filter(m -> Meta.metaEq(core.MetaList.StrictMeta.Custom(":python"), m.meta));
 
 	static function getMembersWithInitExpr(c:TClass):Array<TClassField> {
-		return c.clOrderedFields.filter(cf -> switch cf.cfKind {
+		return c.clFields.toArray().filter(cf -> switch cf.cfKind {
 			case Var(_) if (!isPhysicalField(cf)): false;
 			case Var(_) if (cf.cfExpr == null): true;
 			case _: false;
@@ -2214,7 +2210,7 @@ class Generator {
 
 	static function genClassStatics(ctx:GenpyContext, c:TClass, p:String):Bool {
 		var methods = [], other = [];
-		for (cf in c.clOrderedStatics) {
+		for (cf in c.clStatics) {
 			var isMethod = switch cf.cfKind {
 				case Method(_): cf.cfExpr != null;
 				case _: false;
@@ -2278,7 +2274,7 @@ class Generator {
 			var mt = tInfos(TClassDecl(c));
 			var p = getPath(mt);
 			var pName = getFullName(mt);
-			var x = collectClassFieldData(c.clOrderedFields);
+			var x = collectClassFieldData(c.clFields.toArray());
 			var pSuper = if (c.clSuper == null) null else getPath(tInfos(TClassDecl(c.clSuper.cls)));
 			var pInterfaces = [for (i in c.clImplements) getPath(tInfos(TClassDecl(i.cls)))];
 
@@ -2319,7 +2315,7 @@ class Generator {
 				}
 
 				try {
-					var realFields = c.clOrderedFields.filter(f -> switch f.cfKind {
+					var realFields = c.clFields.toArray().filter(f -> switch f.cfKind {
 						case Method(MethDynamic): throw new GenpyExit(); /* if a class has dynamic method, we can't use __slots__ because python will complain */
 						case Var(_): isPhysicalField(f);
 						case _: false;
@@ -2338,7 +2334,7 @@ class Generator {
 				printField(x.cfdFields, "_hx_fields", true);
 				printField(x.cfdMethods, "_hx_methods", true);
 				/* TODO: It seems strange to have a separation for member fields but a plain _hx_statics for static ones */
-				printField(collectClassStaticsData(c.clOrderedStatics), "_hx_statics", true);
+				printField(collectClassStaticsData(c.clStatics.toArray()), "_hx_statics", true);
 				printField(pInterfaces, "_hx_interfaces", false);
 
 				if (hasFeature(ctx, "python._hx_super")) if (pSuper != null) {
@@ -2348,14 +2344,14 @@ class Generator {
 			}
 
 			if (c.clConstructor != null) genClassConstructor(ctx, c, c.clConstructor);
-			for (cf in c.clOrderedFields) genClassField(ctx, c, p, cf);
+			for (cf in c.clFields) genClassField(ctx, c, p, cf);
 
 			var hasInnerStatic = genClassStatics(ctx, c, p);
 
-			var hasEmptyConstructor = if (Meta.has(Meta.NativeGen, c.clMeta) || hasClassFlag(c, CInterface) || c.clOrderedFields.length == 0)
+			var hasEmptyConstructor = if (Meta.has(Meta.NativeGen, c.clMeta) || hasClassFlag(c, CInterface) || c.clFields.length == 0)
 				false
 			else {
-				genClassEmptyConstructor(ctx, p, c.clOrderedFields);
+				genClassEmptyConstructor(ctx, p, c.clFields.toArray());
 				hasFeature(ctx, "Type.createEmptyInstance");
 			};
 
@@ -2387,7 +2383,7 @@ class Generator {
 		var p = getPath(mt);
 		var pName = getFullName(mt);
 
-		var enumConstructs = core.ds.PMap.foldi(function(k, ef, acc:Array<TEnumField>) return [ef].concat(acc), en.eConstrs, []);
+		var enumConstructs = en.eConstrs.byName.foldCons(ef -> ef);
 		haxe.ds.ArraySort.sort(enumConstructs, function(a, b) return if (a.efIndex < b.efIndex) -1 else if (a.efIndex > b.efIndex) 1 else 0);
 
 		newline(ctx);

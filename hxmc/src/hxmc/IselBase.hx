@@ -34,6 +34,8 @@ class IselBase {
 	var opCall:Int;
 	var opRet:Int;
 	var opTeb:Int; // d <- [the thread environment block + imm] (Windows)
+	// d <- the image's thread-local block, inline (Apple: no call; -1: hxmc_tls_base's call)
+	var opTlsBase:Int = -1;
 	// the first float register of LFunc
 	var fprBase:Int;
 
@@ -318,8 +320,14 @@ class IselBase {
 		return f;
 	}
 
-	// tlsBase from hxmc_tls_base (through a TLV descriptor on Apple)
+	// tlsBase from hxmc_tls_base (through a TLV descriptor on Apple), or the
+	// backend's inline sequence (opTlsBase: no call, the function stays a leaf)
 	function tlsBaseCall() {
+		if (opTlsBase >= 0 && abi.tls == MachoTlv) {
+			tlsBase = f.newReg(false);
+			emit(opTlsBase).d = tlsBase;
+			return;
+		}
 		f.hasCalls = true;
 		tlsBase = f.newReg(false);
 		var x = emit(opCall);

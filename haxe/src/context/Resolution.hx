@@ -221,14 +221,14 @@ class ResolutionList {
 		return out;
 	}
 
-	public function extractFieldImports():core.ds.PersistentMap<String, {type:ModuleType, name:String, pos:Pos}> {
+	public function extractFieldImports():core.ds.PMap<{type:ModuleType, name:String, pos:Pos}> {
 		resolveLazies();
-		var out = core.ds.PersistentMap.empty();
+		var out = core.ds.PMap.empty();
 		for (res in list) switch res.rKind {
 			case RClassFieldImport(alias, c, cf):
 				out = out.add(alias, {type: TClassDecl(c), name: cf.cfName, pos: res.rPos});
 			case RClassStatics(c):
-				for (cf in c.clOrderedStatics) {
+				for (cf in c.clStatics) {
 					var imported = Resolution.asImportableStatic(c, cf, Globals.nullPos);
 					if (imported != null) out = out.add(imported.name,
 						{type: TClassDecl(c), name: cf.cfName, pos: imported.resolution.rPos});

@@ -152,8 +152,8 @@ class Dce {
 	public static function fieldForcesDce(cf:TClassField):Bool return Meta.has(Dce, cf.cfMeta);
 
 	// check if a class has any field marked with @:dce
-	public static function classHasDceField(c:TClass):Bool return exists(fieldForcesDce, c.clOrderedFields)
-		|| exists(fieldForcesDce, c.clOrderedStatics)
+	public static function classHasDceField(c:TClass):Bool return c.clFields.any(fieldForcesDce)
+		|| c.clStatics.any(fieldForcesDce)
 		|| c.clConstructor != null
 		&& fieldForcesDce(c.clConstructor);
 
@@ -255,8 +255,8 @@ class Dce {
 	public static function updateMarkedClassFields(dce:DceData, c:TClass):Void {
 		dce = pushClass(dce, c);
 		// mark all :?used fields as surely :used now
-		for (cf in c.clOrderedStatics) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(dce, c, cf, CfrStatic);
-		for (cf in c.clOrderedFields) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(dce, c, cf, CfrMember);
+		for (cf in c.clStatics) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(dce, c, cf, CfrStatic);
+		for (cf in c.clFields) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(dce, c, cf, CfrMember);
 		// we always have to keep super classes and implemented interfaces
 		var init = core.TOther.TClassTools.getClInit(c);
 		if (init != null) dce.followExpr(dce, init);
@@ -290,10 +290,7 @@ class Dce {
 			dce.usedMutex.release();
 			checkAndAddFeature(dce, "has_enum");
 			checkFeature(dce, Globals.sTypePath(en.ePath) + ".*");
-			for (key in sortedKeys(en.eConstrs)) {
-				var ef = en.eConstrs.get(key);
-				markT(dce, ef.efPos, ef.efType);
-			}
+			for (ef in en.eConstrs.byName) markT(dce, ef.efPos, ef.efType);
 		} else dce.usedMutex.release();
 	}
 
@@ -792,11 +789,11 @@ class Dce {
 	public static function fixAccessors(types:Array<ModuleType>):Void for (mt in types) switch mt {
 		// filter empty abstract implementation classes (issue #1885).
 		case TClassDecl(c = {clKind: KAbstractImpl(_)})
-			if (c.clOrderedStatics.length == 0 && c.clOrderedFields.length == 0 && !hasClassFlag(c, CUsed)):
+			if (c.clStatics.isEmpty() && c.clFields.isEmpty() && !hasClassFlag(c, CUsed)):
 			addClassFlag(c, CExtern);
 		case TClassDecl(c = {clKind: KAbstractImpl(a)}) if (a.aEnum):
 			// also filter abstract implementation classes that have only @:enum fields (issue #2858)
-			if (!exists(cf -> !hasClassFieldFlag(cf, CfEnum), c.clOrderedStatics)) addClassFlag(c, CExtern);
+			if (!c.clStatics.any(cf -> !hasClassFieldFlag(cf, CfEnum))) addClassFlag(c, CExtern);
 		case TClassDecl(c):
 			function hasAccessor(c:TClass, name:String,
 					stat:Bool):Bool return (stat ? c.clStatics : c.clFields).exists(name) || c.clSuper != null
@@ -813,8 +810,8 @@ class Dce {
 					case _:
 				}
 			}
-			for (cf in c.clOrderedStatics) checkProp(true, cf);
-			for (cf in c.clOrderedFields) checkProp(false, cf);
+			for (cf in c.clStatics) checkProp(true, cf);
+			for (cf in c.clFields) checkProp(false, cf);
 		case _:
 	}
 
@@ -847,8 +844,8 @@ class Dce {
 					if (keepClass && !fieldForcesDce(cf) || isStruct || keepField(dce, cf, c,
 						kind)) delayed.push(function() markField(dce, c, cf, kind));
 				}
-				for (cf in c.clOrderedStatics) loop(CfrStatic, cf);
-				for (cf in c.clOrderedFields) loop(CfrMember, cf);
+				for (cf in c.clStatics) loop(CfrStatic, cf);
+				for (cf in c.clFields) loop(CfrMember, cf);
 				if (c.clConstructor != null) loop(CfrConstructor, c.clConstructor);
 				if (c.clInit != null && (keepClass || Meta.has(KeepInit, c.clMeta))) loop(CfrInit, c.clInit);
 			case TEnumDecl(en) if (keepWholeEnum(dce, en)):
@@ -931,14 +928,15 @@ class Dce {
 						if (dce.debug) Sys.println("[DCE] Removed field " + Globals.sTypePath(c.clPath) + "." + cf.cfName);
 						var stat = kind == CfrStatic;
 						checkProperty(cf, stat);
-						(stat ? c.clStatics : c.clFields).remove(cf.cfName);
 					}
 					return b;
 				}
-				c.clOrderedStatics = c.clOrderedStatics.filter(cf -> filter(cf, CfrStatic));
-				c.clOrderedFields = c.clOrderedFields.filter(cf -> filter(cf, CfrMember));
+				// port: upstream removes each dropped field from the PMap as it goes (checkProperty
+				// looks up the accessors there), then assigns the list
+				c.clStatics = c.clStatics.filter(cf -> filter(cf, CfrStatic), statics -> c.clStatics = statics);
+				c.clFields = c.clFields.filter(cf -> filter(cf, CfrMember), fields -> c.clFields = fields);
 				if (c.clConstructor != null && !keep(c.clConstructor, CfrConstructor)) c.clConstructor = null;
-				var nonExtern = exists(isPhysicalField, c.clOrderedFields) || exists(isPhysicalField, c.clOrderedStatics);
+				var nonExtern = c.clFields.any(isPhysicalField) || c.clStatics.any(isPhysicalField);
 				// we keep a class if it is kept whole, was used or has a used field
 				if (classKept || hasClassFlag(c, CUsed) || nonExtern) acc.push(mt);
 				else if (core.TOther.TClassTools.getClInit(c) != null && Meta.has(KeepInit, c.clMeta)) {
@@ -993,7 +991,7 @@ class Dce {
 			// remove "override" from fields that do not override anything anymore
 			for (mt in types) switch mt {
 				case TClassDecl(c):
-					for (cf in c.clOrderedFields) if (hasClassFieldFlag(cf, CfOverride)) {
+					for (cf in c.clFields) if (hasClassFieldFlag(cf, CfOverride)) {
 						var cur = c;
 						var found = false;
 						while (cur.clSuper != null) {

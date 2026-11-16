@@ -149,8 +149,8 @@ class Diagnostics {
 					fieldMeta: dectx.fieldMeta,
 					curmod: dectx.curmod
 				};
-				for (cf in c.clOrderedFields) prepareField(dctx, dectx, com, cf);
-				for (cf in c.clOrderedStatics) prepareField(dctx, dectx, com, cf);
+				for (cf in c.clFields) prepareField(dctx, dectx, com, cf);
+				for (cf in c.clStatics) prepareField(dctx, dectx, com, cf);
 				if (c.clConstructor != null) prepareField(dctx, dectx, com, c.clConstructor);
 			case _:
 		}

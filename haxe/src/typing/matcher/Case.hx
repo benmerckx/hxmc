@@ -86,9 +86,7 @@ class Case {
 					for (arg in s.args) walk(arg.type);
 					walk(s.ret);
 				case TAnon(a):
-					var names = [for (name in a.aFields.keys()) name];
-					names.sort(core.ds.Key.compareStrings);
-					for (name in names) walk(a.aFields.get(name).cfType);
+					for (cf in a.aFields) walk(cf.cfType);
 				case TLazy(f):
 					walk(lazyType(f));
 				case TDynamic(t):
@@ -198,7 +196,7 @@ class Case {
 		var substitution = makeSubst(ctx, freeMonos),
 			subst = substitution.subst;
 		var save = saveLocals(ctx);
-		var locals:core.ds.PersistentMap<String, TVar> = ctx.f.locals;
+		var locals:core.ds.PMap<TVar> = ctx.f.locals;
 		var names = [for (name in locals.keys()) name];
 		names.sort(core.ds.Key.compareStrings);
 		// port: `(v, t_old) :: acc` as a push: oldTypes is read from the end

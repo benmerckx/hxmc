@@ -248,7 +248,7 @@ class FnLower {
 	// (on the class's target only: Lower.ofTarget)
 	public function runInit(c:TClass) {
 		boxed = new Map();
-		for (cf in c.clOrderedStatics)
+		for (cf in c.clStatics)
 			switch cf.cfKind {
 				case Var(_) if (cf.cfExpr != null):
 					var g = l.staticVar(c, cf);

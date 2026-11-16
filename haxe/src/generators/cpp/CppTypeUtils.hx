@@ -201,7 +201,7 @@ class CppTypeUtils {
 
 	public static function hasDynamicMemberFunctions(classDef:TClass):Bool {
 		var result = false;
-		for (field in classDef.clOrderedFields) result = switch field.cfExpr {
+		for (field in classDef.clFields) result = switch field.cfExpr {
 			case null: result;
 			case {eexpr: TFunction(functionDef)} if (isDynamicHaxeMethod(field)): true;
 			case _: result;
@@ -285,10 +285,10 @@ class CppTypeUtils {
 	}
 
 	public static function staticsExceptMeta(classDef:TClass):Array<TClassField>
-		return classDef.clOrderedStatics.filter(function(s) return s.cfName != "__meta__" && s.cfName != "__rtti");
+		return classDef.clStatics.toArray().filter(function(s) return s.cfName != "__meta__" && s.cfName != "__rtti");
 
 	public static function hasSetMemberField(classDef:TClass):Bool {
-		var reflectFields = classDef.clOrderedFields.filter(function(f) return reflective(classDef, f));
+		var reflectFields = classDef.clFields.toArray().filter(function(f) return reflective(classDef, f));
 		var reflectWritable = reflectFields.filter(function(f) return isWritable(classDef, f));
 		return Lambda.exists(reflectWritable, variableField);
 	}
@@ -301,11 +301,11 @@ class CppTypeUtils {
 
 	public static function hasGetFields(classDef:TClass):Bool {
 		function isDataField(field:TClassField):Bool return !follow(field.cfType).match(TFun(_));
-		return Lambda.exists(classDef.clOrderedFields, isDataField);
+		return Lambda.exists(classDef.clFields, isDataField);
 	}
 
 	public static function hasGetMemberField(classDef:TClass):Bool {
-		var reflectFields = classDef.clOrderedFields.filter(function(f) return reflective(classDef, f));
+		var reflectFields = classDef.clFields.toArray().filter(function(f) return reflective(classDef, f));
 		return Lambda.exists(reflectFields, function(f) return isReadable(classDef, f));
 	}
 
@@ -314,11 +314,11 @@ class CppTypeUtils {
 		return Lambda.exists(reflectFields, function(f) return isReadable(classDef, f));
 	}
 
-	public static function hasCompareField(classDef:TClass):Bool return Lambda.exists(classDef.clOrderedFields, function(f) return f.cfName == "__compare");
+	public static function hasCompareField(classDef:TClass):Bool return Lambda.exists(classDef.clFields, function(f) return f.cfName == "__compare");
 
 	public static function hasBootField(classDef:TClass):Bool {
 		return switch core.TOther.TClassTools.getClInit(classDef) {
-			case null: Lambda.exists(classDef.clOrderedStatics.filter(shouldImplementField), hasFieldInit);
+			case null: Lambda.exists(classDef.clStatics.toArray().filter(shouldImplementField), hasFieldInit);
 			case _: true;
 		}
 	}

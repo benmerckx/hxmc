@@ -207,8 +207,7 @@ class ES6Ctors {
 							var cfFunCtor = mkField(ctorMethodName, cfCtor.cfType, cfCtor.cfPos, nullPos);
 							cfFunCtor.cfExpr = replaceSuperCall(ctorExpr);
 							cfFunCtor.cfKind = Method(MethNormal);
-							cl.clOrderedFields.unshift(cfFunCtor);
-							cl.clFields = core.ds.PMap.add(cfFunCtor.cfName, cfFunCtor, cl.clFields);
+							cl.clFields = cl.clFields.cons(cfFunCtor.cfName, cfFunCtor);
 						}
 
 						function makeHxCtorCall(eSkipFlag:TExpr):TExpr { /* this._hx_constructor(a,b,c) */
@@ -282,8 +281,7 @@ class ES6Ctors {
 								if (cl == root) {
 									var cfSkipCtor = mkField(skipCtorFlagName, com.basic.tbool, nullPos, nullPos, true, true);
 									cfSkipCtor.cfExpr = eFalse;
-									cl.clOrderedStatics.unshift(cfSkipCtor);
-									cl.clStatics = core.ds.PMap.add(cfSkipCtor.cfName, cfSkipCtor, cl.clStatics);
+									cl.clStatics = cl.clStatics.cons(cfSkipCtor.cfName, cfSkipCtor);
 								}
 						}
 					case _:

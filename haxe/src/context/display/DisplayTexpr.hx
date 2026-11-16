@@ -105,7 +105,7 @@ class DisplayTexpr {
 		switch c.clKind {
 			case KAbstractImpl(a):
 				var sa = findAbstractByPosition(decls, c.clNamePos);
-				for (cf in c.clOrderedStatics) checkField(sa.data, cf);
+				for (cf in c.clStatics) checkField(sa.data, cf);
 			case _:
 				var sc = findClassByPosition(decls, c.clNamePos);
 				Typeload.typeTypeParams(ctx, TPHType, c.clPath, sc.params);
@@ -114,8 +114,8 @@ class DisplayTexpr {
 						Typeload.loadInstance(ctx, ptp, ParamNormal, LoadNormal, true);
 					case _:
 				}
-				for (cf in c.clOrderedStatics) checkField(sc.data, cf);
-				for (cf in c.clOrderedFields) checkField(sc.data, cf);
+				for (cf in c.clStatics) checkField(sc.data, cf);
+				for (cf in c.clFields) checkField(sc.data, cf);
 				if (c.clConstructor != null) checkField(sc.data, c.clConstructor);
 		}
 	}
@@ -123,12 +123,10 @@ class DisplayTexpr {
 	public static function checkDisplayEnum(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, en:TEnum):Void {
 		var se = findEnumByPosition(decls, en.eNamePos);
 		Typeload.typeTypeParams(ctx, TPHType, en.ePath, se.params);
-		core.ds.PMap.iter(function(_, ef:TEnumField) {
-			if (DisplayPosition.displayPosition.enclosedIn(ef.efPos)) {
-				var sef = findEnumFieldByPosition(se, ef.efNamePos);
-				TypeloadModule.loadEnumField(ctx, en, TEnum(en, extractParamTypes(en.eParams)), {value: false}, 0, sef);
-			}
-		}, en.eConstrs);
+		for (ef in en.eConstrs.byName) if (DisplayPosition.displayPosition.enclosedIn(ef.efPos)) {
+			var sef = findEnumFieldByPosition(se, ef.efNamePos);
+			TypeloadModule.loadEnumField(ctx, en, TEnum(en, extractParamTypes(en.eParams)), {value: false}, 0, sef);
+		}
 	}
 
 	public static function checkDisplayTypedef(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, td:TDef):Void {
@@ -150,7 +148,7 @@ class DisplayTexpr {
 	public static function checkDisplayModuleFields(ctx:Typer, decls:haxe.ds.Vector<TypeDecl>, m:ModuleDef):Void {
 		if (m.mStatics != null) {
 			var c = m.mStatics;
-			for (cf in c.clOrderedStatics) {
+			for (cf in c.clStatics) {
 				if (DisplayPosition.displayPosition.enclosedIn(cf.cfPos)) {
 					var cff = findModuleStaticByPosition(decls, cf.cfNamePos);
 					actuallyCheckDisplayField(ctx, c, TypeloadModule.fieldOfStaticDefinition(cff, cf.cfPos), cf.cfPos);

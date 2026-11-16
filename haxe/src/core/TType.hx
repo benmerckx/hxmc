@@ -18,9 +18,11 @@ import haxe.ds.IntMap;
 import haxe.ds.StringMap;
 import haxe.ds.Vector;
 
-// port: the PMap-typed fields (fields of anonymous structures and classes, constraint fields) are
-// StringMaps; code that iterates them goes through core.ds.PMap (sorted keys).
-typedef TypeMap<T> = StringMap<T>;
+// port: upstream's PMap-typed fields (fields of anonymous structures and classes, enum
+// constructors, constraint fields): persistent maps, which a write replaces (`c.clFields =
+// c.clFields.add(...)`, upstream's `c.cl_fields <- PMap.add ...`). A class's statics are its
+// `clType`'s fields too (TypeloadFields.initClass), so a change of one must not reach the other.
+typedef TypeMap<T> = core.ds.PMap<T>;
 
 // port: (hxmc) its constructors' arguments packed, references in 4 bytes, in hxmc's builds (docs/hxmc.md, "Compressed references")
 @:hxmc.compact enum FieldKind {
@@ -513,10 +515,10 @@ typedef TInfos = {
 	public var clFlags:Int;
 	public var clSuper:Null<ClassAndParams>;
 	public var clImplements:Array<ClassAndParams>;
-	public var clFields:TypeMap<TClassField>;
-	public var clStatics:TypeMap<TClassField>;
-	public var clOrderedStatics:Array<TClassField>;
-	public var clOrderedFields:Array<TClassField>;
+	// port: `cl_fields` with `cl_ordered_fields`, `cl_statics` with `cl_ordered_statics`: the
+	// fields in upstream's list order, by name in `byName` (core.ds.SeqMap).
+	public var clFields:core.ds.SeqMap<TClassField>;
+	public var clStatics:core.ds.SeqMap<TClassField>;
 	public var clDynamic:Null<T>;
 	public var clArrayAccess:Null<T>;
 	public var clConstructor:Null<TClassField>;
@@ -548,8 +550,6 @@ typedef TInfos = {
 		clImplements: clImplements,
 		clFields: clFields,
 		clStatics: clStatics,
-		clOrderedStatics: clOrderedStatics,
-		clOrderedFields: clOrderedFields,
 		clDynamic: clDynamic,
 		clArrayAccess: clArrayAccess,
 		clConstructor: clConstructor,
@@ -598,15 +598,16 @@ typedef TInfos = {
 	/* do not insert any fields above */
 	public var eType:T;
 	public var eFlags:Int;
-	public var eConstrs:TypeMap<TEnumField>;
-	public var eNames:Array<String>;
+	// port: `e_constrs` with `e_names`: the constructors in the names' order, by name in
+	// `byName` (core.ds.SeqMap); `names()` are e_names.
+	public var eConstrs:core.ds.SeqMap<TEnumField>;
 
 	public inline function new(ePath:GlobalTypePath, eModule:ModuleDef, ePos:Pos, eNamePos:Pos, ePrivate:Bool, eDoc:Documentation,
 			eMeta:Metadata, eParams:TypeParams, eUsing:Array<{
 			var cls:TClass;
 			var pos:Pos;
 		}>, eRestore:Void->Void, eType:T, eFlags:Int,
-			eConstrs:TypeMap<TEnumField>, eNames:Array<String>) {
+			eConstrs:core.ds.SeqMap<TEnumField>) {
 		this.ePath = ePath;
 		this.eModule = eModule;
 		this.ePos = ePos;
@@ -620,11 +621,10 @@ typedef TInfos = {
 		this.eType = eType;
 		this.eFlags = eFlags;
 		this.eConstrs = eConstrs;
-		this.eNames = eNames;
 	}
 
 	public inline function clone():TEnum return new TEnum(ePath, eModule, ePos, eNamePos, ePrivate, eDoc, eMeta, eParams, eUsing,
-		eRestore, eType, eFlags, eConstrs, eNames);
+		eRestore, eType, eFlags, eConstrs);
 }
 
 @:structInit class TDef {

@@ -629,10 +629,7 @@ class EvalMain {
 			switch t {
 				case TAnon(an):
 					f("{");
-					var keys = [for (k in an.aFields.keys()) k];
-					keys.sort(core.ds.Key.compareStrings);
-					for (k in keys) {
-						var cf = an.aFields.get(k);
+					for (cf in an.aFields) {
 						line++;
 						f("\n" + (tabs + "\t") + cf.cfName + ": ");
 						try {
@@ -690,8 +687,8 @@ class EvalMain {
 				case TEnum(en, _):
 					switch v {
 						case VEnumValue(ev):
-							if (ev.eindex < 0 || ev.eindex >= en.eNames.length) throw new Failure("nth");
-							var ef = en.eConstrs.get(en.eNames[ev.eindex]);
+							if (ev.eindex < 0 || ev.eindex >= en.eConstrs.length) throw new Failure("nth");
+							var ef = en.eConstrs.get(en.eConstrs.keyAt(ev.eindex));
 							if (ef == null) throw NotFound.raise();
 							f(ef.efName);
 							function loop2(first:Bool, tl:haxe.ds.Vector<{name:String, optional:Bool, type:T}>, vl:haxe.ds.Vector<Value>, i:Int) {

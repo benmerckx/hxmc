@@ -860,8 +860,8 @@ class MacroContext {
 						}
 						var meta = c.clMeta;
 						var path = c.clPath;
-						var fieldRestores = c.clOrderedFields.map(mkFieldRestore);
-						var staticRestores = c.clOrderedStatics.map(mkFieldRestore);
+						var fieldRestores = c.clFields.mapToArray(mkFieldRestore);
+						var staticRestores = c.clStatics.mapToArray(mkFieldRestore);
 						var ctorRestore = c.clConstructor == null ? null : mkFieldRestore(c.clConstructor);
 						c.clRestore = function() {
 							c.clMeta = meta;

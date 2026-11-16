@@ -146,10 +146,14 @@ class Path {
 	public static function getFullPath(file:String):String {
 		if (isWindows) return try FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var length = file.length;
-		// port: Unix.getcwd has no trailing slash, unlike Sys.getCwd.
-		var cwd = Sys.getCwd();
-		if (cwd.length > 1 && StringTools.fastCodeAt(cwd, cwd.length - 1) == "/".code) cwd = cwd.substr(0, cwd.length - 1);
-		var absolutePath = length > 0 && StringTools.fastCodeAt(file, 0) == "/".code ? file : length == 0 ? cwd : cwd + "/" + file;
+		inline function getcwd():String {
+			// port: Unix.getcwd has no trailing slash, unlike Sys.getCwd.
+			var cwd = Sys.getCwd();
+			return cwd.length > 1 && StringTools.fastCodeAt(cwd, cwd.length - 1) == "/".code ? cwd.substr(0, cwd.length - 1) : cwd;
+		}
+		// port: the working directory only for a relative path, as upstream asks for it (a
+		// getcwd opens the directory on macOS)
+		var absolutePath = length > 0 && StringTools.fastCodeAt(file, 0) == "/".code ? file : length == 0 ? getcwd() : getcwd() + "/" + file;
 		var needsNormalization = length > 0 && StringTools.fastCodeAt(file, length - 1) == "/".code;
 		// port: has_dots_or_double_slash as a loop: only the first character of each segment is inspected.
 		// (fastCodeAt: every index here is checked against the length, and

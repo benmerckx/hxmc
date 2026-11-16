@@ -302,7 +302,7 @@ class CppGen {
 		if (ctx.ctxDebugLevel > 0) {
 			var strippedFile = CppContext.stripFile(ctx.ctxCommon, pos.pfile);
 			var escFile = core.StringHelper.sEscape(strippedFile);
-			ctx.ctxFileInfo.value = core.ds.PMap.add(strippedFile, pos.pfile, ctx.ctxFileInfo.value);
+			ctx.ctxFileInfo.value = ctx.ctxFileInfo.value.add(strippedFile, pos.pfile);
 			var fullName = clazz + "." + funcName + if (clazz == "*") " (" + escFile + ":" + Std.string(syntax.Lexer.getErrorLine(pos)) + ")" else "";
 
 			var hashClassFunc = genHash(0, clazz + "." + funcName);
@@ -507,7 +507,7 @@ class CppGen {
 	public static function generateMain(ctx:Context, superDeps:PathMap<Array<GlobalTypePath>>, classDef:TClass):Void {
 		var commonCtx = ctx.ctxCommon;
 		/* main routine should be a single static function */
-		var mainExpression = switch classDef.clOrderedStatics {
+		var mainExpression = switch classDef.clStatics.toArray() {
 			case [{cfExpr: expression}] if (expression != null): expression;
 			case _: die("", "cppGen.ml");
 		}
@@ -566,7 +566,7 @@ class CppGen {
 		if (newScriptable) {
 			outputBoot("#include <hx/Scriptable.h>\n");
 
-			var funcs = [for (k in core.ds.PMap.keys(slots.hash)) {name: k, id: slots.hash.get(k)}];
+			var funcs = [for (k => id in slots.hash) {name: k, id: id}];
 			var sorted = listSort(function(a:{name:String, id:Int}, b:{name:String, id:Int}) return a.id - b.id, funcs);
 			outputBoot("static const char *scriptableInterfaceFuncs[] = {\n\t0,\n\t0,\n");
 			for (f in sorted) outputBoot("\t\"" + f.name + "\", //" + Std.string(-f.id) + "\n");

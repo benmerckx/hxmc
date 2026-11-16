@@ -379,9 +379,7 @@ class Cache {
 			defines:core.Define.DefineContext):Int {
 		var cc = getContext(sign);
 		// port: PMap.foldi with a cons accumulator: descending key order
-		var keys = [for (k in defines.values.keys()) k];
-		keys.sort(core.ds.Key.compareStrings);
-		keys.reverse();
+		var values = defines.values, n = values.size;
 		var jo = JObject([
 			{name: "index", value: JInt(cc.getIndex())},
 			{name: "desc", value: JString(desc)},
@@ -391,9 +389,9 @@ class Cache {
 			{
 				name: "defines",
 				value: JArray([
-					for (k in keys) JObject([
-						{name: "key", value: JString(k)},
-						{name: "value", value: JString(defines.values.get(k))}
+					for (i in 0...n) JObject([
+						{name: "key", value: JString(values.keyAt(n - 1 - i))},
+						{name: "value", value: JString(values.valueAt(n - 1 - i))}
 					])
 				])
 			}

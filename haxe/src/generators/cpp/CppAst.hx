@@ -99,17 +99,15 @@ class IntPMap<V> {
 }
 
 @:structInit class InterfaceSlots {
-	public var hash:StringMap<Int>;
+	public var hash:core.ds.PMap<Int>;
 	public var next:Int;
 
-	public static function empty():InterfaceSlots return {hash: new StringMap(), next: 2};
+	public static function empty():InterfaceSlots return {hash: core.ds.PMap.empty(), next: 2};
 
 	public static function add(name:String, slots:InterfaceSlots):InterfaceSlots {
 		return switch slots.hash.get(name) {
 			case null:
-				var hash = slots.hash.copy();
-				hash.set(name, slots.next);
-				{hash: hash, next: slots.next + 1};
+				{hash: slots.hash.add(name, slots.next), next: slots.next + 1};
 			case slot:
 				slots;
 		}

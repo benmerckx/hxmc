@@ -367,6 +367,10 @@ class Asm {
 	public function mrsTp(d:Int)
 		w(0xD53BD040 | d);
 
+	// mrs d, tpidrro_el0 (Apple: the thread's TSD array, in its bits above the low 3)
+	public function mrsTpRo(d:Int)
+		w(0xD53BD060 | d);
+
 	// d = the address of a thread-local variable: tp + tprel(sym)
 	public function tlsAddr(d:Int, s:Symbol) {
 		mrsTp(d);

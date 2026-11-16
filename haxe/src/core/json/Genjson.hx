@@ -305,12 +305,7 @@ class Genjson {
 
 	public static function generateAnon(ctx:GenjsonContext, an:TAnon):JsonValue {
 		function generateAnonFields():JsonValue {
-			// port: PMap.fold conses in key order: the result is in reverse key order
-			var fields = core.ds.PMap.fold(function(cf:TClassField, acc:Array<JsonValue>) {
-				acc.unshift(generateClassField(ctx, CFSMember, cf));
-				return acc;
-			}, an.aFields, []);
-			return jarray(fields);
+			return jarray(an.aFields.foldCons(cf -> generateClassField(ctx, CFSMember, cf)));
 		}
 		return jobject([
 			kv("fields", generateAnonFields()),
@@ -578,13 +573,13 @@ class Genjson {
 			kv("isInterface", jbool(hasClassFlag(c, CInterface))),
 			kv("superClass", jopt(generateClassRelation, c.clSuper)),
 			kv("interfaces", jlist(generateClassRelation, c.clImplements)),
-			kv("fields", ctx.generateMemberBodies ? jlist(generateClassField.bind(ctx, CFSMember), c.clOrderedFields) : jarray([])),
-			kv("statics", ctx.generateMemberBodies ? jlist(generateClassField.bind(ctx, CFSStatic), c.clOrderedStatics) : jarray([])),
+			kv("fields", ctx.generateMemberBodies ? jarray(c.clFields.mapToArray(generateClassField.bind(ctx, CFSMember))) : jarray([])),
+			kv("statics", ctx.generateMemberBodies ? jarray(c.clStatics.mapToArray(generateClassField.bind(ctx, CFSStatic))) : jarray([])),
 			kv("constructor", ctx.generateMemberBodies ? jopt(generateClassField.bind(ctx, CFSConstructor), c.clConstructor) : jnull),
 			kv("init", ctx.generateMemberBodies ? jopt(generateTexpr.bind(ctx), core.TOther.TClassTools.getClInit(c)) : jnull),
 			kv("overrides",
 				ctx.generateMemberBodies ? jlist(classfieldRef.bind(ctx),
-					c.clOrderedFields.filter(cf -> hasClassFieldFlag(cf, CfOverride))) : jarray([])),
+					c.clFields.toArray().filter(cf -> hasClassFieldFlag(cf, CfOverride))) : jarray([])),
 			kv("isExtern", jbool(hasClassFlag(c, CExtern))),
 			kv("isFinal", jbool(hasClassFlag(c, CFinal))),
 			kv("isAbstract", jbool(hasClassFlag(c, CAbstract)))
@@ -592,9 +587,8 @@ class Genjson {
 	}
 
 	public static function generateEnum(ctx:GenjsonContext, e:TEnum):Array<JsonField> {
-		function generateEnumConstructors():JsonValue return jarray(e.eNames.map(function(s) {
-			var ef = core.ds.PMap.find(s, e.eConstrs);
-			return generateEnumField(ctx, ef);
+		function generateEnumConstructors():JsonValue return jarray(e.eConstrs.keyArray().map(function(s) {
+			return generateEnumField(ctx, e.eConstrs.find(s));
 		}));
 		return [
 			kv("constructors", ctx.generateMemberBodies ? generateEnumConstructors() : jarray([])),

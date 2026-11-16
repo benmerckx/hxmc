@@ -85,9 +85,9 @@ class RawCheck {
 						if (std || strict) com.error(r.what(), r.firstPos) else context.Common.moduleWarning(com, c.clModule, WUser, com.warningOptions, r.what(), r.firstPos);
 					}
 					if (c.clConstructor != null) field(c.clConstructor);
-					for (cf in c.clOrderedStatics)
+					for (cf in c.clStatics)
 						field(cf);
-					for (cf in c.clOrderedFields)
+					for (cf in c.clFields)
 						field(cf);
 				case _:
 			}
@@ -186,7 +186,7 @@ class RawCheck {
 
 	// (a class's functions and variables)
 	static function fieldsOf(c:TClass):Array<TClassField>
-		return (c.clConstructor == null ? [] : [c.clConstructor]).concat(c.clOrderedStatics).concat(c.clOrderedFields);
+		return (c.clConstructor == null ? [] : [c.clConstructor]).concat(c.clStatics.toArray()).concat(c.clFields.toArray());
 
 	// (declared @:hxmc.unsafe: not a kernel's trust, KernelCheck's)
 	static function declared(c:TClass, cf:TClassField):Bool {

@@ -237,12 +237,6 @@ class Genhl {
 	static inline function isPath(p:GlobalTypePath, pack:Array<String>, name:String):Bool
 		return p.name == name && p.pack.join(".") == pack.join(".");
 
-	// port: PMap iteration order over string keys
-	static function sortedKeys<V>(m:StringMap<V>):Array<String> {
-		var keys = [for (k in m.keys()) k];
-		haxe.ds.ArraySort.sort(keys, strCompare);
-		return keys;
-	}
 
 	static function isToString(t:T):Bool {
 		return switch follow(t) {
@@ -528,7 +522,7 @@ class Genhl {
 					case _: die("", "genhl.ml");
 				}
 			case TAnon(a):
-				if (!a.aFields.keys().hasNext()) return HDyn;
+				if (a.aFields.isEmpty()) return HDyn;
 				/* can't use physical comparison in PMap since addresses might change in GC compact,
 					maybe add an uid to tanon if too slow ? */
 				var cached = ctx.anonsCache.get(a);
@@ -537,8 +531,7 @@ class Genhl {
 				var t = HVirtual(vp);
 				if (tref != null) tref.v = t;
 				ctx.anonsCache.set(a, t);
-				var fields = [for (k in sortedKeys(a.aFields)) cfieldType(ctx, a.aFields.get(k))];
-				fields.reverse();
+				var fields = a.aFields.foldCons(cf -> cfieldType(ctx, cf));
 				var fields = listSort((f1:HField, f2:HField) -> strCompare(f1.name, f2.name), fields);
 				vp.vfields = Vector.fromArrayCopy(fields);
 				for (i in 0...vp.vfields.length) vp.vindex.set(vp.vfields[i].name, i);
@@ -721,8 +714,7 @@ class Genhl {
 				}
 				var pfields:Array<HField> = [];
 				for (i in c.clImplements) pfields = loop(i.cls).concat(pfields);
-				var fields = [for (k in sortedKeys(c.clFields)) cfieldType(ctx, c.clFields.get(k))];
-				fields.reverse();
+				var fields = c.clFields.byName.foldCons(cf -> cfieldType(ctx, cf));
 				return concatUniq(fields, pfields);
 			}
 			var fields = loop(c);
@@ -775,7 +767,7 @@ class Genhl {
 			});
 			return fid;
 		}
-		if (!hasClassFlag(c, CExtern)) for (f in (if (statics) c.clOrderedStatics else c.clOrderedFields)) {
+		if (!hasClassFlag(c, CExtern)) for (f in (statics ? c.clStatics : c.clFields)) {
 			if (isExternField(f) || (statics && f.cfName == "__meta__")) continue;
 			var fid:Null<Int> = switch f.cfKind {
 				case Method(m) if (m != MethDynamic && !statics):
@@ -870,7 +862,7 @@ class Genhl {
 		var t = HEnum(et);
 		if (tref != null) tref.v = t;
 		ctx.cachedTypes.set(keyPath, t);
-		et.efields = e.eNames.mapToVector(n -> {
+		et.efields = e.eConstrs.keyArray().mapToVector(n -> {
 			var f = e.eConstrs.get(n);
 			if (f == null) throw NotFound.raise();
 			var args:Vector<Ttype> = switch f.efType {
@@ -910,8 +902,7 @@ class Genhl {
 			p.pindex.set(name, {fid: fid, t: t});
 			return fid;
 		}
-		for (k in sortedKeys(e.eConstrs)) {
-			var ef = e.eConstrs.get(k);
+		for (ef in e.eConstrs.byName) {
 			switch follow(ef.efType) {
 				case TEnum(_):
 					addField(ef.efName, toType(ctx, ef.efType));
@@ -2218,7 +2209,7 @@ class Genhl {
 						op(ctx, ODynGet(r, robj, f));
 					case AEnum(en, index):
 						var curFid = ctx.cfids.arr.length;
-						var name = en.eNames[index];
+						var name = en.eConstrs.keyAt(index);
 						var fid = allocFunPath(ctx, en.ePath, name);
 						if (fid == curFid) {
 							var ef = en.eConstrs.get(name);
@@ -2257,12 +2248,9 @@ class Genhl {
 				}
 			case TObjectDecl(fl):
 				/* We cannot rely on e.etype because it might have optional field etc, see jvm */
-				var fields = new StringMap<TClassField>();
-				for (f in fl) {
-					var cf = mkField(f.key.name, f.expr.etype, f.expr.epos, f.expr.epos);
-					fields.set(f.key.name, cf);
-				}
-				var rt = toType(ctx, mkAnon(Closed, fields));
+				var names = [for (f in fl) f.key.name];
+				var cfs = [for (f in fl) mkField(f.key.name, f.expr.etype, f.expr.epos, f.expr.epos)];
+				var rt = toType(ctx, mkAnon(Closed, core.ds.PMap.ofArrays(names, cfs)));
 				switch rt {
 					case HVirtual(vp) if (safeCast(rt, toType(ctx, e.etype))
 						&& !core.ds.ArrayTools.exists(fl, f -> f.key.name == "toString" && isToString(f.expr.etype))):
@@ -3954,7 +3942,7 @@ class Genhl {
 					/*
 						init dynamic functions
 					 */
-					for (f in c.clOrderedFields) {
+					for (f in c.clFields) {
 						switch f.cfKind {
 							case Method(MethDynamic):
 								var idx = try getIndex(f.cfName, o) catch (_:NotFound) die("", "genhl.ml");
@@ -4007,9 +3995,9 @@ class Genhl {
 		switch t {
 			case TClassDecl(c) if (hasClassFlag(c, CInterface)):
 			case TClassDecl(c) if (hasClassFlag(c, CExtern)):
-				for (f in c.clOrderedStatics) for (m in f.cfMeta) if (Meta.metaEq(Meta.HlNative, m.meta)) generateStatic(ctx, c, f);
+				for (f in c.clStatics) for (m in f.cfMeta) if (Meta.metaEq(Meta.HlNative, m.meta)) generateStatic(ctx, c, f);
 			case TClassDecl(c):
-				for (f in c.clOrderedStatics) generateStatic(ctx, c, f);
+				for (f in c.clStatics) generateStatic(ctx, c, f);
 				switch c.clConstructor {
 					case null:
 					case f:
@@ -4042,7 +4030,7 @@ class Genhl {
 						f2.cfExpr = mergeInits(f.cfExpr);
 						generateMember(ctx, c, f2);
 				}
-				for (f in c.clOrderedFields) generateMember(ctx, c, f);
+				for (f in c.clFields) generateMember(ctx, c, f);
 			case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 		}
 	}
@@ -4184,7 +4172,7 @@ class Genhl {
 					var avalues = allocTmp(ctx, HArray(t));
 					op(ctx, OField(avalues, r, index("__evalues__")));
 
-					for (n in e.eNames) {
+					for (n in e.eConstrs.names()) {
 						var f = e.eConstrs.get(n);
 						if (f == null) throw NotFound.raise();
 						switch follow(f.efType) {
@@ -4271,7 +4259,7 @@ class Genhl {
 			}
 			switch t {
 				case TClassDecl(c) if (!hasClassFlag(c, CExtern) && !isExcluded(c)):
-					for (f in c.clOrderedStatics) {
+					for (f in c.clStatics) {
 						switch [f.cfKind, f.cfExpr] {
 							case [Var(_), e] if (e != null):
 								var p = e.epos;
@@ -4756,7 +4744,7 @@ class Genhl {
 							Inline methods are excluded because they cannot be overridden.
 						 */
 						function loopCl(c:TClass):Void {
-							for (f in c.clOrderedFields) {
+							for (f in c.clFields) {
 								switch f.cfKind {
 									case Method(MethInline):
 									case _: loop({cls: c, params: vector()}, f);
@@ -4766,7 +4754,7 @@ class Genhl {
 						}
 						loopCl(c);
 					} else
-						for (f in c.clOrderedFields) if (hasClassFieldFlag(f, CfOverride)) loop(c.clSuper, f);
+						for (f in c.clFields) if (hasClassFieldFlag(f, CfOverride)) loop(c.clSuper, f);
 					for (m in c.clMeta) {
 						if (Meta.metaEq(Meta.HlNative, m.meta)) {
 							var p = m.pos;
@@ -4783,7 +4771,7 @@ class Genhl {
 									prefix = null;
 							}
 							/* adds :hlNative for all empty methods */
-							for (f in c.clOrderedStatics) {
+							for (f in c.clStatics) {
 								switch f.cfKind {
 									case Method(MethNormal) if (!core.ds.ArrayTools.exists(f.cfMeta, m -> Meta.metaEq(Meta.HlNative, m.meta))):
 										var empty = switch f.cfExpr {
