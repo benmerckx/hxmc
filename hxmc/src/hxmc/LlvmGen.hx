@@ -441,11 +441,15 @@ class LlvmGen {
 			var fn = byOff.get(t.section.name + "@" + (t.offset + r.addend));
 			if (fn != null) encodings.set(fn, cu.buf.get32(r.offset + 12));
 		}
+		// (its symbols go with it, the section's own among them: left undefined,
+		// Obj.append, which merges the per-module objects, took them for
+		// globals, and a Mir host's table bound them as imports, which dyld
+		// does not find: "Symbol not found: _.Lsec10$__compact_unwind")
 		obj.sections.remove(cu);
 		for (s in obj.symbols.copy())
 			if (s.section == cu) {
 				s.section = null;
-				s.global = false;
+				obj.symbols.remove(s);
 			}
 	}
 
