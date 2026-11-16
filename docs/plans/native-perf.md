@@ -287,7 +287,10 @@ The tool's own workload, the port's self-compile to HXB (this branch's
 within noise (24 interleaved runs: medians 4.72 s and 4.74 s, minima 4.19 s
 and 4.06 s); tshx's cold build the same CPU time (24-26 s). tshx's wall
 time on this VM (21 interleaved runs, before 474edea): native median
-1.565 s, LLVM release 1.554 s, fe536a4d 1.625 s.
+1.565 s, LLVM release 1.554 s, fe536a4d 1.625 s. At 2995212 (21 more, the
+machine quieter): native median 1.453 s (min 1.344), LLVM release 1.503 s
+(1.386), fe536a4d 1.522 s (1.393): native about 3% faster than LLVM
+release here, within this VM's noise of a few percent.
 
 Also tried and left out (built, measured, reverted):
 
