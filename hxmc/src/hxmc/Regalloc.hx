@@ -549,7 +549,8 @@ class Regalloc {
 		var spilled = [];
 		var seen = Scratch.fill(s.seen, n, -1); // conflicts found (stamped by query)
 		var conflicts = s.conflicts;
-		for (r in order) {
+		for (oi in 0...order.length) {
+			var r = order[oi];
 			var float = f.floatReg(r), vec = f.vecReg(r);
 			var regs = vec ? t.vprs : float ? t.fprs : t.gprs;
 			var choice = -1;
@@ -567,6 +568,25 @@ class Regalloc {
 			if (h >= 0) {
 				var hr = h < NPHYS ? h : assigned[h];
 				if (hr >= 0 && isFpr[hr] == (float ? 1 : 2) && (!vec || s.isVpr[hr]) && !masked(hr) && free(hr, r)) choice = hr;
+			}
+			// (without a hint of its own: not a register that an interval starting
+			// within this one is hinted to, a phi's next value taking the dying
+			// value's register otherwise leaves a copy per round)
+			if (choice < 0) {
+				var wlo = 0, whi = 0;
+				var k = oi + 1, e = end[r];
+				while (k < order.length && k < oi + 16 && start[order[k]] <= e) {
+					var w = order[k++], wh = f.hint(w);
+					for (_ in 0...3)
+						if (wh >= NPHYS && assigned[wh] < 0) wh = f.hint(wh);
+					var c = wh < 0 ? -1 : wh < NPHYS ? wh : assigned[wh];
+					if (c >= 0) if (c < 32) wlo |= 1 << c else whi |= 1 << (c - 32);
+				}
+				for (c in regs)
+					if (!masked(c) && (c < 32 ? wlo >> c : whi >> (c - 32)) & 1 == 0 && free(c, r)) {
+						choice = c;
+						break;
+					}
 			}
 			if (choice < 0)
 				for (c in regs)
