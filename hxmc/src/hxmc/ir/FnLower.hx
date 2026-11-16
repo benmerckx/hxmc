@@ -3188,14 +3188,39 @@ class FnLower {
 				var xs = args(cargs, s.args, null);
 				return coerceRhs(anonCall(cf.cfName, s, ELocal(o), xs), s.ret, rt);
 			case TField(obj, FDynamic(name)):
-				var o = coerce(value(obj), tyOf(obj), TRef(RAny));
-				var xs = args(cargs, new Vector<Ty>(cargs.length, TRef(RAny)), null);
-				var arr = temp(TRef(RArr(TRef(RAny))), ENewArr(TRef(RAny), xs));
-				var r = ECallHost("hx_dyn_call_field", vector(o, EStr(name), arr), TRef(RAny));
-				return coerceRhs(r, TRef(RAny), rt);
+				// (a structural call of Dynamic arguments and result: the inline
+				// cache takes a method of the object's class where only the
+				// result differs, Ir.anonAlternatives; else the runtime calls
+				// it as Reflect would, hx_anon_call_slow_r)
+				var o = asLocal(coerce(value(obj), tyOf(obj), TRef(RAny)), TRef(RAny));
+				var tys = new Vector<Ty>(cargs.length, TRef(RAny));
+				var xs = args(cargs, tys, null);
+				var s = l.sig([for (t in tys) t], TRef(RAny));
+				return coerceRhs(anonCall(name, s, ELocal(o), xs), TRef(RAny), rt);
 			case _:
 				return callValue(f, cargs, e);
 		}
+	}
+
+	// a closure call's argument types: the signature's, but a function
+	// type's where the function value's type declares one
+	function declaredArgs(f:TExpr, s:SigInfo):Vector<Ty> {
+		var to = s.args.copy();
+		switch TFunctions.follow(f.etype) {
+			case TFun(fs):
+				for (i in 0...(fs.args.length < to.length ? fs.args.length : to.length))
+					switch TFunctions.follow(fs.args[i].type) {
+						case TFun(_):
+							var t = ty(fs.args[i].type);
+							if (t.match(TRef(RClos(_))) && !hasStruct(switch t {
+								case TRef(RClos(x)): x;
+								case _: null;
+							})) to[i] = t;
+						case _:
+					}
+			case _:
+		}
+		return to;
 	}
 
 	// calling a function value: a closure, or Dynamic
@@ -3205,7 +3230,15 @@ class FnLower {
 			case TRef(RClos(s)):
 				var fx = value(f);
 				var c = asLocal(fx, tyOf(f));
-				var xs = args(cargs, s.args, null);
+				// (an argument of a function type: converted to that type first,
+				// then passed as the reference it is: the signature, interned by
+				// its key, has Dynamic there (Program.sig), and a closure of
+				// another signature passed as it is would be called through a
+				// dynamic adapter wherever the callee reads it as its type)
+				var to = declaredArgs(f, s);
+				var xs = args(cargs, to, null);
+				for (i in 0...xs.length)
+					if (i < to.length && to[i] != s.args[i]) xs[i] = coerce(xs[i], to[i], s.args[i]);
 				return callClos(s, ELocal(c), xs, rt);
 			case _:
 				var fx = coerce(value(f), tyOf(f), TRef(RAny));

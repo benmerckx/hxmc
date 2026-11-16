@@ -44,6 +44,15 @@ class Dyn {
 	// any other unit answers false, and the caller asks the C table)
 	@:hxmc.unsafe static function nameIs(p:Ptr, s:String):Bool {
 		var n = Str.len(s);
+		if (Str.isOne(s)) {
+			// (stops at the C string's end: a unit 0 or another byte differs from it)
+			var q:Ptr = cast Str.chars1(s);
+			for (i in 0...n) {
+				var u = Mem.getU8(q, i);
+				if (u == 0 || u >= 0x80 || Mem.getU8(p, i) != u) return false;
+			}
+			return Mem.getU8(p, n) == 0;
+		}
 		for (i in 0...n) {
 			var u = Str.unit(s, i);
 			if (u >= 0x80 || Mem.getU8At(p, 0, i) != u) return false;
@@ -375,6 +384,15 @@ class Dyn {
 		if (s < 0) Rt.rt_throw(Str.isNull(f) ? "Cannot call null" : "Cannot call a non-function"); // (Eval's for null)
 		var want = sigArgs(s);
 		if (want > 16) want = 16;
+		var buf = Mem.stack(128);
+		// (an array of references: its elements copied as they are, missing ones null)
+		if (Mem.getI32(Mem.addr(args), 4) == AK_PTR) {
+			var d = Mem.getPtr(Mem.addr(args), 8);
+			var m = n < want ? n : want;
+			for (i in 0...want)
+				Mem.setPtr(buf, 8 * i, i < m ? Mem.getPtr(d, 8 * i) : Ptr.nil());
+			return Mem.callRef2(Mem.getPtr(Mem.sym("rt_dyncalls"), 8 * s), f, buf);
+		}
 		// the arguments boxed (reading an Int or Float array boxes) into a
 		// reference array first, then copied without a GC point into the
 		// frame area the generated dyncall reads (it unboxes them before
@@ -383,7 +401,6 @@ class Dyn {
 		refs.resize(want);
 		for (i in 0...(n < want ? n : want))
 			refs[i] = args[i];
-		var buf = Mem.stack(128);
 		if (want > 0) {
 			var d = Mem.getPtr(Mem.addr(refs), 8); // (the storage: its elements from 0, Boxes)
 			for (i in 0...want)
@@ -472,8 +489,12 @@ class Dyn {
 				case _:
 			}
 		}
-		var r:Dynamic = Str.isNull(o) ? NOT_BUILTIN : callBuiltin(o, Names.fidStr(fid), boxed, n);
-		if (isNotBuiltin(r)) r = callBoxed(anonGetSlow(o, fid), boxed, n);
+		// (as a call of a Dynamic's field, which this is too, FnLower: a
+		// String's or an Array's method, an enum's constructor by name, a
+		// Reflect.makeVarArgs function)
+		var t = Str.isNull(o) ? 0 : tindex(o);
+		var r:Dynamic = t == T_ARRAY || isString(t) ? callBuiltin(o, Names.fidStr(fid), boxed, n) : NOT_BUILTIN;
+		if (isNotBuiltin(r)) r = callAny(fieldOf(o, fid), boxed, n);
 		return fromBoxed(r, rk);
 	}
 
@@ -482,6 +503,22 @@ class Dyn {
 	// building this one; removable once neither does)
 	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_call_slow") static function anonCallSlowOld(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64
 		return anonCallSlow(o, fid, sig, args, args);
+
+	// o's field fid as a Dynamic read gives it (dynGet by field id)
+	static function fieldOf(o:Dynamic, fid:Int):Dynamic {
+		if (!Str.isNull(o) && tindex(o) == T_TYPEOBJ && tk(ty(described(o))) == TK_ENUM) {
+			var i = enumCtorNames(o).indexOf(Names.fidStr(fid));
+			if (i >= 0) return single(ty(ctor(ty(described(o)), i))) >= 0 ? enumCreate(o, i, null) : enumCtorFunction(o, i);
+		}
+		return anonGetSlow(o, fid);
+	}
+
+	// f called with the first n of args, as dynCall calls it (its own array)
+	static function callAny(f:Dynamic, args:Array<Dynamic>, n:Int):Dynamic {
+		f = unadapt(f);
+		if (closureSig(f) < 0 && Std.isOfType(f, VarArgs)) return (f : VarArgs).f(args.slice(0, n));
+		return callBoxed(f, args, n);
+	}
 
 	// ---- Dynamic access
 
@@ -501,6 +538,14 @@ class Dyn {
 			if (i >= 0) return single(ty(ctor(ty(described(o)), i))) >= 0 ? enumCreate(o, i, null) : enumCtorFunction(o, i);
 		}
 		return anonGetSlow(o, fid(name));
+	}
+
+	// dynGet with the name's id
+	static function dynGetF(o:Dynamic, name:String, f:Int):Dynamic {
+		if (Str.isNull(o)) Rt.rt_throw("Null Access");
+		var t = tindex(o);
+		if (isString(t) || t == T_ARRAY || isNativeArray(t) || t == T_TYPEOBJ) return dynGet(o, name);
+		return anonGetSlow(o, f);
 	}
 
 	// a String's or an Array's method as a value read dynamically (Reflect.field(s,
@@ -543,9 +588,8 @@ class Dyn {
 		// (Reflect.makeVarArgs's: the arguments as an array of their own)
 		if (closureSig(f) < 0 && Std.isOfType(f, VarArgs)) return (f : VarArgs).f(Str.isNull(args) ? [] : args.copy());
 		if (Str.isNull(args)) return callBoxed(f, [], 0);
-		// a copy: the callee may change the array
-		var a = args.copy();
-		return callBoxed(f, a, a.length);
+		// (callBoxed only reads the array: no copy)
+		return callBoxed(f, args, args.length);
 	}
 
 	// callBuiltin's answer when the name is not a built-in method (a static
@@ -1087,6 +1131,18 @@ class Dyn {
 	@:hxmc.kernel public static function refEq(a:Dynamic, b:Dynamic):Bool
 		return TypeView.same(a, b);
 
+	// whether v is an Int's box, a Float's, a Bool's: exactly that kind (a
+	// Float of an integer's value is not an Int, as Std.isOfType has it),
+	// tested inline (interpreters keeping their numbers as Dynamic)
+	public static inline function isIntBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXINT;
+
+	public static inline function isFloatBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXFLOAT;
+
+	public static inline function isBoolBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXBOOL;
+
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 anonymous object, 5 function, 6 class
 	// instance, 7 enum value, 8 String, 9 Array, 10 a type object, 11 other
 	@:hxmc.kernel public static function typeKind(v:Dynamic):Int {
@@ -1353,6 +1409,56 @@ class Dyn {
 
 	public static function setField(o:Dynamic, name:String, v:Dynamic):Void
 		dynSet(o, name, v);
+
+	// Reflect.getProperty: o's getter get_<name> called when it has one,
+	// else the field (Reach keeps the methods of both names: a method sink
+	// of name and of "get_" + name); the getter's name made once per name
+	// (accessorFid), not on each call
+	public static function getProperty(o:Dynamic, name:String):Dynamic {
+		if (Str.isNull(o)) return null;
+		var t = tindex(o);
+		if (t < T_FIRST && !isString(t) && t != T_ARRAY && t != T_TYPEOBJ) return null;
+		var f = fid(name);
+		var a = accessorFid(f, false);
+		if (a >= 0) {
+			var g = anonGetSlow(o, a);
+			if (g != null && Reflect.isFunction(g)) return dynCall(g, []);
+		}
+		return dynGetF(o, name, f);
+	}
+
+	// Reflect.setProperty: o's setter set_<name> called when it has one, else
+	// the field set
+	public static function setProperty(o:Dynamic, name:String, v:Dynamic):Void {
+		var f = fid(name);
+		if (!Str.isNull(o)) {
+			var t = tindex(o);
+			if (t >= T_FIRST || isString(t) || t == T_ARRAY || t == T_TYPEOBJ) {
+				var a = accessorFid(f, true);
+				if (a >= 0) {
+					var g = anonGetSlow(o, a);
+					if (g != null && Reflect.isFunction(g)) {
+						dynCall(g, [v]);
+						return;
+					}
+				}
+			}
+		}
+		anonSetSlow(o, f, v);
+	}
+
+	// the id of the name "get_" (set: "set_") and field f's name, -1 when the
+	// program has none: a direct-mapped cache of (key + 1, id + 2) words
+	// outside the heap, as fid's
+	@:hxmc.unsafe(gc) static function accessorFid(f:Int, set:Bool):Int {
+		var key = (f << 1) | (set ? 1 : 0);
+		var e = Names.accessorCache.add(8 * (key & 4095));
+		var v = Atomic.load64(e);
+		if ((v >>> 32).toInt() == key + 1) return v.toInt() - 2;
+		var r = fidFind((set ? "set_" : "get_") + Names.fidStr(f));
+		Atomic.store64(e, (((key + 1) : I64) << 32) | ((r + 2 : I64) & (((1 : I64) << 32) - 1)));
+		return r;
+	}
 
 	// a field added at run time (slot 0's pairs, which stay without holes:
 	// the others keep their order); not one of the structure's own: its
