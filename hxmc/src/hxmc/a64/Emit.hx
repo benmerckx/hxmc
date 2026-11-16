@@ -162,6 +162,13 @@ class Emit implements hxmc.Target.Emitter {
 		op(Unwind.ENDPROLOGUE);
 		// (a move of a register to itself: a 32-bit one zero-extends)
 		f.threadJumps(i -> (i.op : AOp) == B, i -> (i.op : AOp) == MOV && i.d == i.s1 && (i.d >= 32 || i.size != 4));
+		// (every return writes its epilogue: a copied return block is a jump less)
+		f.duplicateReturns(i -> (i.op : AOp) == B, i -> (i.op : AOp) == RET, 3);
+		// (an AArch64 condition ^ 1 is its exact inverse, unordered included)
+		f.duplicateTests(i -> (i.op : AOp) == B, i -> (i.op : AOp) == BCOND, i -> switch (i.op : AOp) {
+			case CMP | CMPI | FCMP: true;
+			case _: false;
+		}, i -> i.cond ^= 1, 2);
 		for (b in f.blocks)
 			b.label = a.newLabel();
 		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
