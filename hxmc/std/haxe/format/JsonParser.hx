@@ -250,7 +250,7 @@ class JsonParser {
 			cancelSurrogate();
 		#end
 		if (buf == null) {
-			return str.substr(start, pos - start - 1);
+			return hxmc.rt.Str.range(str, start, pos - start - 1); // (hxmc: start, pos within str: substr without its tests)
 		} else {
 			buf.addSub(str, start, pos - start - 1);
 			return buf.toString();

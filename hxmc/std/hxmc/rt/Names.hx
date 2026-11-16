@@ -38,8 +38,10 @@ class Names {
 	static var nextra:Int;
 	static var hash:Ptr; // int32 index + 1, open addressing
 	static var hashCap:Int; // a power of two, at least twice nextra
-	static var strs:Ptr; // fid -> immortal String
-	static var strsCap:Int;
+	// fid -> immortal String: a block of its capacity (8 bytes), then the
+	// entries; read without the lock (strOf): a grown block is filled before
+	// it is published here, and the ones before it are never freed
+	static var strs:Ptr;
 
 	// the running thread's table of inline-cache entries (keys: type << 32 | fid, 0 free)
 	@:hxmc.threadLocal static var icKeys:Ptr;
@@ -184,10 +186,8 @@ class Names {
 		return f < nstatic() ? staticName(f) : extraName(f - nstatic());
 
 	@:hxmc.unsafe static inline function strOf(f:Int):Ptr {
-		lock();
-		var r = f < strsCap ? Mem.getPtr(strs, 8 * f) : Ptr.nil();
-		unlock();
-		return r;
+		var s = strs;
+		return !s.isNull() && f < Mem.getI64(s, 0).toInt() ? Mem.getPtr(s, 8 + 8 * f) : Ptr.nil();
 	}
 
 	// a field name as a String, made once
@@ -205,16 +205,20 @@ class Names {
 		LibC.memcpy(copy, Mem.addr(s).add(-8), bytes);
 		var r = copy.add(8);
 		lock();
-		if (f >= strsCap) {
-			var ncap = strsCap == 0 ? 1024 : strsCap;
+		var t = strs, cap = t.isNull() ? 0 : Mem.getI64(t, 0).toInt();
+		if (f >= cap) {
+			var ncap = cap == 0 ? 1024 : cap;
 			while (ncap <= f)
 				ncap *= 2;
-			strs = LibC.realloc(strs, 8 * ncap);
-			LibC.memset(strs.add(8 * strsCap), 0, 8 * (ncap - strsCap));
-			strsCap = ncap;
+			// (the old block stays: a reader may hold it)
+			var nt = LibC.malloc(8 + 8 * ncap);
+			Mem.setI64(nt, 0, ncap);
+			if (cap > 0) LibC.memcpy(nt.add(8), t.add(8), 8 * cap);
+			LibC.memset(nt.add(8 + 8 * cap), 0, 8 * (ncap - cap));
+			strs = t = nt;
 		}
-		var had = Mem.getPtr(strs, 8 * f);
-		if (had.isNull()) Mem.setPtr(strs, 8 * f, r) else {
+		var had = Mem.getPtr(t, 8 + 8 * f);
+		if (had.isNull()) Mem.setPtr(t, 8 + 8 * f, r) else {
 			LibC.free(copy);
 			r = had;
 		}

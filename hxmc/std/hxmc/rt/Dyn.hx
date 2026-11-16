@@ -202,10 +202,9 @@ class Dyn {
 		var i = 0;
 		while (i + 1 < n) {
 			var k = Mem.getRefAt(Mem.addr(ov), 0, i);
-			if (!Str.isNull(k)) {
-				var kf:Int = k;
-				if (kf == fid) return i;
-			}
+			if (Str.isNull(k)) break; // (the room after the fields: overflowSet)
+			var kf:Int = k;
+			if (kf == fid) return i;
 			i += 2;
 		}
 		return -1;
@@ -218,10 +217,20 @@ class Dyn {
 			Mem.setRefBarrier(Mem.getRef(Mem.addr(o), 0), 8 * (i + 1), v);
 			return;
 		}
+		// (the fields' pairs first, then room, null keys: a new field in the
+		// room, else in storage twice as long, the fields copied once)
 		var ov = Mem.getRef(Mem.addr(o), 0);
 		var n = Str.isNull(ov) ? 0 : nslots(ov);
 		var key:Dynamic = fid;
-		var nv = Mem.alloc(n + 2, T_OVERFLOW, K_PARR);
+		var end = 0;
+		while (end + 1 < n && !Str.isNull(Mem.getRefAt(Mem.addr(ov), 0, end)))
+			end += 2;
+		if (end + 1 < n) {
+			Mem.setRefBarrier(ov, 8 * (end + 1), v);
+			Mem.setRefBarrier(ov, 8 * end, key);
+			return;
+		}
+		var nv = Mem.alloc(n == 0 ? 4 : 2 * n, T_OVERFLOW, K_PARR);
 		ov = Mem.getRef(Mem.addr(o), 0);
 		for (k in 0...n)
 			Mem.setRefBarrier(nv, 8 * k, Mem.getRefAt(Mem.addr(ov), 0, k));
@@ -1040,7 +1049,8 @@ class Dyn {
 		// (read again after each value printed: printing allocates, and a
 		// toString may add fields)
 		var i = 0;
-		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
+		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))
+			&& !Str.isNull(Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i))) {
 			b.add(n++ == 0 ? " " : ", ");
 			var k:Int = Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i);
 			b.add(Names.fidStr(k));
@@ -1348,6 +1358,7 @@ class Dyn {
 			var i = 0;
 			while (i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
 				var ov = Mem.getRef(Mem.addr(o), 0);
+				if (Str.isNull(Mem.getRefAt(Mem.addr(ov), 0, i))) break; // (overflowSet's room)
 				var k:Int = Mem.getRefAt(Mem.addr(ov), 0, i);
 				a.push(Names.fidStr(k));
 				i += 2;
