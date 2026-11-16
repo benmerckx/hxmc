@@ -198,7 +198,7 @@ class Arr {
 	@:hxmc.host("Array_resize") @:access(hxmc.rt.Boxes) static function resize(a:Dynamic, n:Int):Void {
 		var m = len(a);
 		if (n < m) {
-			Repr.arrCut(a, n, m);
+			cut(a, n, m);
 			return;
 		}
 		if (n == m) return;
@@ -210,6 +210,11 @@ class Arr {
 		}
 		grow(a, n);
 	}
+
+	// resize's shrinking, out of line as grow (its other ways then keep
+	// nothing across a call: no callee-saved register saved each time)
+	static function cut(a:Dynamic, n:Int, m:Int):Void
+		Repr.arrCut(a, n, m);
 
 	@:hxmc.unsafe(gc) @:access(hxmc.rt.Boxes) static function grow(a:Dynamic, n:Int):Void {
 		// past the capacity, the storage allocated at twice the capacity, or
