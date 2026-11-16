@@ -545,7 +545,7 @@ class Emit implements hxmc.Target.Emitter {
 				// the first return's epilogue is shared: later ones jump to it
 				// when it is longer than the jump, those of slow paths only when
 				// returns are copied (LFunc.duplicateReturns)
-				if (epiLabel >= 0 && (coldBlock)) a.jmp(epiLabel) else {
+				if (epiLabel >= 0 && coldBlock) a.jmp(epiLabel) else {
 					var at = text.buf.len;
 					var l = a.newLabel();
 					a.bind(l);
