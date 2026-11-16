@@ -319,7 +319,7 @@ class Driver {
 			}
 			// divisions by constants multiplied (not interpreted: one instruction there)
 			if (o.opt && (interp == null || !interp.wants(fn))) DivConst.run(mf);
-			if (o.opt) Opt.lowered(mf);
+			if (o.opt) Opt.lowered(mf, abi.arm);
 			var before = mf.vals.length;
 			mf.compact();
 			if (o.stats) {

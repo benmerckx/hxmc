@@ -2895,7 +2895,7 @@ class Opt {
 	// After MemLower: a block that jumps to one only it enters absorbs it,
 	// copies are their operand, dead code goes (no other optimization: the
 	// optimizer ran on object-level Mir)
-	public static function lowered(f:MFunc) {
+	public static function lowered(f:MFunc, arm = false) {
 		var o = new Opt(f);
 		o.simplifyCfg();
 		// (blocks it empties are merged as it goes)
@@ -2948,8 +2948,86 @@ class Opt {
 		o.negatedSubs();
 		o.zeroExtensions();
 		o.indexed();
+		if (arm) o.armBases();
 		o.sinkCold();
 		o.dce();
+	}
+
+	// arm64 (no [base + index + displacement]): a load or store in a loop at
+	// an index and a displacement, of a base from outside that loop, takes
+	// base + displacement made before the loop, on its one way in (once per
+	// pair; the outermost loop the base is not in): a table's
+	// rows each a register beside the loop (sBox[0x100 | (x & 0xff)]: ldr
+	// [row, x, lsl 2], not an add and a load each time), as LLVM's. Not in a
+	// loop that calls outside its slow paths: the registers kept across the
+	// calls cost more there (formatter, json, binarytrees +1%)
+	function armBases() {
+		var cfg = f.cfg();
+		cfg.loops();
+		var n = cfg.rpo.length, calls = new haxe.ds.Vector<Bool>(n);
+		for (k in 0...n) {
+			var b = cfg.rpo[k];
+			if (b.cold) continue;
+			for (i in b.ins)
+				if (!i.dead && i.op == Call) {
+					var h = cfg.loopHead[k];
+					while (h >= 0) {
+						calls[h] = true;
+						h = cfg.loopParent[h];
+					}
+					break;
+				}
+		}
+		var vals = f.vals, made = new Map<String, Int>();
+		for (b in f.blocks) {
+			var k = cfg.index(b);
+			if (k < 0 || cfg.loopHead[k] < 0 || calls[cfg.loopHead[k]]) continue;
+			for (i in b.ins) {
+				if (i.dead || i.op != Load && i.op != Store || i.sym != null || i.b < 0 || i.imm == 0 || i.a < 0) continue;
+				var base = vals[i.a];
+				if (base.block == null) continue;
+				var bk = cfg.index(base.block);
+				if (bk < 0 || cfg.inLoop(bk, cfg.loopHead[k])) continue;
+				// the outermost loop around b that the base is not in, and its way in
+				var h = cfg.loopHead[k];
+				while (cfg.loopParent[h] >= 0 && !cfg.inLoop(bk, cfg.loopParent[h]))
+					h = cfg.loopParent[h];
+				var head = cfg.rpo[h], pre:Null<MBlock> = null, one = true;
+				for (p in head.preds) {
+					var pk = cfg.index(p);
+					if (pk >= 0 && cfg.inLoop(pk, h)) continue;
+					if (pre != null) one = false;
+					pre = p;
+				}
+				if (!one || pre == null || pre.succs.length != 1) continue;
+				var key = base.id + ":" + i.imm + ":" + pre.id, n = made.get(key);
+				if (n == null) {
+					var c = new MIns(Const, I64);
+					c.id = vals.length;
+					vals.push(c);
+					c.imm = i.imm;
+					c.imm2 = i.imm < 0 ? -1 : 0;
+					var x = new MIns(Add, I64);
+					x.id = vals.length;
+					vals.push(x);
+					x.a = base.id;
+					x.b = c.id;
+					var ins = pre.ins, at = ins.length - 1;
+					c.block = x.block = pre;
+					ins.insert(at, x);
+					ins.insert(at, c);
+					made.set(key, n = x.id);
+				}
+				i.a = n;
+				i.imm = 0;
+			}
+		}
+		if (repl != null && repl.length < vals.length) {
+			var r = MFunc.iota(vals.length);
+			for (k in 0...repl.length)
+				r[k] = repl[k];
+			repl = r;
+		}
 	}
 
 	// x - k of a 64-bit k no instruction takes as an immediate: x + -k, -k
