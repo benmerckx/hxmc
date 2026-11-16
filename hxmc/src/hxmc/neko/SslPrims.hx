@@ -187,20 +187,19 @@ class SslPrims {
 			var l:NValue = null;
 			var i = names.length;
 			while (i-- > 0) {
-				var cell:NArr = [NStr.of(names[i]), l];
+				var cell = Arr.pair(NStr.of(names[i]), l);
 				l = cell;
 			}
 			return l;
 		});
 		function date(d:Date):NValue {
-			var r:NArr = [
-				d.getUTCFullYear(),
-				d.getUTCMonth() + 1,
-				d.getUTCDate(),
-				d.getUTCHours(),
-				d.getUTCMinutes(),
-				d.getUTCSeconds()
-			];
+			var r = Arr.make(6);
+			r[0] = d.getUTCFullYear();
+			r[1] = d.getUTCMonth() + 1;
+			r[2] = d.getUTCDate();
+			r[3] = d.getUTCHours();
+			r[4] = d.getUTCMinutes();
+			r[5] = d.getUTCSeconds();
 			return r;
 		}
 		r("cert_get_notbefore", 1, (vm, a) -> date(cert(a[0]).notBefore));

@@ -21,10 +21,10 @@ class VM {
 	public var sp = 0;
 	public var vthis:NValue = null;
 	public var lastPrim:Null<NFun> = null;
-	public var env:NValue = [];
+	public var env:NValue = Arr.make(0);
 	public var depth = 0;
 	public var resolver:NValue = null;
-	public var excStack:NArr = [];
+	public var excStack:Array<NValue> = [];
 	// each depth's module and the pc of its current call (neko's csp frames)
 	final fmods = new Vector<Int>(MAX_DEPTH + 2, -1);
 	final fpcs = new Vector<Int>(MAX_DEPTH + 2, 0);
@@ -92,7 +92,7 @@ class VM {
 	// ---- calls
 
 	// val_callEx: f called on `thisv` (`keepThis`: the current `this`)
-	public function callEx(thisv:NValue, f:NValue, args:NArr, keepThis = false):NValue {
+	public function callEx(thisv:NValue, f:NValue, args:Array<NValue>, keepThis = false):NValue {
 		var oldThis = vthis, oldEnv = env, oldSp = sp, oldDepth = depth;
 		try {
 			for (a in args)
@@ -114,7 +114,7 @@ class VM {
 		}
 	}
 
-	public inline function callN(f:NValue, args:NArr):NValue
+	public inline function callN(f:NValue, args:Array<NValue>):NValue
 		return callEx(null, f, args, true);
 
 	// a call with nargs arguments on the stack, which it pops
@@ -174,7 +174,7 @@ class VM {
 		var top = fp + m.frameMax[0];
 		if (top + 8 > stack.length) growTo(top + 8);
 		sp = top;
-		var r = interp(m, 0, null, -1, null, [], fp, top);
+		var r = interp(m, 0, null, -1, null, Arr.make(0), fp, top);
 		sp = fp;
 		return r;
 	}
@@ -342,10 +342,9 @@ class VM {
 						sp = top;
 					} else {
 						if (n > fn.nargs) throw errorAt(m, pc, "$apply");
-						var e:NArr = [for (_ in 0...fn.nargs + 1) null];
+						var e = Arr.make(fn.nargs + 1);
 						e[0] = fn;
-						for (i in 0...n)
-							e[i + 1] = stack[d - n + i];
+						Vector.blit(stack, d - n, e, 1, n);
 						acc = Builtins.applyClosure(fn.nargs - n, e);
 					}
 					pc += 3;
@@ -382,26 +381,23 @@ class VM {
 					return acc;
 				case F.MAKEENV:
 					var n = code[pc + 1], d = fp + code[pc + 2];
-					var e:NArr = [for (_ in 0...n) null];
-					for (i in 0...n)
-						e[i] = stack[d - n + i];
+					var e = Arr.make(n);
+					Vector.blit(stack, d - n, e, 0, n);
 					if (!Tag.isFunction(acc) || acc.asFun().prim != null) throw errorAt(m, pc, "Invalid environment");
 					var f = acc.asFun();
 					acc = new NFun(f.nargs, e, f.module, f.addr, null, null);
 					pc += 3;
 				case F.MAKEARRAY:
 					var n = code[pc + 1], d = fp + code[pc + 2];
-					var a:NArr = [for (_ in 0...n + 1) null];
+					var a = Arr.make(n + 1);
 					a[0] = acc;
-					for (i in 0...n)
-						a[i + 1] = stack[d - n + i];
+					Vector.blit(stack, d - n, a, 1, n);
 					acc = a;
 					pc += 3;
 				case F.MAKEARRAY2:
 					var n = code[pc + 1], d = fp + code[pc + 2];
-					var a:NArr = [for (_ in 0...n + 1) null];
-					for (i in 0...n)
-						a[i] = stack[d - n + i];
+					var a = Arr.make(n + 1);
+					Vector.blit(stack, d - n, a, 0, n);
 					a[n] = acc;
 					acc = a;
 					pc += 3;
@@ -723,7 +719,7 @@ class VM {
 	// the positions of the frames when it was thrown, innermost first
 	public function capture(ne:NekoError) {
 		if (ne.stack != null) return;
-		var st:NArr = [];
+		var st:Array<NValue> = [];
 		var k = depth;
 		while (k >= 0) {
 			var m = Module.byId(fmods[k]);
@@ -737,10 +733,10 @@ class VM {
 	// $callstack: every frame's call, outermost first (the last: the call of
 	// $callstack itself)
 	public function callStack():NArr {
-		var st:NArr = [];
+		var st = Arr.make(depth + 1);
 		for (k in 0...depth + 1) {
 			var m = Module.byId(fmods[k]);
-			st.push(m == null ? null : m.position(m.oldOf[fpcs[k]]));
+			st[k] = m == null ? null : m.position(m.oldOf[fpcs[k]]);
 		}
 		return st;
 	}
@@ -995,7 +991,7 @@ class VM {
 		return b.getBytes();
 	}
 
-	public function buffer(b:BytesBuffer, v:NValue, stack:NArr) {
+	public function buffer(b:BytesBuffer, v:NValue, stack:Array<NValue>) {
 		for (s in stack)
 			if (s == v) {
 				b.addString("...");

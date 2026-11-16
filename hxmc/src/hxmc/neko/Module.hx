@@ -126,7 +126,7 @@ class Module {
 	public var fields:Array<String> = [];
 	// the debug position of each code index: an index of dbgTbl, -1: none
 	public var dbgIdx:Null<Vector<Int>>;
-	public var dbgTbl:NArr = [];
+	public var dbgTbl:Array<NValue> = [];
 
 	function new() {}
 
@@ -172,7 +172,7 @@ class Module {
 		m.exports = new NObj();
 		m.exports.set(Fields.id("__module"), new NAbs("module", m));
 		m.globals = new Vector<NValue>(nglobals);
-		var consts:NArr = [];
+		var consts:Array<NValue> = [];
 		var version = 1;
 		var funcs = [];
 		for (i in 0...nglobals) {
@@ -182,7 +182,7 @@ class Module {
 				case 2:
 					var v = long();
 					if ((v & 0xFFFFFF) >= codesize) invalid();
-					var f = new NFun(v >>> 24, [], m, v & 0xFFFFFF, null, null);
+					var f = new NFun(v >>> 24, Arr.make(0), m, v & 0xFFFFFF, null, null);
 					m.globals[i] = f;
 					funcs.push(f);
 				case 3:
@@ -394,13 +394,13 @@ class Module {
 		p += 4;
 		if (npos != codesize) invalid();
 		var idx = new Vector<Int>(npos, -1);
-		var tbl:NArr = [];
+		var tbl:Array<NValue> = [];
 		var curfile = files[0];
 		var curline = 0;
 		var pp:Null<NArr> = null;
 		var i = 0;
 		inline function add() {
-			pp = [curfile, curline];
+			pp = Arr.pair(curfile, curline);
 			tbl.push(pp);
 		}
 		while (i < npos) {

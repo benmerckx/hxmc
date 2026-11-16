@@ -4,9 +4,32 @@ import haxe.io.Bytes;
 
 // Neko's values (neko/vm/neko.h): null, Bool, Int and Float are Haxe's own
 // (an Int is Neko's int or int32, whichever its value needs), an array is an
-// NArr of fixed length; the rest are the classes below, their tag the number
-// $typeof answers.
-typedef NArr = Array<NValue>;
+// NArr; the rest are the classes below, their tag the number $typeof answers.
+
+// a Neko array: a Vector, one allocation of its fixed length (Arr makes them)
+typedef NArr = haxe.ds.Vector<NValue>;
+
+class Arr {
+	public static inline function make(n:Int):NArr
+		return new haxe.ds.Vector(n);
+
+	// (NativeArray.literal: allocated at its length and filled, no Array made)
+	public static inline function pair(a:NValue, b:NValue):NArr
+		return haxe.ds.Vector.fromData(hxmc.NativeArray.literal([a, b]));
+
+	public static inline function triple(a:NValue, b:NValue, c:NValue):NArr
+		return haxe.ds.Vector.fromData(hxmc.NativeArray.literal([a, b, c]));
+
+	// a Haxe list's copy (the arrays of a known shape: pair, triple)
+	public static inline function of(a:Array<NValue>):NArr
+		return haxe.ds.Vector.fromArrayCopy(a);
+
+	public static function sub(a:NArr, pos:Int, len:Int):NArr {
+		var r = make(len);
+		haxe.ds.Vector.blit(a, pos, r, 0, len);
+		return r;
+	}
+}
 
 // a Neko value. No operators: Neko's semantics are the VM's (VM.add,
 // VM.compare, ...), not Haxe's dynamic ones. Its contents are taken by a test
@@ -77,7 +100,7 @@ class Tag {
 		return hxmc.Native.isBoolBox(v.raw());
 
 	public static inline function isArray(v:NValue):Bool
-		return hxmc.Native.typeKind(v.raw()) == 9;
+		return hxmc.Native.isRefArray(v.raw());
 
 	public static inline function isString(v:NValue):Bool
 		return Std.isOfType(v.raw(), NStr);
@@ -282,7 +305,7 @@ class NAbs extends NVal {
 class NekoError {
 	public var value:NValue;
 	// the positions it went through, innermost first
-	public var stack:Null<NArr>;
+	public var stack:Null<Array<NValue>>;
 	// the depth it was thrown at
 	public var depth = 0;
 	// thrown by $rethrow: the caught stack keeps the previous one

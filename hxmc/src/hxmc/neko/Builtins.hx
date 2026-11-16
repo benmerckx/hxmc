@@ -82,36 +82,38 @@ class Builtins {
 				vm.print(vm.toBytes(v));
 			return null;
 		});
-		add("array", -1, (vm, a) -> a.toArray());
+		// (the arguments' Vector, the call's own: VM.callOp)
+		add("array", -1, (vm, a) -> a);
 		add("amake", 1, (vm, a) -> {
 			var n = a[0].int();
 			if (n < 0) throw failure;
-			var r:NArr = [for (_ in 0...n) null];
-			return r;
+			return Arr.make(n);
 		});
 		add("acopy", 1, (vm, a) -> a[0].arr().copy());
 		add("asize", 1, (vm, a) -> a[0].arr().length);
 		add("asub", 3, (vm, a) -> {
 			var arr = a[0].arr(), p = a[1].int(), l = a[2].int();
 			if (p < 0 || l < 0 || p + l < 0 || p + l > arr.length) throw failure;
-			return arr.slice(p, p + l);
+			return Arr.sub(arr, p, l);
 		});
 		add("ablit", 5, (vm, a) -> {
 			var dst = a[0].arr(), dp = a[1].int(), src = a[2].arr(), sp = a[3].int(), l = a[4].int();
 			if (dp < 0 || sp < 0 || l < 0 || dp + l < 0 || sp + l < 0 || dp + l > dst.length || sp + l > src.length) throw failure;
-			if (dst == src && dp > sp) {
-				var i = l;
-				while (i-- > 0)
-					dst[dp + i] = src[sp + i];
-			} else
-				for (i in 0...l)
-					dst[dp + i] = src[sp + i];
+			// (memmove's: overlapping ranges too)
+			haxe.ds.Vector.blit(src, sp, dst, dp, l);
 			return null;
 		});
 		add("aconcat", 1, (vm, a) -> {
-			var r:NArr = [];
-			for (x in a[0].arr())
-				r = r.concat(x.arr());
+			var all = a[0].arr(), n = 0;
+			for (x in all)
+				n += x.arr().length;
+			var r = Arr.make(n);
+			n = 0;
+			for (x in all) {
+				var x = x.asArr();
+				haxe.ds.Vector.blit(x, 0, r, n, x.length);
+				n += x.length;
+			}
 			return r;
 		});
 		add("smake", 1, (vm, a) -> {
@@ -278,7 +280,7 @@ class Builtins {
 			if (!Tag.isObject(a[0])) return (null : NValue);
 			var o = a[0].asObj();
 			var f = o.get(a[1].int());
-			return vm.callEx(o, f, a[2].arr().copy());
+			return vm.callEx(o, f, a[2].arr().toArray());
 		});
 		add("objfield", 2, (vm, a) -> {
 			var id = a[1].int();
@@ -287,7 +289,9 @@ class Builtins {
 		add("objremove", 2, (vm, a) -> a[0].obj().remove(a[1].int()));
 		add("objfields", 1, (vm, a) -> {
 			var o = a[0].obj();
-			var r:NArr = [for (i in 0...o.n) o.ids[i]];
+			var r = Arr.make(o.n);
+			for (i in 0...o.n)
+				r[i] = o.ids[i];
 			return r;
 		});
 		add("hash", 1, (vm, a) -> Fields.idBytes(a[0].str().b));
@@ -318,7 +322,7 @@ class Builtins {
 			if (a.length <= 1) throw VM.error("Invalid closure arguments number");
 			var f = a[0].fun();
 			if (f.nargs != -1 && f.nargs < a.length - 2) throw VM.error("Invalid closure arguments number");
-			return prim("closure_callback", -1, closureCallback, a.toArray());
+			return prim("closure_callback", -1, closureCallback, a);
 		});
 		add("apply", -1, (vm, a) -> {
 			if (a.length < 1) throw failure;
@@ -327,17 +331,16 @@ class Builtins {
 			if (args.length == 0) return f;
 			if (f.nargs == args.length || f.nargs == -1) return vm.callN(f, args);
 			if (args.length > f.nargs) throw failure;
-			var env:NArr = [f];
-			for (x in args)
-				env.push(x);
-			while (env.length < f.nargs + 1)
-				env.push(null);
+			var env = Arr.make(f.nargs + 1);
+			env[0] = f;
+			for (i in 0...args.length)
+				env[i + 1] = args[i];
 			return applyClosure(f.nargs - args.length, env);
 		});
 		add("varargs", 1, (vm, a) -> {
 			var f = a[0].fun();
 			if (f.nargs != 1 && f.nargs != -1) throw failure;
-			return prim("varargs", -1, (vm, args) -> vm.callN(vm.env, [args.toArray()]), f);
+			return prim("varargs", -1, (vm, args) -> vm.callN(vm.env, [args]), f);
 		});
 		add("compare", 2, (vm, a) -> {
 			var r = vm.compare(a[0], a[1]);
@@ -359,7 +362,7 @@ class Builtins {
 			throw ne;
 		});
 		add("nargs", 1, (vm, a) -> a[0].fun().nargs);
-		add("call", 3, (vm, a) -> vm.callEx(a[1], a[0], a[2].arr().copy()));
+		add("call", 3, (vm, a) -> vm.callEx(a[1], a[0], a[2].arr().toArray()));
 		add("isnan", 1, (vm, a) -> Tag.isFloat(a[0]) && Math.isNaN(a[0].asFloat()));
 		add("isinfinite", 1, (vm, a) -> Tag.isFloat(a[0]) && !Math.isNaN(a[0].asFloat()) && !Math.isFinite(a[0].asFloat()));
 		add("getkind", 1, (vm, a) -> {
@@ -405,7 +408,7 @@ class Builtins {
 			if (a[1].asInt() == 0) throw failure;
 			return Std.int(a[0].asInt() / a[1].asInt());
 		});
-		add("excstack", 0, (vm, a) -> vm.excStack.copy());
+		add("excstack", 0, (vm, a) -> Arr.of(vm.excStack));
 		add("callstack", 0, (vm, a) -> vm.callStack());
 		add("version", 0, (vm, a) -> 240);
 		add("neko_build_year", 0, (vm, a) -> 2024);
@@ -435,7 +438,9 @@ class Builtins {
 		var o:NValue = env[1];
 		var cargs = env.length - 2;
 		if (f.nargs != cargs + args.length && f.nargs != -1) return (null : NValue);
-		var a = env.slice(2).concat(args.toArray());
+		var a = [for (i in 2...env.length) env[i]];
+		for (x in args)
+			a.push(x);
 		return vm.callEx(o, f, a);
 	}
 
@@ -444,7 +449,7 @@ class Builtins {
 		if (nargs < 1 || nargs > 5) throw VM.error("Too many apply arguments");
 		return NFun.primitive("apply", nargs, (vm, args) -> {
 			var e = vm.env.asArr();
-			var a = e.slice(1);
+			var a = [for (i in 1...e.length) e[i]];
 			var n = a.length;
 			for (i in 0...args.length)
 				a[n - args.length + i] = args[i];
@@ -588,7 +593,7 @@ class NHash {
 	static inline function schar(c:Int):Int
 		return c >= 128 ? c - 256 : c;
 
-	static function hashRec(v:NValue, h:Array<Int>, l:NArr) {
+	static function hashRec(v:NValue, h:Array<Int>, l:Array<NValue>) {
 		switch Tag.of(v) {
 			case Tag.TINT:
 				big(h, v.asInt());

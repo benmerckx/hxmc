@@ -108,8 +108,7 @@ class SocketPrims {
 		function addr(s:NSocket, peer:Bool):NValue {
 			var r = NativeNet.sockName(s.fd, peer);
 			if (r == null) throw Builtins.failure;
-			var arr:NArr = [swap(r[0]), r[1]];
-			return arr;
+			return Arr.pair(swap(r[0]), r[1]);
 		}
 		r("socket_peer", 1, (vm, a) -> addr(sock(a[0]), true));
 		r("socket_host", 1, (vm, a) -> addr(sock(a[0]), false));
@@ -136,16 +135,23 @@ class SocketPrims {
 		});
 		r("socket_select", 4, (vm, a) -> {
 			function socks(v:NValue):NArr
-				return v == null ? [] : v.arr();
+				return v == null ? Arr.make(0) : v.arr();
 			var rs = socks(a[0]), ws = socks(a[1]), os = socks(a[2]);
 			var rf = [for (s in rs) sock(s).fd], wf = [for (s in ws) sock(s).fd], of = [for (s in os) sock(s).fd];
 			var n = NativeNet.select(rf, wf, of, a[3] == null ? -1.0 : a[3].number());
 			if (n < 0) throw Builtins.failure;
 			// (NativeNet.select sets the descriptors that are not ready to -1)
-			function keep(all:NArr, fds:Array<Int>):NArr
-				return [for (i in 0...all.length) if (fds[i] >= 0) all[i]];
-			var res:NArr = [keep(rs, rf), keep(ws, wf), keep(os, of)];
-			return res;
+			function keep(all:NArr, fds:Array<Int>):NValue {
+				var n = 0;
+				for (fd in fds)
+					if (fd >= 0) n++;
+				var r = Arr.make(n);
+				n = 0;
+				for (i in 0...all.length)
+					if (fds[i] >= 0) r[n++] = all[i];
+				return r;
+			}
+			return Arr.triple(keep(rs, rf), keep(ws, wf), keep(os, of));
 		});
 		r("host_resolve", 1, (vm, a) -> {
 			var name = a[0].str().toString();

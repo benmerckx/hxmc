@@ -50,7 +50,7 @@ class Main {
 	// report: the stack, then the exception
 	public static function report(vm:VM, e:NekoError, isExc:Bool) {
 		var b = new BytesBuffer();
-		var st:NArr = e.stack == null ? [] : e.stack.copy();
+		var st = e.stack == null ? [] : e.stack.copy();
 		st.reverse();
 		for (s in st) {
 			b.addString("Called from ");

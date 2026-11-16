@@ -13,7 +13,10 @@ class Loader {
 		var o = new NObj();
 		o.set(Fields.id("path"), initPath(Sys.getEnv("NEKOPATH")));
 		o.set(Fields.id("cache"), new NObj());
-		o.set(Fields.id("args"), ([for (a in args) NStr.of(a)] : NArr));
+		var argv = Arr.make(args.length);
+		for (i in 0...args.length)
+			argv[i] = NStr.of(args[i]);
+		o.set(Fields.id("args"), argv);
 		o.set(Fields.id("loadprim"), Builtins.prim("loadprim", 2, loadprim));
 		o.set(Fields.id("loadmodule"), Builtins.prim("loadmodule", 2, loadmodule));
 		return o;
@@ -46,7 +49,7 @@ class Loader {
 		for (p in parts) {
 			var last = p.length == 0 ? "" : p.charAt(p.length - 1);
 			var d = last != "/" && last != "\\" ? p + "/" : p;
-			var cell:NArr = [NStr.of(d), l];
+			var cell = Arr.pair(NStr.of(d), l);
 			l = cell;
 		}
 		return l;

@@ -1143,6 +1143,11 @@ class Dyn {
 	public static inline function isBoolBox(v:Dynamic):Bool
 		return !Repr.isNull(v) && Types.tindex(v) == T_BOXBOOL;
 
+	// whether v is NativeArray storage of references (a Vector<Dynamic> made
+	// by typed code; not a NativeArray of an erased type parameter's)
+	public static inline function isRefArray(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_NATIVE_ARRAY;
+
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 anonymous object, 5 function, 6 class
 	// instance, 7 enum value, 8 String, 9 Array, 10 a type object, 11 other
 	@:hxmc.kernel public static function typeKind(v:Dynamic):Int {

@@ -91,19 +91,17 @@ class StdPrims {
 		return NStr.of(s);
 
 	// a list [v, next] of the values (neko's sys_read_dir, string_split)
-	static function list(a:NArr):NValue {
+	static function list(a:Array<NValue>):NValue {
 		var l:NValue = null;
 		var i = a.length;
 		while (i-- > 0) {
-			var cell:NArr = [a[i], l];
-			l = cell;
+			l = Arr.pair(a[i], l);
 		}
 		return l;
 	}
 
 	static function fileError(msg:String, f:String):NekoError {
-		var a:NArr = [str(msg), str(f)];
-		return new NekoError(a);
+		return new NekoError(Arr.pair(str(msg), str(f)));
 	}
 
 	static function file(v:NValue):NFile
@@ -196,7 +194,7 @@ class StdPrims {
 		add("string_split", 2, (vm, a) -> {
 			var o = a[0].str().b, s = a[1].str().b;
 			var ilen = o.length, slen = s.length;
-			var out:NArr = [];
+			var out:Array<NValue> = [];
 			var start = 0;
 			var pos = slen == 0 ? 1 : 0;
 			while (pos <= ilen - slen) {
@@ -379,7 +377,7 @@ class StdPrims {
 		});
 		add("merge_sort", 3, (vm, a) -> {
 			var arr = a[0].arr(), len = a[1].int(), cmp = a[2].fun();
-			var tmp = arr.slice(0, len);
+			var tmp = [for (i in 0...len) arr[i]];
 			mergeSort(vm, tmp, cmp);
 			for (i in 0...len)
 				arr[i] = tmp[i];
@@ -390,7 +388,7 @@ class StdPrims {
 		add("unserialize", 2, (vm, a) -> throw VM.error("unserialize is not supported"));
 	}
 
-	static function mergeSort(vm:VM, a:NArr, cmp:NFun) {
+	static function mergeSort(vm:VM, a:Array<NValue>, cmp:NFun) {
 		if (a.length < 2) return;
 		var mid = a.length >> 1;
 		var l = a.slice(0, mid), r = a.slice(mid);
@@ -637,7 +635,7 @@ class StdPrims {
 		add("sys_read_dir", 1, (vm, a) -> {
 			var p = a[0].str().toString();
 			var names = try sys.FileSystem.readDirectory(p) catch (e:Dynamic) throw Builtins.failure;
-			return list([for (n in names) str(n)]);
+			return list([for (n in names) (str(n) : NValue)]);
 		});
 		add("file_full_path", 1, (vm, a) -> {
 			var p = try sys.FileSystem.fullPath(a[0].str().toString()) catch (e:Dynamic) null;
@@ -652,7 +650,7 @@ class StdPrims {
 			var keys = [for (k in env.keys()) k];
 			var i = keys.length;
 			while (i-- > 0) {
-				var cell:NArr = [str(keys[i]), str(env.get(keys[i])), l];
+				var cell = Arr.triple(str(keys[i]), str(env.get(keys[i])), l);
 				l = cell;
 			}
 			return l;
@@ -747,8 +745,7 @@ class StdPrims {
 		});
 		add("thread_read_message", 1, (vm, a) -> NThread.current().messages.pop(a[0] == true));
 		add("thread_stack", 1, (vm, a) -> {
-			var r:NArr = [];
-			return r;
+			return Arr.make(0);
 		});
 		add("lock_create", 0, (vm, a) -> new NAbs("lock", new sys.thread.Lock()));
 		add("lock_release", 1, (vm, a) -> {
