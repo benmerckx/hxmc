@@ -133,6 +133,43 @@ class SslPrims {
 			}
 			return new NStr(out.bytes());
 		});
+		r("ssl_get_verify_result", 1, (vm, a) -> {
+			var v = NativeSsl.sslGetVerifyResult(a[0].abs("ssl"));
+			if (v == -1) throw VM.error("not available");
+			return v == 0;
+		});
+		// keys and digests (Neko: an abstract of kind pkey; digests by name)
+		function key(data:NStr, isPublic:Bool, pass:Dynamic, pem:Bool):NAbs {
+			var pk = NativeSsl.pkInit();
+			var e = NativeSsl.pkParse(pk, data.b, isPublic, pass == null ? null : pass.str().toString(), pem);
+			if (e != 0) throw VM.error(NativeSsl.strerror(e));
+			return new NAbs("pkey", pk);
+		}
+		r("key_from_der", 2, (vm, a) -> key(a[0].str(), a[1].bool(), null, false));
+		r("key_from_pem", 3, (vm, a) -> key(a[0].str(), a[1].bool(), a[2], true));
+		function alg(v:Dynamic):String {
+			var name = v.str().toString();
+			if (NativeSsl.mdSize(name) == 0) throw VM.error("Invalid hash algorithm");
+			return name;
+		}
+		r("dgst_make", 2, (vm, a) -> {
+			var data = a[0].str(), name = alg(a[1]);
+			var out = haxe.io.Bytes.alloc(NativeSsl.mdSize(name));
+			var e = NativeSsl.md(name, data.b, out);
+			if (e != 0) throw VM.error(NativeSsl.strerror(e));
+			return new NStr(out);
+		});
+		r("dgst_sign", 3, (vm, a) -> {
+			var data = a[0].str(), pk = a[1].abs("pkey"), name = alg(a[2]);
+			var out = haxe.io.Bytes.alloc(1024);
+			var n = NativeSsl.pkSign(pk, name, data.b, out, sys.ssl.Mbedtls.getDefaultCtrDrbg());
+			if (n < 0) throw VM.error(NativeSsl.strerror(n));
+			return new NStr(out.sub(0, n));
+		});
+		r("dgst_verify", 4, (vm, a) -> {
+			var data = a[0].str(), sig = a[1].str(), pk = a[2].abs("pkey"), name = alg(a[3]);
+			return NativeSsl.pkVerify(pk, name, data.b, sig.b) == 0;
+		});
 		r("cert_load_defaults", 0, (vm, a) -> new NAbs("ssl_cert", sys.ssl.Certificate.loadDefaults()));
 		r("cert_load_file", 1, (vm, a) -> new NAbs("ssl_cert", sys.ssl.Certificate.loadFile(a[0].str().toString())));
 		r("cert_load_path", 1, (vm, a) -> new NAbs("ssl_cert", sys.ssl.Certificate.loadPath(a[0].str().toString())));
@@ -144,9 +181,16 @@ class SslPrims {
 			var s = cert(a[0]).issuer(a[1].str().toString());
 			return s == null ? null : NStr.of(s);
 		});
+		// (a list of [name, next] pairs, null after the last)
 		r("cert_get_altnames", 1, (vm, a) -> {
-			var r:Array<Dynamic> = [for (n in cert(a[0]).altNames) NStr.of(n)];
-			return r;
+			var names = cert(a[0]).altNames;
+			var l:Dynamic = null;
+			var i = names.length;
+			while (i-- > 0) {
+				var cell:Array<Dynamic> = [NStr.of(names[i]), l];
+				l = cell;
+			}
+			return l;
 		});
 		function date(d:Date):Dynamic {
 			var r:Array<Dynamic> = [
