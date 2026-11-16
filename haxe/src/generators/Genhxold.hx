@@ -126,11 +126,7 @@ class Genhxold {
 			case TAbstract(a, tl):
 				path(a.aMeta, a.aPath, tl);
 			case TAnon(a):
-				var fields = core.ds.PMap.fold(function(f:TClassField, acc:Array<String>) {
-					acc.unshift(f.cfName + " : " + stype(f.cfType));
-					return acc;
-				}, a.aFields, []);
-				"{" + fields.join(", ") + "}";
+				"{" + a.aFields.foldCons(f -> f.cfName + " : " + stype(f.cfType)).join(", ") + "}";
 			case TLazy(f):
 				stype(lazyType(f));
 			case TDynamic(null):
@@ -294,14 +290,14 @@ class Genhxold {
 					}, a);
 					return a;
 				}
-				for (f in sort(c.clConstructor == null ? c.clOrderedFields : [c.clConstructor].concat(c.clOrderedFields))) printField(false, f);
-				for (f in sort(c.clOrderedStatics)) printField(true, f);
+				for (f in sort(c.clConstructor == null ? c.clFields.toArray() : [c.clConstructor].concat(c.clFields.toArray()))) printField(false, f);
+				for (f in sort(c.clStatics.toArray())) printField(true, f);
 				p("}\n");
 			case TEnumDecl(e):
 				printMeta(e.eMeta);
 				p("extern enum " + stype(TEnum(e, extractParamTypes(e.eParams))) + " {\n");
-				for (n in e.eNames) {
-					var c = core.ds.PMap.find(n, e.eConstrs);
+				for (n in e.eConstrs.names()) {
+					var c = e.eConstrs.find(n);
 					p("\t" + c.efName);
 					switch follow(c.efType) {
 						case TFun(sig):
@@ -327,9 +323,8 @@ class Genhxold {
 				p(" {\n");
 				if (a.aImpl != null) {
 					var c = a.aImpl;
-					var fields = c.clOrderedStatics;
+					var fields = c.clStatics.toArray();
 					if (isEnum) {
-						fields = fields.copy();
 						Hlcode.ocamlArraySort((a:TClassField, b:TClassField) -> core.ds.Key.compareStrings(a.cfName, b.cfName), fields);
 					}
 					for (f in fields) {

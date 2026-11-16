@@ -141,10 +141,10 @@ class EvalJit {
 
 	// port: `PMap.foldi (fun k _ acc -> (hash k,()) :: acc) an.a_fields []` (keys only).
 	static function anonFieldKeys(an:TAnon):Array<Int> {
-		return core.ds.PMap.foldi((k, _, acc:Array<Int>) -> {
-			acc.unshift(EvalHash.hash(k));
-			acc;
-		}, an.aFields, []);
+		var fields = an.aFields, n = fields.size, out:Array<Int> = [];
+		out.resize(n);
+		for (i in 0...n) out[n - 1 - i] = EvalHash.hash(fields.keyAt(i));
+		return out;
 	}
 
 	public static function opAssign(ctx:Context, jit:JitContext, e1:TExpr, e2:TExpr):Emitter {

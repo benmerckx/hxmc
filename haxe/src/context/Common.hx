@@ -607,10 +607,7 @@ class Common {
 	public static function definesForExternal(com:CommonContext):haxe.ds.StringMap<String> {
 		if (externalDefinesHook != null) externalDefinesHook(com, null, false);
 		var result = new haxe.ds.StringMap<String>();
-		var names:Array<String> = [for (k in com.defines.values.keys()) k];
-		names.sort(core.ds.Key.compareStrings);
-		for (k in names) {
-			var v = com.defines.values.get(k);
+		for (k => v in com.defines.values) {
 			result.set(k, v);
 			if (k.split("_").length > 1) result.set(k.split("_").join("-"), v);
 		}
@@ -1186,10 +1183,8 @@ class Common {
 		var remove = ["java"].concat(Globals.platforms.map(Globals.platformName));
 		for (d in [Define.NoTraces]) remove.unshift(Define.getDefineKey(d));
 		for (v in flashVersions) remove.unshift("flash" + v.define);
-		var values = new haxe.ds.StringMap<String>();
-		var keys:Array<String> = [for (k in defines.values.keys()) k];
-		keys.sort(core.ds.Key.compareStrings);
-		for (k in keys) if (!remove.contains(k)) values.set(k, defines.values.get(k));
+		var values = defines.values;
+		for (k in remove) values = values.remove(k);
 		var result = ({values: values, definesSignature: null} : core.Define.DefineContext);
 		Define.define(result, Define.Macro);
 		Define.rawDefine(result, Globals.platformName(Eval));

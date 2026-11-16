@@ -53,12 +53,12 @@ enum DefineOrigin {
 		dReserved);
 }
 
-// port: `define`; `values` is a persistent map (copied on write) as PMap is
+// port: `define`; `values` is upstream's PMap: a clone shares it, a define replaces it.
 @:structInit class DefineContext {
-	public var values:StringMap<String>;
+	public var values:core.ds.PMap<String>;
 	public var definesSignature:Null<String>;
 
-	public inline function new(values:StringMap<String>, definesSignature:Null<String>) {
+	public inline function new(values:core.ds.PMap<String>, definesSignature:Null<String>) {
 		this.values = values;
 		this.definesSignature = definesSignature;
 	}
@@ -366,7 +366,7 @@ class Define {
 	public static function defineValue(ctx:DefineContext, key:String, value:String):Void rawDefineValue(ctx, key, value);
 
 	public static function emptyDefines():DefineContext {
-		return {values: new StringMap(), definesSignature: null};
+		return {values: core.ds.PMap.empty(), definesSignature: null};
 	}
 
 	// port: hxmc's persistent module cache (hxmc/src/hxmc/ModuleCache.hx) records here the defines the
@@ -381,9 +381,7 @@ class Define {
 	// port: throws when the define is absent, like PMap.find in the OCaml source.
 	public static function rawDefinedValue(ctx:DefineContext, key:String):String {
 		if (readHook != null) readHook(ctx, key);
-		var value = ctx.values.get(key);
-		if (value == null && !ctx.values.exists(key)) throw core.ds.NotFound.raise();
-		return value;
+		return ctx.values.find(key);
 	}
 
 	public static function rawDefinedValueSafe(ctx:DefineContext, key:String, ?defaultValue = ""):String {
@@ -391,9 +389,7 @@ class Define {
 	}
 
 	public static function rawDefineValue(ctx:DefineContext, key:String, value:String):Void {
-		var values = ctx.values.copy();
-		values.set(key, value);
-		ctx.values = values;
+		ctx.values = ctx.values.add(key, value);
 		ctx.definesSignature = null;
 	}
 
@@ -402,9 +398,7 @@ class Define {
 	}
 
 	public static function rawUndefine(ctx:DefineContext, key:String):Void {
-		var values = ctx.values.copy();
-		values.remove(key);
-		ctx.values = values;
+		ctx.values = ctx.values.remove(key);
 		ctx.definesSignature = null;
 	}
 

@@ -137,9 +137,8 @@ class ImportHandling {
 		// TODO: cleaner way to get module fields?
 		inline function staticNames():Array<String> {
 			if (md.mStatics == null) return [];
-			var names = PMap.keys(md.mStatics.clStatics);
-			names.reverse();
-			return names;
+			var statics = md.mStatics.clStatics.byName, n = statics.size;
+			return [for (i in 0...n) statics.keyAt(n - 1 - i)];
 		}
 		function failUsefully<R>(name:String, p:Pos):R {
 			var lower = name.charAt(0) >= "a" && name.charAt(0) <= "z",
@@ -174,12 +173,12 @@ class ImportHandling {
 		inline function addStaticInit(t:ModuleType, name:Null<String>, s:String):ResolvedImport return switch resolveTypedef(t) {
 			case TClassDecl(c):
 				c.clBuild();
-				staticFieldResolution(c, PMap.find(s, c.clStatics), name, p);
+				staticFieldResolution(c, c.clStatics.find(s), name, p);
 			case TAbstractDecl(a) if (a.aImpl != null):
 				var c = a.aImpl;
 				c.clBuild();
-				staticAbstractFieldResolution(a, c, PMap.find(s, c.clStatics), name, p);
-			case TEnumDecl(en): enumConstructorResolution(en, PMap.find(s, en.eConstrs), name, p);
+				staticAbstractFieldResolution(a, c, c.clStatics.find(s), name, p);
+			case TEnumDecl(en): enumConstructorResolution(en, en.eConstrs.find(s), name, p);
 			case _: throw NotFound.raise();
 		};
 		inline function addLazyResolution(f:Void->Null<ResolvedImport>):Void ctx.m.importResolution.add(lazyResolution(f));
@@ -221,17 +220,17 @@ class ImportHandling {
 										case TClassDecl(c): {
 												parent: "Class<" + Globals.sTypePath(c.clPath) + ">",
 												kind: "field",
-												names: PMap.keys(c.clStatics)
+												names: c.clStatics.byName.keyArray()
 											};
 										case TAbstractDecl(a) if (a.aImpl != null): {
 												parent: "Abstract<" + Globals.sTypePath(md.mPath) + ">",
 												kind: "field",
-												names: PMap.keys(a.aImpl.clStatics)
+												names: a.aImpl.clStatics.byName.keyArray()
 											};
 										case TEnumDecl(e): {
 												parent: "Enum<" + Globals.sTypePath(md.mPath) + ">",
 												kind: "field",
-												names: PMap.keys(e.eConstrs)
+												names: e.eConstrs.byName.keyArray()
 											};
 										case _: {
 												parent: "Module " + Globals.sTypePath(md.mPath),
@@ -258,7 +257,7 @@ class ImportHandling {
 								var c = md.mStatics;
 								try {
 									c.clBuild();
-									for (cf in c.clOrderedStatics) if (cf.cfName == subName) {
+									for (cf in c.clStatics) if (cf.cfName == subName) {
 										if (!hasClassFieldFlag(cf, CfPublic)) errorPrivate(p);
 										return staticFieldResolution(c, cf, alias, p);
 									}

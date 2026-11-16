@@ -390,8 +390,8 @@ class TypeloadModule {
 				cf.cfMeta = StrictMeta.checkStrictMeta(ctx, cf.cfMeta).concat(cf.cfMeta);
 				for (f in cf.cfOverloads) field(f);
 			}
-			for (cf in c.clOrderedStatics) field(cf);
-			for (cf in c.clOrderedFields) field(cf);
+			for (cf in c.clStatics) field(cf);
+			for (cf in c.clFields) field(cf);
 			if (c.clConstructor != null) field(c.clConstructor);
 		});
 	}
@@ -513,26 +513,23 @@ class TypeloadModule {
 					Error.raiseTypingError("Enum build macro must return a single variable with anonymous object fields", expression.pos);
 			}
 		});
-		var et = TEnum(e, extractParamTypes(e.eParams)), flat = {value: true}, names = [];
+		var et = TEnum(e, extractParamTypes(e.eParams)), flat = {value: true};
 		var index = 0;
 		for (c in constructs) {
 			if (e.eConstrs.exists(c.ecName.name)) Error.raiseTypingError("Duplicate constructor " + c.ecName.name, c.ecName.pos);
 			var f = loadEnumField(local, e, et, flat, index++, c);
-			e.eConstrs.set(f.efName, f);
-			names.push(c.ecName.name);
+			// port: upstream adds to e_constrs and conses c.ec_name (f's name) onto the names
+			e.eConstrs = e.eConstrs.cons(f.efName, f);
 			if (MetadataTools.has(MetaTag.InheritDoc,
 				f.efMeta)) delay(local.g, PConnectField, function() InheritDoc.buildEnumFieldDoc(local, f));
 		}
-		e.eNames = names;
+		e.eConstrs = e.eConstrs.rev();
 		Typecore.unify(local, TType(enumModuleType(e), vector()), e.eType, p);
 		if (flat.value) e.eMeta = VectorTools.cons(({meta: MetaTag.FlatEnum, exprs: vector(), pos: nullPos} : MetadataEntry), e.eMeta);
 		if (MetadataTools.has(MetaTag.InheritDoc, e.eMeta)) delay(local.g, PConnectField, function() InheritDoc.buildEnumDoc(local, e));
 		if (local.com.platform == Jvm && !hasEnumFlag(e, EnExtern)) delay(local.g, PTypeField, function() {
 			e.eMeta = StrictMeta.checkStrictMeta(local, e.eMeta).concat(e.eMeta);
-			var keys = [for (k in e.eConstrs.keys()) k];
-			keys.sort(core.ds.Key.compareStrings);
-			for (k in keys) {
-				var f = e.eConstrs.get(k);
+			for (f in e.eConstrs.byName) {
 				f.efMeta = StrictMeta.checkStrictMeta(local, f.efMeta).concat(f.efMeta);
 			}
 		});

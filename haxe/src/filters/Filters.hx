@@ -80,16 +80,8 @@ class Filters {
 	public static function removeExternFields(scom:SafeContext, t:ModuleType):Void switch t {
 		case TClassDecl(c):
 			if (!Define.defined(scom.defines, Define.DocGen)) {
-				c.clOrderedFields = c.clOrderedFields.filter(function(f) {
-					var b = FilterContext.isRemovableField(scom.isMacroContext, f);
-					if (b) c.clFields.remove(f.cfName);
-					return !b;
-				});
-				c.clOrderedStatics = c.clOrderedStatics.filter(function(f) {
-					var b = FilterContext.isRemovableField(scom.isMacroContext, f);
-					if (b) c.clStatics.remove(f.cfName);
-					return !b;
-				});
+				c.clFields = c.clFields.filter(f -> !FilterContext.isRemovableField(scom.isMacroContext, f));
+				c.clStatics = c.clStatics.filter(f -> !FilterContext.isRemovableField(scom.isMacroContext, f));
 			}
 		case _:
 	}
@@ -115,8 +107,7 @@ class Filters {
 				var f = TypeOps.mkField("__rtti", scom.basic.tstring, c.clPos, Globals.nullPos, true, true);
 				var str = Genxml.genTypeString(t);
 				f.cfExpr = TypeOps.mk(TConst(TString(str)), f.cfType, c.clPos);
-				c.clOrderedStatics.unshift(f);
-				c.clStatics.set(f.cfName, f);
+				c.clStatics = c.clStatics.cons(f.cfName, f);
 			case _:
 		}
 	}
@@ -133,13 +124,11 @@ class Filters {
 					// borrowed from gencommon, but I did wash my hands afterwards
 					var path:core.Globals.GlobalTypePath = {pack: c.clPath.pack, name: c.clPath.name + "_HxMeta"};
 					var ncls = TypeOps.mkClass(c.clModule, path, c.clPos, Globals.nullPos);
-					ncls.clOrderedStatics.unshift(cf);
-					ncls.clStatics.set(cf.cfName, cf);
+					ncls.clStatics = ncls.clStatics.cons(cf.cfName, cf);
 					com.types = (cast com.types : Array<ModuleType>).concat([TClassDecl(ncls)]);
 					c.clMeta = core.ds.VectorTools.cons(({meta: Custom(":hasMetadata"), exprs: vector(), pos: e.epos} : core.Ast.MetadataEntry), c.clMeta);
 				} else {
-					c.clOrderedStatics.unshift(cf);
-					c.clStatics.set(cf.cfName, cf);
+					c.clStatics = c.clStatics.cons(cf.cfName, cf);
 				}
 			}
 		case _:
@@ -161,8 +150,8 @@ class Filters {
 		}
 		switch t {
 			case TClassDecl(c):
-				for (f in c.clOrderedFields) check(f);
-				for (f in c.clOrderedStatics) check(f);
+				for (f in c.clFields) check(f);
+				for (f in c.clStatics) check(f);
 			case _:
 		}
 	}
@@ -207,8 +196,8 @@ class Filters {
 			inline function field(cf:TClassField):Void {
 				if (cf.cfExpr != null) for (f in fl) f(cf.cfExpr);
 			}
-			for (cf in c.clOrderedStatics) field(cf);
-			for (cf in c.clOrderedFields) field(cf);
+			for (cf in c.clStatics) field(cf);
+			for (cf in c.clFields) field(cf);
 			if (c.clConstructor != null) field(c.clConstructor);
 		case _:
 	}
@@ -327,9 +316,7 @@ class Filters {
 				if (!visitedAnons.contains(an)) {
 					visitedAnons.unshift(an);
 					// port: sorted like PMap.iter
-					var keys = [for (k in an.aFields.keys()) k];
-					keys.sort(core.ds.Key.compareStrings);
-					for (k in keys) checkT(m, an.aFields.get(k).cfType);
+					for (cf in an.aFields) checkT(m, cf.cfType);
 				}
 			case TMono(r):
 				if (r.tmType != null) checkT(m, r.tmType);
@@ -347,8 +334,8 @@ class Filters {
 		}
 		switch t {
 			case TClassDecl(c):
-				for (cf in c.clOrderedStatics) checkField(c.clModule, cf);
-				for (cf in c.clOrderedFields) checkField(c.clModule, cf);
+				for (cf in c.clStatics) checkField(c.clModule, cf);
+				for (cf in c.clFields) checkField(c.clModule, cf);
 				if (c.clConstructor != null) checkField(c.clModule, c.clConstructor);
 			case _:
 		}
@@ -414,19 +401,14 @@ class Filters {
 					f.cfOverloads = [for (o in saved.overloads) restoreOne(o.field, o.state)];
 					return f;
 				}
-				inline function mkPmap(lst:Array<TClassField>):StringMap<TClassField> {
-					var map = new StringMap();
-					for (f in lst) map.set(f.cfName, f);
-					return map;
-				}
 				var meta = c.clMeta;
 				var path = c.clPath;
 				var ext = TypeOps.hasClassFlag(c, CExtern);
 				var sup = c.clSuper;
 				var impl = c.clImplements.copy();
 				var csr = c.clConstructor == null ? null : mkFieldRestore(c.clConstructor);
-				var ofr = c.clOrderedFields.map(mkFieldRestore);
-				var osr = c.clOrderedStatics.map(mkFieldRestore);
+				var ofr = c.clFields.mapToArray(mkFieldRestore);
+				var osr = c.clStatics.mapToArray(mkFieldRestore);
 				var init = c.clInit == null ? null : mkFieldRestore(c.clInit);
 				c.clRestore = function() {
 					c.clSuper = sup;
@@ -436,10 +418,8 @@ class Filters {
 					else TypeOps.removeClassFlag(c, CExtern);
 					c.clPath = path;
 					c.clInit = init == null ? null : restoreField(init);
-					c.clOrderedFields = ofr.map(restoreField);
-					c.clOrderedStatics = osr.map(restoreField);
-					c.clFields = mkPmap(c.clOrderedFields);
-					c.clStatics = mkPmap(c.clOrderedStatics);
+					c.clFields = TypeOps.classFieldsOf(ofr.map(restoreField));
+					c.clStatics = TypeOps.classFieldsOf(osr.map(restoreField));
 					c.clConstructor = csr == null ? null : restoreField(csr);
 					c.clDescendants = [];
 					for (v in vars) v.variable.vType = v.type;
@@ -548,8 +528,8 @@ class Filters {
 							if (cf.cfExpr != null && cf.cfExprUnoptimized == null && mightNeedCfUnoptimized(cls,
 								cf)) cf.cfExprUnoptimized = cf.cfExpr;
 						}
-						for (cf in cls.clOrderedFields) field(cf);
-						for (cf in cls.clOrderedStatics) field(cf);
+						for (cf in cls.clFields) field(cf);
+						for (cf in cls.clStatics) field(cf);
 						if (cls.clConstructor != null) field(cls.clConstructor);
 					}
 				case _:

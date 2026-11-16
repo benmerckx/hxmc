@@ -56,6 +56,13 @@ class Return extends haxe.Exception {
 		super("Return");
 		this.value = value;
 	}
+
+	// port: Eval's `return`, an exception per return as upstream's: on hxmc it records no
+	// native stack (made for every return, it would walk the interpreter's whole stack)
+	#if (target.name == "hxmc")
+	@:noCompletion override function __recordsStack():Bool
+		return false;
+	#end
 }
 
 class EvalExceptions {

@@ -438,6 +438,28 @@ class Emit implements hxmc.Target.Emitter {
 				a.ldst(false, 8, false, true, i.s1, X16, 0);
 			case TEBLOAD:
 				a.ldst(true, 8, false, true, i.d, 18, i.imm);
+			case TLSBASE:
+				// Apple's TLV access inline (dyld's _tlv_get_addr): the image's
+				// descriptor (hxmc_tls_start: offset 0) holds the pthread key whose
+				// slot in the thread's TSD array (tpidrro_el0) is its block; an empty
+				// slot (the thread's first access) calls the thunk, which keeps every
+				// register but x0, x16, x17 and lr (the TLV convention): x0 and lr
+				// are kept here, so the function stays a leaf
+				var desc = obj.sym("hxmc_tls_start"), done = a.newLabel();
+				a.adrSym(X16, desc, 0);
+				a.ldst(true, 8, false, true, X17, X16, 8);
+				a.mrsTpRo(X16);
+				a.logicI(0, true, X16, X16, -8, -1);
+				a.ldstR(true, 8, false, true, X16, X16, X17, true);
+				a.cbz(true, X16, done, true);
+				a.pair(false, 0, 30, 31, -16, 1);
+				a.adrSym(0, desc, 0);
+				a.ldst(true, 8, false, true, X16, 0, 0);
+				a.blr(X16);
+				a.movR(true, X16, 0);
+				a.pair(true, 0, 30, 31, 16, 2);
+				a.bind(done);
+				a.movR(true, i.d, X16);
 			case BRK:
 				a.brk();
 			case LDAR:

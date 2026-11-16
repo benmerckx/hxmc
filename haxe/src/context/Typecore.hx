@@ -26,7 +26,7 @@ import core.Globals.GlobalTypePath;
 import core.Ast;
 import core.TType;
 import core.Meta;
-import core.ds.PersistentMap;
+import core.ds.PMap;
 import core.ds.NotFound;
 import context.TyperPass;
 import context.Resolution;
@@ -326,14 +326,14 @@ class MonomorphList {
 
 @:structInit class TyperField {
 	public var curfield:TClassField;
-	public var locals:PersistentMap<String, TVar>;
+	public var locals:PMap<TVar>;
 	public var vthis:Null<TVar>;
 	public var isUntyped:Bool;
 	public var meta:Metadata;
 	public var inDisplay:Bool;
 	public var inCallArgs:Bool;
 
-	public inline function new(curfield:TClassField, locals:PersistentMap<String, TVar>, vthis:Null<TVar>, isUntyped:Bool, meta:Metadata,
+	public inline function new(curfield:TClassField, locals:PMap<TVar>, vthis:Null<TVar>, isUntyped:Bool, meta:Metadata,
 			inDisplay:Bool, inCallArgs:Bool) {
 		this.curfield = curfield;
 		this.locals = locals;
@@ -509,7 +509,7 @@ class TyperManager {
 	};
 
 	public static function createCtxF(cf:TClassField):TyperField return {
-		locals: PersistentMap.empty(),
+		locals: PMap.empty(),
 		curfield: cf,
 		vthis: null,
 		isUntyped: false,
@@ -1001,8 +1001,8 @@ class Typecore {
 				if (other != null) cf.cfDoc = other.cfDoc;
 			}
 		}
-		for (cf in c.clOrderedFields) maybeMerge(core.clFields, cf);
-		for (cf in c.clOrderedStatics) maybeMerge(core.clStatics, cf);
+		for (cf in c.clFields) maybeMerge(core.clFields.byName, cf);
+		for (cf in c.clStatics) maybeMerge(core.clStatics.byName, cf);
 		if (c.clConstructor != null && c.clConstructor.cfDoc == null && core.clConstructor != null)
 			c.clConstructor.cfDoc = core.clConstructor.cfDoc;
 	}

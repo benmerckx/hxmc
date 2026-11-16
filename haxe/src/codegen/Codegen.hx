@@ -41,7 +41,7 @@ class Codegen {
 	// TOOLS
 
 	public static function hasProperties(c:TClass):Bool {
-		for (f in c.clOrderedFields) switch f.cfKind {
+		for (f in c.clFields) switch f.cfKind {
 			case Var({vRead: AccCall | AccPrivateCall}) | Var({vWrite: AccCall | AccPrivateCall}):
 				return true;
 			case _:
