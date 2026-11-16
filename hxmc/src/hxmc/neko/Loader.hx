@@ -77,7 +77,7 @@ class Loader {
 		var nargs = a[1].int();
 		if (nargs >= 10 || nargs < -1) throw Builtins.failure;
 		var f = Prims.find(name, nargs);
-		if (f == null) throw VM.error("Primitive not found : " + name + "(" + nargs + ")");
+		if (f == null) throw VM.failure("Primitive not found : " + name + "(" + nargs + ")", "load.c", 357);
 		return f;
 	}
 
@@ -91,8 +91,8 @@ class Loader {
 		if (Tag.isAbstract(mv) && mv.asAbs().kind == "module") return (mv.asAbs().data : Module).exports;
 		var name = mname.toString();
 		var file = StringTools.endsWith(name, ".n") ? selectFile(o.get(Fields.id("path")), name, "") : selectFile(o.get(Fields.id("path")), name, ".n");
-		var bytes = try sys.io.File.getBytes(file) catch (_:Dynamic) throw VM.error("Module not found : " + name);
-		var m = try Module.read(bytes, vthis) catch (e:Module.ReadError) throw VM.error("Invalid module : " + name);
+		var bytes = try sys.io.File.getBytes(file) catch (_:Dynamic) throw VM.failure("Module not found : " + name, "load.c", 181);
+		var m = try Module.read(bytes, vthis) catch (e:Module.ReadError) throw VM.failure("Invalid module : " + name, "load.c", 398);
 		m.name = new NStr(mname.b.sub(0, mname.b.length));
 		cache.set(mid, new NAbs("module", m));
 		vm.execute(m);

@@ -52,6 +52,8 @@ class Main {
 		var b = new BytesBuffer();
 		var st = e.stack == null ? [] : e.stack.copy();
 		st.reverse();
+		// (after a $rethrow, the stack caught before follows, as at a trap)
+		if (e.rethrown) st = st.concat(vm.excStack);
 		for (s in st) {
 			b.addString("Called from ");
 			if (s == null) b.addString("a C function") else if (Tag.isString(s)) {

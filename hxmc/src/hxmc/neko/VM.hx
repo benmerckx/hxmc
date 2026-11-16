@@ -65,6 +65,17 @@ class VM {
 	public static inline function error(msg:String):NekoError
 		return new NekoError(NStr.of(msg));
 
+	// _neko_failure (vm/others.c): an object of the C source's position,
+	// "file(line) : msg" as a string
+	public static function failure(msg:String, file:String, line:Int):NekoError {
+		var o = new NObj();
+		o.set(Fields.id("msg"), NStr.of(msg));
+		o.set(Fields.id("file"), NStr.of(file));
+		o.set(Fields.id("line"), line);
+		o.set(Fields.idString, Builtins.prim("failure_to_string", 0, (vm, a) -> NStr.of(file + "(" + line + ") : " + msg)));
+		return new NekoError(o);
+	}
+
 	// ---- the stack
 
 	inline function push(v:NValue) {
@@ -97,9 +108,19 @@ class VM {
 		try {
 			for (a in args)
 				push(a);
+			// (Neko's interp entered from C first has a frame of no module:
+			// "a C function" in the stacks)
+			if (Tag.isFunction(f) && f.asFun().prim == null && f.asFun().nargs == args.length) {
+				if (depth >= MAX_DEPTH) {
+					depth = 0;
+					throw error("Stack Overflow");
+				}
+				fmods[++depth] = -2;
+			}
 			var r = callOp(f, keepThis ? vthis : thisv, args.length);
 			vthis = oldThis;
 			env = oldEnv;
+			depth = oldDepth;
 			return r;
 		} catch (e:Dynamic) {
 			var ne = wrap(e);
@@ -721,7 +742,8 @@ class VM {
 		if (ne.stack != null) return;
 		var st:Array<NValue> = [];
 		var k = depth;
-		while (k >= 0) {
+		// (-1: no frame yet, a primitive called before any module ran)
+		while (k >= 0 && fmods[k] != -1) {
 			var m = Module.byId(fmods[k]);
 			st.push(m == null ? null : m.position(m.oldOf[fpcs[k]]));
 			k--;
