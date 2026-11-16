@@ -154,10 +154,18 @@ class Emit implements hxmc.Target.Emitter {
 		a.movSp(Asm.FP, SP);
 		op(Unwind.SETFP);
 		subSp(frameSize - split);
-		for (k in 0...saved.length) {
-			ldst(false, 8, false, saved[k], SP, saveOff[k]);
-			op(Unwind.SAVE, saved[k], saveOff[k]);
-		}
+		var k = 0;
+		while (k < saved.length)
+			if (paired(k)) {
+				a.pair(false, saved[k], saved[k + 1], SP, saveOff[k], 0);
+				op(Unwind.SAVE, saved[k], saveOff[k]);
+				op(Unwind.SAVE, saved[k + 1], saveOff[k + 1]);
+				k += 2;
+			} else {
+				ldst(false, 8, false, saved[k], SP, saveOff[k]);
+				op(Unwind.SAVE, saved[k], saveOff[k]);
+				k++;
+			}
 		subSp(split);
 		op(Unwind.ENDPROLOGUE);
 		// (a move of a register to itself: a 32-bit one zero-extends)
@@ -241,6 +249,13 @@ class Emit implements hxmc.Target.Emitter {
 		}
 	}
 
+	// saved registers k and k + 1 by one stp/ldp: of a kind, in adjacent
+	// slots within its reach (not on Windows: its unwind codes are one per
+	// instruction, save_reg's)
+	function paired(k:Int):Bool
+		return !probe && k + 1 < saved.length && (saved[k] >= 32) == (saved[k + 1] >= 32) && saveOff[k + 1] == saveOff[k] + 8
+			&& saveOff[k] <= 496;
+
 	function epilogue() {
 		op(Unwind.EPILOGUE);
 		if (split >= 4096) {
@@ -251,10 +266,18 @@ class Emit implements hxmc.Target.Emitter {
 			a.addSubI(0, true, SP, SP, split & 0xfff);
 			op(Unwind.FREE, split & 0xfff);
 		}
-		for (k in 0...saved.length) {
-			ldst(true, 8, false, saved[k], SP, saveOff[k]);
-			op(Unwind.RESTORE, saved[k], saveOff[k]);
-		}
+		var k = 0;
+		while (k < saved.length)
+			if (paired(k)) {
+				a.pair(true, saved[k], saved[k + 1], SP, saveOff[k], 0);
+				op(Unwind.RESTORE, saved[k], saveOff[k]);
+				op(Unwind.RESTORE, saved[k + 1], saveOff[k + 1]);
+				k += 2;
+			} else {
+				ldst(true, 8, false, saved[k], SP, saveOff[k]);
+				op(Unwind.RESTORE, saved[k], saveOff[k]);
+				k++;
+			}
 		a.movSp(SP, Asm.FP);
 		op(Unwind.SPFP);
 		a.pair(true, Asm.FP, Asm.LR, SP, 16, 2);
