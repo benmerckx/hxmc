@@ -260,16 +260,18 @@ declarations as in Setup, its output and every file compared each time.
 | 6842fe5 | Str.eqSlow: one width compared without its widths tested again (StrView.sameUnits takes it), the bytes `n << !one`; Opt.lowered: a comparison's `c ? 1 : 0` is c, `c ? 0 : 1` is `c ^ 1` | tshx -0.05% (hx_str_eq_slow -15%) |
 | 5dc8c87 | Str.across12 (and lastAcross12, dcfb335): a pattern with a unit above 0xFF is in no one-byte string (-1 at once) | tshx -0.30% (Str.find 36.6 -> 5.7 M) |
 | dcfb335 | Boxes.f2iSlow: a Float to Int out of range below 2^63 is its 64-bit truncation's low half (f % 2^32's), fmod only beyond | tshx -0.30% (LibM.fmod 29.8 M gone) |
+| 6c1e331 | Gc.remember: the remembered set's growth and its store out of line (rememberGrown): hxmc_barrier_slow keeps nothing across a call (no callee-saved register saved: 34 -> 26 instructions a call, 3.6 M calls) | tshx -0.21%, alloc -0.23% |
+| 2995212 | Arr.resize: its shrinking out of line (cut), as its growth: no callee-saved register on its other ways | tshx -0.04% |
 
-At dcfb335, the third session's commits merged in (valgrind instructions;
+At the end of the session, the third session's commits merged in (valgrind instructions;
 the LLVM release builds, and the numbers in parentheses, of fe536a4d, this
 session's start):
 
 | | native | LLVM release (O2) | |
 | --- | --- | --- | --- |
-| tshx | 9.883 G (10.098 G) | 10.371 G | native -4.7% |
+| tshx | 9.859 G (10.098 G) | 10.371 G | native -4.9% |
 | json | 2.925 G (3.362) | 2.921 G | +0.1% |
-| alloc | 5.977 G (6.042) | 5.749 G | +4.0% |
+| alloc | 5.963 G (6.042) | 5.749 G | +3.7% |
 | bcrypt | 10.177 G (11.019) | 9.886 G | +2.9% |
 | binarytrees | 8.682 G (8.752) | 8.570 G | +1.3% |
 | mandelbrot | 2.079 G (2.079) | 1.881 G | +10.5% |
@@ -330,6 +332,9 @@ bootstrap order, or the shared module cache above, not looked into.
 6. Regalloc without splitting: a value live across a loop spills whole
    (Str.hashSlow's `s`, reloaded four times before the loop); the reason
    Opt.promoteSlots stops at loop headers.
+   And no shrink-wrapping: a function saves its callee-saved registers on
+   every way when one rare way calls (hxmc_barrier_slow, Arr.resize were
+   split by hand; hx_apush_slow, NArray.view, Dyn.dynEq are such too).
 7. Opt.promoteSlots at other joins once spills are cheaper; json's word
    loop still sign-extends its counter (`k < m - 7`, k += 8: a bound not a
    constant).
