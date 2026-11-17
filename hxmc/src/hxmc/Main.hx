@@ -207,15 +207,11 @@ class Main {
 		}) ? 1 : 0;
 		opts.mirHost = hxmc.ir.Lower.mirHost == 1;
 		hxmc.ir.Lower.compact = compactRefs(abi, opts);
-		hxmc.ir.Lower.autoEnums = hxmc.ir.Lower.compact
-			? [for (cp in com.classPaths.asList()) if (cp.scope == core.ClassPath.ClassPathScope.Std) StringTools.replace(haxe.io.Path.addTrailingSlash(sys.FileSystem.absolutePath(cp.path)), "\\", "/")]
-				.concat(hxmc.ir.RawCheck.stdRoots([for (cp in com.classPaths.asList()) cp.path]))
-			: null;
 		// (Mem.compact: a class of the program asks for compressed references; one
 		// Lower never reaches keeps the runtime's tests, which then find none)
 		hxmc.ir.Lower.compactTypes = hxmc.ir.Lower.compact && Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): hxmc.ir.Lower.hasMeta(":hxmc.compact", c.clMeta);
-			case TEnumDecl(e): hxmc.ir.Lower.hasMeta(":hxmc.compact", e.eMeta) || hxmc.ir.Lower.autoCompact(e);
+			case TEnumDecl(e): hxmc.ir.Lower.hasMeta(":hxmc.compact", e.eMeta);
 			case _: false;
 		}) ? 1 : 0;
 		// (the positions of every statement, natively: a program that reads

@@ -554,16 +554,13 @@ on both targets.
 
 `@:hxmc.compact` on a class stores the references it and its subclasses
 declare in 4 bytes instead of 8, where the target allows it (executables
-for Linux, and Windows on x86-64; elsewhere it changes nothing). The
-program's own enums are so without it: their constructors' arguments
-(references, Int and Bool) take 4 bytes each, and a constructor of one
-such argument none (a tree of `Leaf(v)` and `Node(l, r, tag)`: 55% less
-memory, 39% faster). The program behaves the same; a heap of small linked
-objects (syntax trees, symbols) takes 10 to 16% less memory in the
-measured programs, at about the same speed. Such a class has at most 32
-slots, and a compressed field has no address (`Struct.fieldOffset`).
-`-D hxmc.compact=0` turns all of it off (the heap is then not kept below
-32 GB). Details and numbers: [hxmc.md](hxmc.md#compressed-references).
+for Linux, and Windows on x86-64; elsewhere it changes nothing); on an
+enum, its constructors' arguments (references, Int and Bool in 4 bytes
+each). The program behaves the same; a heap of small linked objects (syntax trees,
+symbols) takes 10 to 16% less memory in the measured programs, at about
+the same speed. Such a class has at most 32 slots, and a compressed field
+has no address (`Struct.fieldOffset`). Details and numbers:
+[hxmc.md](hxmc.md#compressed-references).
 
 ### Null access
 

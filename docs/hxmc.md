@@ -219,14 +219,7 @@ may be encoded in them, [values of type parameters](#values-of-type-parameters))
 Float and Int64; a struct field; a dynamic method's slot; the fields of a
 superclass that is not compact (its code reads them where they are).
 
-**Enums.** Every enum of the program with arguments is compact without the
-annotation (`Lower.autoCompact`): not the std's (typed in every build,
-they would give every program compressed references, and their heap below
-32 GB, `CompactFree`), not an extern one, nor one whose constructor needs
-more than 32 slots, which stays as it is (with the annotation, an error).
-A tree of `Leaf(v)` and `Node(l, r, tag)`: 388 to 176 MB, 1.31 to 0.80 s;
-the programs that mark their hot enums (the compiler, tshx) unchanged.
-`@:hxmc.compact` on an enum lays out each of its constructors'
+**Enums.** `@:hxmc.compact` on an enum lays out each of its constructors'
 arguments as a compact class's fields (`Facts.assignTypes`,
 `CtorInfo.locs`): an Int, a Bool or a compressed reference in a 4-byte
 half, packed in order, where an enum without it has a slot per argument
