@@ -67,11 +67,7 @@ class TanonIdentification<A> {
 		return loop(t);
 	}
 
-	public static function countFields(pm:TypeMap<TClassField>):Int {
-		var i = 0;
-		for (_ in pm.keys()) i++;
-		return i;
-	}
+	public static inline function countFields(pm:TypeMap<TClassField>):Int return pm.size;
 
 	public static function pfmOfTypedef<A>(td:TDef):PathFieldMapping<A> return switch follow(td.tType) {
 		case TAnon(an): {
@@ -95,44 +91,43 @@ class TanonIdentification<A> {
 	}
 
 	public function unify(uctx:UnificationContext, tc:T, pfm:PathFieldMapping<A>):Void {
-		inline function pairs(fields:TypeMap<TClassField>):Array<{cf:TClassField, other:TClassField}> {
-			var acc = [];
-			var names = [for (n in pfm.pfmFields.keys()) n];
-			names.sort(core.ds.Key.compareStrings);
-			for (n in names) {
-				var cf = pfm.pfmFields.get(n);
-				var other = fields.get(cf.cfName);
-				if (other == null) throw NotFound.raise();
-				acc.unshift({cf: cf, other: other});
-			}
-			return acc;
+		// port: upstream's pair_up conses (cf, cf') in key order, then walks that list: the
+		// matches at pfm_fields' indices, every one found first (Not_found), then walked
+		// backwards.
+		var pfmFields = pfm.pfmFields, n = pfmFields.size;
+		inline function pairUp(fields:TypeMap<TClassField>):haxe.ds.Vector<TClassField> {
+			var others = new haxe.ds.Vector<TClassField>(n);
+			for (i in 0...n) others[i] = fields.find(pfmFields.valueAt(i).cfName);
+			return others;
 		}
 		inline function fieldType(cf:TClassField):T return uctx.opaqueFieldParams ? cf.cfType : monomorphs(cf.cfParams, cf.cfType);
 		try {
 			var monos:core.TType.TParams = switch follow(tc) {
 				case TInst(c, tl):
-					var ps = pairs(c.clFields);
+					var others = pairUp(c.clFields.byName);
 					var ms = pfm.pfmParams.map(function(_) return mkMono());
-					for (pair in ps) {
-						if (!unifyKind(uctx, pair.other.cfKind, pair.cf.cfKind)) throw new Unify_error([UnifyCustom("kind mismatch")]);
-						core.TUnification.unify(applyParams(c.clParams, tl, fieldType(pair.other)),
-							applyParams(pfm.pfmParams, ms, fieldType(pair.cf)));
+					var i = n;
+					while (i > 0) {
+						var cf = pfmFields.valueAt(--i), other = others[i];
+						if (!unifyKind(uctx, other.cfKind, cf.cfKind)) throw new Unify_error([UnifyCustom("kind mismatch")]);
+						core.TUnification.unify(applyParams(c.clParams, tl, fieldType(other)), applyParams(pfm.pfmParams, ms, fieldType(cf)));
 					}
 					ms;
 				case TAnon(an):
-					var fields = an.aFields.copy();
-					var ps = pairs(an.aFields);
+					var others = pairUp(an.aFields);
 					var ms = pfm.pfmParams.map(function(_) return mkMono());
-					for (pair in ps) {
+					var i = n;
+					while (i > 0) {
+						var cf = pfmFields.valueAt(--i), other = others[i];
 						if (!uctx.allowOptionalMismatch
-							&& core.Meta.has(StrictMeta.Optional,
-								pair.cf.cfMeta) != core.Meta.has(StrictMeta.Optional,
-								pair.other.cfMeta)) throw new Unify_error([UnifyCustom("optional mismatch")]);
-						if (!unifyKind(uctx, pair.other.cfKind, pair.cf.cfKind)) throw new Unify_error([UnifyCustom("kind mismatch")]);
-						fields.remove(pair.cf.cfName);
-						typeEqCustom(uctx, fieldType(pair.other), applyParams(pfm.pfmParams, ms, fieldType(pair.cf)));
+							&& core.Meta.has(StrictMeta.Optional, cf.cfMeta) != core.Meta.has(StrictMeta.Optional,
+								other.cfMeta)) throw new Unify_error([UnifyCustom("optional mismatch")]);
+						if (!unifyKind(uctx, other.cfKind, cf.cfKind)) throw new Unify_error([UnifyCustom("kind mismatch")]);
+						typeEqCustom(uctx, fieldType(other), applyParams(pfm.pfmParams, ms, fieldType(cf)));
 					}
-					if (countFields(fields) > 0) throw new Unify_error([UnifyCustom("not enough fields")]);
+					// port: upstream removes each paired name from the anon's fields and checks
+					// that none is left; the names are distinct fields of it, so that is a count.
+					if (an.aFields.size != n) throw new Unify_error([UnifyCustom("not enough fields")]);
 					ms;
 				case _: throw new Unify_error([UnifyCustom("bad type")]);
 			};
@@ -205,15 +200,9 @@ class TanonIdentification<A> {
 				return pfm;
 			}
 		});
-		var arity = 0;
-		var fields = an.aFields.copy();
-		var names = [for (n in (an.aFields.keys() : Iterator<String>)) n];
-		names.sort(core.ds.Key.compareStrings);
-		for (n in names) {
-			var cf = an.aFields.get(n);
-			arity++;
-			fields.set(cf.cfName, core.ds.Record.withFields(cf, {cfType: replaceMono(uctx.equalityKind != EqStricter, cf.cfType)})); // TODO: not very robust
-		}
+		var arity = an.aFields.size;
+		var fields = an.aFields.map(function(cf) return core.ds.Record.withFields(cf,
+			{cfType: replaceMono(uctx.equalityKind != EqStricter, cf.cfType)})); // TODO: not very robust
 		an = core.TType.TAnon.withStatusRef(fields, an.aStatusRef);
 		return protect(function() {
 			try {

@@ -5,7 +5,7 @@ import hxmc.ir.Ir;
 // hxmc's sources (haxe/src, hxmc/src; @hxmc/source's), with this main, that
 // adds a function to each program it builds for hxmc after the lowering
 // (hxmc.Main.beforeCodegen): `frontend_answer`, returning 42, which the
-// program's main then passes to its `show` first (FrontendCheck, the npm job).
+// program's main then passes to its `show` first (Units, the npm job).
 //   haxe -cp haxe/src -cp hxmc/src -cp hxmc/test/frontend -main Frontend -D disable-parallelism --custom-target hxmc=<compiler>
 //   <compiler> -cp hxmc/test/frontend/app -main Main --custom-target hxmc=<out>   (prints "answer 42", "answer 1")
 class Frontend {

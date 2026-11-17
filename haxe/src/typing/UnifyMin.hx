@@ -68,37 +68,37 @@ class UnifyMin {
 			// specific case for const anon : we don't want to hide fields but restrict their common type
 			var fcount = -1;
 			inline function expr(f:TClassField):TExpr return f.cfExpr == null ? mk(TBlock(vector()), f.cfType, f.cfPos) : f.cfExpr;
-			var fields = new StringMap<Array<TExpr>>();
-			for (e in el) switch follow(e.etype) {
+			// port: upstream conses each anon's field expression onto that field's list: every
+			// list ends up with one expression per element of el, the last one's first. A
+			// Vector of that length per field, filled from the end.
+			var k = el.length;
+			var fields:core.ds.PMap<haxe.ds.Vector<TExpr>> = core.ds.PMap.empty();
+			for (j in 0...k) switch follow(el[j].etype) {
 				case TAnon(a) if (a.aStatus == Const):
-					var names = [for (name in a.aFields.keys()) name];
-					names.sort(core.ds.Key.compareStrings);
 					if (fcount == -1) {
-						fcount = names.length;
-						for (name in names) fields.set(name, [expr(a.aFields.get(name))]);
+						fcount = a.aFields.size;
+						fields = a.aFields.map(function(f) {
+							var l = new haxe.ds.Vector<TExpr>(k);
+							l[k - 1] = expr(f);
+							return l;
+						});
 					} else {
-						if (fcount != names.length) throw core.ds.FastThrow.of("Not_found");
-						var previous = [for (name in fields.keys()) name];
-						previous.sort(core.ds.Key.compareStrings);
-						for (name in previous) {
-							var f = a.aFields.get(name);
+						if (fcount != a.aFields.size) throw core.ds.FastThrow.of("Not_found");
+						for (i in 0...fields.size) {
+							var f = a.aFields.get(fields.keyAt(i));
 							if (f == null) throw core.ds.FastThrow.of("Not_found");
-							fields.set(name, [expr(f)].concat(fields.get(name)));
+							fields.valueAt(i)[k - 1 - j] = expr(f);
 						}
 					}
 				case _:
 					throw core.ds.FastThrow.of("Not_found");
 			}
-			var result = new StringMap<TClassField>();
-			var names = [for (name in fields.keys()) name];
-			names.sort(core.ds.Key.compareStrings);
-			for (name in names) {
-				var values = fields.get(name);
-				var t = try unifyMinRaise(basic, core.ds.VectorTools.ofArray(values)) catch (_:Unify_error) {
+			var result = fields.mapi(function(name, values) {
+				var t = try unifyMinRaise(basic, values) catch (_:Unify_error) {
 					throw core.ds.FastThrow.of("Not_found");
 				};
-				result.set(name, mkField(name, t, values[0].epos, nullPos));
-			}
+				return mkField(name, t, values[0].epos, nullPos);
+			});
 			return mkAnon(Closed, result);
 		} catch (error:Dynamic) {
 			if (error != "Not_found") throw core.ds.FastThrow.of(error);

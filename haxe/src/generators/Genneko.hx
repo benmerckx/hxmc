@@ -180,14 +180,7 @@ class Genneko {
 	static function array(p:NPos, el:Array<NExpr>):NExpr return call(p, builtin(p, "array"), el);
 
 	// port: `pmap_list f p`: PMap.fold in key order, consing, so the largest key comes first.
-	static function pmapList<V>(f:V->NExpr, p:haxe.ds.StringMap<V>):Array<NExpr> {
-		var acc = core.ds.PMap.fold((v, acc:Array<NExpr>) -> {
-			acc.push(f(v));
-			acc;
-		}, p, []);
-		acc.reverse();
-		return acc;
-	}
+	static inline function pmapList<V>(f:V->NExpr, p:core.ds.PMap<V>):Array<NExpr> return p.foldCons(f);
 
 	static function needsReturn(e:NExpr):Bool {
 		return switch e.decl {
@@ -508,11 +501,12 @@ class Genneko {
 		}
 	}
 
-	static function genMethod(ctx:Context, p:NPos, c:TClassField, acc:Array<{name:String, e:NExpr}>):Array<{name:String, e:NExpr}> {
+	// port: gen_method conses the field's entry onto acc: here the entry, or null for none.
+	static function genMethod(ctx:Context, p:NPos, c:TClassField):Null<{name:String, e:NExpr}> {
 		ctx.curmethod = c.cfName;
-		if (!isPhysicalField(c)) return acc;
+		if (!isPhysicalField(c)) return null;
 		var e = c.cfExpr;
-		if (e == null) return [{name: c.cfName, e: null_(p)}].concat(acc);
+		if (e == null) return {name: c.cfName, e: null_(p)};
 		switch e.eexpr {
 			case TCall({eexpr: TField(_, FStatic({clPath: {pack: ["neko"], name: "Lib"}}, {cfName: load = "load" | "loadLazy"}))},
 				[{eexpr: TConst(TString(m))}, {eexpr: TConst(TString(f))}, {eexpr: TConst(TInt(n))}]):
@@ -520,18 +514,25 @@ class Genneko {
 				var e = call(p, new NExpr(EField(builtin(p, "loader"), "loadprim"), p),
 					[new NExpr(EBinop("+", new NExpr(EBinop("+", str(p, m), str(p, "@")), p), str(p, f)), p), new NExpr(EConst(Int(n)), p)]);
 				var e = (if (load == "load") e else new NExpr(ETry(e, "@e", call(p, ident(p, "@lazy_error"), [ident(p, "@e")])), p));
-				return [{name: c.cfName, e: e}].concat(acc);
+				return {name: c.cfName, e: e};
 			case TFunction(_):
-				return [{name: (if (c.cfName == "new") "__construct__" else c.cfName), e: genExpr(ctx, e)}].concat(acc);
+				return {name: (if (c.cfName == "new") "__construct__" else c.cfName), e: genExpr(ctx, e)};
 			case _:
-				return [{name: c.cfName, e: null_(p)}].concat(acc);
+				return {name: c.cfName, e: null_(p)};
 		}
 	}
 
-	// port: PMap.fold (gen_method ctx p) over a field map, in key order.
-	static function foldMethods(ctx:Context, p:NPos, fields:haxe.ds.StringMap<TClassField>,
+	// port: PMap.fold (gen_method ctx p) over a field map: the entries made in key order,
+	// consed onto acc, so in reverse before it.
+	static function foldMethods(ctx:Context, p:NPos, fields:TypeMap<TClassField>,
 			acc:Array<{name:String, e:NExpr}>):Array<{name:String, e:NExpr}> {
-		return core.ds.PMap.fold((f, acc) -> genMethod(ctx, p, f, acc), fields, acc);
+		var made = [];
+		for (f in fields) {
+			var m = genMethod(ctx, p, f);
+			if (m != null) made.push(m);
+		}
+		made.reverse();
+		return made.concat(acc);
 	}
 
 	static function genClass(ctx:Context, c:TClass):NExpr {
@@ -547,8 +548,8 @@ class Genneko {
 				switch f.cfExpr {
 					case {eexpr: TFunction(tf)}:
 						var params = tf.tfArgs.map(a -> a.variable.vName);
-						genMethod(ctx, p, f, [
-							{
+						// port: gen_method consing the constructor's entry onto this one
+						var fnew = {
 								name: "new",
 								e: new NExpr(EFunction(params.mapToArray(bs), new NExpr(EBlock([
 									new NExpr(EVars([{name: "@o", expr: call(p, builtin(p, "new"), [null_(p)])}]), p),
@@ -560,8 +561,9 @@ class Genneko {
 									])),
 									new NExpr(EReturn(ident(p, "@o")), p)
 								]), p)), p)
-							}
-						]);
+							};
+						var m = genMethod(ctx, p, f);
+						m == null ? [fnew] : [m, fnew];
 					case _:
 						[];
 				}
@@ -587,14 +589,14 @@ class Genneko {
 		var tmp = new NExpr(EVars([{name: "@tmp", expr: call(p, builtin(p, "new"), [null_(p)])}]), p);
 		var estat = new NExpr(EBinop("=", stpath, ident(p, "@tmp")), p);
 		function genProps(props:Array<{name:String, field:String}>) return new NExpr(EObject(props.map(ns -> {name: bs(ns.name), expr: str(p, ns.field)})), p);
-		var sprops = (switch codegen.Codegen.getProperties(c.clOrderedStatics) {
+		var sprops = (switch codegen.Codegen.getProperties(c.clStatics.toArray()) {
 			case []: [];
 			case l: [{name: "__properties__", e: genProps(l)}];
 		});
-		var sfields = [{name: "prototype", e: clpath}].concat(sprops).concat(foldMethods(ctx, p, c.clStatics, fnew.concat(others))).map(build);
+		var sfields = [{name: "prototype", e: clpath}].concat(sprops).concat(foldMethods(ctx, p, c.clStatics.byName, fnew.concat(others))).map(build);
 		var eclass = new NExpr(EBinop("=", clpath, ident(p, "@tmp")), p);
-		var mfields = foldMethods(ctx, p, c.clFields, [fserialize].concat(fstring)).map(build);
-		var props = codegen.Codegen.getProperties(c.clOrderedFields);
+		var mfields = foldMethods(ctx, p, c.clFields.byName, [fserialize].concat(fstring)).map(build);
+		var props = codegen.Codegen.getProperties(c.clFields.toArray());
 		var emeta = [new NExpr(EBinop("=", field(p, clpath, "__class__"), stpath), p)].concat(switch props {
 			case []: [];
 			case _:
@@ -682,7 +684,7 @@ class Genneko {
 				{name: "__serialize", expr: ident(p, "@serialize")},
 				{name: "__string", expr: ident(p, "@enum_to_string")}
 			]), p)), p)
-		].concat(pmapList(genEnumConstr.bind(ctx, uname), e.eConstrs)).concat(switch e.ePath {
+		].concat(pmapList(genEnumConstr.bind(ctx, uname), e.eConstrs.byName)).concat(switch e.ePath {
 			case {pack: [], name: name}: [new NExpr(EBinop("=", field(p, ident(p, "@classes"), name), ident(p, name)), p)];
 			case _: [];
 		})), p);
@@ -712,9 +714,9 @@ class Genneko {
 				if (hasClassFlag(c, CExtern)) return [];
 				// port: List.fold_right: the last static is processed first.
 				var acc = [];
-				var i = c.clOrderedStatics.length;
+				var i = c.clStatics.length;
 				while (i-- > 0) {
-					var f = c.clOrderedStatics[i];
+					var f = c.clStatics.at(i);
 					var e = f.cfExpr;
 					if (e == null) continue;
 					switch e.eexpr {
@@ -771,7 +773,7 @@ class Genneko {
 				var arr = call(p, field(p, ident(p, "Array"), "new1"), [array(p, name.map(n -> genConstant(ctx, e.ePos, TString(n)))), int(p, name.length)]);
 				var path = genTypePath(p, e.ePath);
 				var setname = new NExpr(EBinop("=", field(p, path, "__ename__"), arr), p);
-				var arr = call(p, field(p, ident(p, "Array"), "new1"), [array(p, e.eNames.map(n -> genConstant(ctx, e.ePos, TString(n)))), int(p, e.eNames.length)]);
+				var arr = call(p, field(p, ident(p, "Array"), "new1"), [array(p, e.eConstrs.keyArray().map(n -> genConstant(ctx, e.ePos, TString(n)))), int(p, e.eConstrs.length)]);
 				var setconstrs = new NExpr(EBinop("=", field(p, path, "__constructs__"), arr), p);
 				var meta = (switch core.Texpr.buildMetadata(ctx.com.basic, TEnumDecl(e)) {
 					case null: [];

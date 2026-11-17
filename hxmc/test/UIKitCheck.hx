@@ -4,8 +4,8 @@ import sys.io.File;
 
 using StringTools;
 
-// A UIKit app in its bundle, run (make uikit-check; a Mac with Xcode):
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run UIKitCheck
+// A UIKit app in its bundle, run (make native-check NATIVE=uikit; a Mac with Xcode):
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck uikit
 // (CI: @hxmc/cli's compiler, HXMC_TOOL=<it>, on macOS arm64 and x86-64)
 // hxmc/test/ios/UIKitHello.hx (its own hxmc_ui_main: UIApplicationMain, a
 // Haxe delegate, the program's body once launched) bundled as a packager
@@ -161,19 +161,20 @@ class UIKitCheck {
 		}
 	}
 
-	static function main() {
+	public static function run(args:Array<String>):Int {
 		if (Sys.systemName() != "Mac" || exec(["xcrun", "--find", "simctl"]).code != 0) {
-			Sys.println("uikit-check: skipped (not a Mac with Xcode)");
-			return;
+			Sys.println("UIKitCheck: skipped (not a Mac with Xcode)");
+			return 0;
 		}
 		tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
 		var arm = exec(["uname", "-m"]).out.trim() == "arm64";
 		catalyst(arm ? "macos-catalyst-arm64" : "macos-catalyst-x86_64");
 		if (arm) simulator();
 		if (failures.length > 0) {
-			Sys.println('uikit-check: ${failures.length} failed: ${failures.join(", ")}');
-			Sys.exit(1);
+			Sys.println('UIKitCheck: ${failures.length} failed: ${failures.join(", ")}');
+			return 1;
 		}
-		Sys.println("uikit-check: ok");
+		Sys.println("UIKitCheck: ok");
+		return 0;
 	}
 }

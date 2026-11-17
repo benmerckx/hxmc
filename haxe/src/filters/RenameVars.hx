@@ -214,13 +214,13 @@ class RenameVars {
 			catch (_:Dynamic) nativeName = pathToName(infos.mtPath);
 			switch mt {
 				case TClassDecl(c) if (nativeName == ""):
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						var name:String;
 						try name = Native.getNativeName(cf.cfMeta).name
 						catch (_:Dynamic) name = cf.cfName;
 						reserveInit(ri, name);
 					}
-				case TClassDecl({clKind: KModuleFields(m), clOrderedStatics: fl}):
+				case TClassDecl({clKind: KModuleFields(m), clStatics: fl}):
 					var prefix = Path.flatPath(m.mPath) + "_";
 					for (cf in fl) {
 						var name:String;

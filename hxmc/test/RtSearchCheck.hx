@@ -47,7 +47,7 @@ class RtSearchCheck {
 		return p;
 	}
 
-	static function main() {
+	public static function run():Int {
 		var uname = exec(["uname", "-sm"]).out.trim();
 		var host = switch uname {
 			case "Linux x86_64": {target: "linux-x86_64", pkg: "linux-x64"};
@@ -102,6 +102,6 @@ class RtSearchCheck {
 
 		if (failures == 0) rmrf(dir);
 		Sys.println(failures == 0 ? "RtSearchCheck: ok" : 'RtSearchCheck: $failures failed (in $dir)');
-		Sys.exit(failures == 0 ? 0 : 1);
+		return failures == 0 ? 0 : 1;
 	}
 }

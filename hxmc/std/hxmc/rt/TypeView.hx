@@ -55,6 +55,11 @@ class TypeView {
 		return t == T_BOXINT || t == T_BOXBOOL ? Mem.getI32(Mem.addr(v), 0) : 0;
 	}
 
+	// a string as a String (a view reads it as one), else "": the caller has
+	// tested it (Opt drops the repeated test)
+	public static function string(v:Dynamic):String
+		return isString(index(v)) ? v : "";
+
 	// a Float box's number, else 0
 	public static function float(v:Dynamic):Float
 		return index(v) == T_BOXFLOAT ? Mem.getF64(Mem.addr(v), 0) : 0;

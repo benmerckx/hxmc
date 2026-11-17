@@ -43,19 +43,16 @@ dev loop's own 110. A profile of the server (a symbol table,
   macro code compiled, but helder's compiler is not a Mir host.
 - **Filters**: DCE's mark over the whole program (50). Per field, the
   marks of a field whose expression is the same object as the last
-  build's could be replayed, as LowerCache replays a body's queries.
-- **Lowering**: LowerCache replays 3,663 bodies: their queries (about
-  115,000 calls into the lowering, 55: the functions, methods and classes
-  they name), their locals and a copy of each body through the binding
-  (25). Keeping the last build's program (its classes', functions' and
-  globals' objects) for the modules not typed again would leave neither;
-  it needs the numbers of globals and selectors not to depend on the
-  order of the lowering (names, as `Facts` gives them), so that a module
-  typed again changes only its own.
-- **Prepare**: `Reach` scans every body (20): its marks per body could be
-  kept with the body's LowerCache entry, as Facts' scan is (they depend on
-  the sinks and the stacks flag); Facts' other passes (cold statements,
-  types, names) are smaller.
+  build's could be replayed.
+- **Lowering**: every body is lowered again (a replay of the last
+  build's bodies saved 10 to 20 ms of a 234 ms server build of a
+  380-module program, and was removed). Keeping the last build's program
+  for the modules not typed again needs the numbers of globals and
+  selectors not to depend on the order of the lowering (names, as `Facts`
+  gives them), so that a module typed again changes only its own.
+- **Prepare**: `Reach` scans every body (20): its marks could be kept per
+  body (they depend on the sinks and the stacks flag); Facts' other
+  passes (cold statements, types, names) are smaller.
 - **Data and link**: `DataGen` compiles the dynamic and bound trampolines of
   every signature each build (10 of its 28); the link takes the 277
   modules' objects again. A dev build could link the modules compiled into

@@ -1,4 +1,4 @@
-// the program FrontendCheck's frontend builds (hxmc/test/frontend/Frontend.hx)
+// the program Units' frontend builds (hxmc/test/frontend/Frontend.hx)
 class Main {
 	static function main() {
 		show(1);

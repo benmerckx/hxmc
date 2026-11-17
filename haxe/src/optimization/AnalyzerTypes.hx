@@ -465,15 +465,10 @@ class Graph {
 		tf: tf
 	});
 
-	static var nextId = 1;
-	static final idMutex = new sys.thread.Mutex();
+	// port: Atomic.fetch_and_add, as upstream (the analyzer's functions are processed in parallel)
+	static final nextId = new haxe.atomic.AtomicInt(1);
 
-	public static function allocId():Int {
-		idMutex.acquire();
-		var id = ++nextId;
-		idMutex.release();
-		return id;
-	}
+	public static inline function allocId():Int return nextId.add(1) + 1;
 
 	public static function createNode(g:GraphData, kind:BlockKind, t:T, p:Pos):BasicBlockData {
 		var bb = BasicBlock.create(allocId(), kind, t, p);

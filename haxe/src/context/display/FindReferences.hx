@@ -95,11 +95,11 @@ class FindReferences {
 						// check classes hierarchy
 						var r = if (findBase) {
 							function loop(c:TClass):{cf:TClassField, c:TClass} {
-								if (c.clSuper == null) return {cf: core.ds.PMap.find(cf.cfName, c.clFields), c: c};
+								if (c.clSuper == null) return {cf: c.clFields.find(cf.cfName), c: c};
 								try {
 									return loop(c.clSuper.cls);
 								} catch (_:core.ds.NotFound) {
-									return {cf: core.ds.PMap.find(cf.cfName, c.clFields), c: c};
+									return {cf: c.clFields.find(cf.cfName), c: c};
 								}
 							}
 							try loop(c)
@@ -119,7 +119,7 @@ class FindReferences {
 						loop = function(c:TClass):Array<{cf:TClassField, c:TClass}> {
 							var pairs = [];
 							for (i in c.clImplements) pairs = foldInterface(pairs, i);
-							return pairs.length == 0 ? [{cf: core.ds.PMap.find(cf.cfName, c.clFields), c: c}] : pairs;
+							return pairs.length == 0 ? [{cf: c.clFields.find(cf.cfName), c: c}] : pairs;
 						};
 						var pairs = [];
 						for (i in c.clImplements) pairs = foldInterface(pairs, i);

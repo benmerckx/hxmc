@@ -10,16 +10,20 @@ import haxe.Int64;
 // (towards zero), with m = 2^s / |d| + 1 (s = 31 + k or 32 + k: m below 2^32)
 // multiplied in 64 bits (n sign-extended: the product stays below 2^63), which
 // every back end has. A negative divisor negates the quotient; a remainder is
-// n - q |d|. MirBuild leaves no divisor 0 or -1 here.
+// n - q |d|. MirBuild leaves no divisor 0 or -1 here. Of an n never negative
+// (Opt.nonNegative: a loop's counter) and d > 0, no correction towards
+// zero: a power of two is n >>> k, its remainder n & (d - 1).
 class DivConst {
 	public static function run(f:MFunc) {
 		var n = 0;
+		var opt:Null<Opt> = null;
 		for (b in f.blocks) {
 			var out:Array<MIns> = [];
 			for (i in b.ins) {
 				var d = i.b >= 0 ? f.vals[i.b] : null;
 				if ((i.op == Div || i.op == Rem) && i.ty == I32 && d.op == Const && d.sym == null && d.imm != 0 && d.imm != -1) {
-					expand(f, i, d.imm, out);
+					var pos = d.imm > 0 && (opt ?? (opt = new Opt(f))).nonNegative(i.a);
+					expand(f, i, d.imm, out, pos);
 					n++;
 				}
 				out.push(i);
@@ -29,7 +33,7 @@ class DivConst {
 		if (n > 0) f.edited();
 	}
 
-	static function expand(f:MFunc, i:MIns, d:Int, out:Array<MIns>) {
+	static function expand(f:MFunc, i:MIns, d:Int, out:Array<MIns>, pos:Bool) {
 		function ins(op:Op, ty:MTy, a:Int, b = -1, imm = 0):Int {
 			var x = new MIns(op, ty);
 			x.a = a;
@@ -49,6 +53,13 @@ class DivConst {
 		while (Int64.shl(1, lg + 1) <= ad)
 			lg++;
 		var q = n;
+		if (pos && lg > 0 && Int64.shl(1, lg) == ad) {
+			var r = i.op == Rem ? ins(And, I32, n, k(d - 1)) : ins(Shr, I32, n, k(lg));
+			i.op = Copy;
+			i.a = r;
+			i.b = -1;
+			return;
+		}
 		if (lg > 0 && Int64.shl(1, lg) == ad) {
 			var sign = lg == 1 ? n : ins(Sar, I32, n, k(lg - 1));
 			q = ins(Sar, I32, ins(Add, I32, n, ins(Shr, I32, sign, k(32 - lg))), k(lg));
@@ -60,7 +71,8 @@ class DivConst {
 			var c = ins(Const, I64, -1, -1, m.low);
 			f.vals[c].imm2 = m.high;
 			var p = ins(Mul, I64, ins(SExt, I64, n), c);
-			q = ins(Sub, I32, ins(Trunc, I32, ins(Sar, I64, p, k(s, I64))), ins(Sar, I32, n, k(31)));
+			var t = ins(Trunc, I32, ins(Sar, I64, p, k(s, I64)));
+			q = pos ? t : ins(Sub, I32, t, ins(Sar, I32, n, k(31)));
 		}
 		// (q * 2^31 wraps: right for d = MIN)
 		var r = i.op == Rem ? ins(Sub, I32, n, ins(Mul, I32, q, k(ad.low))) : d < 0 ? ins(Neg, I32, q) : q;

@@ -46,7 +46,7 @@ class ModuleCacheState {
 	// per role (0: the program's context, 1: the macros'), its signature and
 	// defines (the macros': predicted while that context does not exist)
 	public var signs = new haxe.ds.Vector<Null<String>>(2);
-	public var defs = new haxe.ds.Vector<Null<haxe.ds.StringMap<String>>>(2);
+	public var defs = new haxe.ds.Vector<Null<core.ds.PMap<String>>>(2);
 	// per role, the variant restored for each module (ModuleCache.key)
 	public var chosen:haxe.ds.Vector<Map<String, Variant>> = vector(new Map<String, Variant>(), new Map<String, Variant>());
 	// per module of the store this build checked or ended with (role|key), its verdict
@@ -452,7 +452,7 @@ class ModuleCacheState {
 	}
 
 	// a role's defines now (the macros': their context's once it exists)
-	function defsNow(role:Int):Null<haxe.ds.StringMap<String>> {
+	function defsNow(role:Int):Null<core.ds.PMap<String>> {
 		if (role == 0) return com.defines.values;
 		var m = com.getMacros();
 		if (m != null && m.defines.values != defs[1]) {

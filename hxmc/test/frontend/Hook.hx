@@ -5,17 +5,14 @@ import hxmc.ir.Ir;
 // function no edit changes, for server-verify's frontend cases (make
 // dev-check): Lib.f first calls a function the hook adds each build
 // (`hook_mark`), and Lib.g calls Lib.alloc, which allocates, when the
-// program has Main.extra. The compilation server reuses Lib's lowered
-// bodies (LowerCache) and must not take what Facts found in a body before
-// or after the hook in an earlier build (its callees, whether it reaches a
-// GC point) for the one the hook makes now.
+// program has Main.extra. The compilation server keeps Lib's module and
+// object and must not reuse the object of a body the hook changes.
 //   haxe -cp haxe/src -cp hxmc/src -cp hxmc/test/frontend -main Hook -D disable-parallelism --custom-target hxmc=<compiler>
 class Hook {
 	static function main() {
 		hxmc.Main.beforeCodegen = (com, prog:Program) -> {
 			inline function find(name:String)
 				return Lambda.find(prog.funcs, f -> f.name == name);
-			// (a new vector: the lowered one stays LowerCache's, docs/hxmc.md "Frontends")
 			function prepend(f:FuncInfo, s:Stmt)
 				f.body = Vector.fromArrayCopy([s].concat(f.body.toArray()));
 			var f = find("Lib_f");

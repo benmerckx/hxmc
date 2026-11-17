@@ -47,6 +47,7 @@ enum abstract AOp(Int) to Int from Int {
 	var TLSLOAD; // d <- thread-local sym (s2 >= 0: at its offset from the TLS base s2)
 	var TLSSTORE; // thread-local sym <- s1 (s2: as TLSLOAD)
 	var TEBLOAD; // d <- [x18 + imm] (Windows: the thread environment block)
+	var TLSBASE; // d <- the image's thread-local block (Apple: Emit's inline TLV access, x16/x17 its scratch)
 	var BRK;
 	// (hxmc.unsafe: MirBuild.intrinsic)
 	var LDAR; // d <- [s1], acquire (size)
@@ -95,6 +96,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		opCall = CALL;
 		opRet = RET;
 		opTeb = TEBLOAD;
+		opTlsBase = TLSBASE;
 	}
 
 	// ---- RegTarget
@@ -130,7 +132,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				u(i.s2);
 				u(i.s3);
 			case DMB:
-			case MOVI | MOVF | CSET | TLSLOAD | TEBLOAD:
+			case MOVI | MOVF | CSET | TLSLOAD | TEBLOAD | TLSBASE:
 				defs.push(i.d);
 				u(i.s2);
 			case LEA | LOAD:
@@ -507,6 +509,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.s2 = useZ(i.c);
 				x.cond = cc;
 				x.size = sz(i.ty);
+			case SExt | ZExt if (zeroExtended(i.a, i.op == SExt)):
+				mov(reg(i.id), use(i.a), 8);
 			case SExt:
 				var x = emit(SXTW);
 				x.d = reg(i.id);
@@ -540,11 +544,12 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case Store:
 				// a store that publishes a reference: the stores before it first
 				// (dmb ishst; the reader's loads through it are ordered by their
-				// address dependency)
-				if (i.release) emit(DMB).cond = 1;
+				// address dependency; null publishes nothing)
+				var v = useZ(i.c);
+				if (i.release && v != ZR) emit(DMB).cond = 1;
 				var x = emit(STORE);
 				x.size = i.size;
-				x.s1 = useZ(i.c);
+				x.s1 = v;
 				memOf(x, i.a, i.b, i.imm2, i.imm, i.size);
 			case Call if (i.sym != null && StringTools.startsWith(i.sym, hxmc.MirBuild.SPECIAL)):
 				special(i);

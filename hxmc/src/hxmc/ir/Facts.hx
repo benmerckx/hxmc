@@ -613,7 +613,7 @@ class Facts {
 		var initial = [for (f => _ in cand) f => true];
 		for (f in p.funcs) {
 			var sc = f.gcScan;
-			if (sc == null) f.gcScan = sc = f.gcScanned != null && f.gcScanned.stacks == p.stacks ? f.gcScanned.scan : scanGc(f);
+			if (sc == null) f.gcScan = sc = scanGc(f);
 			for (n in sc.names)
 				bodyNames.set(n, true);
 			var gc = sc.gc, here = sc.here, addr = sc.addr;

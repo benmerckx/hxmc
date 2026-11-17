@@ -39,18 +39,18 @@ lists the ones marked with *.
 | `-D hxmc.target=<target>` | the target (above) |
 | `-D hxmc.libc=glibc` | Linux: link dynamically against glibc, so the program can import shared libraries (`@:hxmc.lib("libGL.so.1")`) and `dlopen` them |
 | `-D hxmc.shared` | a shared library: Linux in the glibc mode, a dylib on macOS, iOS and Mac Catalyst, a DLL on Windows; Android's output always is one |
-| `-D hxmc.macos-min-version=<x.y>` | macOS: the oldest version the output runs on (11.0 on arm64, 10.15 on x86-64, the floors), its `LC_BUILD_VERSION`'s minimum; `-D hxmc.ios-min-version` is iOS's and Mac Catalyst's (15.0). Newer APIs need a guard, `Platform.supports(view.method)`([Availability](interop.md#availability)) |
+| `-D hxmc.macos-min-version=<x.y>` | macOS: the oldest version the output runs on (11.0 on arm64, 10.15 on x86-64, the floors), its `LC_BUILD_VERSION`'s minimum; `-D hxmc.ios-min-version` is iOS's and Mac Catalyst's (15.0). Newer APIs need a guard, `Platform.supports(view.method)` ([Availability](interop.md#availability)) |
 | `-D hxmc.exports=<names>` | the `@:hxmc.export` functions a shared library exports |
 | `-D hxmc.dll-base=<hex>` | Windows: a DLL's preferred base address |
 | `-D hxmc.output=<path>` | the output path, instead of `--custom-target`'s |
 | `-D hxmc.link=<paths>` | extra objects and archives to link (also `@:hxmc.link("path")` on a class) |
-| `-D hxmc.jobs=<n>` | parallel module compilations (default: the number of cores; also `HXMC_JOBS`) |
+| `-D hxmc.jobs=<n>` | parallel module compilations (default: the number of cores) |
 | `-debug` | DWARF lines and a symbol table ([Debugging](#debugging)) |
 | `-D hxmc.symbols` | a symbol table only (wasm: a name section) |
 | `-D hxmc.lines` | DWARF lines only |
 | `-D hxmc.no-stacks` | no call stacks: `haxe.CallStack` and exception stacks are empty |
 | `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
-| `-D hxmc.no-frame-pointers` | x86-64: no frame pointers (arm64 always keeps them; also `HXMC_FRAME_POINTERS=0`) |
+| `-D hxmc.frame-pointers=0` | x86-64: no frame pointers (arm64 always keeps them) |
 | `-D hxmc.checked` * | diagnostic build: enable NativeArray bounds, null, span and tagged-reference checks and disable Mir optimizations, including check elimination. Overrides the individual check switches. Raw operations in unsafe code remain unsafe. |
 | `-D hxmc.strict` | raw memory outside `@:hxmc.unsafe` code is an error in the program's own code, not a warning (hxmc's std: always) ([Unsafe code](interop.md#unsafe-code)); so is an unguarded API newer than the deployment target ([Availability](interop.md#availability)) |
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |
@@ -63,10 +63,9 @@ lists the ones marked with *.
 | `-D hxmc.no-cache=<packages>` | type these packages, modules or library directories in every build ([Macros and the cache](#macros-and-the-module-cache)) |
 | `-D hxmc.macros=mir` | experimental: run macros on hxmc's Mir interpreter instead of Eval ([Mir macros](#mir-macros)) |
 | `-D hxmc.run=mir` | experimental: run `--interp`/`--run` on the Mir interpreter |
-| `-D hxmc.pic` | a position-independent executable: refused, not written yet |
 
-The switches of the passes and the diagnostics are flags too: a define or
-its variable, `-D hxmc.escape=0` or `HXMC_ESCAPE=0` ([the table](hxmc.md#flags-and-environment-variables)).
+The diagnostics are flags too ([the table](hxmc.md#flags-and-environment-variables));
+`-D hxmc.opt=0` turns the optimizer off.
 
 ## Outputs
 
@@ -124,7 +123,7 @@ parameter not satisfying: bundleIdentifier", and one with only an
 embedded `__info_plist` gets no scene from the system. `hxmc_ui_main`
 works as on iOS. A packager writes the `.app` as for macOS
 (`Contents/MacOS/<name>`, `Contents/Info.plist`). `hxmc/test/ios/UIKitHello.hx` is such
-an app, with its own `hxmc_ui_main` (`make uikit-check`).
+an app, with its own `hxmc_ui_main` (`make native-check NATIVE=uikit`).
 
 ### Native output for a packager
 
@@ -137,7 +136,11 @@ builds on two outputs, checked by `make native-check`:
   `ANativeActivity_onCreate` is exported when the program defines it.
 - **iOS**: a plain Mach-O executable, or a dylib with `-D hxmc.shared`.
   `-D hxmc.ios-min-version=<major.minor>` sets its `LC_BUILD_VERSION`
-  minimum (15.0, the floor). The linker signs it ad hoc, as
+  minimum (15.0, the floor), `-D hxmc.ios-sdk-version=<major.minor>` the
+  SDK it declares (26.0, the App Store's minimum; the bundle's `Info.plist`
+  should name the same). `-D hxmc.dsym` writes `<output>.dSYM` beside it
+  (the symbols crash reports are symbolicated with; with `-debug` the
+  DWARF too). The linker signs it ad hoc, as
   linker-signed. With any of the defines below it is signed as `codesign
   -s -` signs a bundle's executable instead. The packager writes
   `Info.plist` and `CodeResources` first, then links, then puts the files
@@ -585,7 +588,7 @@ instead.
   structure's own fields (as on cpp).
 - **A dynamic method set to null** is its own method again when read.
 - **Call stacks** show an inlined function's frame as its caller's.
-  `-D hxmc.no-frame-pointers` on x86-64 leaves stacks empty.
+  `-D hxmc.frame-pointers=0` on x86-64 leaves stacks empty.
 - **`Std.string` of a structure** prints `{ a : 1, b : 2 }`, fields by
   name, then fields added at run time.
 - **Debugging**: no variables in the debugger yet, no PDB on Windows.

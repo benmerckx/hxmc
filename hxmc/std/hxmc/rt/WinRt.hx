@@ -189,17 +189,10 @@ class WinRt {
 	// ---- startup (rt_init): a crash names its exception and the address in
 	// the image (the image has no unwind information for generated code, so
 	// neither a debugger's stack trace nor an unhandled-exception filter can
-	// be relied on); HXMC_TRACE reports the start
+	// be relied on)
 
 	@:hxmc.host("rt_win_init") @:hxmc.unsafe static function init():Void {
 		K.AddVectoredExceptionHandler(0, Callback.addr(crash));
-		var v = Mem.stack(16);
-		var name = Mem.stack(16);
-		var s = "HXMC_TRACE";
-		for (i in 0...s.length)
-			Mem.setI8(name, i, StringTools.fastCodeAt(s, i));
-		Mem.setI8(name, s.length, 0);
-		if (K.GetEnvironmentVariableA(name, v, 4) > 0) say("hxmc: started\n");
 	}
 
 	@:hxmc.unsafe static function say(msg:String) {
@@ -252,7 +245,6 @@ class WinRt {
 	static function AcquireSRWLockExclusive(l:Ptr):Void;
 	static function ReleaseSRWLockExclusive(l:Ptr):Void;
 	static function WideCharToMultiByte(cp:Int, flags:Int, w:Ptr, wn:Int, s:Ptr, n:Int, def:Ptr, used:Ptr):Int;
-	static function GetEnvironmentVariableA(name:Ptr, buf:Ptr, n:Int):Int;
 	static function GetStdHandle(which:Int):Ptr;
 	static function WriteFile(h:Ptr, buf:Ptr, n:Int, written:Ptr, overlapped:Ptr):Int;
 	static function GetModuleHandleA(name:Ptr):Ptr;

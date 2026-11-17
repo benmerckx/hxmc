@@ -309,7 +309,7 @@ class EvalPrototype {
 				}
 				var interfaces = collectInterfaces([], c);
 				var pctx = PrototypeBuilder.create(ctx, key, pparent, PClass(interfaces), meta);
-				var fields = c.clOrderedStatics.filter(cf -> !isRemovableField(cf));
+				var fields = c.clStatics.toArray().filter(cf -> !isRemovableField(cf));
 				var delays:Array<StaticDelay> = [];
 				if (!TFunctions.hasClassFlag(c, CExtern))
 					for (cf in fields) {
@@ -354,7 +354,7 @@ class EvalPrototype {
 				}
 				{init: PrototypeBuilder.finalize(pctx), delays: delays};
 			case TEnumDecl(en):
-				var names = en.eNames.map(name -> {
+				var names = en.eConstrs.keyArray().map(name -> {
 					var ef = en.eConstrs.get(name);
 					if (ef == null) throw NotFound.raise();
 					var args = switch TFunctions.follow(ef.efType) {
@@ -376,10 +376,8 @@ class EvalPrototype {
 					}
 				}
 				// port: PMap.iter: ascending key order
-				var constrNames = [for (k in en.eConstrs.keys()) k];
-				constrNames.sort(compareString);
-				for (name in constrNames)
-					PrototypeBuilder.addProtoField(pctx, EvalHash.hash(name), AtomicLazy.fromVal(enumFieldValue(en.eConstrs.get(name))));
+				for (name => ef in en.eConstrs.byName)
+					PrototypeBuilder.addProtoField(pctx, EvalHash.hash(name), AtomicLazy.fromVal(enumFieldValue(ef)));
 				{init: PrototypeBuilder.finalize(pctx), delays: []};
 			case TAbstractDecl(a):
 				var pctx = PrototypeBuilder.create(ctx, key, null, PClass([]), meta);
@@ -413,7 +411,7 @@ class EvalPrototype {
 		}
 		var key = EvalHash.pathHash(c.clPath);
 		var pctx = PrototypeBuilder.create(ctx, key, pparent, PInstance, null);
-		var fields = c.clOrderedFields.filter(cf -> !isRemovableField(cf));
+		var fields = c.clFields.toArray().filter(cf -> !isRemovableField(cf));
 		if (TFunctions.hasClassFlag(c, CExtern) && !(c.clPath.pack.length == 0 && c.clPath.name == "String")) {} else
 			for (cf in fields) {
 				switch [cf.cfKind, cf.cfExpr] {
@@ -576,7 +574,7 @@ class EvalPrototype {
 								} else false;
 						}
 					}
-					for (f in c.clOrderedFields)
+					for (f in c.clFields)
 						if (TFunctions.hasClassFieldFlag(f, CfOverride))
 							loop(c.clSuper, f);
 					createConstructor(ctx, c);
@@ -654,7 +652,7 @@ class EvalPrototype {
 		}
 		var proto = try ctx.staticPrototypes.get(key) catch (_:NotFound) return;
 		var values = new Map<Int, Value>();
-		for (cf in c.clOrderedStatics)
+		for (cf in c.clStatics)
 			if (isPersistent(cf)) {
 				var name = EvalHash.hash(cf.cfName);
 				var i = try proto.pnames.find(name) catch (_:NotFound) continue;

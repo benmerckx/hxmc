@@ -67,7 +67,6 @@ class WasmGen {
 	public static inline var STACK_OVERFLOW = "rt_cstack_overflow";
 	// the last exception a pad caught (an exnref global; LinkWasm)
 	public static inline var EXNREF = "rt_exnref";
-	public static var coalesceOn = true; // (the build's, Options.apply)
 
 	var obj:Obj;
 	var legacyEh:Bool; // legacy exception handling (try/catch_all/rethrow) instead of try_table and exnref
@@ -167,7 +166,7 @@ class WasmGen {
 		analyze();
 		narrowing();
 		frame();
-		if (coalesceOn) coalesce() else plainLocals();
+		coalesce();
 		// the prologue: the frame below the stack pointer
 		if (fp >= 0) {
 			global(Op.GlobalGet, SP);
@@ -518,13 +517,6 @@ class WasmGen {
 
 	function needsLocal(i:MIns):Bool
 		return !i.dead && i.ty != Void && i.op != Param && !remat(i) && !folded[i.id] && uses[i.id] > 0;
-
-	function plainLocals() {
-		local = MFunc.ints(vals.length, -1);
-		for (x in rpo)
-			for (i in x.ins)
-				if (needsLocal(i)) local[i.id] = newLocal(tyCode(ety(i.id)));
-	}
 
 	// a set of n bits per block
 	static function sets(nblk:Int, n:Int):Vector<Bits> {

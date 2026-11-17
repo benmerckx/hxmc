@@ -20,17 +20,13 @@ class AddFieldInits {
 			var v = TypeOps.allocVar(VGenerated, "_g", ethis.etype, ethis.epos);
 			var needThis = false;
 			var inits:Array<TClassField> = [];
-			var fields:Array<TClassField> = [];
-			for (cf in c.clOrderedFields) {
-				switch [cf.cfKind, cf.cfExpr] {
-					case [Var(_), expr] if (expr != null):
-						inits.unshift(cf);
-					case _:
-				}
-				fields.unshift(cf);
+			// port: upstream also conses every field and assigns the list reversed: the list
+			// it had, so the fields stay as they are.
+			for (cf in c.clFields) switch [cf.cfKind, cf.cfExpr] {
+				case [Var(_), expr] if (expr != null):
+					inits.unshift(cf);
+				case _:
 			}
-			fields.reverse();
-			c.clOrderedFields = fields;
 			if (inits.length == 0) return;
 			var el = inits.map(function(cf) {
 				var e = cf.cfExpr;

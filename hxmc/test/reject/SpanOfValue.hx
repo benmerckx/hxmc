@@ -1,5 +1,5 @@
 // Span.of(x) writes back into x after the call: x is a variable.
-// expect: SpanOfValue.main: Span.of(x) of no variable (kernel: C writes the span: x is a local, a field or a static, copied back after the call (ReadOnlySpan.of for a value))
+// expect: SpanOfValue.main: Span.of(x) of no variable (kernel: C writes the span: x is a local, a static or a field of this or of a local, copied back after the call (ReadOnlySpan.of for a value))
 import hxmc.Span;
 
 @:hxmc.c @:hxmc.fast @:hxmc.safe extern class C {

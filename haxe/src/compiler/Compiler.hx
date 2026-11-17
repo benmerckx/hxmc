@@ -102,11 +102,8 @@ class Compiler {
 
 	public static function checkDefines(com:CommonContext):Void {
 		if (Common.defined(com, Define.DisableParallelism)) Parallel.enable = false;
-		var keys:Array<String> = [for (k in com.defines.values.keys()) k];
-		keys.sort(core.ds.Key.compareStrings);
-		for (k in keys) {
-			var v = com.defines.values.get(k),
-				reason = Define.deprecationLut.get(k);
+		for (k => v in com.defines.values) {
+			var reason = Define.deprecationLut.get(k);
 			if (reason == null) continue;
 			var p = Globals.fakePos("-D " + k);
 			switch reason {
@@ -525,12 +522,7 @@ class Setup {
 	public static function createTyperContext(com:CommonContext, macros:Null<{finalize:Void->Void, typer:Typer}>):Typer {
 		var buf = new StringBuf();
 		buf.add("Defines: ");
-		var keys:Array<String> = [for (k in com.defines.values.keys()) k];
-		keys.sort(core.ds.Key.compareStrings);
-		for (k in keys) {
-			var v = com.defines.values.get(k);
-			buf.add(v == "1" ? k + ";" : k + "=" + v + ";");
-		}
+		for (k => v in com.defines.values) buf.add(v == "1" ? k + ";" : k + "=" + v + ";");
 		var text = buf.toString();
 		Common.log(com, text.substr(0, text.length - 1));
 		com.callbacks.run(com.errorExt, com.callbacks.getBeforeTyperCreate());

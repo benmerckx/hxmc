@@ -60,8 +60,8 @@ using core.ds.VectorTools;
 // restored module, whose expressions are the filtered ones (Skeletons,
 // through Finalization.sortExprHook).
 //
-// On by default; HXMC_MODULE_CACHE=0 or -D hxmc.no-module-cache turns it
-// off (HXMC_MODULE_CACHE=0 also when -D hxmc.module-cache is given).
+// On by default; -D hxmc.no-module-cache (or HXMC_MODULE_CACHE=0, which the
+// tool sets for its own run again) turns it off.
 // Through `haxe` (HaxeMain) and the tool alike, for every target. Not used
 // (the build types everything from source): display requests, the
 // compilation server and its clients (already in memory), builds of several
@@ -670,9 +670,9 @@ class ModuleCache {
 								if (r) core.TFunctions.removeClassFieldFlag(cf, CfMaybeUsed);
 							}
 							add(c.clConstructor, "c|");
-							for (cf in c.clOrderedFields)
+							for (cf in c.clFields)
 								add(cf, "f|");
-							for (cf in c.clOrderedStatics)
+							for (cf in c.clStatics)
 								add(cf, "s|");
 						case _:
 					}
@@ -776,10 +776,9 @@ class ModuleCache {
 		fresh(s, core.Globals.sTypePath(m.mPath) + " refers to " + core.Globals.sTypePath(c.clPath) + "." + name + ", which it no longer has");
 	}
 
-	// (HXMC_MODULE_CACHE=0 wins over the define: the tool sets it for its own
-	// run again, ModuleCache.again)
+	// (HXMC_MODULE_CACHE=0: the tool sets it for its own run again, ModuleCache.again)
 	public static function wanted(com:CommonContext):Bool {
-		return Sys.getEnv("HXMC_MODULE_CACHE") != "0" && Options.on("hxmc.module-cache", true, com.defines) && CacheDir.define(com, "hxmc.no-module-cache") == null;
+		return Sys.getEnv("HXMC_MODULE_CACHE") != "0" && CacheDir.define(com, "hxmc.no-module-cache") == null;
 	}
 
 	// why a build that wants the cache cannot use it (null: it can)
@@ -1071,7 +1070,7 @@ class ModuleCache {
 
 	// the macros' context's defines, as MacroContext.createMacroContext
 	// makes them
-	static function predictMacroDefines(com:CommonContext):{sign:String, values:haxe.ds.StringMap<String>} {
+	static function predictMacroDefines(com:CommonContext):{sign:String, values:core.ds.PMap<String>} {
 		var c = Common.clone(com, true);
 		var d = Common.adaptDefinesToMacroContext(c.defines);
 		c.defines.values = d.values;
@@ -1737,13 +1736,13 @@ class ModuleCache {
 					for (i in c.clImplements)
 						b.add("i" + core.Globals.sTypePath(i.cls.clPath) + ";");
 					if (c.clConstructor != null) field("n", c.clConstructor);
-					for (f in c.clOrderedFields)
+					for (f in c.clFields)
 						field("f", f);
-					for (f in c.clOrderedStatics)
+					for (f in c.clStatics)
 						field("s", f);
 				case TEnumDecl(e):
 					b.add("E" + core.Globals.sTypePath(e.ePath) + "\n");
-					for (n in e.eNames) {
+					for (n in e.eConstrs.names()) {
 						b.add(n + ":");
 						ty(e.eConstrs.get(n).efType, 0);
 						b.add(";");

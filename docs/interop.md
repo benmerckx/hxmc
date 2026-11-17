@@ -198,7 +198,13 @@ a field, an index or an operator. What is inside is read through a view: a
 kernel that knows the layout and gives it out checked, as `hxmc.rt.StrView`
 does a string's (its length, its width, its units as a `ReadOnlySpan`).
 The views are the trusted part, `@:hxmc.unsafe`; what reads through them
-is checked. A view's functions are inlined where they are called, as the
+is checked. A view trusts its value's type, so a safe kernel passes no
+`Dynamic` and no type parameter's value where a typed GC value is expected
+(`StrView.length(d)` of a `d:Dynamic`: `reject/KernelViewDynamic`), nor
+the result of a kernel declared to return a type parameter, whatever the
+type it is called with (its body may have made it of a `Dynamic`); one that
+takes `Dynamic` tests the type itself, as `TypeView` does (`TypeView.string`
+gives a tested string as a `String`). A view's functions are inlined where they are called, as the
 inline representation calls they stand for were, and a kernel called at
 one place of its module is inlined there whatever its loops (`KernelOnce`):
 a kernel per width, as `count1` and `count2`, costs no call.
@@ -215,7 +221,8 @@ is an index of a row of the type table, which `TypeView.kind(t)` and
 `@:hxmc.proof` (or an abstract over one), and only `@:hxmc.unsafe` code
 makes one. A safe kernel holds, passes, compares and returns a proof;
 it never casts to one, nor takes another value where one is expected (a
-`Dynamic` unboxed). GC code could make one from anything, so only
+`Dynamic` unboxed, the result of a kernel declared to return a type
+parameter: `reject/KernelProofGeneric`). GC code could make one from anything, so only
 kernels and `@:hxmc.unsafe` code call a function that takes a proof, and
 such a function is no value (no closure, no reflection). No static, no
 struct field and no span element is a proof: GC code writes those, and a
@@ -282,7 +289,7 @@ converts to a `ReadOnlySpan`, never back.
 | `s.fill(pos, len, v)` | v in elements pos .. pos + len - 1, checked |
 | `s.load(i)`, `s.store(i, v)`, `s.compareExchange(i, expected, replacement)` | atomic accesses of element i, checked as `s[i]`: of `Int`, `UInt` (`Int32`, `UInt32`) and `Int64` elements; sequentially consistent, so a load acquires and a store releases. `compareExchange` writes replacement if the element holds expected and returns what it held. A `ReadOnlySpan` has `load` only |
 | `s.add(i, v)`, `s.exchange(i, v)` | atomic: v added to element i, v into element i; the value it held (of the same elements as `load`; a `Span` only) |
-| `Span.stack(n)` | n zeroed elements in the kernel's frame (a constant n, up to 65536): scratch while the kernel runs, never its result (`reject/SpanStackResult`); on the other targets a `Bytes` of its own |
+| `Span.stack(n)` | n zeroed elements in the kernel's frame (a constant n, up to 65536): scratch while the kernel runs, never its result, also through a call given it (`reject/SpanStackResult`, `SpanStackCall`); on the other targets a `Bytes` of its own |
 
 A failed check cannot throw in kernels (a throw allocates): the
 program ends with exit code 2 and a message on stderr:
@@ -541,10 +548,12 @@ trace(Lib.lib_upper("abc"));                                   // no Arena, no f
 ```
 
 **Out-parameters from GC code.** `Span.of(x)` passes a variable (a local,
-a field, a static) as a span of one: x is copied into a slot of the frame
+a static, a field of `this` or of a local, which the call may write: not
+final, `(default, null)` only in its class or through `this` in a subclass) as a span of one: x is copied into a slot of the frame
 for the call and back after it, so an out-struct or an out-scalar needs no
 `Mem.stack`. `ReadOnlySpan.of(v)` passes a value as `const T *`, copied in
-only. Both are a call's arguments (`reject/SpanOfValue`, `SpanOfOutside`);
+only. Both are a call's arguments (`reject/SpanOfValue`, `SpanOfOutside`,
+`SpanOfCall`, `SpanOfFinal`, `SpanOfReadOnly`);
 structs by value pass and return as any struct does.
 
 ```haxe
@@ -554,7 +563,7 @@ var lo = 0, hi = 0;
 Lib.minmax(3, -7, 12, Span.of(lo), Span.of(hi));                // int *min, int *max
 ```
 
-`CBindingsStrings` and `CBindingsOut` check these (and `make header-check`
+`CBindingsStrings` and `CBindingsOut` check these (and `make native-check NATIVE=header`
 their declarations: a `String` is checked to be `char *`).
 
 **Arrays from GC code.** `ReadOnlySpan.ofArray(a)` passes an `Array` of
@@ -620,7 +629,10 @@ owns: zeroed bytes, lent to one call as a span (`Span.ofBuffer(b, ?pos,
 call holds a span of the buffer (a callback of that call, another
 thread), `close()` throws instead of freeing the memory under it. A closed
 buffer is empty: its length is 0, its accessors (`get`, `set`, `fill`,
-`getBytes`, `blitFromBytes`, `blitToBytes`) and its spans throw. Nothing
+`getBytes`, `blitFromBytes`, `blitToBytes`) and its spans throw. Each
+accessor lends it for the access as a span is lent (`BufferClose`: closed
+by another thread meanwhile): two atomic operations an access, so many
+bytes are read and written through a span or a blit. Nothing
 else frees it (hxmc has no finalizers): `Buffer.scoped(n, b -> ...)` closes
 it on every path, and inlines (no closure).
 
@@ -634,6 +646,15 @@ buf.close();
 GC code lends a Buffer, a kernel never makes a span of one
 (`reject/BufferKernel`): it is lent spans, as of any other memory.
 `CBindingsBuffer` checks it (a close refused during the call that holds it).
+
+Raw code hands memory over without a copy: `Buffer.adopt(io)` makes a
+Buffer own an `IoBuffer` that raw code made (a job's result, a decoder's
+pixels), and `b.detach()` gives the memory back as an `IoBuffer` for raw
+code to free (a job's input moved to another thread), closing the Buffer;
+it throws while a span is lent, as `close()` does. Both have a raw type,
+so only `@:hxmc.unsafe` code calls them, and an API can take and return
+Buffers while what is inside moves memory as it did. `BufferHandover`
+checks them.
 
 
 ### Typed callbacks
@@ -733,7 +754,7 @@ Dirs.next(d);                                          // ends the program: an i
 A declaration that disagrees with C (a field at another offset, an `Int`
 where C has a `long`, a parameter too few) is undefined behaviour at run
 time. `-D hxmc.header-check=<file>` writes the program's declarations that
-name their headers as C++ assertions over them, and `make header-check`
+name their headers as C++ assertions over them, and `make native-check NATIVE=header`
 (`hxmc/test/HeaderCheck.hx`) compiles them with zig for each target
 against its own C library (musl, macOS's, MinGW-w64's, wasi-libc): a
 mismatch fails the build, naming the declaration.
@@ -749,16 +770,22 @@ Each function is checked for its number of parameters (and `...` for
 `@:hxmc.varargs`), each parameter and the result for its kind and size: an
 integer of 4 bytes, a float, a pointer, a `size_t`, a struct by its name;
 a span's element against the pointee (a named struct, or any type of the
-element's size, `void` or a struct for scalars), and a minimum length
-against the pointee's size. The C++ is only for its type traits (clang's
-builtins, no C++ library): the declarations are C's.
+element's size, `void` or a struct of it for scalars: C reads one per
+element the length counts; a `struct sockaddr` for bytes, whose length
+counts bytes; any struct for a constant minimum, checked against the
+pointee's size). Every declaration is checked, also a second one of the
+same function. What no header says stays the declaration's word: that C
+reads no more of a span than its length or minimum (a count passed as a
+plain parameter beside a constant minimum is not tied to the span), and
+that a `struct sockaddr`'s length is its bytes. The C++ is only for its
+type traits (clang's builtins, no C++ library): the declarations are C's.
 
 ```
 HeaderCheck.hx:23: QR.q: q is an integer of 8 bytes
 cb_value: parameter 1 (o) is an integer of 4 bytes
 ```
 
-`make header-check` covers the std's typed bindings (`hxmc.rt.PosixApi`,
+`make native-check NATIVE=header` covers the std's typed bindings (`hxmc.rt.PosixApi`,
 `Os`'s), `CBindings` against `CBindings.h`, and must fail on
 `hxmc/test/header/BadLayout.hx`. Without zig it is skipped. Android's and
 the glibc mode's headers are not among them yet (Layouts.hx reads those).
@@ -879,6 +906,11 @@ Two forms mark a function (or every function of a class) as trusted:
 
 An inline function's mark goes with the copies Haxe inlines, so a small
 trusted helper is trusted where it lands, and its callers stay checked.
+A coroutine's mark covers its whole body, which the coroutine transform
+moves into a class of its own (its state machine), and a coroutine
+closure's made in a marked function (`CoroUnsafe`). A mark on an
+expression inside a coroutine's body does not survive the transform: mark
+the function, or move the raw part into a function of its own.
 Each marked function is one place to audit; prefer small ones.
 
 ```haxe
@@ -1989,7 +2021,7 @@ try p.play("x.ogg", 0) catch (e:JavaException) trace(e.className, e.javaMessage)
 
 The corpus cases `JniCalls`, `JniArrays`, `JniRefs`, `JniPeers` and
 `JniThreads` embed a JVM (linux-x86_64 in the glibc mode, with a JDK:
-`make jni-check`, [testing.md](testing.md)); `JniElsewhere` runs on every
+`make native-check NATIVE=jni`, [testing.md](testing.md)); `JniElsewhere` runs on every
 target; `JniCheck` also loads an hxmc library into `java` and builds it
 for Android.
 

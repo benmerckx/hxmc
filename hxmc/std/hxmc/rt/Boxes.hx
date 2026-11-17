@@ -15,8 +15,9 @@ import hxmc.unsafe.Ptr;
 class Boxes {
 	static inline var SMALL_MIN = -128;
 	static inline var SMALL_MAX = 1023;
-	@:hxmc.bss(18432) static var smallInts:Ptr; // 16 bytes each (SMALL_MAX - SMALL_MIN + 1)
-	@:hxmc.bss(32) static var boolBoxes:Ptr;
+	// (named: the generated code boxes a Bool and a small Int inline, MemLower.boxFrom)
+	@:hxmc.bss(18432, "rt_small_ints") static var smallInts:Ptr; // 16 bytes each (SMALL_MAX - SMALL_MIN + 1)
+	@:hxmc.bss(32, "rt_bool_boxes") static var boolBoxes:Ptr;
 	@:hxmc.bss(18432) static var smallI64s:Ptr; // likewise for Int64 (OCaml's ints in converted code: ml2hx)
 
 	// at startup (rt_init; WebAssembly's Gc.init)
@@ -72,13 +73,17 @@ class Boxes {
 	static inline function f2i(f:Float):Int
 		return f > -2147483649.0 && f < 2147483648.0 ? (cast f : Int) : f2iSlow(f);
 
+	// (below 2^63: the low 32 bits of the 64-bit truncation, f % 2^32's,
+	// as fmod takes off a multiple of 2^32 of f's sign, which truncation
+	// towards zero takes off too; fmod beyond)
 	@:hxmc.export("hx_f2i_slow") @:hxmc.kernel static function f2iSlow(f:Float):Int {
 		if (f != f) return 0;
-		if (f >= 2147483648.0 || f <= -2147483649.0) {
-			var l:I64 = cast(f % 4294967296.0);
+		if (f >= -9223372036854775808.0 && f < 9223372036854775808.0) {
+			var l:I64 = cast f;
 			return l.toInt();
 		}
-		return cast f;
+		var l:I64 = cast(f % 4294967296.0);
+		return l.toInt();
 	}
 
 	// (null: T_NONE, 0; a Bool of null false)

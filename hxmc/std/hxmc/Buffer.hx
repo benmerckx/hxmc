@@ -44,6 +44,29 @@ final class Buffer {
 		}
 	}
 
+	// a buffer owning io, which raw code made and gives up (its bytes not
+	// copied: a job's result, a decoder's pixels); io is raw, so only
+	// @:hxmc.unsafe code calls it
+	public static function adopt(io:IoBuffer):Buffer {
+		if ((cast io : hxmc.unsafe.Ptr).isNull()) throw "Buffer.adopt: no buffer";
+		var b = new Buffer(0);
+		b.io.free();
+		b.io = io;
+		b.size = io.length;
+		return b;
+	}
+
+	// its memory given up to raw code, which frees it (not copied: a job's
+	// input moved to another thread); the buffer closed. Throws while a span
+	// is lent, or once closed
+	public function detach():IoBuffer {
+		if (lends.compareExchange(0, -1) != 0) throw lends.load() < 0 ? "Buffer: closed" : "Buffer.detach: a span of it is lent to a running call";
+		var r = io;
+		io = cast hxmc.unsafe.Ptr.nil();
+		size = 0;
+		return r;
+	}
+
 	inline function get_length():Int
 		return lends.load() < 0 ? 0 : size;
 
@@ -60,28 +83,59 @@ final class Buffer {
 		size = 0;
 	}
 
-	function open():IoBuffer {
-		if (lends.load() < 0) throw "Buffer: closed";
+	// io lent for an access of [pos, pos + len) (release() after it), as a
+	// span is: close() on another thread throws meanwhile instead of freeing
+	// it. Every range is checked first: nothing throws while it is lent
+	function lend(pos:Int, len:Int):IoBuffer {
+		check(pos, len);
+		if (take(0) < 0) throw "Buffer: closed";
 		return io;
 	}
 
-	public function get(pos:Int):Int
-		return open().get(pos);
+	function check(pos:Int, len:Int)
+		if (pos < 0 || len < 0 || pos > size - len) {
+			// (closed meanwhile: close() empties it once no span is lent)
+			if (lends.load() < 0) throw "Buffer: closed";
+			throw Error.OutsideBounds;
+		}
 
-	public function set(pos:Int, v:Int):Void
-		open().set(pos, v);
+	static inline function inside(b:Bytes, pos:Int, len:Int)
+		if (pos < 0 || len < 0 || pos > b.length - len) throw Error.OutsideBounds;
 
-	public function fill(pos:Int, len:Int, v:Int):Void
-		open().fill(pos, len, v);
+	public function get(pos:Int):Int {
+		var r = lend(pos, 1).get(pos);
+		release();
+		return r;
+	}
 
-	public function getBytes(pos:Int, len:Int):Bytes
-		return open().getBytes(pos, len);
+	public function set(pos:Int, v:Int):Void {
+		lend(pos, 1).set(pos, v);
+		release();
+	}
 
-	public function blitFromBytes(pos:Int, src:Bytes, srcpos:Int, len:Int):Void
-		open().blitFromBytes(pos, src, srcpos, len);
+	public function fill(pos:Int, len:Int, v:Int):Void {
+		lend(pos, len).fill(pos, len, v);
+		release();
+	}
 
-	public function blitToBytes(pos:Int, dst:Bytes, dstpos:Int, len:Int):Void
-		open().blitToBytes(pos, dst, dstpos, len);
+	public function getBytes(pos:Int, len:Int):Bytes {
+		check(pos, len);
+		var b = Bytes.alloc(len);
+		blitToBytes(pos, b, 0, len);
+		return b;
+	}
+
+	public function blitFromBytes(pos:Int, src:Bytes, srcpos:Int, len:Int):Void {
+		inside(src, srcpos, len);
+		lend(pos, len).blitFromBytes(pos, src, srcpos, len);
+		release();
+	}
+
+	public function blitToBytes(pos:Int, dst:Bytes, dstpos:Int, len:Int):Void {
+		inside(dst, dstpos, len);
+		lend(pos, len).blitToBytes(pos, dst, dstpos, len);
+		release();
+	}
 
 	// (Span.ofBuffer, FnLower.spanCall: the range checked as the arguments
 	// are evaluated, the span lent once they are, released after the call)

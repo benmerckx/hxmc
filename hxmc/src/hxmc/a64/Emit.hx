@@ -154,14 +154,29 @@ class Emit implements hxmc.Target.Emitter {
 		a.movSp(Asm.FP, SP);
 		op(Unwind.SETFP);
 		subSp(frameSize - split);
-		for (k in 0...saved.length) {
-			ldst(false, 8, false, saved[k], SP, saveOff[k]);
-			op(Unwind.SAVE, saved[k], saveOff[k]);
-		}
+		var k = 0;
+		while (k < saved.length)
+			if (paired(k)) {
+				a.pair(false, saved[k], saved[k + 1], SP, saveOff[k], 0);
+				op(Unwind.SAVE, saved[k], saveOff[k]);
+				op(Unwind.SAVE, saved[k + 1], saveOff[k + 1]);
+				k += 2;
+			} else {
+				ldst(false, 8, false, saved[k], SP, saveOff[k]);
+				op(Unwind.SAVE, saved[k], saveOff[k]);
+				k++;
+			}
 		subSp(split);
 		op(Unwind.ENDPROLOGUE);
 		// (a move of a register to itself: a 32-bit one zero-extends)
 		f.threadJumps(i -> (i.op : AOp) == B, i -> (i.op : AOp) == MOV && i.d == i.s1 && (i.d >= 32 || i.size != 4));
+		// (every return writes its epilogue: a copied return block is a jump less)
+		f.duplicateReturns(i -> (i.op : AOp) == B, i -> (i.op : AOp) == RET, 3);
+		// (an AArch64 condition ^ 1 is its exact inverse, unordered included)
+		f.duplicateTests(i -> (i.op : AOp) == B, i -> (i.op : AOp) == BCOND, i -> switch (i.op : AOp) {
+			case CMP | CMPI | FCMP: true;
+			case _: false;
+		}, i -> i.cond ^= 1, 2);
 		for (b in f.blocks)
 			b.label = a.newLabel();
 		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
@@ -234,6 +249,13 @@ class Emit implements hxmc.Target.Emitter {
 		}
 	}
 
+	// saved registers k and k + 1 by one stp/ldp: of a kind, in adjacent
+	// slots within its reach (not on Windows: its unwind codes are one per
+	// instruction, save_reg's)
+	function paired(k:Int):Bool
+		return !probe && k + 1 < saved.length && (saved[k] >= 32) == (saved[k + 1] >= 32) && saveOff[k + 1] == saveOff[k] + 8
+			&& saveOff[k] <= 496;
+
 	function epilogue() {
 		op(Unwind.EPILOGUE);
 		if (split >= 4096) {
@@ -244,10 +266,18 @@ class Emit implements hxmc.Target.Emitter {
 			a.addSubI(0, true, SP, SP, split & 0xfff);
 			op(Unwind.FREE, split & 0xfff);
 		}
-		for (k in 0...saved.length) {
-			ldst(true, 8, false, saved[k], SP, saveOff[k]);
-			op(Unwind.RESTORE, saved[k], saveOff[k]);
-		}
+		var k = 0;
+		while (k < saved.length)
+			if (paired(k)) {
+				a.pair(true, saved[k], saved[k + 1], SP, saveOff[k], 0);
+				op(Unwind.RESTORE, saved[k], saveOff[k]);
+				op(Unwind.RESTORE, saved[k + 1], saveOff[k + 1]);
+				k += 2;
+			} else {
+				ldst(true, 8, false, saved[k], SP, saveOff[k]);
+				op(Unwind.RESTORE, saved[k], saveOff[k]);
+				k++;
+			}
 		a.movSp(SP, Asm.FP);
 		op(Unwind.SPFP);
 		a.pair(true, Asm.FP, Asm.LR, SP, 16, 2);
@@ -438,6 +468,28 @@ class Emit implements hxmc.Target.Emitter {
 				a.ldst(false, 8, false, true, i.s1, X16, 0);
 			case TEBLOAD:
 				a.ldst(true, 8, false, true, i.d, 18, i.imm);
+			case TLSBASE:
+				// Apple's TLV access inline (dyld's _tlv_get_addr): the image's
+				// descriptor (hxmc_tls_start: offset 0) holds the pthread key whose
+				// slot in the thread's TSD array (tpidrro_el0) is its block; an empty
+				// slot (the thread's first access) calls the thunk, which keeps every
+				// register but x0, x16, x17 and lr (the TLV convention): x0 and lr
+				// are kept here, so the function stays a leaf
+				var desc = obj.sym("hxmc_tls_start"), done = a.newLabel();
+				a.adrSym(X16, desc, 0);
+				a.ldst(true, 8, false, true, X17, X16, 8);
+				a.mrsTpRo(X16);
+				a.logicI(0, true, X16, X16, -8, -1);
+				a.ldstR(true, 8, false, true, X16, X16, X17, true);
+				a.cbz(true, X16, done, true);
+				a.pair(false, 0, 30, 31, -16, 1);
+				a.adrSym(0, desc, 0);
+				a.ldst(true, 8, false, true, X16, 0, 0);
+				a.blr(X16);
+				a.movR(true, X16, 0);
+				a.pair(true, 0, 30, 31, 16, 2);
+				a.bind(done);
+				a.movR(true, i.d, X16);
 			case BRK:
 				a.brk();
 			case LDAR:

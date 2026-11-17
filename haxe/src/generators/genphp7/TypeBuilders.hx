@@ -455,10 +455,10 @@ class EnumBuilder extends TypeBuilder {
 	*/
 	override function writeBody():Void {
 		var writeEmptyLines = false;
-		core.ds.PMap.iter((name:String, field:TEnumField) -> {
+		for (name => field in enm.eConstrs.byName) {
 			if (writeEmptyLines) writer.writeEmptyLines() else writeEmptyLines = true;
 			writeConstructor(name, field);
-		}, enm.eConstrs);
+		}
 		writeReflection();
 	}
 
@@ -516,7 +516,7 @@ class EnumBuilder extends TypeBuilder {
 		writer.indentMore();
 		writer.writeLine("return [");
 		writer.indentMore();
-		core.ds.PMap.iter((name:String, field:TEnumField) -> writer.writeLine((Std.string(field.efIndex)) + " => '" + name + "',"), enm.eConstrs);
+		for (name => field in enm.eConstrs.byName) writer.writeLine((Std.string(field.efIndex)) + " => '" + name + "',");
 		writer.indentLess();
 		writer.writeStatement("]");
 		writer.indentLess();
@@ -533,14 +533,14 @@ class EnumBuilder extends TypeBuilder {
 		writer.indentMore();
 		writer.writeLine("return [");
 		writer.indentMore();
-		core.ds.PMap.iter((name:String, field:TEnumField) -> {
+		for (name => field in enm.eConstrs.byName) {
 			var count = switch follow(field.efType) {
 				case TFun(sig): sig.args.length;
 				case TEnum(_): 0;
 				case _: fail(field.efPos, "genphp7.enum_builder#write_reflection");
 			}
 			writer.writeLine("'" + name + "' => " + (Std.string(count)) + ",");
-		}, enm.eConstrs);
+		}
 		writer.indentLess();
 		writer.writeStatement("]");
 		writer.indentLess();
@@ -773,25 +773,25 @@ class ClassBuilder extends TypeBuilder {
 		}
 		if (!(hasClassFlag(cls, CInterface))) {
 			/* Inlined statc vars (constants) */
-			core.ds.PMap.iter(writeIfConstant, cls.clStatics);
+			cls.clStatics.byName.iter(writeIfConstant);
 			if (atLeastOneFieldWritten) writer.writeEmptyLines();
 			atLeastOneFieldWritten = false;
 			/* Statc vars */
-			core.ds.PMap.iter(writeIfVar.bind(true), cls.clStatics);
+			cls.clStatics.byName.iter(writeIfVar.bind(true));
 			if (atLeastOneFieldWritten) writer.writeEmptyLines();
 			atLeastOneFieldWritten = false;
 			/* instance vars */
-			core.ds.PMap.iter(writeIfVar.bind(false), cls.clFields);
+			cls.clFields.byName.iter(writeIfVar.bind(false));
 		}
 		/* Statc methods */
-		core.ds.PMap.iter(writeIfMethod.bind(true), cls.clStatics);
+		cls.clStatics.byName.iter(writeIfMethod.bind(true));
 		/* Constructor */
 		switch getConstructor() {
 			case null:
 			case field: writeIfMethod(false, "new", field);
 		}
 		/* Instance methods */
-		core.ds.PMap.iter(writeIfMethod.bind(false), cls.clFields);
+		cls.clFields.byName.iter(writeIfMethod.bind(false));
 		/* Generate `__toString()` if not defined by user, but has `toString()` */
 		writeToStringIfRequired();
 	}
@@ -820,7 +820,7 @@ class ClassBuilder extends TypeBuilder {
 	function constructorIsRequired():Bool {
 		if ((hasClassFlag(cls, CInterface)) || getNamespace().length > 0) return false;
 		var required = false;
-		for (field in cls.clOrderedStatics.concat(cls.clOrderedFields)) {
+		for (field in cls.clStatics.toArray().concat(cls.clFields.toArray())) {
 			if (!required) required = (asciiLowercase(field.cfName) == asciiLowercase(getName()));
 		}
 		return required;
@@ -851,7 +851,7 @@ class ClassBuilder extends TypeBuilder {
 			}
 			writer.write(";\n");
 		}
-		for (field in cls.clOrderedStatics) {
+		for (field in cls.clStatics) {
 			switch field.cfKind {
 				case Method(MethDynamic): writeDynamicMethodInitialization(field);
 				case _:
@@ -892,7 +892,7 @@ class ClassBuilder extends TypeBuilder {
 				case _:
 			}
 		}
-		for (field in cls.clOrderedStatics) writeVarInitialization(field);
+		for (field in cls.clStatics) writeVarInitialization(field);
 	}
 
 	/**
@@ -1054,7 +1054,7 @@ class ClassBuilder extends TypeBuilder {
 			writer.writeStatement("if ($this->" + fieldName + " === null) $this->" + fieldName + " = new " + hxClosure + "($this, '__hx__default__"
 				+ fieldName + "')");
 		}
-		for (field in cls.clOrderedFields) {
+		for (field in cls.clFields) {
 			switch field.cfKind {
 				case Method(MethDynamic): initDynamicMethod(field);
 				case _:
@@ -1077,8 +1077,8 @@ class ClassBuilder extends TypeBuilder {
 				case _:
 			}
 		}
-		for (f in cls.clOrderedFields) collect(f);
-		for (f in cls.clOrderedStatics) collect(f);
+		for (f in cls.clFields) collect(f);
+		for (f in cls.clStatics) collect(f);
 		function write(lst:Array<String>):Void {
 			for (i in 0...lst.length) {
 				if (i == lst.length - 1) writer.writeLine("'" + lst[i] + "' => true") else writer.writeLine("'" + lst[i] + "' => true,");

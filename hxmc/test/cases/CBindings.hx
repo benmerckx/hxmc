@@ -10,7 +10,7 @@ import hxmc.unsafe.*;
 // span of one, handles only C makes (one with an invalid value, cleared by
 // the function closing it), callbacks by name, a span result; @:hxmc.safe:
 // the declaration vouches, so safe kernels call them (reject/CBinding* the
-// rules); make header-check compiles them against CBindings.h.
+// rules); make native-check NATIVE=header compiles them against CBindings.h.
 @:hxmc.struct @:hxmc.cname("struct cb_qr") @:publicFields class QR {
 	var q:Int32;
 	var r:Int32;

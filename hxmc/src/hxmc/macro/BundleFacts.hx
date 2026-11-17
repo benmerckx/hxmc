@@ -55,7 +55,7 @@ class BundleFacts {
 			if (std) stdTypes.set(core.Globals.sTypePath(info.mtPath), true);
 			switch t {
 				case TClassDecl(c):
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						var g = l.staticVars.get(l.canonField(c, cf));
 						if (g != null) globalShare.set(g, std);
 					}
@@ -172,7 +172,7 @@ class BundleFacts {
 		var selectors = [for (s in 0...p.selectors.length) {sym: e.selNames[s], rows: rowsOf[s]}];
 		var entries = [];
 		if (main != null)
-			for (cf in main.clOrderedStatics) {
+			for (cf in main.clStatics) {
 				var f = l.funcs.get(l.canonField(main, cf));
 				if (f != null && cf.cfName != "main" && p.isLive(f)) entries.push({name: cf.cfName, sym: e.symbol(f)});
 			}

@@ -2,6 +2,7 @@ package hxmc;
 
 import haxe.ds.Vector;
 import hxmc.Mir;
+import hxmc.Ssa;
 import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
@@ -141,9 +142,17 @@ class Opt {
 			}
 		}
 		if (nullsDropped) dce();
-		if (licmOn)
-			for (_ in 0...3)
-				if (!licm()) break;
+		var moved = false;
+		for (_ in 0...3)
+			if (licm()) moved = true else break;
+		// (loads moved out of a loop's arms together, before it: the same
+		// value, once)
+		if (moved) redundancy(f.cfg());
+		// (a branch LICM made invariant: the loop copied for each way)
+		if (unswitch()) {
+			simplifyCfg();
+			dce();
+		}
 		if (barriers > 0) {
 			freshTargets();
 			loneBarrierOperands();
@@ -173,7 +182,199 @@ class Opt {
 		dce();
 	}
 
-	static var licmOn = true; // (the build's, Options.apply)
+	// ---- unswitching
+
+	// at most this many instructions in a loop copied; loops copied per function
+	static inline var UNSWITCH_SIZE = 40;
+	static inline var UNSWITCH_LOOPS = 2;
+
+	// An innermost loop with one way in, of at most UNSWITCH_SIZE instructions,
+	// that branches on a value from before it (or on a comparison of such
+	// values or constants) to two blocks of the loop, neither a slow path, in a
+	// block of at least half its rounds (guessed: a test the loop makes only
+	// sometimes costs its copy's test at each entry for little, as in a hash
+	// table's probe):
+	// copied (LoopVersion.copyLoop), a test of the value before the loop
+	// entering the copy, where the branch is a jump to its first target, or the
+	// loop, where it is a jump to the other (simplifyCfg). A string scan's
+	// branch on the string's width (one byte or two a unit), once its header
+	// word has left the loop (licm): a loop per width, as LLVM's
+	// simple-loop-unswitch makes at -O3. Returns whether a loop was copied.
+	function unswitch():Bool {
+		var count = 0;
+		var lv:Null<LoopVersion> = null;
+		var done = new Map<Int, Bool>(); // (headers looked at, the copies' too)
+		while (count < UNSWITCH_LOOPS) {
+			var cfg = f.cfg();
+			cfg.loops();
+			if (cfg.irreducible) break;
+			var order = cfg.rpo;
+			var bodies = cfg.loopBodies();
+			var vals = f.vals;
+			var found = false;
+			var k = order.length;
+			while (!found && k-- > 1) {
+				var h = order[k];
+				var ks = bodies[k];
+				if (ks == null || h.handler || done.exists(h.id)) continue;
+				done.set(h.id, true);
+				var inL = new Map<Int, Bool>();
+				var inner = true, size = 0;
+				for (x in ks) {
+					if (x != k && bodies[x] != null || order[x].handler) inner = false;
+					inL.set(order[x].id, true);
+					for (i in order[x].ins)
+						if (!i.dead) size++;
+				}
+				if (!inner || size > UNSWITCH_SIZE) continue;
+				function inLoop(b:Null<MBlock>):Bool
+					return b != null && inL.exists(b.id);
+				var pre = -1;
+				for (q in 0...h.preds.length)
+					if (!inLoop(h.preds[q])) pre = pre == -1 ? q : -2;
+				if (pre < 0) continue;
+				var preB = h.preds[pre];
+				var pt = preB.term();
+				if (pt == null || pt.op == Switch || pt.op == AnonTest) continue;
+				// (a value from before the loop, or a constant of it)
+				inline function before(v:Int):Bool {
+					var x = vals[v];
+					return !inLoop(x.block) || (x.op == Const || x.op == ConstF) && x.sym == null;
+				}
+				// (a branch of most rounds: each block's share of the rounds, by
+				// static guesses at the branches, as LLVM's BranchProbabilityInfo:
+				// a slow path never, a way out of the loop rarely, an unsigned x < n
+				// (a bounds test) passes,
+				// an equality rarely holds)
+				var freq = new Map<Int, Float>();
+				freq.set(h.id, 1.0);
+				function share(p:MBlock, b:MBlock):Float {
+					var t = p.term();
+					if (b.cold) return 0;
+					if (t.op == Jmp) return 1;
+					if (t.op != Br) return 1 / t.targets.length;
+					if (t.targets[0] == t.targets[1]) return 1;
+					var other = t.targets[0] == b ? t.targets[1] : t.targets[0];
+					if (other.cold) return 1;
+					// (staying in the loop: likely)
+					if (!inLoop(other)) return 0.97;
+					var c = vals[t.a];
+					var yes = c.op != Cmp ? 0.5 : switch (c.imm : Cond) {
+						case CULt | CULe: 0.95;
+						case CUGt | CUGe: 0.05;
+						case CEq | FEq: 0.2;
+						case CNe | FNe: 0.8;
+						case _: 0.5;
+					};
+					return t.targets[0] == b ? yes : 1 - yes;
+				}
+				for (x in ks) {
+					var b = order[x];
+					if (b == h) continue;
+					var sum = 0.0;
+					for (p in b.preds)
+						if (inLoop(p) && cfg.index(p) < x && freq.exists(p.id)) sum += freq.get(p.id) * share(p, b);
+					freq.set(b.id, sum);
+				}
+				var br:Null<MIns> = null;
+				for (x in ks) {
+					var t = order[x].term();
+					if (br != null || t == null || t.op != Br || t.targets[0] == t.targets[1]) continue;
+					if (freq.get(order[x].id) < 0.5) continue;
+					if (!inLoop(t.targets[0]) || !inLoop(t.targets[1]) || t.targets[0].cold || t.targets[1].cold || order[x].cold) continue;
+					var c = vals[t.a];
+					// (not a null test: its other way is the exception, a copy for nothing)
+					if (c.op == Cmp && (c.imm == (CEq : Int) || c.imm == (CNe : Int)) && c.a >= 0 && c.b >= 0 && vals[c.a].ty == I64 && (isZero(c.a) || isZero(c.b))) continue;
+					if (!inLoop(c.block) || c.op == Cmp && c.a >= 0 && c.b >= 0 && before(c.a) && before(c.b) && c.ty == I32) br = t;
+				}
+				if (br == null) continue;
+				var members = [for (x in ks) order[x]];
+				if (lv == null) lv = new LoopVersion(f);
+				var copyBr:Null<MIns> = null;
+				lv.copyLoop(h, members, inLoop, cfg, (i, x) -> if (i == br) copyBr = x, h2 -> {
+					// the test before the loop: the copy where the value is true
+					var test = new MBlock(0);
+					for (b in f.blocks)
+						if (b.id >= test.id) test.id = b.id + 1;
+					test.sealed = test.filled = true;
+					test.cold = preB.cold;
+					f.blocks.push(test);
+					inline function add(op:Op, ty:MTy):MIns {
+						var x = new MIns(op, ty);
+						x.id = vals.length;
+						vals.push(x);
+						x.block = test;
+						test.ins.push(x);
+						return x;
+					}
+					function here(v:Int):Int {
+						var x = vals[v];
+						if (!inLoop(x.block)) return v;
+						var y = add(x.op, x.ty);
+						y.imm = x.imm;
+						y.imm2 = x.imm2;
+						y.f = x.f;
+						y.vty = x.vty;
+						return y.id;
+					}
+					var c = vals[br.a];
+					var cond = br.a;
+					if (inLoop(c.block)) {
+						var a = here(c.a), b = here(c.b);
+						var y = add(Cmp, c.ty);
+						y.imm = c.imm;
+						y.imm2 = c.imm2;
+						y.a = a;
+						y.b = b;
+						y.vty = c.vty;
+						y.pos = c.pos;
+						cond = y.id;
+					}
+					var tb = add(Br, Void);
+					tb.a = cond;
+					tb.pos = br.pos;
+					tb.targets = vector(h2, h);
+					test.succs = [h2, h];
+					test.preds = [preB];
+					for (q in 0...pt.targets.length)
+						if (pt.targets[q] == h) pt.targets[q] = test;
+					for (q in 0...preB.succs.length)
+						if (preB.succs[q] == h) preB.succs[q] = test;
+					h.preds[pre] = test;
+					h2.preds[pre] = test;
+					// (the decided branches: simplifyCfg makes them jumps)
+					var one = add(Const, I32);
+					one.imm = 1;
+					var zero = add(Const, I32);
+					var t = test.ins.pop();
+					test.ins.insert(0, zero);
+					test.ins.insert(0, one);
+					test.ins.push(t);
+					copyBr.a = one.id;
+					br.a = zero.id;
+					done.set(h2.id, true);
+				});
+				f.edited();
+				found = true;
+				count++;
+			}
+			if (!found) break;
+		}
+		if (count > 0) {
+			// (the new values are their own representatives)
+			var r = MFunc.iota(f.vals.length);
+			if (repl != null)
+				for (k in 0...repl.length)
+					r[k] = repl[k];
+			repl = r;
+			var c = MFunc.iota(f.vals.length);
+			if (canon != null)
+				for (k in 0...canon.length)
+					c[k] = canon[k];
+			canon = c;
+		}
+		return count > 0;
+	}
 
 	// ---- loop-invariant code motion
 
@@ -281,6 +482,52 @@ class Opt {
 						if ((i.op == Call || objCall(i.op)) && !b.cold) calls = true;
 					}
 			if (calls) continue;
+			// A guard (LLVM's loop-rotate, then LICM into the guarded
+			// preheader). A header that only tests (pure operations of its phis
+			// and of values from before the loop) and branches out or to the
+			// loop's block after it, which only that header enters, in a loop
+			// of one way back (a jump): the objects that block dereferences
+			// before any effect are not null once the loop's first round passes
+			// the test, so loads through them can move to a block on that edge,
+			// once the test is at the loop's end (guard)
+			var guardTo:Null<MBlock> = null, latch:Null<MBlock> = null;
+			for (p in h.preds)
+				if (p.mark == inOrder && body[p.tmp]) latch = latch == null ? p : h;
+			if (latch == h || latch == null || latch.term() == null || latch.term().op != Jmp) latch = null;
+			var firstDerefs:Array<Int> = [];
+			var ht = h.term();
+			if (latch != null && outside.term() != null && (outside.succs.length != 1 || outside.term().op == Jmp) && ht != null && ht.op == Br
+				&& ht.targets.length == 2) {
+				var t0 = ht.targets[0], t1 = ht.targets[1];
+				var in0 = t0.mark == inOrder && body[t0.tmp], in1 = t1.mark == inOrder && body[t1.tmp];
+				var bb = in0 ? t0 : t1;
+				if (in0 != in1 && bb != h && bb.preds.length == 1 && !bb.handler && !hasPhi(bb)) {
+					var n = 0;
+					for (i in h.ins)
+						if (!i.dead && i.op != Phi && i != ht) {
+							if (!(pure(i.op) || i.op == Const || i.op == ConstF) || i.ty == V128) n = 99;
+							n++;
+						}
+					if (n <= 8) {
+						guardTo = bb;
+						for (i in bb.ins) {
+							if (i.dead) continue;
+							if ((i.op == Load || objDeref(i.op)) && i.a >= 0) firstDerefs.push(baseOf(i.a));
+							if (!(pure(i.op) || i.op == Const || i.op == ConstF || i.op == SymAddr || i.op == Load || objPure(i.op)
+								|| i.op == GetField || i.op == ArrayLength || i.op == NArrayLength || i.op == EnumTag || i.op == NullCheck))
+								break;
+						}
+						if (firstDerefs.length == 0) guardTo = null;
+					}
+				}
+			}
+			// (the instructions that move after the guard: its loads, what uses them)
+			var guarded = new Map<Int, Bool>();
+			var needsGuard = false;
+			inline function nonNullIn(i:MIns):Bool {
+				var o = baseOf(i.a);
+				return nonNull(o, outside, 0) || guardTo != null && i.ty != V128 && firstDerefs.indexOf(o) >= 0 && (needsGuard = true);
+			}
 			// the movable instructions, in reverse postorder of their blocks
 			var hoist:Array<MIns> = [];
 			if (inv.length < vals.length) inv.resize(vals.length);
@@ -292,14 +539,15 @@ class Opt {
 			for (b in members)
 				for (i in b.ins) {
 					if (i.dead) continue;
+					needsGuard = false;
 					var can = switch i.op {
 						case Const | ConstF | SymAddr | StackAddr: true;
 						case Cmp: false; // (fused with its branch)
 						// (object-level: as the loads of fields, headers and immutable memory below)
 						case GetField | ArrayLength | NArrayLength:
 							var c = objLoadClass(i);
-							c >= 0 && kills & (1 << c) == 0 && nonNull(baseOf(i.a), outside, 0);
-						case EnumTag: nonNull(baseOf(i.a), outside, 0);
+							c >= 0 && kills & (1 << c) == 0 && nonNullIn(i);
+						case EnumTag: nonNullIn(i);
 						case TypeTest | FieldAddr: true;
 						case _ if (i.isObj()): false;
 						case Load | TlsLoad:
@@ -309,10 +557,16 @@ class Opt {
 							// the load cannot fault before the loop; a loop that may collect
 							// writes them all: no reference leaves it to live across a GC point)
 							|| i.op == Load && i.b < 0 && (i.mem == MField || i.mem == MHdr || i.mem == MConst)
-							&& kills & (1 << memClass(i)) == 0 && nonNull(baseOf(i.a), outside, 0);
+							&& kills & (1 << memClass(i)) == 0 && nonNullIn(i);
 						case op: pure(op);
 					};
 					if (!can || !invariant(i.a) || !invariant(i.b) || !invariant(i.c)) continue;
+					// (after the guard: a load that needs it, an operation of one that does)
+					if (b == h && needsGuard) continue;
+					if (needsGuard || i.a >= 0 && guarded.exists(i.a) || i.b >= 0 && guarded.exists(i.b) || i.c >= 0 && guarded.exists(i.c)) {
+						if (b == h || i.ty == V128) continue;
+						guarded.set(i.id, true);
+					}
 					inv[i.id] = true;
 					hoist.push(i);
 				}
@@ -354,16 +608,433 @@ class Opt {
 			}
 			// move
 			var term = pre.ins.pop();
-			for (i in hoist) {
-				i.block.ins.remove(i);
-				i.block = pre;
-				pre.ins.push(i);
-			}
+			for (i in hoist)
+				if (!guarded.exists(i.id)) {
+					i.block.ins.remove(i);
+					i.block = pre;
+					pre.ins.push(i);
+				}
 			pre.ins.push(term);
 			moved = true;
+			if (guardTo != null && Lambda.count(guarded) > 0) {
+				guard(pre, h, guardTo, latch, [for (i in hoist) if (guarded.exists(i.id)) i], nextBlock++);
+				made = true;
+			}
 		}
 		if (made) f.edited();
 		return moved;
+	}
+
+	// ---- shadow-stack slots as values
+
+	// After MemLower (Opt.lowered: its operations and their continuations are
+	// plain code, the points that may collect are calls), a loop header's
+	// first load of a slot of the function's shadow-stack frame (rt_sp read
+	// at its entry, plus a constant) is a phi of the value each predecessor
+	// leaves there: its store, its earlier load, its one predecessor's (up a
+	// chain), or a reload at its end after what may write the slot (a call
+	// that may collect: killMask) or, outside the loop, where paths meet; in a block, a load after a store or load
+	// of the slot with nothing between that may write it is that value. A
+	// loop's rooted local, as NameResolver.Resolve's `location =
+	// location.Parent` with calls on its other way, then goes around in a
+	// register, not through its slot (a store's latency each round). Not at
+	// other joins: values kept through whole functions cost spills (tshx +5.8%
+	// instructions). The stores stay (Frames, before MemLower, dropped those
+	// no load read). Not in functions with a try, nor where the frame's
+	// address goes elsewhere than into constant-offset loads, stores and its
+	// push. Returns whether a load was replaced.
+	function promoteSlots():Bool {
+		var vals = f.vals;
+		var fp:Null<MIns> = null;
+		for (i in f.entry.ins)
+			if (!i.dead && i.op == TlsLoad && i.sym == "rt_sp") {
+				fp = i;
+				break;
+			}
+		if (fp == null) return false;
+		var NO = 0x40000000;
+		var off = MFunc.ints(vals.length, NO);
+		off[fp.id] = 0;
+		// the slot of each load and store of the frame (by offset)
+		var slotOf = new Map<Int, Int>();
+		var slots = new Map<Int, Bool>();
+		var cfg = f.cfg();
+		for (b in cfg.rpo)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				if (i.op == Call && i.returnsTwice) return false;
+				var da = i.a >= 0 && off[i.a] != NO, db = i.b >= 0 && off[i.b] != NO, dc = i.c >= 0 && off[i.c] != NO;
+				var dargs = false;
+				for (x in i.args)
+					if (off[x] != NO) dargs = true;
+				if (!da && !db && !dc && !dargs) continue;
+				if (i.op == Add && da && !db) {
+					var c = vals[i.b];
+					if (c.op != Const || c.sym != null || c.imm2 != (c.imm < 0 ? -1 : 0)) return false;
+					off[i.id] = off[i.a] + c.imm;
+				} else if ((i.op == Load || i.op == Store) && da && !db && !dc && !dargs) {
+					var s = off[i.a] + i.imm;
+					if (i.size != 8 || s < 0 || s & 7 != 0) return false;
+					slotOf.set(i.id, s);
+					if (i.op == Load) slots.set(s, true);
+				} else if (i.op == TlsStore && (i.sym == "rt_sp" || i.sym == "rt_sp_hw") && da || i.op == Cmp && da && !db) {
+					// (the push)
+				} else if (i.isObj() && i.info != null && i.info.fr) {
+					// (an operation that takes the frame: kills every slot, below)
+				} else return false;
+			}
+		var nb = 0;
+		for (b in f.blocks)
+			if (b.id >= nb) nb = b.id + 1;
+		var any = false;
+		var r = [for (k in 0...vals.length) k];
+		var made:Array<MIns> = [];
+		var sorted = [for (s in slots.keys()) s];
+		sorted.sort((a, b) -> a - b);
+		for (s in sorted) {
+			var cls = (1 << (MFrameAt + ((s >> 3) & 7))) | (1 << MFrame);
+			// per block: the loads of the slot it reads on entry (none written
+			// or killed before them), its value at its end (NONE: as on
+			// entry; LAZY: killed, a reload there if asked)
+			var entryLoads = new Map<Int, Array<MIns>>();
+			var ends = MFunc.ints(nb, SsaReader.NONE);
+			var ty:MTy = I64;
+			var vty:Null<hxmc.ir.Ir.Ty> = null;
+			for (b in f.blocks) {
+				// (-2: as on entry, -1: killed, else the value)
+				var state = b.handler ? -1 : -2;
+				for (i in b.ins) {
+					if (i.dead) continue;
+					var at = slotOf.get(i.id);
+					if (at != null) {
+						if (at != s) continue;
+						if (i.op == Store) {
+							var v = vals[i.c];
+							state = v.ty == I64 ? i.c : -1;
+						} else if (state >= 0) {
+							r[i.id] = state;
+							i.dead = true;
+							any = true;
+						} else {
+							if (state == -2) {
+								var l = entryLoads.get(b.id);
+								if (l == null) entryLoads.set(b.id, l = []);
+								l.push(i);
+								if (vty == null) vty = i.vty;
+							}
+							state = i.id;
+						}
+						continue;
+					}
+					if (i.isObj() && i.info != null && i.info.fr || killMask(i) & cls != 0) state = -1;
+				}
+				if (state >= 0) ends[b.id] = state else if (state == -1) ends[b.id] = SsaReader.LAZY;
+			}
+			if (Lambda.count(entryLoads) == 0) continue;
+			// (a reload: at a block's end, before its terminator)
+			var reloads = new Map<Int, Int>();
+			function reload(b:MBlock):Int {
+				var have = reloads.get(b.id);
+				if (have != null) return have;
+				var x = new MIns(Load, I64);
+				x.id = vals.length;
+				vals.push(x);
+				r.push(x.id);
+				x.a = fp.id;
+				x.imm = s;
+				x.size = 8;
+				x.mem = MFrame;
+				x.vty = vty;
+				x.block = b;
+				b.ins.insert(b.term() != null ? b.ins.length - 1 : b.ins.length, x);
+				reloads.set(b.id, x.id);
+				return x.id;
+			}
+			// the slot's value at the end of p: what p left, else what its one
+			// predecessor left (null: paths meet before, unknown)
+			function endOf(p:MBlock, depth:Int):Null<Int> {
+				var e = ends[p.id];
+				if (e >= 0) return e;
+				if (e == SsaReader.LAZY) return reload(p);
+				if (p.handler) return reload(p);
+				if (p == f.entry) return reload(p);
+				return p.preds.length == 1 && depth < 8 ? endOf(p.preds[0], depth + 1) : null;
+			}
+			// only loop headers (a way back to them: a predecessor not before
+			// them in reverse postorder): the value goes around in a register
+			var index = new Map<Int, Int>();
+			for (k in 0...cfg.rpo.length)
+				index.set(cfg.rpo[k].id, k);
+			for (b in f.blocks) {
+				var l = entryLoads.get(b.id);
+				if (l == null || b.handler || !index.exists(b.id)) continue;
+				var back = false;
+				for (p in b.preds)
+					if (index.exists(p.id) && index.get(p.id) >= index.get(b.id)) back = true;
+				if (!back) continue;
+				var args = new haxe.ds.Vector<Int>(b.preds.length);
+				var known = true;
+				for (q in 0...b.preds.length) {
+					var p = b.preds[q];
+					var v = endOf(p, 0);
+					// (from outside the loop where paths meet: a reload there, once
+					// per entry into the loop)
+					if (v == null && index.exists(p.id) && index.get(p.id) < index.get(b.id)) v = reload(p);
+					if (v == null) {
+						known = false;
+						break;
+					}
+					args[q] = v;
+				}
+				if (!known) continue;
+				var first = l[0];
+				var p = new MIns(Phi, ty);
+				p.id = vals.length;
+				vals.push(p);
+				r.push(p.id);
+				p.vty = vty;
+				p.block = b;
+				// (the phi itself where the way back brings the load's own value)
+				for (q in 0...args.length)
+					if (args[q] == first.id) args[q] = p.id;
+				p.args = args;
+				made.push(p);
+				var k = 0;
+				while (k < b.ins.length && b.ins[k].op == Phi)
+					k++;
+				b.ins.insert(k, p);
+				for (i in l) {
+					r[i.id] = p.id;
+					i.dead = true;
+				}
+				any = true;
+			}
+		}
+		if (!any) return false;
+		Ssa.trivialPhis(vals, made);
+		repl = haxe.ds.Vector.fromArrayCopy(r);
+		for (p in made)
+			if (!p.dead && p.op == Copy) {
+				repl[p.id] = p.a;
+				p.dead = true;
+			}
+		rewrite();
+		dce();
+		f.edited();
+		return true;
+	}
+
+	// licm's guard: the loop rotated. Its header h only tests and branches
+	// out (to its exit) or to inLoop (entered from h alone, without phis);
+	// latch, its one way back, jumps to h. The latch gets a copy of the test
+	// (h's phis as their values from the latch) branching to inLoop or the
+	// exit: h runs once, before the loop, and its branch to inLoop goes
+	// through a new block of the guarded instructions gs (in order). The
+	// values of h, of the copy and of gs reach their users through phis
+	// (SsaReader: inLoop's, the exit's; a guarded value is 0 on the way out
+	// from h, where it was not computed).
+	function guard(pre:MBlock, h:MBlock, inLoop:MBlock, latch:MBlock, gs:Array<MIns>, id:Int) {
+		var vals = f.vals;
+		function add(b:MBlock, op:Op, ty:MTy):MIns {
+			var x = new MIns(op, ty);
+			x.id = vals.length;
+			vals.push(x);
+			x.block = b;
+			b.ins.push(x);
+			return x;
+		}
+		var ht = h.term();
+		var exit = ht.targets[0] == inLoop ? ht.targets[1] : ht.targets[0];
+		var li = h.preds.indexOf(latch);
+		var map = new Map<Int, Int>();
+		for (i in h.ins)
+			if (!i.dead && i.op == Phi) map.set(i.id, i.args[li]);
+		inline function m(v:Int):Int {
+			var r = v < 0 ? null : map.get(v);
+			return r == null ? v : r;
+		}
+		// the test at the latch
+		var jmp = latch.ins.pop();
+		for (i in h.ins) {
+			if (i.dead || i.op == Phi || i == ht) continue;
+			var x = add(latch, i.op, i.ty);
+			x.a = m(i.a);
+			x.b = m(i.b);
+			x.c = m(i.c);
+			x.imm = i.imm;
+			x.imm2 = i.imm2;
+			x.f = i.f;
+			x.size = i.size;
+			x.signed = i.signed;
+			x.sym = i.sym;
+			x.vty = i.vty;
+			x.pos = i.pos;
+			map.set(i.id, x.id);
+		}
+		var br = add(latch, Br, Void);
+		br.a = m(ht.a);
+		br.pos = jmp.pos;
+		br.targets = vector(ht.targets[0], ht.targets[1]);
+		latch.succs = [ht.targets[0], ht.targets[1]];
+		inLoop.preds.push(latch);
+		// (the exit's phis: from the latch what they take from h, read again below)
+		var hi = exit.preds.indexOf(h);
+		exit.preds.push(latch);
+		for (i in exit.ins)
+			if (!i.dead && i.op == Phi) {
+				var args = new Vector<Int>(i.args.length + 1);
+				for (q in 0...i.args.length)
+					args[q] = i.args[q];
+				args[i.args.length] = i.args[hi];
+				i.args = args;
+			}
+		// h entered from pre alone
+		h.preds.splice(li, 1);
+		for (i in h.ins)
+			if (!i.dead && i.op == Phi) {
+				var args = new Vector<Int>(i.args.length - 1);
+				var k = 0;
+				for (q in 0...i.args.length)
+					if (q != li) args[k++] = i.args[q];
+				i.args = args;
+			}
+		// the guarded block, on h's edge to inLoop
+		var g = new MBlock(id);
+		g.cold = h.cold;
+		g.sealed = g.filled = true;
+		f.blocks.push(g);
+		for (q in 0...ht.targets.length)
+			if (ht.targets[q] == inLoop) ht.targets[q] = g;
+		for (q in 0...h.succs.length)
+			if (h.succs[q] == inLoop) h.succs[q] = g;
+		inLoop.preds[inLoop.preds.indexOf(h)] = g;
+		for (i in gs) {
+			i.block.ins.remove(i);
+			i.block = g;
+			g.ins.push(i);
+		}
+		var j = add(g, Jmp, Void);
+		j.targets = vector(inLoop);
+		g.preds = [h];
+		g.succs = [inLoop];
+		// (the zeros of guarded values on the way out from h)
+		var zero = new Map<Int, Int>();
+		function zeroOf(ty:MTy):Int {
+			var k = (ty : Int);
+			if (!zero.exists(k)) {
+				var t = pre.ins.pop();
+				zero.set(k, add(pre, ty == F64 ? ConstF : Const, ty).id);
+				pre.ins.push(t);
+			}
+			return zero.get(k);
+		}
+		// the values defined in h (also at the latch) or g, read again where
+		// they are used outside their block
+		var defs:Array<{x:MIns, inLatch:Int}> = [];
+		for (i in h.ins)
+			if (!i.dead && i != ht) defs.push({x: i, inLatch: m(i.id)});
+		for (i in gs)
+			defs.push({x: i, inLatch: -1});
+		var nb = 0;
+		for (b in f.blocks)
+			if (b.id >= nb) nb = b.id + 1;
+		var made:Array<MIns> = [];
+		for (d in defs) {
+			var x = d.x.id, home = d.x.block;
+			var used = false;
+			for (b in f.blocks)
+				if (b != home)
+					for (i in b.ins)
+						if (!i.dead && usesVal(i, x)) used = true;
+			if (!used) continue;
+			var ends = MFunc.ints(nb, SsaReader.NONE);
+			ends[home.id] = x;
+			if (d.inLatch >= 0) ends[latch.id] = d.inLatch;
+			var ty = d.x.ty, vty = d.x.vty;
+			var rd = new SsaReader(f.entry, d.inLatch >= 0 ? SsaReader.LAZY : zeroOf(ty), ends, MFunc.ints(nb, SsaReader.NOTSET), b -> {
+				var phi = new MIns(Phi, ty);
+				phi.id = vals.length;
+				vals.push(phi);
+				phi.vty = vty;
+				phi.block = b;
+				made.push(phi);
+				var k = 0;
+				while (k < b.ins.length && b.ins[k].op == Phi)
+					k++;
+				b.ins.insert(k, phi);
+				phi.id;
+			}, (p, args) -> vals[p].args = args);
+			rd.undefOf = () -> throw "hxmc: Opt.guard: " + f.name + ": v" + x + " read where it is not defined";
+			for (b in f.blocks.copy()) {
+				if (b == home) continue;
+				var entry = -1;
+				for (i in b.ins.copy()) {
+					if (i.dead || made.indexOf(i) >= 0) continue;
+					if (i.op == Phi) {
+						for (q in 0...i.args.length)
+							if (i.args[q] == x) {
+								var r = rd.readEnd(b.preds[q]);
+								if (r != x) {
+									var args = i.args.copy();
+									args[q] = r;
+									i.args = args;
+								}
+							}
+						continue;
+					}
+					if (usesVal(i, x)) {
+						if (entry < 0) entry = rd.readEntry(b);
+						if (i.a == x) i.a = entry;
+						if (i.b == x) i.b = entry;
+						if (i.c == x) i.c = entry;
+						if (i.args.indexOf(x) >= 0) i.args = i.args.map(a -> a == x ? entry : a);
+					}
+				}
+			}
+			rd.finish();
+		}
+		// (h's phis, now of one operand, and the phis made: copies where
+		// trivial, then replaced by what they copy)
+		for (i in h.ins)
+			if (!i.dead && i.op == Phi) made.push(i);
+		Ssa.trivialPhis(vals, made);
+		var copies = new Map<Int, Int>();
+		for (p in made)
+			if (!p.dead && p.op == Copy) copies.set(p.id, p.a);
+		inline function c(v:Int):Int {
+			while (v >= 0 && copies.exists(v))
+				v = copies.get(v);
+			return v;
+		}
+		if (Lambda.count(copies) > 0) {
+			for (b in f.blocks)
+				for (i in b.ins) {
+					if (i.dead) continue;
+					if (copies.exists(i.id)) {
+						i.dead = true;
+						continue;
+					}
+					i.a = c(i.a);
+					i.b = c(i.b);
+					i.c = c(i.c);
+					var any = false;
+					for (x in i.args)
+						if (copies.exists(x)) any = true;
+					if (any) i.args = i.args.map(x -> c(x));
+				}
+			for (b in f.blocks)
+				b.ins = b.ins.filter(i -> !copies.exists(i.id));
+		}
+		// (the new values are their own representatives)
+		function grow(t:Vector<Int>):Vector<Int> {
+			if (t == null || t.length >= vals.length) return t;
+			var r = MFunc.iota(vals.length);
+			for (k in 0...t.length)
+				r[k] = t[k];
+			return r;
+		}
+		repl = grow(repl);
+		canon = grow(canon);
 	}
 
 	// whether v is an object just allocated (MemLower.alloc's result: the
@@ -940,11 +1611,14 @@ class Opt {
 			if (nonNeg(v, cfg, 0) || tested(v)) return true;
 			var x = f.vals[v];
 			if (x.op != Phi || x.ty != I32) return false;
-			for (a in x.args) {
+			// (an operand as its edge brings it: tested where it leaves its block,
+			// not here, which tests this iteration's values)
+			for (j in 0...x.args.length) {
+				var a = x.args[j];
 				if (a == v) continue;
 				var y = f.vals[a];
 				var up = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
-				if (up ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, 0) && !tested(a)) return false;
+				if (up ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, 0) && !nonNegAt(a, x.block.preds[j], cfg)) return false;
 			}
 			return true;
 		}
@@ -957,11 +1631,22 @@ class Opt {
 			}
 			var x = f.vals[v];
 			if (x.op != Phi || x.ty != I32) return false;
-			for (a in x.args) {
+			// (s = n - m the same in every iteration: n and m defined before the
+			// phi's block, which a loop's header dominates; each operand at most s
+			// where its edge leaves, not where this iteration tests its own; 0
+			// is, as m <= n)
+			var pb = cfg.index(x.block), sv = f.vals[s];
+			inline function before(w:Int):Bool {
+				var wb = cfg.index(f.vals[w].block);
+				return wb != pb && cfg.dominates(wb, pb);
+			}
+			if (!before(sv.a) || !before(sv.b)) return false;
+			for (j in 0...x.args.length) {
+				var a = x.args[j];
 				if (a == v) continue;
 				var y = f.vals[a];
 				var down = y.op == Sub && y.a == v && isOne(y.b) || y.op == Add && (y.a == v && isConst(y.b, -1) || y.b == v && isConst(y.a, -1));
-				if (down ? !aboveSome(v, y.block, cfg) : !holds(a, s, false)) return false;
+				if (down ? !aboveSome(v, y.block, cfg) : !isConst(a, 0) && !atMostAt(a, s, x.block.preds[j], cfg)) return false;
 			}
 			return true;
 		}
@@ -1064,6 +1749,94 @@ class Opt {
 		return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0 ? c.imm : -1;
 	}
 
+	function allOnes(v:Int):Bool {
+		var c = f.vals[repl[v]];
+		return c.op == Const && c.sym == null && c.imm == -1 && (c.ty == I32 || c.imm2 == -1);
+	}
+
+	// nonNeg for a back end (x64.Isel: a counter's extension a copy)
+	public function nonNegative(v:Int):Bool {
+		var cfg = f.cfg();
+		cfg.dom();
+		return nonNeg(v, cfg, 0);
+	}
+
+	// Whether v, x + c of a constant c >= 0 and x not negative (nonNegative,
+	// or such a sum), stays below 2^31: x has an upper bound where v is
+	// computed (upperAt) of at most 2^31 - 1 - c (a loop counter's steps,
+	// i += 1 twice a round below i <= 14)
+	public function nonNegativeSum(v:Int):Bool {
+		var cfg = f.cfg();
+		cfg.dom();
+		return nonNegSum(v, cfg, 0);
+	}
+
+	function nonNegSum(v:Int, cfg:Cfg<MBlock>, depth:Int):Bool {
+		var x = f.vals[v];
+		if (x.op != Add || x.ty != I32 || depth > 4 || x.block == null) return false;
+		var c = f.vals[x.b];
+		if (c.op != Const || c.sym != null || c.imm < 0) return false;
+		return (nonNeg(x.a, cfg, depth + 1) || nonNegSum(x.a, cfg, depth + 1)) && upperAt(v, x.block, cfg, 0) != null;
+	}
+
+	// an upper bound of the I32 v where b runs (null: none known, or past
+	// 2^31 - 1): a constant, x + c of a constant c >= 0 (x's bound plus c),
+	// or a branch dominating b that compared v with a constant
+	function upperAt(v:Int, b:MBlock, cfg:Cfg<MBlock>, depth:Int):Null<Float> {
+		var x = f.vals[v];
+		if (x.ty != I32 || depth > 6) return null;
+		if (x.op == Const) return x.sym == null ? x.imm : null;
+		if (x.op == Add) {
+			var c = f.vals[x.b];
+			if (c.op != Const || c.sym != null || c.imm < 0) return null;
+			var u = upperAt(x.a, b, cfg, depth + 1);
+			return u == null || u + c.imm > 2147483647.0 ? null : u + c.imm;
+		}
+		inline function konst(y:Int):Null<Int> {
+			var k = f.vals[y];
+			return k.op == Const && k.sym == null && k.ty == I32 ? k.imm : null;
+		}
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var y = cfg.rpo[k];
+			if (y.preds.length == 1) {
+				var t = y.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = y == t.targets[0];
+					if (c.op == Cmp && !c.dead) {
+						// (v < K, v <= K, as the branch found them)
+						var lt:Null<Int> = null, le:Null<Int> = null;
+						if (c.a == v && konst(c.b) != null) {
+							var n = konst(c.b);
+							switch (c.imm : Cond) {
+								case CLt: if (taken) lt = n else null;
+								case CLe: if (taken) le = n else null;
+								case CGe: if (!taken) lt = n else null;
+								case CGt: if (!taken) le = n else null;
+								case _:
+							}
+						} else if (c.b == v && konst(c.a) != null) {
+							var n = konst(c.a);
+							switch (c.imm : Cond) {
+								case CGt: if (taken) lt = n else null;
+								case CGe: if (taken) le = n else null;
+								case CLe: if (!taken) lt = n else null;
+								case CLt: if (!taken) le = n else null;
+								case _:
+							}
+						}
+						if (lt != null) return lt - 1.0;
+						if (le != null) return le;
+					}
+				}
+			}
+			k = idom[k];
+		}
+		return null;
+	}
+
 	// Whether v (an I32) is never negative: a constant, or a phi each of
 	// whose operands is, or is the phi plus 1 computed only where the phi is
 	// below some value (a loop's counter: below a bound, the increment
@@ -1074,17 +1847,44 @@ class Opt {
 		switch x.op {
 			case Const:
 				return x.sym == null && x.imm >= 0;
+			// (a byte or 16-bit unit loaded unsigned; x & c, x >>> k of c >= 0, k > 0)
+			case Load:
+				return x.size < 4 && !x.signed;
+			case And:
+				return isNonNegConst(x.a) || isNonNegConst(x.b);
+			case Shr:
+				var k = f.vals[x.b];
+				return k.op == Const && k.sym == null && k.imm & 31 != 0;
 			case Phi:
 				for (a in x.args) {
 					if (a == v) continue;
 					var y = f.vals[a];
 					var one = y.op == Add && (y.a == v && isOne(y.b) || y.b == v && isOne(y.a));
-					if (one ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, depth + 1)) return false;
+					// (or the phi plus constants, bounded below 2^31: nonNegSum)
+					if (one ? !belowSome(v, y.block, cfg) : !nonNeg(a, cfg, depth + 1) && !sumOf(a, v, cfg)) return false;
 				}
 				return true;
 			case _:
 				return false;
 		}
+	}
+
+	// whether a is v + c1 + c2 ... of constants >= 0 that stays below 2^31
+	function sumOf(a:Int, v:Int, cfg:Cfg<MBlock>):Bool {
+		var x = f.vals[a];
+		var n = 0;
+		while (x.op == Add && x.ty == I32 && n++ < 4) {
+			var c = f.vals[x.b];
+			if (c.op != Const || c.sym != null || c.imm < 0) return false;
+			if (x.a == v) return x.block != null && upperAt(a, x.block, cfg, 0) != null;
+			x = f.vals[x.a];
+		}
+		return false;
+	}
+
+	inline function isNonNegConst(v:Int):Bool {
+		var c = f.vals[v];
+		return c.op == Const && c.sym == null && c.ty == I32 && c.imm >= 0;
 	}
 
 	inline function isOne(v:Int):Bool {
@@ -1110,6 +1910,58 @@ class Opt {
 							case CGe if (!taken && c.a == v): return true;
 							case CGt if (taken && c.b == v): return true;
 							case CLe if (!taken && c.b == v): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	// whether a branch dominating block b found v <= s or v < s
+	function atMostAt(v:Int, s:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CLe | CLt if (taken && c.a == v && c.b == s): return true;
+							case CGt | CGe if (!taken && c.a == v && c.b == s): return true;
+							case CGe | CGt if (taken && c.a == s && c.b == v): return true;
+							case CLt | CLe if (!taken && c.a == s && c.b == v): return true;
+							case _:
+						}
+				}
+			}
+			k = idom[k];
+		}
+		return false;
+	}
+
+	// whether a branch dominating block b found k <= v for a constant k >= 0
+	function nonNegAt(v:Int, b:MBlock, cfg:Cfg<MBlock>):Bool {
+		var idom = cfg.idom;
+		var k = cfg.index(b);
+		while (k > 0) {
+			var x = cfg.rpo[k];
+			if (x.preds.length == 1) {
+				var t = x.preds[0].term();
+				if (t != null && t.op == Br && t.targets[0] != t.targets[1]) {
+					var c = f.vals[t.a];
+					var taken = x == t.targets[0];
+					if (c.op == Cmp && !c.dead)
+						switch c.imm {
+							case CGe | CGt if (taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLt | CLe if (!taken && c.a == v && constOf(c.b) >= 0): return true;
+							case CLe | CLt if (taken && c.b == v && constOf(c.a) >= 0): return true;
+							case CGt | CGe if (!taken && c.b == v && constOf(c.a) >= 0): return true;
 							case _:
 						}
 				}
@@ -2043,41 +2895,344 @@ class Opt {
 	// After MemLower: a block that jumps to one only it enters absorbs it,
 	// copies are their operand, dead code goes (no other optimization: the
 	// optimizer ran on object-level Mir)
-	public static function lowered(f:MFunc) {
+	public static function lowered(f:MFunc, arm = false) {
 		var o = new Opt(f);
 		o.simplifyCfg();
 		// (blocks it empties are merged as it goes)
 		o.ifConvert();
 		o.repl = MFunc.iota(f.vals.length);
 		var any = false;
-		for (b in f.blocks)
+		// copies are their operand; a constant made again in its block is the
+		// first (those LICM moved out of a loop's arms together: a 64-bit
+		// mask once, not a register each); x + 0 and the like are x; -1 - x is ~x;
+		// a comparison's c ? 1 : 0 is c, c ? 0 : 1 is c ^ 1
+		for (b in f.blocks) {
+			var consts = new Map<String, Int>();
 			for (i in b.ins)
 				if (i.op == Copy && !i.dead) {
 					o.repl[i.id] = i.a;
 					i.dead = true;
 					any = true;
+				} else if (i.op == Const && !i.dead) {
+					var key = (i.ty : Int) + ":" + i.imm + ":" + i.imm2 + ":" + i.sym;
+					var first = consts.get(key);
+					if (first == null) consts.set(key, i.id) else {
+						o.repl[i.id] = first;
+						i.dead = true;
+						any = true;
+					}
+				} else if ((i.op == Add || i.op == Sub || i.op == Or || i.op == Xor || i.op == Shl || i.op == Shr || i.op == Sar)
+					&& (i.ty == I32 || i.ty == I64) && i.b >= 0 && o.isZero(i.b) && f.vals[i.a].ty == i.ty) {
+					// (x + 0, x - 0, x | 0, x ^ 0, x << 0...: x; a lowering's offset 0)
+					o.repl[i.id] = i.a;
+					i.dead = true;
+					any = true;
+				} else if (i.op == Select && i.ty == I32 && f.vals[i.a].op == Cmp && o.isConst(i.b, 1) && o.isConst(i.c, 0)) {
+					// (c ? 1 : 0 of a comparison c: c; c ? 0 : 1: c ^ 1)
+					o.repl[i.id] = i.a;
+					i.dead = true;
+					any = true;
+				} else if (i.op == Select && i.ty == I32 && f.vals[i.a].op == Cmp && o.isConst(i.b, 0) && o.isConst(i.c, 1)) {
+					i.op = Xor;
+					i.b = i.c;
+					i.c = -1;
+				} else if (i.op == Sub && (i.ty == I32 || i.ty == I64) && o.allOnes(i.a)) {
+					i.op = Not;
+					i.a = i.b;
+					i.b = -1;
 				}
+		}
 		if (any) o.rewrite();
+		// (a rooted local's slot read where paths meet: its value)
+		o.promoteSlots();
+		o.negatedSubs();
+		o.zeroExtensions();
 		o.indexed();
+		if (arm) o.armBases();
+		o.sinkCold();
 		o.dce();
+	}
+
+	// arm64 (no [base + index + displacement]): a load or store in a loop at
+	// an index and a displacement, of a base from outside that loop, takes
+	// base + displacement made before the loop, on its one way in (once per
+	// pair; the outermost loop the base is not in): a table's
+	// rows each a register beside the loop (sBox[0x100 | (x & 0xff)]: ldr
+	// [row, x, lsl 2], not an add and a load each time), as LLVM's. Not in a
+	// loop that calls outside its slow paths: the registers kept across the
+	// calls cost more there (formatter, json, binarytrees +1%)
+	function armBases() {
+		var cfg = f.cfg();
+		cfg.loops();
+		var n = cfg.rpo.length, calls = new haxe.ds.Vector<Bool>(n);
+		for (k in 0...n) {
+			var b = cfg.rpo[k];
+			if (b.cold) continue;
+			for (i in b.ins)
+				if (!i.dead && i.op == Call) {
+					var h = cfg.loopHead[k];
+					while (h >= 0) {
+						calls[h] = true;
+						h = cfg.loopParent[h];
+					}
+					break;
+				}
+		}
+		var vals = f.vals, made = new Map<String, Int>();
+		for (b in f.blocks) {
+			var k = cfg.index(b);
+			if (k < 0 || cfg.loopHead[k] < 0 || calls[cfg.loopHead[k]]) continue;
+			for (i in b.ins) {
+				if (i.dead || i.op != Load && i.op != Store || i.sym != null || i.b < 0 || i.imm == 0 || i.a < 0) continue;
+				var base = vals[i.a];
+				if (base.block == null) continue;
+				var bk = cfg.index(base.block);
+				if (bk < 0 || cfg.inLoop(bk, cfg.loopHead[k])) continue;
+				// the outermost loop around b that the base is not in, and its way in
+				var h = cfg.loopHead[k];
+				while (cfg.loopParent[h] >= 0 && !cfg.inLoop(bk, cfg.loopParent[h]))
+					h = cfg.loopParent[h];
+				var head = cfg.rpo[h], pre:Null<MBlock> = null, one = true;
+				for (p in head.preds) {
+					var pk = cfg.index(p);
+					if (pk >= 0 && cfg.inLoop(pk, h)) continue;
+					if (pre != null) one = false;
+					pre = p;
+				}
+				if (!one || pre == null || pre.succs.length != 1) continue;
+				var key = base.id + ":" + i.imm + ":" + pre.id, n = made.get(key);
+				if (n == null) {
+					var c = new MIns(Const, I64);
+					c.id = vals.length;
+					vals.push(c);
+					c.imm = i.imm;
+					c.imm2 = i.imm < 0 ? -1 : 0;
+					var x = new MIns(Add, I64);
+					x.id = vals.length;
+					vals.push(x);
+					x.a = base.id;
+					x.b = c.id;
+					var ins = pre.ins, at = ins.length - 1;
+					c.block = x.block = pre;
+					ins.insert(at, x);
+					ins.insert(at, c);
+					made.set(key, n = x.id);
+				}
+				i.a = n;
+				i.imm = 0;
+			}
+		}
+		if (repl != null && repl.length < vals.length) {
+			var r = MFunc.iota(vals.length);
+			for (k in 0...repl.length)
+				r[k] = repl[k];
+			repl = r;
+		}
+	}
+
+	// x - k of a 64-bit k no instruction takes as an immediate: x + -k, -k
+	// made beside k (where LICM left it), which x86-64 adds by lea into
+	// another register (Emit: mov d, x; add d, r) where a subtraction takes a
+	// copy and a sub (a SWAR test's x - 0x0101...01)
+	function negatedSubs() {
+		var vals = f.vals;
+		var made = new Map<Int, Int>();
+		for (b in f.blocks)
+			for (i in b.ins) {
+				if (i.dead || i.op != Sub || i.ty != I64 || i.b < 0) continue;
+				var k = vals[i.b];
+				if (k.op != Const || k.sym != null || k.ty != I64 || k.dead || k.block == null) continue;
+				// (a sign-extended 32-bit immediate: lea already)
+				if (k.imm2 == (k.imm < 0 ? -1 : 0)) continue;
+				var n = made.get(k.id);
+				if (n == null) {
+					var v = haxe.Int64.neg(haxe.Int64.make(k.imm2, k.imm));
+					var x = new MIns(Const, I64);
+					x.id = vals.length;
+					vals.push(x);
+					x.imm = v.low;
+					x.imm2 = v.high;
+					x.block = k.block;
+					k.block.ins.insert(k.block.ins.indexOf(k) + 1, x);
+					n = x.id;
+					made.set(k.id, n);
+				}
+				i.op = Add;
+				i.b = n;
+			}
+		// (the new constants are their own representatives)
+		if (repl != null && repl.length < vals.length) {
+			var r = MFunc.iota(vals.length);
+			for (k in 0...repl.length)
+				r[k] = repl[k];
+			repl = r;
+		}
+	}
+
+	// (x << 32) >>> c, of c 29 to 32 and x a 32-bit value extended (Haxe's
+	// unsigned conversion, a compressed reference decoded by hand: GcCore):
+	// x's zero extension shifted left by 32 - c, which x86-64 makes without
+	// the shifts or as an address's scale 8 (MemLower.decompress's form)
+	function zeroExtensions() {
+		inline function count(v:Int):Int {
+			var c = f.vals[v];
+			return c.op == Const && c.sym == null ? c.imm : -1;
+		}
+		for (b in f.blocks) {
+			var k = 0;
+			while (k < b.ins.length) {
+				var i = b.ins[k++];
+				if (i.op != Shr || i.ty != I64 || i.dead) continue;
+				var c = count(i.b), s = f.vals[i.a];
+				if (c < 29 || c > 32 || s.op != Shl || count(s.b) != 32) continue;
+				var x = f.vals[s.a];
+				if ((x.op != SExt && x.op != ZExt) || f.vals[x.a].ty != I32) continue;
+				inline function ins(op:Op, ty:MTy):MIns {
+					var n = new MIns(op, ty);
+					n.id = f.vals.length;
+					f.vals.push(n);
+					n.block = b;
+					b.ins.insert(k++ - 1, n);
+					return n;
+				}
+				if (c == 32) {
+					i.op = ZExt;
+					i.a = x.a;
+					i.b = -1;
+					continue;
+				}
+				var z = ins(ZExt, I64), n = ins(Const, I32);
+				z.a = x.a;
+				n.imm = 32 - c;
+				i.op = Shl;
+				i.a = z.id;
+				i.b = n.id;
+			}
+		}
 	}
 
 	// an access at x + y, of no index: at base x, index y (as Mem's raw
 	// accesses make it, which the back ends encode in the access; a span's
-	// element at a sub's start, hxmc.rt.Bytes' accessors)
+	// element at a sub's start, hxmc.rt.Bytes' accessors); an index y << k
+	// (k of 1 to 3) or y * 2^k at scale 1: index y at scale 2^k (a reference
+	// store's element, whose shifted index its barrier's address shares; a
+	// span's word read at a unit's index)
+	// An index sext(x + c) or sext(x | c), of x in 0...m and a constant c
+	// with m + c below 2^31 (and, for the or, c's bits above x's): index
+	// sext(x), displacement c times the scale (a table's row, sBox[0x100 |
+	// (x & 0xff)]: [base + x*4 + 0x400], no or, add or extension of its own)
 	function indexed() {
+		for (b in f.blocks) {
+			var k = 0;
+			while (k < b.ins.length) {
+				var i = b.ins[k++];
+				if ((i.op == Load || i.op == Store) && !i.dead && i.sym == null && i.b >= 0) {
+					var s = f.vals[i.b];
+					if (s.op != SExt) continue;
+					var v = f.vals[s.a];
+					if (v.op != Add && v.op != Or) continue;
+					var c = constOf(v.b);
+					if (c < 0) continue;
+					var m = upTo(v.a), span = 1;
+					while (span <= m)
+						span <<= 1;
+					if (m < 0 || m + c > 0x7fffffff || v.op == Or && c & (span - 1) != 0 || c * i.imm2 > 0x3fffffff - i.imm) continue;
+					var x = new MIns(SExt, I64);
+					x.id = f.vals.length;
+					f.vals.push(x);
+					x.block = b;
+					x.a = v.a;
+					b.ins.insert(k++ - 1, x);
+					i.b = x.id;
+					i.imm += c * i.imm2;
+				}
+			}
+		}
 		for (b in f.blocks)
 			for (i in b.ins)
-				if ((i.op == Load || i.op == Store) && !i.dead && i.b < 0 && i.sym == null) {
-					var x = f.vals[i.a];
-					if (x.op != Add || x.ty != I64 || x.dead) continue;
-					var l = f.vals[x.a], r = f.vals[x.b];
-					if (l.op == Const || r.op == Const || l.ty != I64 || r.ty != I64) continue;
-					i.a = x.a;
-					i.b = x.b;
-					i.imm2 = 1;
+				if ((i.op == Load || i.op == Store) && !i.dead && i.sym == null) {
+					if (i.b < 0) {
+						var x = f.vals[i.a];
+						if (x.op != Add || x.ty != I64 || x.dead) continue;
+						var l = f.vals[x.a], r = f.vals[x.b];
+						if (l.op == Const || r.op == Const || l.ty != I64 || r.ty != I64) continue;
+						// (the scaled operand the index)
+						var sx = r.op == Shl || r.op == Mul || l.op != Shl && l.op != Mul;
+						i.a = sx ? x.a : x.b;
+						i.b = sx ? x.b : x.a;
+						i.imm2 = 1;
+					}
+					var s = f.vals[i.b];
+					if (i.imm2 != 1 || s.op != Shl && s.op != Mul || s.ty != I64 || f.vals[s.a].ty != I64) continue;
+					var k = f.vals[s.b];
+					if (k.op != Const || k.sym != null || k.imm2 != 0) continue;
+					var scale = s.op == Shl ? (k.imm >= 1 && k.imm <= 3 ? 1 << k.imm : 0) : k.imm == 2 || k.imm == 4 || k.imm == 8 ? k.imm : 0;
+					if (scale == 0) continue;
+					i.b = s.a;
+					i.imm2 = scale;
 				}
 	}
+
+	// the largest an Int v can be when it is never negative (-1: unknown): a
+	// constant, x & a constant, x >>> a constant, a byte or 16-bit unit loaded
+	public function upTo(v:Int):Int {
+		var x = f.vals[v];
+		if (x.ty != I32) return -1;
+		return switch x.op {
+			case Const: x.sym == null && x.imm >= 0 ? x.imm : -1;
+			case And:
+				var a = constOf(x.a), b = constOf(x.b);
+				a >= 0 && b >= 0 ? (a < b ? a : b) : a >= 0 ? a : b;
+			case Shr:
+				var k = constOf(x.b);
+				k >= 1 && k <= 31 ? (1 << (32 - k)) - 1 : -1;
+			case Load: x.size < 4 && !x.signed ? (1 << (8 * x.size)) - 1 : -1;
+			case _: -1;
+		}
+	}
+
+	// A cheap pure value whose uses are all in one slow-path block, other than
+	// its own, moves there (before its first use): a reference store's slot
+	// address, which only the barrier's slow call reads, is computed there
+	// and holds no register across the fast path. Rounds: what only the
+	// moved value used follows it.
+	function sinkCold() {
+		for (_ in 0...4) {
+			var useBlock = new Vector<MBlock>(f.vals.length), many = new Vector<Bool>(f.vals.length);
+			for (b in f.blocks)
+				for (i in b.ins) {
+					inline function use(x:Int)
+						if (x >= 0) {
+							if (i.op == Phi || useBlock[x] != null && useBlock[x] != b) many[x] = true;
+							useBlock[x] = b;
+						}
+					use(i.a);
+					use(i.b);
+					use(i.c);
+					for (x in i.args)
+						use(x);
+				}
+			var moved = false;
+			for (b in f.blocks) {
+				if (b.cold) continue;
+				var k = b.ins.length;
+				while (k-- > 0) {
+					var i = b.ins[k], to = useBlock[i.id];
+					if (many[i.id] || to == null || !to.cold || to.handler || to == b || i.op == Const || !speculable(i)) continue;
+					b.ins.splice(k, 1);
+					var at = 0;
+					while (!usesVal(to.ins[at], i.id)) at++;
+					to.ins.insert(at, i);
+					i.block = to;
+					moved = true;
+				}
+			}
+			if (!moved) break;
+		}
+	}
+
+	static function usesVal(i:MIns, v:Int):Bool
+		return i.a == v || i.b == v || i.c == v || i.args.indexOf(v) >= 0;
 
 	// ---- if-conversion
 
@@ -2478,7 +3633,21 @@ class Opt {
 			i.a = i.b = i.c = -1;
 			return true;
 		}
+		// (x >>> k) | (x << (w - k)), of constants known once inlined (MirBuild's
+		// rotation saw a parameter): x rotated right by k (not a constant: numbered)
+		inline function rotation(s:MIns, l:MIns):Bool {
+			var w = i.ty == I64 ? 64 : 32;
+			var k = s.op == Shr && l.op == Shl && s.ty == i.ty && l.ty == i.ty && res(s.a) == res(l.a) ? f.vals[res(s.b)] : null;
+			var m = k == null ? null : f.vals[res(l.b)];
+			if (k == null || !plain(k) || !plain(m) || k.imm <= 0 || k.imm >= w || m.imm != w - k.imm) return false;
+			i.op = Rotr;
+			i.a = res(s.a);
+			i.b = res(s.b);
+			return true;
+		}
 		switch i.op {
+			case Or if ((i.ty == I32 || i.ty == I64) && y != null && (rotation(x, y) || rotation(y, x))):
+				return false;
 			case Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr if (i.ty == I32 && plain(x) && plain(y)):
 				var a = x.imm, b = y.imm;
 				return set(switch i.op {
@@ -2514,6 +3683,12 @@ class Opt {
 				if (a < 0 || b <= 0) return false;
 				var r = i.op == UDiv ? a / b : a % b;
 				return set(r.low, i.ty == I64 ? r.high : 0);
+			// (a symbol's or a frame slot's address is not null: a string
+			// literal's null test in an equality)
+			case Cmp if ((i.imm == (CEq : Int) || i.imm == (CNe : Int)) && y != null
+				&& ((x.op == SymAddr || x.op == StackAddr) && plain(y) && y.imm == 0 && y.imm2 == 0
+					|| (y.op == SymAddr || y.op == StackAddr) && plain(x) && x.imm == 0 && x.imm2 == 0)):
+				return set(i.imm == (CNe : Int) ? 1 : 0, 0);
 			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
 				// (signed and unsigned order of two words, 32 or 64 bits)
 				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);

@@ -4,7 +4,7 @@ import sys.FileSystem;
 using StringTools;
 
 // Java through JNI (docs/interop.md, "Java (JNI)"):
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run JniCheck
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test -cp hxmc/src --run NativeCheck jni
 // - the corpus's JNI cases (Corpus.JNI: an embedded JVM, libjvm opened at
 //   run time) in the dynamic glibc mode on linux-x86_64, and again with
 //   RT_VERIFY=1, and JniElsewhere (Java without a JVM);
@@ -30,7 +30,7 @@ class JniCheck {
 	static function skip(what:String, why:String)
 		Sys.println(pad(what, 56) + " skipped  " + why);
 
-	static function main() {
+	public static function run(args:Array<String>):Int {
 		var tool = FileSystem.fullPath(Sys.getEnv("HXMC_TOOL") ?? "bin/hxmc/hxmc");
 		var jdk = Corpus.jdk();
 		var cases = [for (k in Corpus.JNI.keys()) k];
@@ -103,8 +103,9 @@ class JniCheck {
 		}
 		if (failures.length > 0) {
 			Sys.println("JniCheck: " + failures.length + " failed");
-			Sys.exit(1);
+			return 1;
 		}
 		Sys.println("JniCheck: all passed");
+		return 0;
 	}
 }

@@ -56,8 +56,8 @@ class DisplayFields {
 			true), {t: cf.cfType, ct: ct});
 	}
 
-	public static function collectStaticExtensions(ctx:Typer, blockedItems:StringMap<Bool>, items:StringMap<CompletionItemData>, e:TExpr,
-			p:Pos):StringMap<CompletionItemData> {
+	public static function collectStaticExtensions(ctx:Typer, blockedItems:StringMap<Bool>, items:PMap<CompletionItemData>, e:TExpr,
+			p:Pos):PMap<CompletionItemData> {
 		function optType(t:T):T {
 			return switch t {
 				case TLazy(f):
@@ -70,7 +70,7 @@ class DisplayFields {
 			};
 		}
 		function dup(t:T):T return core.TFunctions.map(dup, t);
-		function handleField_(c:TClass, f:TClassField, acc:StringMap<CompletionItemData>):StringMap<CompletionItemData> {
+		function handleField_(c:TClass, f:TClassField, acc:PMap<CompletionItemData>):PMap<CompletionItemData> {
 			var f = {
 				var f2 = f.clone();
 				f2.cfType = optType(f.cfType);
@@ -118,7 +118,7 @@ class DisplayFields {
 				var origin = StaticExtension(decl);
 				var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(f.cfMeta), f.cfType);
 				var item = CompletionItem.makeCiClassField(CompletionClassField.make(f, CFSMember, origin, true), {t: f.cfType, ct: ct});
-				return PMap.add(f.cfName, item, acc);
+				return acc.add(f.cfName, item);
 			} catch (err:core.Error.TypingError) {
 				switch err.error.errMessage {
 					case Unify(_):
@@ -130,18 +130,18 @@ class DisplayFields {
 				return acc;
 			}
 		}
-		function handleField(c:TClass, cf:TClassField, acc:StringMap<CompletionItemData>):StringMap<CompletionItemData> {
+		function handleField(c:TClass, cf:TClassField, acc:PMap<CompletionItemData>):PMap<CompletionItemData> {
 			if (blockedItems.exists(cf.cfName)) return acc;
 			return handleField_(c, cf, acc);
 		}
-		function loop(acc:StringMap<CompletionItemData>, l:Array<{cls:TClass, pos:Pos}>):StringMap<CompletionItemData> {
+		function loop(acc:PMap<CompletionItemData>, l:Array<{cls:TClass, pos:Pos}>):PMap<CompletionItemData> {
 			for (u in l) {
 				var c = u.cls;
-				for (f in c.clOrderedStatics) {
+				for (f in c.clStatics) {
 					if (Meta.has(MetaTag.NoUsing, f.cfMeta)
 						|| Meta.has(MetaTag.NoCompletion, f.cfMeta)
 						|| hasClassFieldFlag(f, CfImpl)
-						|| PMap.mem(f.cfName, acc)) {} else {
+						|| acc.exists(f.cfName)) {} else {
 						for (f in [f].concat(f.cfOverloads)) acc = handleField(c, f, acc);
 					}
 				}
@@ -154,7 +154,7 @@ class DisplayFields {
 			case _:
 				var items = loop(items, ctx.m.moduleUsing);
 				var items = loop(items, ctx.g.globalUsing);
-				function loopModuleUsing(items:StringMap<CompletionItemData>, t:T):StringMap<CompletionItemData> {
+				function loopModuleUsing(items:PMap<CompletionItemData>, t:T):PMap<CompletionItemData> {
 					return switch followWithoutType(t) {
 						case TInst(c, _):
 							loop(items, c.clUsing);
@@ -205,16 +205,16 @@ class DisplayFields {
 			blockedItems.set(cf.cfName, true);
 			return false;
 		}
-		function loop(items:StringMap<CompletionItemData>, t:T):StringMap<CompletionItemData> {
-			function isNewItem(items:StringMap<CompletionItemData>, name:String):Bool return !PMap.mem(name, items);
-			function browseInterfaces(c:TClass, acc:StringMap<CompletionItemData>):StringMap<CompletionItemData> {
+		function loop(items:PMap<CompletionItemData>, t:T):PMap<CompletionItemData> {
+			function isNewItem(items:PMap<CompletionItemData>, name:String):Bool return !items.exists(name);
+			function browseInterfaces(c:TClass, acc:PMap<CompletionItemData>):PMap<CompletionItemData> {
 				for (i in c.clImplements) {
 					var c = i.cls;
-					for (cf in c.clOrderedFields) {
+					for (cf in c.clFields) {
 						if (isNewItem(acc, cf.cfName)) {
 							var origin = Parent(TClassDecl(c));
 							var item = makeClassField(origin, cf);
-							acc = PMap.add(cf.cfName, item, acc);
+							acc = acc.add(cf.cfName, item);
 						}
 					}
 					for (i2 in c.clImplements) acc = browseInterfaces(i2.cls, acc);
@@ -223,7 +223,7 @@ class DisplayFields {
 			}
 			return switch follow(t) {
 				case TMono(m):
-					function foldConstraints(items:StringMap<CompletionItemData>, k:TMonoConstraintKind):StringMap<CompletionItemData> {
+					function foldConstraints(items:PMap<CompletionItemData>, k:TMonoConstraintKind):PMap<CompletionItemData> {
 						return switch k {
 							case CStructural(fields, isOpen):
 								if (!isOpen) {
@@ -252,15 +252,15 @@ class DisplayFields {
 					// For classes, browse the hierarchy
 					var fields = core.TOther.TClassTools.getAllFields(c0, tl);
 					Display.mergeCoreDoc(ctx, TClassDecl(c0));
-					var acc = PMap.foldi(function(k:String, e:{cls:TClass, field:TClassField}, acc:StringMap<CompletionItemData>) {
+					var acc = fields.foldi(function(k:String, e:{cls:TClass, field:TClassField}, acc:PMap<CompletionItemData>) {
 						var c = e.cls, cf = e.field;
 						if (shouldAccess(c, cf, false) && isNewItem(acc, cf.cfName)) {
 							var origin = c == c0 ? Self(TClassDecl(c)) : Parent(TClassDecl(c));
 							var item = makeClassField(origin, cf);
-							return PMap.add(k, item, acc);
+							return acc.add(k, item);
 						}
 						return acc;
-					}, fields, items);
+					}, items);
 					var acc = if (hasClassFlag(c0, CExtern) && Meta.has(MetaTag.LibType, c0.clMeta)) browseInterfaces(c0, acc) else acc;
 					acc;
 				case TEnum(_):
@@ -275,7 +275,7 @@ class DisplayFields {
 							var cf = c.clStatics.get("match");
 							if (cf != null) {
 								var item = makeClassField(Self(TAbstractDecl(a)), cf);
-								PMap.add("match", item, items);
+								items.add("match", item);
 							} else items;
 						case _:
 							items;
@@ -284,7 +284,7 @@ class DisplayFields {
 					Display.mergeCoreDoc(ctx, TAbstractDecl(a));
 					// Abstracts should show all their @:impl fields minus the constructor.
 					var items = items;
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						if (hasClassFieldFlag(cf, CfImpl) && !hasClassFieldFlag(cf, CfEnum) && shouldAccess(c, cf, false)
 							&& isNewItem(items, cf.cfName)) {
 							var origin = Self(TAbstractDecl(a));
@@ -295,7 +295,7 @@ class DisplayFields {
 								cf2;
 							};
 							var item = makeClassField(origin, cf);
-							items = PMap.add(cf.cfName, item, items);
+							items = items.add(cf.cfName, item);
 						}
 					}
 					try {
@@ -309,11 +309,11 @@ class DisplayFields {
 						var forwardedFields = loop(PMap.empty(), applyParams(a.aParams, tl, a.aThis));
 						function abstractHasOwnField(fieldName:String):Bool return c.clFields.exists(fieldName)
 							|| c.clStatics.exists(fieldName);
-						PMap.foldi(function(name:String, item:CompletionItemData, acc:StringMap<CompletionItemData>) {
+						forwardedFields.foldi(function(name:String, item:CompletionItemData, acc:PMap<CompletionItemData>) {
 							if ((sl.length == 0 || sl.contains(name)) && isNewItem(acc, name)
-								&& !abstractHasOwnField(name)) return PMap.add(name, item, acc);
+								&& !abstractHasOwnField(name)) return acc.add(name, item);
 							return acc;
-						}, forwardedFields, items);
+						}, items);
 					} catch (_:core.ds.NotFound) {
 						items;
 					}
@@ -324,32 +324,31 @@ class DisplayFields {
 							switch follow(aThis) {
 								case TInst(c, _):
 									var items = items;
-									for (cf in c.clOrderedStatics) {
+									for (cf in c.clStatics) {
 										if (shouldAccess(c, cf, true) && isNewItem(items, cf.cfName)) {
 											var origin = Self(TClassDecl(c));
 											var item = makeClassField(origin, cf);
-											items = PMap.add(cf.cfName, item, items);
+											items = items.add(cf.cfName, item);
 										}
 									}
-									PMap.foldi(function(name:String, item:CompletionItemData, acc:StringMap<CompletionItemData>) {
-										if (isNewItem(acc, name)) return PMap.add(name, item, acc);
+									// port: upstream folds over PMap.empty here, which leaves items as they are
+									(PMap.empty() : PMap<CompletionItemData>).foldi(function(name:String, item:CompletionItemData, acc:PMap<CompletionItemData>) {
+										if (isNewItem(acc, name)) return acc.add(name, item);
 										return acc;
-									}, PMap.empty(), items);
+									}, items);
 								case _: items;
 							}
 						case _: items;
 					};
-					function iterFields(origin:ClassFieldOrigin, fields:StringMap<TClassField>, fAllow:TClassField->Bool,
-							fMake:CompletionClassField->TPair->CompletionItemData):StringMap<CompletionItemData> {
-						var items = PMap.fold(function(cf:TClassField, acc:StringMap<CompletionItemData>) {
+					function iterFields(origin:ClassFieldOrigin, fields:TypeMap<TClassField>, fAllow:TClassField->Bool,
+							fMake:CompletionClassField->TPair->CompletionItemData):PMap<CompletionItemData> {
+						return fields.fold(function(cf:TClassField, acc:PMap<CompletionItemData>) {
 							if (isNewItem(acc, cf.cfName) && fAllow(cf)) {
 								var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(cf.cfMeta), cf.cfType);
-								return PMap.add(cf.cfName,
-									fMake(CompletionClassField.make(cf, CFSMember, origin, true), {t: cf.cfType, ct: ct}), acc);
+								return acc.add(cf.cfName, fMake(CompletionClassField.make(cf, CFSMember, origin, true), {t: cf.cfType, ct: ct}));
 							}
 							return acc;
-						}, fields, items);
-						return items;
+						}, items);
 					}
 					switch an.aStatus {
 						case ClassStatics(c = {clKind: KAbstractImpl(a)}):
@@ -360,21 +359,21 @@ class DisplayFields {
 								return if (hasClassFieldFlag(ccf.field,
 									CfEnum)) CompletionItem.makeCiEnumAbstractField(a, ccf, t) else CompletionItem.makeCiClassField(ccf, t);
 							}
-							iterFields(Self(TClassDecl(c)), c.clStatics, fAllow, fMake);
+							iterFields(Self(TClassDecl(c)), c.clStatics.byName, fAllow, fMake);
 						case ClassStatics(c):
 							Display.mergeCoreDoc(ctx, TClassDecl(c));
 							function fAllow(cf:TClassField):Bool return shouldAccess(c, cf, true);
-							iterFields(Self(TClassDecl(c)), c.clStatics, fAllow, CompletionItem.makeCiClassField);
+							iterFields(Self(TClassDecl(c)), c.clStatics.byName, fAllow, CompletionItem.makeCiClassField);
 						case AbstractStatics(a = {aImpl: c}) if (c != null):
 							Display.mergeCoreDoc(ctx, TAbstractDecl(a));
 							function fAllow(cf:TClassField):Bool return shouldAccess(c, cf, true);
-							iterFields(Self(TAbstractDecl(a)), c.clStatics, fAllow, CompletionItem.makeCiClassField);
+							iterFields(Self(TAbstractDecl(a)), c.clStatics.byName, fAllow, CompletionItem.makeCiClassField);
 						case EnumStatics(en):
-							PMap.fold(function(ef:TEnumField, acc:StringMap<CompletionItemData>) {
+							en.eConstrs.byName.fold(function(ef:TEnumField, acc:PMap<CompletionItemData>) {
 								var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(ef.efMeta), ef.efType);
 								var cef = CompletionEnumField.make(ef, Self(TEnumDecl(en)), true);
-								return PMap.add(ef.efName, CompletionItem.makeCiEnumField(cef, {t: ef.efType, ct: ct}), acc);
-							}, en.eConstrs, items);
+								return acc.add(ef.efName, CompletionItem.makeCiEnumField(cef, {t: ef.efType, ct: ct}));
+							}, items);
 						case _:
 							var origin = switch t {
 								case TType(td, _): Self(TTypeDecl(td));
@@ -390,7 +389,7 @@ class DisplayFields {
 						cf.cfKind = Method(MethNormal);
 						var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(cf.cfMeta), t);
 						var item = CompletionItem.makeCiClassField(CompletionClassField.make(cf, CFSStatic, BuiltIn, true), {t: t, ct: ct});
-						PMap.add("bind", item, items);
+						items.add("bind", item);
 					} else items;
 				case _:
 					items;
@@ -404,7 +403,7 @@ class DisplayFields {
 				cf.cfKind = Var({vRead: AccNormal, vWrite: AccNever});
 				var ct = CompletionType.fromType(Display.getImportStatus.bind(ctx), Ast.getValueMeta(cf.cfMeta), cf.cfType);
 				var item = CompletionItem.makeCiClassField(CompletionClassField.make(cf, CFSMember, BuiltIn, true), {t: cf.cfType, ct: ct});
-				PMap.add(cf.cfName, item, PMap.empty());
+				PMap.singleton(cf.cfName, item);
 			case _:
 				PMap.empty();
 		};
@@ -412,10 +411,7 @@ class DisplayFields {
 		var items = loop(items, e.etype);
 		// Add static extensions
 		var items = collectStaticExtensions(ctx, blockedItems, items, e, p);
-		var items = PMap.fold(function(item:CompletionItemData, acc:Array<CompletionItemData>) {
-			acc.unshift(item);
-			return acc;
-		}, items, []);
+		var items = items.foldCons(item -> item);
 		var items = Display.sortFields(items, WithTypeTools.value, TKField(p));
 		try {
 			var sl = Ast.stringListOfExprPathRaise(eAst);

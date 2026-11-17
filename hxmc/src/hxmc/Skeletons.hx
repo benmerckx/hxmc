@@ -78,7 +78,7 @@ class Skeletons {
 		if (map == null) s.skeletons.set(mk, map = new Map());
 		var init = core.TOther.TClassTools.getClInit(c);
 		if (init != null) map.set(c.clPath.name + "\x00", record(init));
-		for (cf in c.clStatics)
+		for (cf in c.clStatics.byName)
 			if (cf.cfExpr != null) map.set(c.clPath.name + "\x00" + cf.cfName, record(cf.cfExpr));
 		if (c.clConstructor != null && c.clConstructor.cfExpr != null) map.set(c.clPath.name + "\x00new", record(c.clConstructor.cfExpr));
 	}
@@ -105,7 +105,7 @@ class Skeletons {
 						if (map == null) s.skeletons.set(mk, map = new Map());
 						var init = core.TOther.TClassTools.getClInit(c);
 						if (init != null) work.push({map: map, name: c.clPath.name + "\x00", e: init});
-						for (cf in c.clStatics)
+						for (cf in c.clStatics.byName)
 							if (cf.cfExpr != null) work.push({map: map, name: c.clPath.name + "\x00" + cf.cfName, e: cf.cfExpr});
 						if (c.clConstructor != null && c.clConstructor.cfExpr != null)
 							work.push({map: map, name: c.clPath.name + "\x00new", e: c.clConstructor.cfExpr});

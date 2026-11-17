@@ -37,7 +37,10 @@ class Crosshost {
 			var i:Null<Int> = Std.parseInt(p[0]), n:Null<Int> = p.length == 2 ? Std.parseInt(p[1]) : null;
 			if (i == null || n == null || n < 1 || i < 0 || i >= n) fail("--shard I/N, 0 <= I < N: " + a.get("--shard"));
 			shard = i;
-			cases = [for (k in 0...cases.length) if (k % n == i) cases[k]];
+			// (the cases with a C companion first: the slowest, Windows' most,
+			// dealt out evenly)
+			var c = [for (x in cases) if (companion(x)) x].concat([for (x in cases) if (!companion(x)) x]);
+			cases = [for (k in 0...c.length) if (k % n == i) c[k]];
 		}
 		mkdirs(OUT);
 		var t0 = now();
@@ -49,7 +52,9 @@ class Crosshost {
 			Sys.println('the tool as a module: ${FileSystem.stat(wasm).size} bytes, ${fixed(now() - t0)}s');
 		}
 		wasm = FileSystem.fullPath(wasm);
-		var jobs = [for (t in a.get("--targets", TARGETS.join(",")).split(",")) for (c in cases) {target: t, name: c}];
+		// (the slowest first, so none is left to run alone at the end)
+		var targets = a.get("--targets", TARGETS.join(",")).split(",");
+		var jobs = [for (slow in [true, false]) for (t in targets) for (c in cases) if (companion(c) == slow) {target: t, name: c}];
 		if (a.has("--tool") && shard == 0) jobs.unshift({target: host(), name: "TOOL"});
 		var bad = 0;
 		// (each job's seconds)
@@ -68,6 +73,10 @@ class Crosshost {
 		Sys.println('crosshost: ${jobs.length - bad}/${jobs.length} identical, ${Math.round(now() - t0)}s');
 		Sys.exit(bad > 0 ? 1 : 0);
 	}
+
+	// a case built with a C file of its own (Corpus.nativeInputs)
+	static function companion(name:String):Bool
+		return FileSystem.exists('hxmc/test/cases/$name.c');
 
 	// the workers no thread is using
 	static var idle:Array<sys.io.Process> = [];

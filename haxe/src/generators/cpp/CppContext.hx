@@ -22,9 +22,9 @@ import haxe.ds.StringMap;
  */
 // port: `(string, string) PMap.t ref`: a mutable cell shared by the contexts copied from one another.
 class FileInfo {
-	public var value:StringMap<String>;
+	public var value:core.ds.PMap<String>;
 
-	public function new(value:StringMap<String>) this.value = value;
+	public function new(value:core.ds.PMap<String>) this.value = value;
 }
 
 class Context {
@@ -95,17 +95,14 @@ class CppContext {
 
 	/* todo - is this how it's done? */
 	// port: PMap.iter goes through the keys in increasing order; the result is reversed.
-	public static function pmapKeys<V>(pmap:StringMap<V>):Array<String> {
-		var keys = core.ds.PMap.keys(pmap);
-		keys.reverse();
+	public static function pmapKeys<V>(pmap:core.ds.PMap<V>):Array<String> {
+		var n = pmap.size, keys:Array<String> = [];
+		keys.resize(n);
+		for (i in 0...n) keys[i] = pmap.keyAt(n - 1 - i);
 		return keys;
 	}
 
-	public static function pmapValues<V>(pmap:StringMap<V>):Array<V> {
-		var values = [for (k in core.ds.PMap.keys(pmap)) pmap.get(k)];
-		values.reverse();
-		return values;
-	}
+	public static inline function pmapValues<V>(pmap:core.ds.PMap<V>):Array<V> return pmap.foldCons(v -> v);
 
 	// port: `Hashtbl.iter` over `common_ctx.resources`, collected once for the several passes.
 	public static function resourcesInHashtblOrder(com:Gctx):Array<{name:String, data:haxe.io.Bytes}> {

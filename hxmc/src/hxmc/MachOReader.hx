@@ -140,6 +140,10 @@ class MachOReader {
 			if ((type & 0xe0) != 0) continue; // a debugging entry
 			var ext = (type & 1) != 0;
 			var t = type & 0x0e;
+			// (a local of a section left out, LLVM's ltmp<n> of __eh_frame or
+			// __DWARF: none, as that section's own; undefined, Obj.append would
+			// take it for a global, an import dyld does not find)
+			if (!ext && t == 0xe && secs[sect] == null) continue;
 			var s:Symbol;
 			if (ext) {
 				s = o.sym(name);

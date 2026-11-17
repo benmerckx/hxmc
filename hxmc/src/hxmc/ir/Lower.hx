@@ -2,7 +2,6 @@ package hxmc.ir;
 
 import hxmc.Platform;
 import hxmc.ir.Ir;
-import hxmc.ir.LowerQueries;
 import hxmc.ir.CInterop;
 import hxmc.ir.Com.ComValue;
 import hxmc.ir.Jni.JniValue;
@@ -27,9 +26,8 @@ using core.ds.VectorTools;
 // where the runtime holds it, `stored`, `erase`), and values are converted
 // (tagged, boxed, unboxed, wrapped in adapter closures) where a declared type
 // and a use-site type differ: calls, returns, field and enum-argument access
-// (FnLower.coerce). A function body sees this class through
-// LowerQueries alone (what the compilation server's reuse of bodies covers).
-class Lower implements LowerQueries {
+// (FnLower.coerce).
+class Lower {
 	var prog = new Program();
 	var classes = new Map<TClass, ClassInfo>();
 	var enums = new Map<TEnum, EnumInfo>();
@@ -62,27 +60,9 @@ class Lower implements LowerQueries {
 			case NotCoro(t): t;
 		}
 
-	// `l`: a subclass to lower with (hxmc's resident compiler passes one that
-	// reuses function bodies across builds, see `lowerBody`); otherwise none
-	// whether the program's Str.hash is the word-at-a-time hash (its hashSlow
-	// marked @:hxmc.wordHash), else FNV-1a: literals and string switches
-	// (FnLower.strHash) hash as the runtime the program links does, whichever
-	// std it was typed with (the std a tool of either kind builds: TargetFlags)
-	static function strWordHash(types:Array<core.TType.ModuleType>):Bool {
-		for (t in types)
-			switch t {
-				case TClassDecl(c) if (c.clPath.name == "Str" && c.clPath.pack.join(".") == "hxmc.rt"):
-					var f = c.clStatics.get("hashSlow");
-					return f != null && core.Meta.has(Custom(":hxmc.wordHash"), f.cfMeta);
-				case _:
-			}
-		return true;
-	}
-
 	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
 		Lower.basic = basic;
 		if (l == null) l = new Lower();
-		FnLower.wordHash = strWordHash(types);
 		var mainField = main.clStatics.get("main");
 		l.prog.main = l.staticFunc(main, mainField);
 		// (haxe.EntryPoint.run after main, as Finalization.maybeAddEntrypoint adds
@@ -116,14 +96,9 @@ class Lower implements LowerQueries {
 			c != null && order.exists(c) ? order.get(c) : types.length;
 		};
 		l.prog.inits.sort((a, b) -> pos(a) - pos(b));
-		if (survey) l.writeSurvey();
 		return l.prog;
 	}
 
-	// ---- survey mode (HXMC_SURVEY=file): record unsupported constructs, keep going
-
-	public static var survey = false; // (the build's, Options.apply)
-	static var surveyFile:Null<String> = null;
 	// statements carry their source lines (Stmt.SPos): native builds but with
 	// -D hxmc.no-stacks (the call stacks' table, -debug's DWARF: Main)
 	public static var lines = false;
@@ -139,36 +114,9 @@ class Lower implements LowerQueries {
 	// code of the compiler running this lowering is its code. What that code
 	// does (FuncInfo.noGc, blocks), or null when the compiler lacks it.
 	public static var hostCode:Null<FuncInfo->Null<{noGc:Bool, blocks:Bool}>> = null;
-	public var errors = new Map<String, {count:Int, example:String}>();
-	public var natives = new Map<String, Int>(); // runtime functions called, with counts
-
-	public function record(e:LowerError, fn:String) {
-		var r = errors.get(e.msg);
-		if (r == null) errors.set(e.msg, {count: 1, example: fn + " " + e.where}) else r.count++;
-	}
-
-	function writeSurvey() {
-		var keys = [for (k in errors.keys()) k];
-		keys.sort((a, b) -> errors.get(b).count - errors.get(a).count);
-		var out = new StringBuf();
-		for (k in keys)
-			out.add('${errors.get(k).count}\t$k\t${errors.get(k).example}\n');
-		var ns = [for (k in natives.keys()) k];
-		ns.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
-		out.add('\n${ns.length} natives:\n');
-		for (k in ns)
-			out.add('${natives.get(k)}\t$k\n');
-		out.add('\n${prog.funcs.length} functions, ${prog.classes.length} classes, ${prog.enums.length} enums, ${prog.shapes.length} shapes, ${prog.lambdas.length} lambdas\n');
-		sys.io.File.saveContent(surveyFile, out.toString());
-	}
-
 	public function guarded(fi:FuncInfo, f:() -> Void):() -> Void {
 		return () -> {
-			try f() catch (e:LowerError) {
-				if (!survey) throw e.toString();
-				record(e, fi.name);
-				fi.body = vector(SThrow(ENull(TRef(RAny))));
-			}
+			try f() catch (e:LowerError) throw e.toString();
 			bindHosts(fi);
 		}
 	}
@@ -198,7 +146,7 @@ class Lower implements LowerQueries {
 					// that of a class of another target (@:hxmc.android, ofTarget)
 					if (!ofTarget(c)) continue;
 					if (c.clInit != null) initClass(c);
-					for (cf in c.clOrderedStatics)
+					for (cf in c.clStatics)
 						if (cf.cfMeta.length > 0 && cf.cfKind.match(Method(_)) && hasMeta(":hxmc.export", cf.cfMeta)) {
 							var n = metaString(":hxmc.export", cf.cfMeta);
 							if (hostImpls.exists(n)) fail("two Haxe functions exported as " + n);
@@ -208,7 +156,7 @@ class Lower implements LowerQueries {
 				case TClassDecl(c) if (runtimeClass(c)):
 					if (c.clPath.name == "SpanSupport" && c.clPath.pack.length == 1) spanSupport = c;
 					if (!ofTarget(c)) continue;
-					for (cf in c.clOrderedStatics) {
+					for (cf in c.clStatics) {
 						if (cf.cfMeta.length == 0) continue;
 						// Data and TLS can be read by generated code's symbol alone,
 						// without any Haxe field access registering their storage.
@@ -267,9 +215,7 @@ class Lower implements LowerQueries {
 	public static var compact = false;
 	// Mem.compact: 1 when compact and a class of the program is @:hxmc.compact
 	// (Main.generate, from the typed types: a constant of every body, so that
-	// the runtime's code for compressed references folds away without one;
-	// LowerCache drops its bodies when it changes, and the object cache
-	// sees it in their IR, Fingerprint)
+	// the runtime's code for compressed references folds away without one; the object cache sees it in their IR, Fingerprint)
 	public static var compactTypes = 0;
 	public static var targetArm = -1;
 	public static var targetCode = -1;
@@ -555,23 +501,8 @@ class Lower implements LowerQueries {
 		TagCheck.func(fi, prog);
 	}
 
-	// Lowers the body of `fi` (`run`). The hook for a subclass that caches
-	// bodies (hxmc/src/hxmc/LowerCache.hx): `key` is the field the body comes
-	// from (null: a closure or a static initializer); the cache keeps a body
-	// while the field object and its expression stay the same (the
-	// compilation server retypes a changed module and the modules depending
-	// on it, which makes new ones) and replays the calls the body made into
-	// this class. Whole-program builds do not override it.
-	function lowerBody(fi:FuncInfo, key:Null<TClassField>, run:() -> Void):Void
-		run();
-
 	public function fail(msg:String):Dynamic
 		throw new LowerError(msg, "");
-
-	public function native(name:String):String {
-		natives.set(name, (natives.exists(name) ? natives.get(name) : 0) + 1);
-		return name;
-	}
 
 	public static function ident(pack:Array<String>, name:String):String
 		return pack.concat([name]).join("_");
@@ -587,8 +518,7 @@ class Lower implements LowerQueries {
 		var n = owner.nlambdas++;
 		var name = owner.name + "__lambda" + n;
 		// (its Haxe name: the owner's, `$` and its number, a local function in
-		// stacks: StackTable, NativeStackTrace; kept by name, which a body
-		// the server replays asks again, newLambda)
+		// stacks: StackTable, NativeStackTrace: newLambda)
 		if (owner.display != null) lambdaDisplays.set(name, owner.display + "$" + n);
 		return name;
 	}
@@ -656,9 +586,9 @@ class Lower implements LowerQueries {
 		if (c.hasClassFlag(CExtern) || c.hasClassFlag(CInterface) || runtimeClass(c) || !c.clKind.match(KNormal)) return false;
 		if (written(Keep, c.clMeta) || optimization.Dce.superForcesKeep(c)) return true;
 		if (core.Meta.has(Dce, c.clMeta)) return false;
-		for (cf in c.clOrderedFields)
+		for (cf in c.clFields)
 			if (written(Keep, cf.cfMeta)) return true;
-		for (cf in c.clOrderedStatics)
+		for (cf in c.clStatics)
 			if (written(Keep, cf.cfMeta)) return true;
 		return false;
 	}
@@ -678,7 +608,7 @@ class Lower implements LowerQueries {
 			// too: what its field holds before first use (Dyn.anonGetSlow)
 			while (methodsDone < tclasses.length) {
 				var tc = tclasses[methodsDone++];
-				for (f in tc.clOrderedFields)
+				for (f in tc.clFields)
 					if (f.cfKind.match(Method(MethNormal | MethInline | MethDynamic)) && funcOf(f) != null && !f.hasClassFieldFlag(CfExtern))
 						method(tc, f);
 			}
@@ -1103,7 +1033,7 @@ class Lower implements LowerQueries {
 		// and descriptor, Jni; where there is JNI, elsewhere a Haxe class)
 		if (Jni.available()) jniSide(c, ci, sup);
 		var own = [];
-		for (f in c.clOrderedFields)
+		for (f in c.clFields)
 			switch f.cfKind {
 				case Var(v) if (isPhysical(c, f, v)):
 					if (KernelCheck.spanOf(f.cfType) != null)
@@ -1441,7 +1371,7 @@ class Lower implements LowerQueries {
 			if (!ObjC.isProtocol(i.cls) && !ObjC.isId(i.cls))
 				throw new LowerError('Objective-C class $cname (@:hxmc.objc) implements the Haxe interface ${i.cls.clPath.name}: it implements Objective-C protocols only',
 					where);
-		for (cf in c.clOrderedFields)
+		for (cf in c.clFields)
 			if (cf.cfKind.match(Method(MethDynamic)))
 				throw new LowerError('Objective-C class $cname (@:hxmc.objc): the dynamic method ${cf.cfName} has no slot to hold its function', CInterop.posOf(cf.cfPos));
 		claimObjCName(ObjC.className(c), c);
@@ -1516,11 +1446,11 @@ class Lower implements LowerQueries {
 		funcs.set(cf, fi);
 		prog.funcs.push(fi);
 		signature(fi, tf, TId);
-		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
+		whenTyped(c, cf, guarded(fi, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.runMode(funcOf(cf), c);
 			fl.finish();
-		})));
+		}));
 		return fi;
 	}
 
@@ -1558,13 +1488,13 @@ class Lower implements LowerQueries {
 		enums.set(e, ei);
 		prog.enums.push(ei);
 		var ctors = [];
-		for (name in e.eNames) {
+		for (name in e.eConstrs.names()) {
 			var ef = e.eConstrs.get(name);
 			ctors.push(new CtorInfo(ei, name, ef.efIndex, vector()));
 		}
 		ctors.sort((a, b) -> a.tag - b.tag);
 		ei.ctors = Vector.fromArrayCopy(ctors);
-		outsideUnfolding(() -> for (name in e.eNames) {
+		outsideUnfolding(() -> for (name in e.eConstrs.names()) {
 			var ef = e.eConstrs.get(name);
 			var ci = ei.ctors[ef.efIndex];
 			switch TFunctions.follow(ef.efType) {
@@ -1661,11 +1591,11 @@ class Lower implements LowerQueries {
 			return fi;
 		}
 		if (hasMeta(":hxmc.callback", cf.cfMeta)) callback(fi, c, cf);
-		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
+		whenTyped(c, cf, guarded(fi, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.run(funcOf(cf));
 			fl.finish();
-		})));
+		}));
 		return fi;
 	}
 
@@ -1971,11 +1901,11 @@ class Lower implements LowerQueries {
 				case _: signature(fi, tf, TRef(RObj(root)));
 			}
 		} else signature(fi, tf, TRef(RObj(root)));
-		whenTyped(c, cf, guarded(fi, () -> lowerBody(fi, cf, () -> {
+		whenTyped(c, cf, guarded(fi, () -> {
 			var fl = new FnLower(this, fi, ci, null);
 			fl.run(funcOf(cf));
 			fl.finish();
-		})));
+		}));
 		fi.dfltEntry = defaultsEntry(fi, ci);
 		return fi;
 	}
@@ -2004,11 +1934,11 @@ class Lower implements LowerQueries {
 		w.pos = fi.pos;
 		w.display = fi.display;
 		prog.funcs.push(w);
-		pending.push(guarded(w, () -> lowerBody(w, null, () -> {
+		pending.push(guarded(w, () -> {
 			var fl = new FnLower(this, w, ci, null);
 			fl.forwardDefaults(fi);
 			fl.finish();
-		})));
+		}));
 		return w;
 	}
 
@@ -2078,11 +2008,11 @@ class Lower implements LowerQueries {
 		var tf = funcOf(c.clConstructor);
 		signature(fi, tf, TRef(RObj(ci)));
 		fi.ret = TVoid;
-		pending.push(guarded(fi, () -> lowerBody(fi, c.clConstructor, () -> {
+		pending.push(guarded(fi, () -> {
 			var fl = new FnLower(this, fi, ci, null);
 			fl.run(tf, true);
 			fl.finish();
-		})));
+		}));
 		return fi;
 	}
 
@@ -2096,7 +2026,7 @@ class Lower implements LowerQueries {
 		var self = new Local(0, "this0", TRef(RAny));
 		fi.args.push(self);
 		fi.ret = TVoid;
-		fi.body = vector(SExpr(ECallHost(native("StringBuf_init"), vector(ELocal(self)), TVoid)), SReturn(null));
+		fi.body = vector(SExpr(ECallHost("StringBuf_init", vector(ELocal(self)), TVoid)), SReturn(null));
 		pending.push(() -> bindHosts(fi));
 		return fi;
 	}
@@ -2118,11 +2048,11 @@ class Lower implements LowerQueries {
 		var tf = funcOf(c.clConstructor);
 		signature(fi, tf, TI64);
 		fi.ret = TVoid;
-		pending.push(guarded(fi, () -> lowerBody(fi, c.clConstructor, () -> {
+		pending.push(guarded(fi, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.runStructCtor(tf);
 			fl.finish();
-		})));
+		}));
 		return fi;
 	}
 
@@ -2144,11 +2074,11 @@ class Lower implements LowerQueries {
 		}
 		prog.lambdas.push(li);
 		prog.funcs.push(fi);
-		pending.push(guarded(fi, () -> lowerBody(fi, null, () -> {
+		pending.push(guarded(fi, () -> {
 			var fl = new FnLower(this, fi, null, li);
 			body(fl);
 			fl.finish();
-		})));
+		}));
 		return li;
 	}
 
@@ -2168,7 +2098,7 @@ class Lower implements LowerQueries {
 		var ci = classInfo(c);
 		if (ci.statics != null) return;
 		ci.statics = [];
-		for (cf in c.clOrderedStatics) {
+		for (cf in c.clStatics) {
 			if (cf.hasClassFieldFlag(CfExtern) || cf.hasClassFieldFlag(CfGeneric)) continue;
 			switch cf.cfKind {
 				// (a function taking or returning a struct is not reachable by name)
@@ -2426,11 +2356,11 @@ class Lower implements LowerQueries {
 		initOf.set(fi, c);
 		// (a class's __init__ runs whether or not live code reads its statics: Reach)
 		if (c.clInit != null && ofTarget(c)) prog.roots.push(fi);
-		pending.push(guarded(fi, () -> lowerBody(fi, null, () -> {
+		pending.push(guarded(fi, () -> {
 			var fl = new FnLower(this, fi, null, null);
 			fl.runInit(c);
 			fl.finish();
-		})));
+		}));
 	}
 
 	public function rootClass():ClassInfo
@@ -2590,4 +2520,17 @@ class LowerError {
 
 	public function toString()
 		return "lowering: " + msg + (where != "" ? " (" + where + ")" : "");
+}
+
+// The default values of a function's arguments (from 0, the receiver
+// first for a method: null there), and the variables they belong to (a
+// default value may read the arguments before it: FnLower.defaultValue)
+class ArgDefaults {
+	public final values:Array<Null<TExpr>>;
+	public final vars:Array<Null<TVar>>;
+
+	public function new(values, vars) {
+		this.values = values;
+		this.vars = vars;
+	}
 }

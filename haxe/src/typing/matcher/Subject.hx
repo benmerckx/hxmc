@@ -130,7 +130,7 @@ class Subject {
 					}
 					{kind: SKValue, finiteness: RunTimeFinite};
 				case TAbstract(a = {aImpl: c}, pl) if (c != null && a.aEnum):
-					if (!deep) for (cf in c.clOrderedStatics) {
+					if (!deep) for (cf in c.clStatics) {
 						follow(cf.cfType);
 						if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) {
 							var ctor = cf.cfExpr == null ? null : Constructor.extractCtor(cf.cfExpr);
@@ -153,9 +153,7 @@ class Subject {
 				// port: `constructors` is still empty here and the constructors are distinct, so they are pushed without add's linear search.
 				case TEnum(en, _):
 					if (!deep) {
-						var names = [for (n in en.eConstrs.keys()) n];
-						names.sort(core.ds.Key.compareStrings);
-						for (n in names) constructors.push(({kind: ConEnum(en, en.eConstrs.get(n)), pos: nullPos} : ConstructorData));
+						for (ef in en.eConstrs.byName) constructors.push(({kind: ConEnum(en, ef), pos: nullPos} : ConstructorData));
 					}
 					{kind: SKEnum, finiteness: RunTimeFinite};
 				case _: {kind: SKValue, finiteness: Infinite};

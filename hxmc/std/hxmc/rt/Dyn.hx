@@ -29,7 +29,7 @@ class Dyn {
 		var v = Atomic.load64(e);
 		if ((v >>> 32).toInt() == h) {
 			var f = v.toInt() - 1;
-			if (f >= 0 && nameIs(Names.fidName(f), name)) return f;
+			if (f >= 0 && nameIs(Names.nameOf(f), name)) return f;
 		}
 		var f = Names.fidSlow(name);
 		Atomic.store64(e, ((h : I64) << 32) | ((f + 1 : I64) & (((1 : I64) << 32) - 1)));
@@ -44,6 +44,15 @@ class Dyn {
 	// any other unit answers false, and the caller asks the C table)
 	@:hxmc.unsafe static function nameIs(p:Ptr, s:String):Bool {
 		var n = Str.len(s);
+		if (Str.isOne(s)) {
+			// (stops at the C string's end: a unit 0 or another byte differs from it)
+			var q:Ptr = cast Str.chars1(s);
+			for (i in 0...n) {
+				var u = Mem.getU8(q, i);
+				if (u == 0 || u >= 0x80 || Mem.getU8(p, i) != u) return false;
+			}
+			return Mem.getU8(p, n) == 0;
+		}
 		for (i in 0...n) {
 			var u = Str.unit(s, i);
 			if (u >= 0x80 || Mem.getU8At(p, 0, i) != u) return false;
@@ -53,28 +62,34 @@ class Dyn {
 
 	// ---- lookups (binary searches: the tables are sorted by fid)
 
-	@:hxmc.unsafe static function findField(ty:Ptr, fid:Int):Ptr {
-		var lo = 0, hi = nfields(ty) - 1;
+	@:hxmc.unsafe static inline function findField(ty:Ptr, fid:Int):Ptr {
+		var lo = 0, hi = nfields(ty) - 1, r = Ptr.nil();
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
 			var f = field(ty, mid);
 			var x = fFid(f);
-			if (x == fid) return f;
+			if (x == fid) {
+				r = f;
+				break;
+			}
 			if (x < fid) lo = mid + 1 else hi = mid - 1;
 		}
-		return Ptr.nil();
+		return r;
 	}
 
-	@:hxmc.unsafe static function findMethod(ty:Ptr, fid:Int):Ptr {
-		var lo = 0, hi = nmethods(ty) - 1;
+	@:hxmc.unsafe static inline function findMethod(ty:Ptr, fid:Int):Ptr {
+		var lo = 0, hi = nmethods(ty) - 1, r = Ptr.nil();
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
 			var m = method(ty, mid);
 			var x = mFid(m);
-			if (x == fid) return m;
+			if (x == fid) {
+				r = m;
+				break;
+			}
 			if (x < fid) lo = mid + 1 else hi = mid - 1;
 		}
-		return Ptr.nil();
+		return r;
 	}
 
 	// rt_icache (Names.hx): uint32 t, int32 slot (> 0: field slot + 1; 0: a
@@ -186,10 +201,9 @@ class Dyn {
 		var i = 0;
 		while (i + 1 < n) {
 			var k = Mem.getRefAt(Mem.addr(ov), 0, i);
-			if (!Str.isNull(k)) {
-				var kf:Int = k;
-				if (kf == fid) return i;
-			}
+			if (Str.isNull(k)) break; // (the room after the fields: overflowSet)
+			var kf:Int = k;
+			if (kf == fid) return i;
 			i += 2;
 		}
 		return -1;
@@ -202,10 +216,20 @@ class Dyn {
 			Mem.setRefBarrier(Mem.getRef(Mem.addr(o), 0), 8 * (i + 1), v);
 			return;
 		}
+		// (the fields' pairs first, then room, null keys: a new field in the
+		// room, else in storage twice as long, the fields copied once)
 		var ov = Mem.getRef(Mem.addr(o), 0);
 		var n = Str.isNull(ov) ? 0 : nslots(ov);
 		var key:Dynamic = fid;
-		var nv = Mem.alloc(n + 2, T_OVERFLOW, K_PARR);
+		var end = 0;
+		while (end + 1 < n && !Str.isNull(Mem.getRefAt(Mem.addr(ov), 0, end)))
+			end += 2;
+		if (end + 1 < n) {
+			Mem.setRefBarrier(ov, 8 * (end + 1), v);
+			Mem.setRefBarrier(ov, 8 * end, key);
+			return;
+		}
+		var nv = Mem.alloc(n == 0 ? 4 : 2 * n, T_OVERFLOW, K_PARR);
 		ov = Mem.getRef(Mem.addr(o), 0);
 		for (k in 0...n)
 			Mem.setRefBarrier(nv, 8 * k, Mem.getRefAt(Mem.addr(ov), 0, k));
@@ -375,6 +399,15 @@ class Dyn {
 		if (s < 0) Rt.rt_throw(Str.isNull(f) ? "Cannot call null" : "Cannot call a non-function"); // (Eval's for null)
 		var want = sigArgs(s);
 		if (want > 16) want = 16;
+		var buf = Mem.stack(128);
+		// (an array of references: its elements copied as they are, missing ones null)
+		if (Mem.getI32(Mem.addr(args), 4) == AK_PTR) {
+			var d = Mem.getPtr(Mem.addr(args), 8);
+			var m = n < want ? n : want;
+			for (i in 0...want)
+				Mem.setPtr(buf, 8 * i, i < m ? Mem.getPtr(d, 8 * i) : Ptr.nil());
+			return Mem.callRef2(Mem.getPtr(Mem.sym("rt_dyncalls"), 8 * s), f, buf);
+		}
 		// the arguments boxed (reading an Int or Float array boxes) into a
 		// reference array first, then copied without a GC point into the
 		// frame area the generated dyncall reads (it unboxes them before
@@ -383,7 +416,6 @@ class Dyn {
 		refs.resize(want);
 		for (i in 0...(n < want ? n : want))
 			refs[i] = args[i];
-		var buf = Mem.stack(128);
 		if (want > 0) {
 			var d = Mem.getPtr(Mem.addr(refs), 8); // (the storage: its elements from 0, Boxes)
 			for (i in 0...want)
@@ -472,8 +504,12 @@ class Dyn {
 				case _:
 			}
 		}
-		var r:Dynamic = Str.isNull(o) ? NOT_BUILTIN : callBuiltin(o, Names.fidStr(fid), boxed, n);
-		if (isNotBuiltin(r)) r = callBoxed(anonGetSlow(o, fid), boxed, n);
+		// (as a call of a Dynamic's field, which this is too, FnLower: a
+		// String's or an Array's method, an enum's constructor by name, a
+		// Reflect.makeVarArgs function)
+		var t = Str.isNull(o) ? 0 : tindex(o);
+		var r:Dynamic = t == T_ARRAY || isString(t) ? callBuiltin(o, Names.fidStr(fid), boxed, n) : NOT_BUILTIN;
+		if (isNotBuiltin(r)) r = callAny(fieldOf(o, fid), boxed, n);
 		return fromBoxed(r, rk);
 	}
 
@@ -482,6 +518,22 @@ class Dyn {
 	// building this one; removable once neither does)
 	@:hxmc.unsafe(gc) @:hxmc.export("hx_anon_call_slow") static function anonCallSlowOld(o:Dynamic, fid:Int, sig:Int, args:Ptr):I64
 		return anonCallSlow(o, fid, sig, args, args);
+
+	// o's field fid as a Dynamic read gives it (dynGet by field id)
+	static function fieldOf(o:Dynamic, fid:Int):Dynamic {
+		if (!Str.isNull(o) && tindex(o) == T_TYPEOBJ && tk(ty(described(o))) == TK_ENUM) {
+			var i = enumCtorNames(o).indexOf(Names.fidStr(fid));
+			if (i >= 0) return single(ty(ctor(ty(described(o)), i))) >= 0 ? enumCreate(o, i, null) : enumCtorFunction(o, i);
+		}
+		return anonGetSlow(o, fid);
+	}
+
+	// f called with the first n of args, as dynCall calls it (its own array)
+	static function callAny(f:Dynamic, args:Array<Dynamic>, n:Int):Dynamic {
+		f = unadapt(f);
+		if (closureSig(f) < 0 && Std.isOfType(f, VarArgs)) return (f : VarArgs).f(args.slice(0, n));
+		return callBoxed(f, args, n);
+	}
 
 	// ---- Dynamic access
 
@@ -501,6 +553,14 @@ class Dyn {
 			if (i >= 0) return single(ty(ctor(ty(described(o)), i))) >= 0 ? enumCreate(o, i, null) : enumCtorFunction(o, i);
 		}
 		return anonGetSlow(o, fid(name));
+	}
+
+	// dynGet with the name's id
+	static function dynGetF(o:Dynamic, name:String, f:Int):Dynamic {
+		if (Str.isNull(o)) Rt.rt_throw("Null Access");
+		var t = tindex(o);
+		if (isString(t) || t == T_ARRAY || isNativeArray(t) || t == T_TYPEOBJ) return dynGet(o, name);
+		return anonGetSlow(o, f);
 	}
 
 	// a String's or an Array's method as a value read dynamically (Reflect.field(s,
@@ -543,9 +603,8 @@ class Dyn {
 		// (Reflect.makeVarArgs's: the arguments as an array of their own)
 		if (closureSig(f) < 0 && Std.isOfType(f, VarArgs)) return (f : VarArgs).f(Str.isNull(args) ? [] : args.copy());
 		if (Str.isNull(args)) return callBoxed(f, [], 0);
-		// a copy: the callee may change the array
-		var a = args.copy();
-		return callBoxed(f, a, a.length);
+		// (callBoxed only reads the array: no copy)
+		return callBoxed(f, args, args.length);
 	}
 
 	// callBuiltin's answer when the name is not a built-in method (a static
@@ -710,12 +769,18 @@ class Dyn {
 		if (ta == tb) {
 			if (ta == T_BOXFLOAT) return TypeView.float(a) == TypeView.float(b);
 			if (ta == T_BOXINT || ta == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
-			if (isString(ta)) return Str.eqSlow(a, b);
+			if (isString(ta)) return Str.eqSlow(TypeView.string(a), TypeView.string(b));
+		}
+		// (two of the program's types, neither a closure: the boxes, strings and
+		// type objects below are the runtime's types, below T_FIRST)
+		if (ta >= T_FIRST && tb >= T_FIRST) {
+			var ka = TypeView.kind(ta), kb = TypeView.kind(tb);
+			if (ka != TK_CLOSURE && ka != TK_BOUND && kb != TK_CLOSURE && kb != TK_BOUND) return false;
 		}
 		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) return unboxI64(a) == unboxI64(b);
 		if (isNum(a) && isNum(b)) return unboxFloat(a) == unboxFloat(b);
 		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
-		if (isString(ta) && isString(tb)) return Str.eqSlow(a, b);
+		if (isString(ta) && isString(tb)) return Str.eqSlow(TypeView.string(a), TypeView.string(b));
 		if (ta == T_TYPEOBJ && tb == T_TYPEOBJ) return TypeView.described(a) == TypeView.described(b);
 		// (two closures of one method and object: equal, as on Eval and hl)
 		if (ta == tb && ta >= T_FIRST && (TypeView.kind(ta) == TK_BOUND || isMethodClosure(ta))) return compareMethods(a, b);
@@ -758,7 +823,7 @@ class Dyn {
 			var x = unboxFloat(a), y = unboxFloat(b);
 			return x < y ? -1 : x > y ? 1 : 0;
 		}
-		if (isString(ta) && isString(tb)) return Str.cmp(a, b);
+		if (isString(ta) && isString(tb)) return Str.cmp(TypeView.string(a), TypeView.string(b));
 		if (TypeView.same(a, b)) return 0;
 		// two dates: by time, as JavaScript's `a == b ? 0 : a > b ? 1 : -1`
 		// (Eval: -1 but for the same date)
@@ -1018,7 +1083,8 @@ class Dyn {
 		// (read again after each value printed: printing allocates, and a
 		// toString may add fields)
 		var i = 0;
-		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
+		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))
+			&& !Str.isNull(Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i))) {
 			b.add(n++ == 0 ? " " : ", ");
 			var k:Int = Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i);
 			b.add(Names.fidStr(k));
@@ -1086,6 +1152,18 @@ class Dyn {
 
 	@:hxmc.kernel public static function refEq(a:Dynamic, b:Dynamic):Bool
 		return TypeView.same(a, b);
+
+	// whether v is an Int's box, a Float's, a Bool's: exactly that kind (a
+	// Float of an integer's value is not an Int, as Std.isOfType has it),
+	// tested inline (interpreters keeping their numbers as Dynamic)
+	public static inline function isIntBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXINT;
+
+	public static inline function isFloatBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXFLOAT;
+
+	public static inline function isBoolBox(v:Dynamic):Bool
+		return !Repr.isNull(v) && Types.tindex(v) == T_BOXBOOL;
 
 	// 0 null, 1 Int, 2 Float, 3 Bool, 4 anonymous object, 5 function, 6 class
 	// instance, 7 enum value, 8 String, 9 Array, 10 a type object, 11 other
@@ -1326,6 +1404,7 @@ class Dyn {
 			var i = 0;
 			while (i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
 				var ov = Mem.getRef(Mem.addr(o), 0);
+				if (Str.isNull(Mem.getRefAt(Mem.addr(ov), 0, i))) break; // (overflowSet's room)
 				var k:Int = Mem.getRefAt(Mem.addr(ov), 0, i);
 				a.push(Names.fidStr(k));
 				i += 2;
@@ -1353,6 +1432,56 @@ class Dyn {
 
 	public static function setField(o:Dynamic, name:String, v:Dynamic):Void
 		dynSet(o, name, v);
+
+	// Reflect.getProperty: o's getter get_<name> called when it has one,
+	// else the field (Reach keeps the methods of both names: a method sink
+	// of name and of "get_" + name); the getter's name made once per name
+	// (accessorFid), not on each call
+	public static function getProperty(o:Dynamic, name:String):Dynamic {
+		if (Str.isNull(o)) return null;
+		var t = tindex(o);
+		if (t < T_FIRST && !isString(t) && t != T_ARRAY && t != T_TYPEOBJ) return null;
+		var f = fid(name);
+		var a = accessorFid(f, false);
+		if (a >= 0) {
+			var g = anonGetSlow(o, a);
+			if (g != null && Reflect.isFunction(g)) return dynCall(g, []);
+		}
+		return dynGetF(o, name, f);
+	}
+
+	// Reflect.setProperty: o's setter set_<name> called when it has one, else
+	// the field set
+	public static function setProperty(o:Dynamic, name:String, v:Dynamic):Void {
+		var f = fid(name);
+		if (!Str.isNull(o)) {
+			var t = tindex(o);
+			if (t >= T_FIRST || isString(t) || t == T_ARRAY || t == T_TYPEOBJ) {
+				var a = accessorFid(f, true);
+				if (a >= 0) {
+					var g = anonGetSlow(o, a);
+					if (g != null && Reflect.isFunction(g)) {
+						dynCall(g, [v]);
+						return;
+					}
+				}
+			}
+		}
+		anonSetSlow(o, f, v);
+	}
+
+	// the id of the name "get_" (set: "set_") and field f's name, -1 when the
+	// program has none: a direct-mapped cache of (key + 1, id + 2) words
+	// outside the heap, as fid's
+	@:hxmc.unsafe(gc) static function accessorFid(f:Int, set:Bool):Int {
+		var key = (f << 1) | (set ? 1 : 0);
+		var e = Names.accessorCache.add(8 * (key & 4095));
+		var v = Atomic.load64(e);
+		if ((v >>> 32).toInt() == key + 1) return v.toInt() - 2;
+		var r = fidFind((set ? "set_" : "get_") + Names.fidStr(f));
+		Atomic.store64(e, (((key + 1) : I64) << 32) | ((r + 2 : I64) & (((1 : I64) << 32) - 1)));
+		return r;
+	}
 
 	// a field added at run time (slot 0's pairs, which stay without holes:
 	// the others keep their order); not one of the structure's own: its

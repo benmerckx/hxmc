@@ -171,7 +171,7 @@ class CInterop {
 	// it marks the class (optimization/Dce.hx, markClass).
 	static function keepFields(c:TClass) {
 		var feature = core.Globals.sTypePath(c.clPath) + ".*";
-		for (cf in c.clOrderedFields) {
+		for (cf in c.clFields) {
 			if (!cf.cfKind.match(Var(_))) continue;
 			var exprs = [new core.Ast.Expr(EConst(String(feature, SDoubleQuotes)), cf.cfPos)];
 			var meta:Array<core.Ast.MetadataEntry> = [];
@@ -351,7 +351,7 @@ class CInterop {
 		inProgress.set(c, true);
 		var off = 0, align = 1;
 		var fields:Array<CField> = [];
-		for (cf in c.clOrderedFields) {
+		for (cf in c.clFields) {
 			switch cf.cfKind {
 				case Var(_):
 				case Method(_): throw new LowerError('@:hxmc.struct $where: ${cf.cfName}: a struct has no methods (yet)', posOf(cf.cfPos));
@@ -799,7 +799,7 @@ class CInterop {
 
 	// whether a function of c names fn in @:hxmc.free
 	static function freesResults(c:TClass, fn:String):Bool {
-		for (f in c.clOrderedStatics) {
+		for (f in c.clStatics) {
 			var m = f.cfMeta.length > 0 ? core.Meta.getOpt(Custom(":hxmc.free"), f.cfMeta) : null;
 			if (m != null && m.exprs.length == 1 && identOf(m.exprs[0]) == fn) return true;
 		}
@@ -831,7 +831,7 @@ class CInterop {
 		return switch ctype(t) {
 			case CStruct(sc):
 				var ok = true;
-				for (f in sc.clOrderedFields)
+				for (f in sc.clFields)
 					if (f.cfKind.match(Var(_)) && !safeValue(f.cfType, depth + 1)) ok = false;
 				ok;
 			case CPtr: isSize(t);

@@ -186,7 +186,7 @@ class Bytes {
 	@:hxmc.host("haxe_io_BytesBuffer_new") static function bbNew():Dynamic
 		return Repr.bbNew();
 
-	@:hxmc.host("haxe_io_BytesBuffer_get_length") @:hxmc.kernel static function bbGetLength(bb:Dynamic):Int
+	@:hxmc.host("haxe_io_BytesBuffer_get_length") @:hxmc.kernel static function bbGetLength(bb:haxe.io.BytesBuffer):Int
 		return BytesView.bufLength(bb);
 
 	// room for n more bytes

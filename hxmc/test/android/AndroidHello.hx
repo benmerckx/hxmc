@@ -1,6 +1,6 @@
 import hxmc.unsafe.*;
 
-// The smallest Android app's library (make shared-check: as libmain.so,
+// The smallest Android app's library (make native-check NATIVE=shared: as libmain.so,
 // which a packager puts in an APK): a NativeActivity's library, its entry
 // ANativeActivity_onCreate in no-GC Haxe (Android calls it on the
 // activity's UI thread, which the runtime does not know). It starts a thread for the program: hxmc's generated main (the

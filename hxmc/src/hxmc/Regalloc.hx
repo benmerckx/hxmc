@@ -68,6 +68,8 @@ class Scratch {
 	public var occBlock:Array<Int> = [];
 	public var occFirst:Array<Int> = [];
 	public var occLast:Array<Int> = [];
+	public var occUse:Array<Int> = [];
+	public var occDef:Array<Int> = [];
 	public var occAt:Array<Int> = [];
 	public var listed:Array<Int> = [];
 	public var bl:Array<Int> = [];
@@ -172,22 +174,25 @@ class Regalloc {
 	public var insns = 0; // instructions they went through
 
 	public function run() {
-		// loop depths from the layout (reverse postorder, slow paths last): a
-		// branch back to an earlier block closes a loop over the blocks between
+		// loop depths: the Mir's loop nest's (IselBase), else from the layout
+		// (reverse postorder, slow paths last): a branch back to an earlier
+		// block closes a loop over the blocks between
 		var nb = f.blocks.length;
 		for (bi in 0...nb)
 			f.blocks[bi].id = bi;
-		var depth = Scratch.fill(s.count, nb + 1, 0);
-		for (b in f.blocks)
-			for (pr in b.preds)
-				if (pr.id >= b.id && !pr.cold) {
-					depth[b.id]++;
-					depth[pr.id + 1]--;
-				}
-		var d = 0;
-		for (bi in 0...nb) {
-			d += depth[bi];
-			f.blocks[bi].loopDepth = d;
+		if (!f.depths) {
+			var depth = Scratch.fill(s.count, nb + 1, 0);
+			for (b in f.blocks)
+				for (pr in b.preds)
+					if (pr.id >= b.id && !pr.cold) {
+						depth[b.id]++;
+						depth[pr.id + 1]--;
+					}
+			var d = 0;
+			for (bi in 0...nb) {
+				d += depth[bi];
+				f.blocks[bi].loopDepth = d;
+			}
 		}
 		for (round in 0...64) {
 			rounds++;
@@ -260,14 +265,19 @@ class Regalloc {
 		var defBlock = s.defBlock, defNext = s.defNext;
 		defBlock.resize(0);
 		defNext.resize(0);
-		// per register and block it appears in: the first and last position
-		// (a list through occNext, the latest block first)
+		// per register and block it appears in: the first and last position,
+		// the last use before its first definition there and that definition
+		// (-1: none; a phi's register, used in a loop's last block and then
+		// set for the next round: a hole between) (a list through occNext,
+		// the latest block first)
 		var occHead = Scratch.fill(s.occHead, n, -1);
-		var occNext = s.occNext, occBlock = s.occBlock, occFirst = s.occFirst, occLast = s.occLast;
+		var occNext = s.occNext, occBlock = s.occBlock, occFirst = s.occFirst, occLast = s.occLast, occUse = s.occUse, occDef = s.occDef;
 		occNext.resize(0);
 		occBlock.resize(0);
 		occFirst.resize(0);
 		occLast.resize(0);
+		occUse.resize(0);
+		occDef.resize(0);
 		// spill costs: the uses and definitions, 8x per loop level
 		var weight = s.weight;
 		weight.resize(n);
@@ -298,10 +308,15 @@ class Regalloc {
 					if (r >= NPHYS) {
 						weight[r] += w;
 						var h = occHead[r];
-						if (h >= 0 && occBlock[h] == bi) occLast[h] = p else {
+						if (h >= 0 && occBlock[h] == bi) {
+							occLast[h] = p;
+							if (occDef[h] < 0) occUse[h] = p;
+						} else {
 							occBlock.push(bi);
 							occFirst.push(p);
 							occLast.push(p);
+							occUse.push(p);
+							occDef.push(-1);
 							occNext.push(h);
 							occHead[r] = occBlock.length - 1;
 						}
@@ -328,10 +343,15 @@ class Regalloc {
 					if (r >= NPHYS) {
 						weight[r] += w;
 						var h = occHead[r];
-						if (h >= 0 && occBlock[h] == bi) occLast[h] = p + 1 else {
+						if (h >= 0 && occBlock[h] == bi) {
+							occLast[h] = p + 1;
+							if (occDef[h] < 0) occDef[h] = p + 1;
+						} else {
 							occBlock.push(bi);
 							occFirst.push(p + 1);
 							occLast.push(p + 1);
+							occUse.push(-1);
+							occDef.push(p + 1);
 							occNext.push(h);
 							occHead[r] = occBlock.length - 1;
 						}
@@ -459,18 +479,26 @@ class Regalloc {
 					ptHi[r] |= fixHi[bi];
 					continue;
 				}
-				var a = liveInSeen[bi] == r || o < 0 ? b.from : occFirst[o];
-				var z = liveOutSeen[bi] == r || o < 0 ? b.to : occLast[o];
-				var m = segFrom.length;
-				if (segN[r] > 0 && segTo[m - 1] + 2 >= a) {
-					len[r] += z - segTo[m - 1];
-					segTo[m - 1] = z;
-				} else {
-					segFrom.push(a);
-					segTo.push(z);
-					segN[r]++;
-					len[r] += z - a + 1;
+				inline function range(a:Int, z:Int) {
+					var m = segFrom.length;
+					if (segN[r] > 0 && segTo[m - 1] + 2 >= a) {
+						len[r] += z - segTo[m - 1];
+						segTo[m - 1] = z;
+					} else {
+						segFrom.push(a);
+						segTo.push(z);
+						segN[r]++;
+						len[r] += z - a + 1;
+					}
 				}
+				var liveIn = liveInSeen[bi] == r;
+				var a = liveIn || o < 0 ? b.from : occFirst[o];
+				var z = liveOutSeen[bi] == r || o < 0 ? b.to : occLast[o];
+				// (live in, dead from its last use until it is set again)
+				if (liveIn && o >= 0 && occUse[o] >= 0 && occDef[o] > occUse[o] + 2) {
+					range(a, occUse[o]);
+					range(occDef[o], z);
+				} else range(a, z);
 			}
 			if (segN[r] > 0) {
 				start[r] = segFrom[segAt[r]];
@@ -521,7 +549,8 @@ class Regalloc {
 		var spilled = [];
 		var seen = Scratch.fill(s.seen, n, -1); // conflicts found (stamped by query)
 		var conflicts = s.conflicts;
-		for (r in order) {
+		for (oi in 0...order.length) {
+			var r = order[oi];
 			var float = f.floatReg(r), vec = f.vecReg(r);
 			var regs = vec ? t.vprs : float ? t.fprs : t.gprs;
 			var choice = -1;
@@ -532,9 +561,32 @@ class Regalloc {
 			inline function masked(c:Int):Bool
 				return (c < 32 ? mlo >> c : mhi >> (c - 32)) & 1 != 0;
 			var h = f.hint(r);
+			// a virtual hint not allocated yet: its own (a phi's input is hinted
+			// at the phi, allocated later, and the phi at another of its inputs)
+			for (_ in 0...3)
+				if (h >= NPHYS && assigned[h] < 0) h = f.hint(h);
 			if (h >= 0) {
 				var hr = h < NPHYS ? h : assigned[h];
 				if (hr >= 0 && isFpr[hr] == (float ? 1 : 2) && (!vec || s.isVpr[hr]) && !masked(hr) && free(hr, r)) choice = hr;
+			}
+			// (without a hint of its own: not a register that an interval starting
+			// within this one is hinted to, a phi's next value taking the dying
+			// value's register otherwise leaves a copy per round)
+			if (choice < 0) {
+				var wlo = 0, whi = 0;
+				var k = oi + 1, e = end[r];
+				while (k < order.length && k < oi + 16 && start[order[k]] <= e) {
+					var w = order[k++], wh = f.hint(w);
+					for (_ in 0...3)
+						if (wh >= NPHYS && assigned[wh] < 0) wh = f.hint(wh);
+					var c = wh < 0 ? -1 : wh < NPHYS ? wh : assigned[wh];
+					if (c >= 0) if (c < 32) wlo |= 1 << c else whi |= 1 << (c - 32);
+				}
+				for (c in regs)
+					if (!masked(c) && (c < 32 ? wlo >> c : whi >> (c - 32)) & 1 == 0 && free(c, r)) {
+						choice = c;
+						break;
+					}
 			}
 			if (choice < 0)
 				for (c in regs)
@@ -543,10 +595,14 @@ class Regalloc {
 						break;
 					}
 			if (choice < 0) {
-				// the register whose overlapping intervals cost least to spill
-				// (weight per position covered), if less than this one
+				// the register whose overlapping intervals cost least to spill,
+				// if less than this one: their weights, the uses each spill
+				// makes loads and stores (no splitting: a long interval spilled
+				// is spilled at every use; by weight per position covered, a
+				// short value taking a callee-saved register across a call
+				// evicted an interpreter's pc, used in every case)
 				var best = -1;
-				var bestCost = r >= noSpillFrom ? 1e300 : lateRound ? -1.0 : weight[r] / len[r];
+				var bestCost = r >= noSpillFrom ? 1e300 : lateRound ? -1.0 : weight[r];
 				for (c in regs) {
 					if (masked(c) || fixedOverlapSegs(c, r)) continue;
 					var cost = 0.0;
@@ -557,7 +613,7 @@ class Regalloc {
 							ok = false;
 							break;
 						}
-						cost += weight[a] / len[a];
+						cost += weight[a];
 					}
 					if (ok && cost < bestCost) {
 						best = c;

@@ -311,10 +311,6 @@ class LambdaInfo {
 	// (Facts: what a scan of its body found, made once: a program lowered in
 	// steps, interp.MirMacros, makes its facts again at each step)
 	public var gcScan:Null<GcScan> = null;
-	// (the scan of the same body in an earlier build of the compilation
-	// server, its callees this build's: LowerCache, taken by findNoGc when
-	// that build's p.stacks is this one's, Reach dropping the same calls)
-	public var gcScanned:Null<{stacks:Bool, scan:GcScan}> = null;
 	// the native code of the compiler lowering it runs it, and its body was
 	// not typed (@:hxmc.hostCode, Lower.hostCode): no body here, never
 	// compiled nor inlined; its gcScan says what that code does
@@ -647,12 +643,18 @@ class Ir {
 	// switched (a word for a reference, an Int, a Float; a reference for a
 	// word), then every argument and the result a word where it may be (a
 	// generic method's). A word is never passed for a method's reference,
-	// nor boxed for it (no allocation among the arguments).
+	// nor boxed for it (no allocation among the arguments). Where the call
+	// takes a reference that may hold a number (Dynamic, a word), a method
+	// returning a number too (IntIterator's next as Iterator<Dynamic>'s):
+	// its result boxed or encoded after the call.
 	public static function anonAlternatives(s:SigInfo):Array<{args:Array<Ty>, ret:Ty}> {
 		var args = [for (a in s.args) a];
 		var wordable = (t:Ty) -> t == TI32 || t == TF64 || t.match(TRef(_));
 		var r = [];
 		if (wordable(s.ret)) r.push({args: args, ret: Ir.isWord(s.ret) ? TRef(RAny) : TRef(RTag)});
+		if (s.ret.match(TRef(RAny | RTag)))
+			for (t in [TI32, TF64, TBool])
+				r.push({args: args, ret: t});
 		var gen = [for (a in args) wordable(a) ? TRef(RTag) : a];
 		var changed = false;
 		for (i in 0...args.length)

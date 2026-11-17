@@ -11,7 +11,7 @@ import core.ds.VectorTools.vector;
 
 // x86-64 LIR operations (LIns.op)
 enum abstract XOp(Int) to Int from Int {
-	var MOV; // d <- s1 (gpr or xmm)
+	var MOV; // d <- s1 (gpr or xmm; flag: movsxd; size 4, imm2 1: zero-extended; imm2 8, 16: its low byte, 16 bits zero-extended)
 	var MOVI; // d <- imm (imm2: high half when size 8)
 	var MOVF; // d (xmm) <- f (constant pool)
 	var LEA; // d <- address
@@ -75,6 +75,7 @@ enum abstract XOp(Int) to Int from Int {
 	var VXK; // d <- d op [the constant of uses: four 32-bit words]
 	var VCONST; // d <- the constant of uses
 	var PTEST; // flags <- s1 & s1 (ptest)
+	var FOPM; // d <- d (cond: as FOP) [mem] (a double)
 }
 
 // Mir -> LIR for x86-64 (System V and Win64: CallConv); the walk, the
@@ -98,7 +99,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 
 	var flagsOf = new Map<Int, Int>(); // comparisons whose flags the branch after them reads
 	var memFolds = new Map<Int, Bool>(); // loads that are memory operands of their user
-	var testFolds = new Map<Int, Bool>(); // x & constant used only by a comparison with 0 (TESTI)
+	var testFolds = new Map<Int, Bool>(); // x & constant (or y) used only by a comparison with 0 (TESTI, TEST)
 	var indexFolds = new Map<Int, Bool>(); // x + y used only as the base of accesses: their base and index
 	var scaleFolds = new Map<Int, Bool>(); // x << 3 (a compressed reference's address) used only as the base of accesses: their index, scaled
 
@@ -201,7 +202,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				mem();
 			case CMPMI:
 				mem();
-			case ALUM:
+			case ALUM | FOPM:
 				defs.push(i.d);
 				uses.push(i.d);
 				mem();
@@ -284,6 +285,11 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					cand0 = c.b;
 					if (c.op != Sub) cand1 = c.a;
 					if (c.a == c.b) continue;
+				} else if (c.op == FAdd || c.op == FSub || c.op == FMul || c.op == FDiv) {
+					// (a double's operation: the load as its memory operand, FOPM)
+					if (c.a == c.b || mf.vals[c.b].op == ConstF) continue;
+					cand0 = c.b;
+					if (c.op == FAdd || c.op == FMul) cand1 = c.a;
 				} else if (c.op == SExt) {
 					cand0 = c.a;
 				} else continue;
@@ -291,7 +297,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					var x = q == 0 ? cand0 : cand1;
 					if (x < 0) break;
 					var l = mf.vals[x];
-					if (l.op != Load || l.block != b || useCount[x] != 1 || l.ty == F64) continue;
+					if (l.op != Load || l.block != b || useCount[x] != 1 || (l.ty == F64) != (c.ty == F64)) continue;
 					if (l.size != (l.ty == I32 ? 4 : 8)) continue;
 					var j = k;
 					var ok = false;
@@ -312,7 +318,7 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			}
 		}
 		// x & constant compared with 0 (== or !=), used only there, in its
-		// block: a TESTI of the comparison
+		// block: a TESTI of the comparison (x & y of registers: a TEST)
 		// (also when value numbering left one x & constant for several such
 		// comparisons: each tests x, the and is not computed nor kept live)
 		testFolds = new Map();
@@ -326,7 +332,8 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				var x = mf.vals[c.a];
 				if (x.op != And || x.ty == F64) continue;
 				var k = immOf(x.b);
-				if (k == null || isymOf(x.b) != null || folded[x.a]) continue;
+				if (k == null && immOf(x.a) == null ? folded[x.b] || x.a == x.b : k == null || isymOf(x.b) != null) continue;
+				if (folded[x.a]) continue;
 				var n = testUses.exists(x.id) ? testUses.get(x.id) + 1 : 1;
 				testUses.set(x.id, n);
 				if (n == useCount[x.id]) {
@@ -365,6 +372,13 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		for (b in mf.blocks)
 			for (i in b.ins)
 				if ((i.op == Const && immOf(i.id) != null) || i.op == SymAddr || i.op == StackAddr || i.op == ConstF) folded[i.id] = true;
+		// (a double a comparison uses: in a register where it is made, which
+		// LICM moved out of the loop; ucomisd takes no constant)
+		for (b in mf.blocks)
+			for (i in b.ins)
+				if (i.op == Cmp && i.a >= 0 && mf.vals[i.a].ty == F64)
+					for (x in [i.a, i.b])
+						if (mf.vals[x].op == ConstF) folded[x] = false;
 		// vector constants: made where used (pxor, pcmpeqd, a load from
 		// .rodata), or the memory operand of their user (vbk), never a
 		// register of their own across the code
@@ -526,10 +540,17 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 		if (imm != null) {
 			if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe) && testFolds.exists(a)) {
 				var y = m.vals[a];
-				var x = emit(TESTI);
-				x.s1 = use(y.a);
-				x.imm = immOf(y.b);
-				x.size = sz(t);
+				if (immOf(y.b) == null) {
+					var x = emit(TEST);
+					x.s1 = use(y.a);
+					x.s2 = use(y.b);
+					x.size = sz(t);
+				} else {
+					var x = emit(TESTI);
+					x.s1 = use(y.a);
+					x.imm = immOf(y.b);
+					x.size = sz(t);
+				}
 			} else if (imm == 0 && isymOf(b) == null && (c == CEq || c == CNe)) {
 				var x = emit(TEST);
 				x.s1 = use(a);
@@ -615,6 +636,12 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 			case Copy:
 				mov(reg(i.id), use(i.a));
 			case And if (testFolds.exists(i.id)): // (TESTI of its comparison)
+			case And if ((immOf(i.b) == 0xFF || immOf(i.b) == 0xFFFF) && isymOf(i.b) == null): // movzx, the operand kept
+				var x = emit(MOV);
+				x.d = reg(i.id);
+				x.s1 = use(i.a);
+				x.size = 4;
+				x.imm2 = immOf(i.b) == 0xFF ? 8 : 16;
 			case Add if (folded[i.id]): // (the displacement of the loads and stores it is the address of)
 			case Shl if (folded[i.id]): // (the index of the loads and stores it is the address of: scaleFolds)
 			case Add | Sub | And | Or | Xor:
@@ -774,12 +801,33 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 					a = i.b;
 					c = i.a;
 				}
+				if ((i.op == FAdd || i.op == FMul) && memFold(a)) {
+					var t = a;
+					a = c;
+					c = t;
+				}
 				var d = reg(i.id);
 				mov(d, use(a));
-				var x = emit(k(c) ? FOPK : FOP);
+				if (memFold(c)) {
+					var l = m.vals[c];
+					var x = emit(FOPM);
+					x.d = d;
+					memOf(x, l.a, l.b, l.imm2, l.imm);
+					x.mem = l.mem;
+					x.cond = switch i.op {
+						case FAdd: 0x58;
+						case FMul: 0x59;
+						case FSub: 0x5c;
+						case _: 0x5e;
+					};
+					return;
+				}
+				// (x * 2: x + x, exactly, without the constant's load)
+				var twice = i.op == FMul && k(c) && m.vals[c].f == 2.0;
+				var x = emit(k(c) && !twice ? FOPK : FOP);
 				x.d = d;
-				if (k(c)) x.f = m.vals[c].f else x.s1 = use(c);
-				x.cond = switch i.op {
+				if (twice) x.s1 = d else if (k(c)) x.f = m.vals[c].f else x.s1 = use(c);
+				x.cond = twice ? 0x58 : switch i.op {
 					case FAdd: 0x58;
 					case FMul: 0x59;
 					case FSub: 0x5c;
@@ -848,12 +896,16 @@ class Isel extends hxmc.IselBase implements hxmc.Target.Selector {
 				x.imm2 = 1; // movsxd from memory
 				memOf(x, l.a, l.b, l.imm2, l.imm);
 				x.mem = l.mem;
+			case SExt if (zeroExtended(i.a, true)):
+				mov(reg(i.id), use(i.a), 8);
 			case SExt:
 				var x = emit(MOV);
 				x.d = reg(i.id);
 				x.s1 = use(i.a);
 				x.flag = true; // movsxd
 				x.size = 8;
+			case ZExt if (zeroExtended(i.a, false)):
+				mov(reg(i.id), use(i.a), 8);
 			case ZExt:
 				var x = emit(MOV);
 				x.d = reg(i.id);

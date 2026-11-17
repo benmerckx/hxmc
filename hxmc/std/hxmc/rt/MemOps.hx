@@ -22,7 +22,11 @@ class MemOps {
 	// (b as long as a: one length, its words' and bytes' checks proved,
 	// Opt.fits; i + 8 <= n: i < n - 7)
 	static inline function bytes(a:ReadOnlySpan<UInt8>, b:ReadOnlySpan<UInt8>):Int {
-		var n = a.length, c = b.sub(0, n), i = 0;
+		var n = a.length, c = b.sub(0, n), i = 0, none:hxmc.I64 = 0;
+		// (16 bytes a round, one test: the words' differences or'ed; then the
+		// word that differs, and the bytes)
+		while (i < n - 15 && (a.getI64(i) ^ c.getI64(i)) | (a.getI64(i + 8) ^ c.getI64(i + 8)) == none)
+			i += 16;
 		while (i < n - 7 && a.getI64(i) == c.getI64(i))
 			i += 8;
 		var r = 0;

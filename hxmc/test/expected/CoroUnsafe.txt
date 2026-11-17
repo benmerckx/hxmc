@@ -1,0 +1,5 @@
+exit 0
+-- a trusted coroutine
+result 12, error null
+-- a coroutine closure in a trusted function
+result 42, error null

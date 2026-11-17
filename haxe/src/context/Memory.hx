@@ -71,11 +71,11 @@ class Memory {
 			case TClassDecl(c):
 				deps.unshift(c);
 				c.clDescendants = []; /* prevent false positive */
-				for (f in c.clOrderedStatics) deps.unshift(f);
-				for (f in c.clOrderedFields) deps.unshift(f);
+				for (f in c.clStatics) deps.unshift(f);
+				for (f in c.clFields) deps.unshift(f);
 			case TEnumDecl(e):
 				deps.unshift(e);
-				for (n in e.eNames) deps.unshift(e.eConstrs.get(n));
+				for (ef in e.eConstrs) deps.unshift(ef);
 			case TTypeDecl(t):
 				deps.unshift(t);
 			case TAbstractDecl(a):

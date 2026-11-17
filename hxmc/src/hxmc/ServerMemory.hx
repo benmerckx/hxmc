@@ -4,14 +4,13 @@ import compiler.server.ServerCompilationContext;
 import context.Common;
 
 // What a compilation server keeps between requests, kept under a cap
-// (-D hxmc.server-mb=<n>, else HXMC_SERVER_MB=<n>: n MB of live heap; unset
-// or 0: no cap; each compilation's own, read at its start). The server
-// keeps a context per signature (the typed modules of every program it built,
-// with their macros' contexts), hxmc keeps the objects of each output it wrote
-// (Driver.memObjs), the lowered bodies of the last program (LowerCache) and
-// the macro interpreter: a second project built in the same server keeps the
-// first's as well, which a server with little memory (a browser's worker,
-// wasm32: its memory never shrinks) cannot afford.
+// (-D hxmc.server-mb=<n>: n MB of live heap; unset or 0: no cap; each
+// compilation's own, read at its start). The server keeps a context per
+// signature (the typed modules of every program it built, with their
+// macros' contexts), hxmc keeps the objects of each output it wrote
+// (Driver.memObjs) and the macro interpreter: a second project built in the
+// same server keeps the first's as well, which a server with little memory
+// (a browser's worker, wasm32: its memory never shrinks) cannot afford.
 //
 // A compilation's group is its signature's (at the start of its typing) and
 // the contexts it used (those its typing touched, and their children: the
@@ -27,14 +26,13 @@ import context.Common;
 //     is live is more than the cap, the least recently used other groups
 //     are dropped the same way.
 // A group dropped: its contexts (ServerMemory.dropContexts: not those a kept
-// group uses), the objects of the outputs it wrote, the lowered bodies when
-// they are its program's, and the macro interpreter (it holds the types of
+// group uses), the objects of the outputs it wrote and the macro interpreter (it holds the types of
 // every macro context it ran: made again by the next compilation). A dropped
 // project's next build is a cold one. What a single group keeps is never
 // dropped: the cap is not a limit on one project. hxmc.stats (HXMC_STATS=1)
 // prints what is dropped.
 class ServerMemory {
-	// (the running or last compilation's: -D hxmc.server-mb, else HXMC_SERVER_MB, read in begin)
+	// (the running or last compilation's: -D hxmc.server-mb, read in begin)
 	static var cap:Float = -1;
 	static var stats = false; // (-D hxmc.stats, else HXMC_STATS)
 
@@ -125,7 +123,6 @@ class ServerMemory {
 		var gone = dropContexts(cs, [for (s in x.signs) if (!keep.exists(s)) s]);
 		for (o in x.outs)
 			Driver.forgetOutput(o);
-		Main.forgetLowered(x.signs);
 		// (and what the last compilations left that holds their programs: the
 		// macro interpreter, made again by the next compilation's first macro,
 		// the filters of the last macro context, the lowering's basic types)

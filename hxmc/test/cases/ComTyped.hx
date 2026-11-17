@@ -65,6 +65,10 @@ extern interface ICounter2 extends ICounter {
 	static function counter_live():Int;
 }
 
+@:hxmc.lib("comtypeddyn") @:hxmc.c @:hxmc.safe extern class Safe {
+	static function counter_peek(p:ReadOnlySpan<hxmc.unsafe.UInt8>, c:ICounter):Int;
+}
+
 class ComTyped {
 	static function main() {
 		Com.init(MultiThreaded);
@@ -93,5 +97,13 @@ class ComTyped {
 		hxmc.rt.Gc.collect(true);
 		Com.runDeferred();
 		trace("pairs released", Native.counter_live() - live0);
+		// (a COM argument converted before a span is lent: its throw leaves the Buffer lent to nothing)
+		var buf = new hxmc.Buffer(4), k = new Out<ICounter>();
+		trace("peek", Safe.counter_peek(ReadOnlySpan.ofBuffer(buf), c));
+		Native.counter_new(k);
+		Com.detach(k.value);
+		trace("peek detached", try Safe.counter_peek(ReadOnlySpan.ofBuffer(buf), k.value) catch (e:ComException) ComException.hex(e.hresult));
+		buf.close();
+		trace("closed", buf.closed);
 	}
 }

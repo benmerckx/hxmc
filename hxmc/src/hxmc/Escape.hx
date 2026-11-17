@@ -46,33 +46,10 @@ class Escape {
 	static inline var NONE = SsaReader.NONE; // no definition in the block
 	static inline var NOTSET = SsaReader.NOTSET;
 
-	public static var on = true; // (the build's, Options.apply)
-
-	// (debugging: HXMC_ESCAPE_HASH=<lo>-<hi>, the functions whose names hash
-	// to lo...hi of 0...1024 only; HXMC_ESCAPE_NO=<parts>, parts off:
-	// closures, frames, again, boxes, replace, screen, anon)
-	static var hashRange:Null<Array<Int>> = null;
-	static var no = "";
-
-	public static function allowed(name:String):Bool {
-		if (hashRange == null) return true;
-		var h = 0;
-		for (k in 0...name.length)
-			h = (h * 31 + StringTools.fastCodeAt(name, k)) & 0xFFFFFF;
-		h = h % 1024;
-		return h >= hashRange[0] && h < hashRange[1];
-	}
-
-	public static inline function part(p:String):Bool
-		return no.indexOf(p) < 0;
-
 	// per type index, which slots hold references (the Driver sets it; read
 	// only): Mem.alloc's objects, whose words are read and written by
 	// hxmc.unsafe's loads and stores, keep those on the shadow stack
 	public static var refSlots:Null<Map<Int, Vector<Bool>>>;
-
-	// (HXMC_ESCAPE_LOG=1) what happens to each allocation that is analyzed
-	static var log = false;
 
 	var f:MFunc;
 
@@ -109,30 +86,20 @@ class Escape {
 	var parent:Vector<Int> = vector(); // union-find of sites
 	var escaped:Vector<Bool> = vector();
 	var uniform:Vector<Bool> = vector();
-	var whys:Vector<Null<String>> = vector();
 	var lastFail:Null<MIns>;
 
 	public function new(f:MFunc)
 		this.f = f;
 
-	// (HXMC_ESCAPE_DUMP=<function symbol>: its object-level Mir before and after)
-	static var dumpName:Null<String> = null;
-
 	public function run() {
-		if (f.name == dumpName) Sys.println("escape: before\n" + f.dump());
-		go();
-		if (f.name == dumpName) Sys.println("escape: after\n" + f.dump());
-	}
-
-	function go() {
-		if (f.allocs == 0 || !allowed(f.name)) return;
+		if (f.allocs == 0) return;
 		f.edited();
 		for (b in f.blocks)
 			for (i in b.ins)
 				if (i.op == Call && i.returnsTwice) return;
 		// (again after a replacement: an object stored into a replaced one's
 		// field no longer is)
-		for (_ in 0...(part("again") ? 3 : 1))
+		for (_ in 0...3)
 			if (!once()) break;
 	}
 
@@ -146,17 +113,15 @@ class Escape {
 			analyze();
 			if (round == 2 || !foldKnown()) break;
 		}
-		if (!part("replace")) return false;
 		var groups = check();
 		var any = false;
 		for (g in groups)
 			if (replace(g)) any = true else escape(g.root, "fields overlap");
-		if (log) report();
 		if (!any) return false;
 		sweep();
 		prune();
 		Ssa.trivialPhis(f.vals, newPhis);
-		if (part("frames")) elideFrames();
+		elideFrames();
 		return true;
 	}
 
@@ -341,7 +306,7 @@ class Escape {
 				if (s.defAt == null) return null;
 				s.key = o.name + ":" + o.tindex + ":" + o.n;
 				return s;
-			case Box if (part("boxes")):
+			case Box:
 				var k = switch i.info.t {
 					case TI32: 1;
 					case TF64: 2;
@@ -493,7 +458,6 @@ class Escape {
 			for (a in i.args)
 				if (a != i.id && der[a] >= 0) sure[root(der[a])] = true;
 		var n = 0;
-		if (!part("screen")) sure = new Vector<Bool>(all.length); // (debugging: everything analyzed)
 		for (i in tests) {
 			var x = i.op == Cmp ? (exact[i.a] >= 0 ? i.a : i.b) : i.a;
 			var k = exact[x];
@@ -571,7 +535,7 @@ class Escape {
 			case EnumTag if (o.ctor != null):
 				toConst(u, o.ctor.tag);
 				return true;
-			case AnonGet if (o.shape != null && part("anon")):
+			case AnonGet if (o.shape != null):
 				var at = anonField(o.shape, u.info.name, u.info.t);
 				if (at < 0) return false;
 				var t = o.shape.fields[at].ty;
@@ -582,7 +546,7 @@ class Escape {
 				u.op = GetField;
 				u.info = i;
 				return true;
-			case AnonTest if (o.shape != null && part("anon")):
+			case AnonTest if (o.shape != null):
 				var at = anonField(o.shape, u.info.name, u.info.t);
 				var hit = u.targets[0];
 				if (at >= 0) {
@@ -726,7 +690,6 @@ class Escape {
 		cellVps = [];
 		parent = MFunc.iota(sites.length);
 		escaped = new Vector(sites.length);
-		whys = new Vector(sites.length);
 		// the closure: what may be an alias
 		closure = [];
 		inline function add(x:Int) {
@@ -845,7 +808,6 @@ class Escape {
 	function escape(s:Int, why:String) {
 		var r = find(s);
 		escaped[r] = true;
-		if (log && whys[r] == null) whys[r] = why;
 	}
 
 	// the lattice's join: two groups meeting become one; a group meeting
@@ -862,7 +824,6 @@ class Escape {
 		if (ra == rb) return ra;
 		// (the smaller index the root: deterministic)
 		var e = escaped[ra] || escaped[rb];
-		var w = whys[ra] != null ? whys[ra] : whys[rb];
 		if (rb < ra) {
 			var t = ra;
 			ra = rb;
@@ -870,7 +831,6 @@ class Escape {
 		}
 		parent[rb] = ra;
 		escaped[ra] = e;
-		whys[ra] = w;
 		return ra;
 	}
 
@@ -1067,7 +1027,6 @@ class Escape {
 						all = true;
 				}
 				if (all) {
-					if (log) Sys.println('escape: ${f.name}: an untracked area: ' + MFunc.insString(u));
 					break;
 				}
 			}
@@ -1274,7 +1233,7 @@ class Escape {
 			if (g == null || escaped[g.root]) continue;
 			for (k in 0...g.accesses.length)
 				if (!latest(g, g.bases[k], g.accesses[k])) {
-					escape(g.root, "not the latest instance" + (log ? " (" + MFunc.insString(g.accesses[k]) + ")" : ""));
+					escape(g.root, "not the latest instance");
 					break;
 				}
 		}
@@ -1410,19 +1369,6 @@ class Escape {
 
 	inline function phiArgs(v:Int):Vector<Int>
 		return v >= nv ? vpArgs[v - nv] : f.vals[v].args;
-
-	// ---- the log
-
-	function report() {
-		var lines = [];
-		for (k in 0...sites.length) {
-			var r = find(k);
-			var s = sites[k];
-			var w = escaped[r] ? (whys[r] == null ? "?" : whys[r]) : "replaced";
-			lines.push('escape: ${f.name}: ${s.what()}: $w');
-		}
-		Sys.println(lines.join("\n"));
-	}
 
 	function failWhy(u:Null<MIns>):String {
 		if (u == null) return "a use";

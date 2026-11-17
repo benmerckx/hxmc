@@ -45,10 +45,9 @@ extern class GcCore {
 	// upper half (a constant): the program may have compressed references
 	// (Mem.compact), its heap is then below 32 GB (Gc.init), and its objects
 	// may have no slot (a header constructor, hxmc.ir.Facts: an enum value of
-	// one 4-byte argument, in that half). (false without hxmc.memcompact:
-	// the committed stage0 makes none)
+	// one 4-byte argument, in that half).
 	public static inline function fwdLow():Bool
-		return #if hxmc.memcompact Mem.compact() == 1 #else false #end;
+		return Mem.compact() == 1;
 
 	// p's payload words, the header's first word w0 (Types.wordsAt: the
 	// length read only for a large array)
@@ -92,10 +91,9 @@ extern class GcCore {
 	// constant (Mem.compact: false without a @:hxmc.compact class, or where
 	// the target's fields stay 8 bytes, hxmc.Main.compactRefs), so that
 	// every test of them below, and the code they guard, folds away in the
-	// programs without. (true from a tool without Mem.compact, which defines
-	// no hxmc.memcompact: the committed stage0 tests each type)
+	// programs without.
 	public static inline function compactTypes():Bool
-		return #if hxmc.memcompact Mem.compact() == 1 #else true #end;
+		return Mem.compact() == 1;
 
 	// whether type t's objects have compressed references (word 20's bit 0,
 	// Types.hasCompact)

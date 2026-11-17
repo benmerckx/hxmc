@@ -35,7 +35,7 @@ using core.ds.VectorTools;
 typedef PatternContext = {
 	var ctx:Typer;
 	var orLocals:Null<haxe.ds.StringMap<{v:TVar, p:Pos}>>;
-	var ctxLocals:core.ds.PersistentMap<String, TVar>;
+	var ctxLocals:core.ds.PMap<TVar>;
 	var currentLocals:haxe.ds.StringMap<{v:TVar, p:Pos}>;
 	var inReification:Bool;
 	var isPostfixMatch:Bool;
@@ -140,9 +140,9 @@ class ExprToPattern {
 			return {kind: ConEnum(en, ef), pos: p};
 		}
 		inline function enumerable():Array<String> return switch follow(t) {
-			case TEnum(en, _): en.eNames;
+			case TEnum(en, _): en.eConstrs.keyArray();
 			case TAbstract(a = {aImpl: c}, _) if (c != null && a.aEnum): [
-					for (cf in c.clOrderedStatics) if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) cf.cfName
+					for (cf in c.clStatics) if (hasClassFieldFlag(cf, CfImpl) && hasClassFieldFlag(cf, CfEnum)) cf.cfName
 				];
 			case _: [];
 		};
@@ -382,17 +382,12 @@ class ExprToPattern {
 				}
 				function collectFields(t:T, filter:Null<Array<String>>):Void switch follow(t) {
 					case TAnon(an):
-						var names = [for (n in an.aFields.keys()) n];
-						names.sort(core.ds.Key.compareStrings);
-						for (n in names) {
-							var cf = an.aFields.get(n);
-							collectField(cf, cf.cfType, filter);
-						}
+						for (cf in an.aFields) collectField(cf, cf.cfType, filter);
 					case TInst(c, tl):
 						function loopClass(c:TClass, tl:core.TType.TParams):Void {
 							if (c.clSuper != null) loopClass(c.clSuper.cls,
 								c.clSuper.params.map(function(t) return applyParams(c.clParams, tl, t)));
-							for (cf in c.clOrderedFields) if (canAccess(ctx, c, cf,
+							for (cf in c.clFields) if (canAccess(ctx, c, cf,
 								false)) collectField(cf, applyParams(c.clParams, tl, cf.cfType), filter);
 						}
 						loopClass(c, tl);
@@ -408,7 +403,7 @@ class ExprToPattern {
 								filter.indexOf(s) >= 0);
 							collectFields(core.Abstract.getUnderlyingType(a, tl), filtered);
 						}
-						for (cf in c.clOrderedStatics) if (hasClassFieldFlag(cf,
+						for (cf in c.clStatics) if (hasClassFieldFlag(cf,
 							CfImpl)) collectField(cf, applyParams(a.aParams, tl, cf.cfType), filter);
 					case _:
 						core.Error.raiseTypingError("Cannot field-match against "

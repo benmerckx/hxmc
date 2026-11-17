@@ -88,9 +88,9 @@ class AvailCheck {
 						expr(cf.cfExpr, v > floor ? v : floor);
 					}
 					if (c.clConstructor != null) field(c.clConstructor);
-					for (cf in c.clOrderedStatics)
+					for (cf in c.clStatics)
 						field(cf);
-					for (cf in c.clOrderedFields)
+					for (cf in c.clFields)
 						field(cf);
 				case _:
 			}

@@ -39,7 +39,7 @@ class InheritDoc {
 
 	public static function getClassField(c:TClass, fieldName:String):{cls:Null<TClass>, field:TClassField} {
 		try {
-			var cf = try findMap(c.clFields, fieldName) catch (_:NotFound) findMap(c.clStatics, fieldName);
+			var cf = try c.clFields.find(fieldName) catch (_:NotFound) c.clStatics.find(fieldName);
 			return {cls: c, field: cf};
 		} catch (_:NotFound) {
 			if (c.clSuper == null) throw NotFound.raise();
@@ -157,11 +157,11 @@ class InheritDoc {
 					buildClassFieldDoc(ctx, r.cls, r.field);
 					r.field.cfDoc;
 				case TAnon(a):
-					var cf = findMap(a.aFields, fieldName);
+					var cf = a.aFields.find(fieldName);
 					buildClassFieldDoc(ctx, null, cf);
 					cf.cfDoc;
 				case TEnum(en, _):
-					var ef = findMap(en.eConstrs, fieldName);
+					var ef = en.eConstrs.find(fieldName);
 					buildEnumFieldDoc(ctx, ef);
 					ef.efDoc;
 				case TAbstract(a, _) if (a.aImpl != null):

@@ -27,8 +27,6 @@ using core.ds.VectorTools;
 // continuation (OInfo.cont: the phis there, a reference a cold site reloads
 // after its slow path, get the value each edge's path has).
 class MemLower extends MirWriter {
-	static var noShadow = false; // (the build's, Options.apply)
-
 	var icSym:String;
 
 	public var icaches = 0; // inline caches made (bss: <name>__ic, IC_SIZE each)
@@ -602,23 +600,100 @@ class MemLower extends MirWriter {
 		return readVar(r, cur);
 	}
 
+	// a Dynamic as a number: an Int's box read inline (and as a Float, a
+	// Float's), any other value by the runtime (null, a Bool, the other kind)
 	function unboxTo(t:Ty, v:Int):Int
 		return switch t {
-			case TI32: call("hx_unbox_int", vector(v), I32);
-			case TBool: call("hx_unbox_bool", vector(v), I32);
-			case TF64: call("hx_unbox_float", vector(v), F64);
+			case TI32: unboxInline(TI32, v, "hx_unbox_int");
+			case TBool: unboxInline(TBool, v, "hx_unbox_bool");
+			case TF64: unboxInline(TF64, v, "hx_unbox_float");
 			case TI64: call("hx_unbox_i64", vector(v), I64);
 			case _: v;
 		};
 
+	function unboxInline(t:Ty, v:Int, fn:String):Int {
+		var ty = MirBuild.mty(t);
+		var res = newVar(ty);
+		var join = newBlock();
+		var nn = newBlock(), slow = newBlock();
+		slow.cold = true;
+		br(cmp(CNe, v, lconst(0, 0)), nn, slow);
+		seal(nn);
+		cur = nn;
+		var ti = tindex(v);
+		if (t == TBool) {
+			// (a Bool's box read inline; null, a number's box... by the runtime)
+			var isBool = newBlock();
+			seal(slow);
+			br(cmp(CEq, ti, iconst(Abi.T_BOXBOOL)), isBool, slow);
+			seal(isBool);
+			cur = isBool;
+			writeVar(res, cur, loadM(Opt.MConst, I32, 4, v, 0));
+			jmp(join);
+			cur = slow;
+			writeVar(res, cur, call(fn, vector(v), ty));
+			jmp(join);
+			seal(join);
+			cur = join;
+			return readVar(res, cur);
+		}
+		var isInt = newBlock();
+		if (t == TF64) {
+			var isFloat = newBlock(), notFloat = newBlock();
+			br(cmp(CEq, ti, iconst(Abi.T_BOXFLOAT)), isFloat, notFloat);
+			seal(isFloat);
+			cur = isFloat;
+			writeVar(res, cur, loadM(Opt.MConst, F64, 8, v, 0));
+			jmp(join);
+			seal(notFloat);
+			cur = notFloat;
+			br(cmp(CEq, ti, iconst(Abi.T_BOXINT)), isInt, slow);
+		} else
+			br(cmp(CEq, ti, iconst(Abi.T_BOXINT)), isInt, slow);
+		seal(isInt);
+		seal(slow);
+		cur = isInt;
+		// (a box is never written: its number a constant load)
+		var i = loadM(Opt.MConst, I32, 4, v, 0);
+		writeVar(res, cur, t == TF64 ? op1(I2F, F64, i) : i);
+		jmp(join);
+		cur = slow;
+		writeVar(res, cur, call(fn, vector(v), ty));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(res, cur);
+	}
+
 	function boxFrom(t:Ty, v:Int):Int
 		return switch t {
-			case TI32: call("hx_box_int", vector(v), I64);
-			case TBool: call("hx_box_bool", vector(v), I64);
+			case TI32: boxIntInline(v);
+			// (the static boxes, rt_bool_boxes: false's, then true's, 16 bytes each)
+			case TBool: op2(Add, I64, symAddr("rt_bool_boxes", 8), op2(Shl, I64, op1(ZExt, I64, cmp(CNe, v, iconst(0))), lconst32(4)));
 			case TF64: call("hx_box_float", vector(v), I64);
 			case TI64: call("hx_box_i64", vector(v), I64);
 			case _: v;
 		};
+
+	// an Int's box: from -128 to 1023 a static one (rt_small_ints, 16 bytes
+	// each, Boxes.SMALL_MIN and SMALL_MAX), the others by the runtime
+	function boxIntInline(v:Int):Int {
+		var res = newVar(I64);
+		var join = newBlock(), small = newBlock(), big = newBlock();
+		var k = op2(Add, I32, v, iconst(128));
+		br(cmp(CULt, k, iconst(1152)), small, big);
+		seal(small);
+		seal(big);
+		cur = small;
+		writeVar(res, cur, op2(Add, I64, symAddr("rt_small_ints", 8), op2(Shl, I64, op1(ZExt, I64, k), lconst32(4))));
+		jmp(join);
+		cur = big;
+		writeVar(res, cur, call("hx_box_int", vector(v), I64));
+		jmp(join);
+		seal(join);
+		cur = join;
+		return readVar(res, cur);
+	}
 
 	// ---- the tagged words of type parameters' values (hxmc.rt.Tagged; docs/hxmc.md,
 	// "Values of type parameters"): a reference below 2^48, a Float's bits
@@ -891,12 +966,6 @@ class MemLower extends MirWriter {
 	// slot, or its place in the cold site's spill area)
 	function arrSlot(o:OInfo, av:Int, sp:Int):Int {
 		if (o.rootSlot >= 0) return op2(Add, I64, fr, lconst32(8 * o.rootSlot));
-		if (noShadow && (sp < 0 || o.listIndex < 0)) {
-			// (measurement: a frame slot holding the array; nothing collects)
-			var addr = stackAddr(frameSlot(8, 8));
-			store(8, addr, 0, av);
-			return addr;
-		}
 		if (sp < 0 || o.listIndex < 0) throw new MirBuild.Unsupported("array local neither rooted nor spilled");
 		return op2(Add, I64, sp, lconst32(8 * o.listIndex));
 	}
@@ -1325,6 +1394,8 @@ class MemLower extends MirWriter {
 		}
 		var mr = callInd(fn, VectorTools.cons(self, ys), MirBuild.mty(m.ret), mTys);
 		if (s.ret == TVoid) return mr;
+		// (a number for a reference that may hold one: Ir.anonAlternatives)
+		if (Ir.isScalar(m.ret) && Ir.isRef(s.ret)) return Ir.isWord(s.ret) && m.ret != TBool ? tagFrom(m.ret, mr) : boxFrom(m.ret, mr);
 		return Ir.isWord(m.ret) && !Ir.isWord(s.ret) ? untagTo(s.ret.match(TRef(_)) ? TRef(RAny) : s.ret, mr, true) : mr;
 	}
 

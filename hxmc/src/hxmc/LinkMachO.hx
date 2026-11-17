@@ -11,7 +11,8 @@ import hxmc.Abi;
 // at 0, no __PAGEZERO, dyld or LC_MAIN, its LC_ID_DYLIB and the exports,
 // Abi.exports, in the export trie; hxmc dev's builds on macOS and iOS):
 //   __PAGEZERO (4 GB), __TEXT (headers, code, import stubs, read-only data,
-//   the generated functions' unwind tables in __eh_frame: Unwind), __DATA
+//   the generated functions' unwind tables in __eh_frame and __unwind_info:
+//   Unwind), __DATA
 //   (import slots, data with pointers, thread-local descriptors and
 //   templates, zero-fill), with -debug __DWARF (Dwarf; read-only, nothing
 //   reads it at run time), __LINKEDIT (dyld's rebase and bind opcodes, an
@@ -45,11 +46,15 @@ class LinkMachO extends LinkCore {
 	public var sign = new CodeSign();
 	// iOS: the oldest version the output runs on (15.0: UILaunchScreen is
 	// 14's, and 15 is the floor of current Xcodes and the App Store's
-	// devices: A9 and later), and the SDK version it declares (18.0: the
-	// App Store's minimum since 2025; a later one would ask for UIScene)
+	// devices: A9 and later), and the SDK version it declares (26.0: App
+	// Store Connect takes uploads built with the iOS 26 SDK alone since
+	// 2026-04-28; the packager's Info.plist (DTSDKName, DTPlatformVersion)
+	// names the same, as Xcode's always match; UIKit asks for UIScene of an
+	// SDK after 26's)
 	public static inline var IOS_MIN = 0x000F0000;
-	public static inline var IOS_SDK = 0x00120000;
+	public static inline var IOS_SDK = 0x001A0000;
 	public var minos = IOS_MIN; // (-D hxmc.ios-min-version, -D hxmc.macos-min-version: Options.minos)
+	public var sdk = IOS_SDK; // (iOS, Mac Catalyst: -D hxmc.ios-sdk-version, Options.iosSdk)
 
 	// macOS's floor: 11.0 on arm64 (the first on Apple silicon), 10.15 on x86-64
 	public static function macosMin(arm:Bool):Int
@@ -58,6 +63,15 @@ class LinkMachO extends LinkCore {
 	// imports bound weakly (0 where the system lacks them): declarations newer
 	// than the deployment target (@:hxmc.available, CInterop.WEAK)
 	public var weak = new Map<String, Bool>();
+	// dyld's fixups as chains (LC_DYLD_CHAINED_FIXUPS, DYLD_CHAINED_PTR_64,
+	// and LC_DYLD_EXPORTS_TRIE) instead of the rebase and bind opcodes of
+	// LC_DYLD_INFO_ONLY: an iPhone's by default (ld64's and lld's for iOS
+	// 13.4 and later), any with -D hxmc.fixup-chains (Options.fixupChains)
+	public var fixupChains:Null<Bool> = null;
+	// (-D hxmc.dsym) the output's debug symbols as dsymutil writes them
+	// (dsymFile), set by link: what crash reports are symbolicated with
+	public var wantDsym = false;
+	public var dsym:Null<Bytes> = null;
 	// imports from other dylibs than libSystem (@:hxmc.lib): symbol -> install name
 	public var dylibs = new Map<String, String>();
 	// dylibs loaded whatever the program imports from them (an Objective-C
@@ -313,9 +327,12 @@ class LinkMachO extends LinkCore {
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
 		// (Unwind.NONE: an LLVM function without unwind information)
 		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section) && !Unwind.none(r.ops)) r];
-		var eh = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing).sec : null;
+		var frame = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing) : null;
+		var eh = frame?.sec;
 		addr.set(header, 0);
-		var pos = HEADER_RESERVE;
+		// (an iPhone's: __text from the first page after the header's, the
+		// pages LC_ENCRYPTION_INFO_64 names, as ld64 lays them out)
+		var pos = abi.platform == "ios" ? PAGE : HEADER_RESERVE;
 		function group(list:Array<Section>):{start:Int, end:Int} {
 			if (list.length > 0) pos = LinkCore.align(pos, list[0].align);
 			var start = pos;
@@ -327,6 +344,26 @@ class LinkMachO extends LinkCore {
 		var oText = group(text);
 		var oConst = group(ro);
 		var oEh = group(eh != null ? [eh] : []);
+		// __unwind_info (Unwind.unwindInfo), as ld64 and lld write it beside
+		// __eh_frame: each function's entry (the code's symbols, the import
+		// stubs), naming its FDE, and the end of the code
+		var unwind:Null<Buf> = null, oUnwind = {start: pos, end: pos};
+		if (frame != null) {
+			var fdeAt = new Map<Int, Int>();
+			for (k in 0...recs.length)
+				fdeAt.set(addr.get(recs[k].sym.section) + recs[k].sym.offset, frame.fdes[k]);
+			var starts = new Map<Int, Bool>();
+			codeSymbols(s -> starts.set(addr.get(s.section) + s.offset, true));
+			for (a in fdeAt.keys())
+				starts.set(a, true);
+			if (stubs.size() > 0) starts.set(addr.get(stubs), true);
+			var list = [for (a in starts.keys()) a];
+			list.sort((a, b) -> a - b);
+			unwind = Unwind.unwindInfo([for (a in list) {start: a, fde: fdeAt.exists(a) ? fdeAt.get(a) : -1}], addr.get(stubs) + stubs.size(), arm);
+			pos = LinkCore.align(pos, 4);
+			oUnwind = {start: pos, end: pos + unwind.len};
+			pos = oUnwind.end;
+		}
 		var textEnd = LinkCore.align(pos, PAGE);
 		// __DATA
 		pos = textEnd;
@@ -384,31 +421,10 @@ class LinkMachO extends LinkCore {
 		var all = text.concat(ro).concat(eh != null ? [eh] : []).concat(roData).concat(data).concat(classrefs).concat(selrefs).concat(imageinfo).concat(init).concat(fini).concat(tlv).concat(tdata);
 		for (s in all)
 			applyRelocs(s);
+		// (-debug) the DWARF sections, between __DATA and __LINKEDIT in the file
+		var dwarf = Dwarf.sections(objs, r -> r.sym.section != null && addr.exists(r.sym.section), r -> symAddr(r.sym), baseHi);
 		// ---- __LINKEDIT
 		var le = new Buf(1 << 16);
-		// rebase opcodes: runs of adjacent pointers
-		rebases.sort((a, b) -> a - b);
-		var rebaseOff = le.len;
-		if (rebases.length > 0) {
-			le.u8(0x11); // REBASE_OPCODE_SET_TYPE_IMM pointer
-			var k = 0;
-			while (k < rebases.length) {
-				var n = 1;
-				while (k + n < rebases.length && rebases[k + n] == rebases[k] + 8 * n)
-					n++;
-				le.u8(0x20 | (dylib ? 1 : 2)); // SET_SEGMENT_AND_OFFSET_ULEB __DATA (a dylib has no __PAGEZERO)
-				uleb(le, rebases[k] - dataStart);
-				le.u8(0x60); // DO_REBASE_ULEB_TIMES
-				uleb(le, n);
-				k += n;
-			}
-		}
-		le.u8(0);
-		le.align(8);
-		var rebaseSize = le.len - rebaseOff;
-		// bind opcodes (non-lazy: all at load)
-		binds.sort((a, b) -> a.at - b.at);
-		var bindOff = le.len;
 		// the dylibs: libSystem (ordinal 1), then the others in order of use
 		var libs = ["/usr/lib/libSystem.B.dylib"];
 		var ordinal = new Map<String, Int>();
@@ -427,41 +443,75 @@ class LinkMachO extends LinkCore {
 		}
 		for (d in loads)
 			if (libs.indexOf(d) < 0) libs.push(d);
-		if (binds.length > 0) {
-			var curOrd = 1;
-			le.u8(0x11); // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM 1
-			le.u8(0x51); // BIND_OPCODE_SET_TYPE_IMM pointer
-			var cur = "";
-			var curAddend = 0;
-			for (b in binds) {
-				var ord = ordinal.exists(b.name) ? ordinal.get(b.name) : 1;
-				if (ord != curOrd) {
-					if (ord < 16) le.u8(0x10 | ord) // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM
-					else {
-						le.u8(0x20); // BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB
-						uleb(le, ord);
-					}
-					curOrd = ord;
+		rebases.sort((a, b) -> a - b);
+		binds.sort((a, b) -> a.at - b.at);
+		var chained = fixupChains ?? (abi.platform == "ios");
+		var rebaseOff = 0, rebaseSize = 0, bindOff = 0, bindSize = 0, fixupsOff = 0, fixupsSize = 0;
+		var chain:Array<{at:Int, bind:Int, addend:Int}> = [];
+		if (chained) {
+			// (the segments, in their load commands' order)
+			var segCount = (dylib ? 0 : 1) + 2 + (dwarf.length > 0 ? 1 : 0) + 1 + (heapWindow && !dylib ? 1 : 0);
+			fixupsOff = le.len;
+			chain = chainedFixups(le, ordinal, importWeak, segCount, dylib ? 1 : 2, dataStart, dataFileEnd);
+			fixupsSize = le.len - fixupsOff;
+		} else {
+			// rebase opcodes: runs of adjacent pointers
+			rebaseOff = le.len;
+			if (rebases.length > 0) {
+				le.u8(0x11); // REBASE_OPCODE_SET_TYPE_IMM pointer
+				var k = 0;
+				while (k < rebases.length) {
+					var n = 1;
+					while (k + n < rebases.length && rebases[k + n] == rebases[k] + 8 * n)
+						n++;
+					le.u8(0x20 | (dylib ? 1 : 2)); // SET_SEGMENT_AND_OFFSET_ULEB __DATA (a dylib has no __PAGEZERO)
+					uleb(le, rebases[k] - dataStart);
+					le.u8(0x60); // DO_REBASE_ULEB_TIMES
+					uleb(le, n);
+					k += n;
 				}
-				if (b.name != cur) {
-					le.u8(0x40 | (importWeak.get(b.name) ? 1 : 0)); // SET_SYMBOL_TRAILING_FLAGS_IMM
-					le.str("_" + b.name);
-					le.u8(0);
-					cur = b.name;
-				}
-				if (b.addend != curAddend) {
-					le.u8(0x60); // SET_ADDEND_SLEB
-					sleb(le, b.addend);
-					curAddend = b.addend;
-				}
-				le.u8(0x70 | (dylib ? 1 : 2)); // SET_SEGMENT_AND_OFFSET_ULEB __DATA
-				uleb(le, b.at - dataStart);
-				le.u8(0x90); // DO_BIND
 			}
+			le.u8(0);
+			le.align(8);
+			rebaseSize = le.len - rebaseOff;
+			// bind opcodes (non-lazy: all at load)
+			bindOff = le.len;
+			if (binds.length > 0) {
+				var curOrd = 1;
+				le.u8(0x11); // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM 1
+				le.u8(0x51); // BIND_OPCODE_SET_TYPE_IMM pointer
+				var cur = "";
+				var curAddend = 0;
+				for (b in binds) {
+					var ord = ordinal.exists(b.name) ? ordinal.get(b.name) : 1;
+					if (ord != curOrd) {
+						if (ord < 16) le.u8(0x10 | ord) // BIND_OPCODE_SET_DYLIB_ORDINAL_IMM
+						else {
+							le.u8(0x20); // BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB
+							uleb(le, ord);
+						}
+						curOrd = ord;
+					}
+					if (b.name != cur) {
+						le.u8(0x40 | (importWeak.get(b.name) ? 1 : 0)); // SET_SYMBOL_TRAILING_FLAGS_IMM
+						le.str("_" + b.name);
+						le.u8(0);
+						cur = b.name;
+					}
+					if (b.addend != curAddend) {
+						le.u8(0x60); // SET_ADDEND_SLEB
+						sleb(le, b.addend);
+						curAddend = b.addend;
+					}
+					le.u8(0x70 | (dylib ? 1 : 2)); // SET_SEGMENT_AND_OFFSET_ULEB __DATA
+					uleb(le, b.at - dataStart);
+					le.u8(0x90); // DO_BIND
+				}
+			}
+			le.u8(0);
+			le.align(8);
+			bindSize = le.len - bindOff;
 		}
-		le.u8(0);
-		le.align(8);
-		var bindSize = le.len - bindOff;
 		// the export trie: __mh_execute_header at 0; a dylib's exports
 		var exportOff = le.len;
 		if (dylib) {
@@ -480,6 +530,25 @@ class LinkMachO extends LinkCore {
 		}
 		le.align(8);
 		var exportSize = le.len - exportOff;
+		// the functions' starts (LC_FUNCTION_STARTS: ULEB deltas from the
+		// header's address, ascending, 0-terminated), as ld64 and lld write
+		// them: what crash reports, symbolication and profilers find
+		// functions by in a stripped binary
+		var starts = [];
+		codeSymbols(s -> starts.push(addr.get(s.section) + s.offset));
+		starts.sort((a, b) -> a - b);
+		var startsOff = le.len, prev = 0;
+		for (a in starts)
+			if (a != prev) {
+				uleb(le, a - prev);
+				prev = a;
+			}
+		le.u8(0);
+		le.align(8);
+		var startsSize = le.len - startsOff;
+		// (LC_DATA_IN_CODE: no data among the code: empty, as ld64 and lld
+		// write it then)
+		var dataInCodeOff = le.len;
 		// the symbol table: (with `symbols`) the functions as locals, then the
 		// imports (undefined, from ordinal 1)
 		var strtab = new Buf(4096);
@@ -514,8 +583,6 @@ class LinkMachO extends LinkCore {
 		le.buf(strtab);
 		le.align(16);
 		var sigOffInLe = le.len;
-		// (-debug) the DWARF sections, between __DATA and __LINKEDIT in the file
-		var dwarf = Dwarf.sections(objs, r -> r.sym.section != null && addr.exists(r.sym.section), r -> symAddr(r.sym), baseHi);
 		var dwarfOff = dataFileEnd > dataStart ? LinkCore.align(dataFileEnd, PAGE) : dataStart;
 		var dwarfSize = 0;
 		for (d in dwarf)
@@ -532,6 +599,24 @@ class LinkMachO extends LinkCore {
 		out.zeros(fileSize);
 		for (s in all.concat([got]))
 			out.b.blit(addr.get(s), s.buf.b, 0, s.buf.len);
+		if (unwind != null) out.b.blit(oUnwind.start, unwind.b, 0, unwind.len);
+		// the chains: each fixup's pointer made its entry, linked to the next
+		// in its page (DYLD_CHAINED_PTR_64: a rebase's target the address it
+		// holds, a bind's import and inline addend; next in 4-byte strides)
+		for (k in 0...chain.length) {
+			var f = chain[k], at = f.at;
+			var same = k + 1 < chain.length && Std.int((chain[k + 1].at - dataStart) / PAGE) == Std.int((at - dataStart) / PAGE);
+			var next = same ? (chain[k + 1].at - at) >> 2 : 0;
+			if (f.bind < 0) {
+				var lo = out.b.getInt32(at), hi = out.b.getInt32(at + 4);
+				if (hi & 0x00FFFFF0 != 0) throw "hxmc: link: a rebased pointer beyond a chained fixup's reach";
+				out.b.setInt32(at, lo);
+				out.b.setInt32(at + 4, (hi & 0xF) | (((hi >>> 24) & 0xff) << 4) | (next << 19));
+			} else {
+				out.b.setInt32(at, f.bind | (f.addend << 24));
+				out.b.setInt32(at + 4, (next << 19) | 0x80000000);
+			}
+		}
 		var dsects = [], dwarfAddr = [];
 		var at = dwarfOff;
 		for (d in dwarf) {
@@ -592,7 +677,8 @@ class LinkMachO extends LinkCore {
 		seg("__TEXT", 0, textEnd, 0, textEnd, 5, [
 			sec("__text", {start: oText.start, end: addr.get(stubs) + stubs.size()}, 0x80000400),
 			sec("__const", oConst, 0),
-			sec("__eh_frame", oEh, 0x6800000b, false, 8)
+			sec("__eh_frame", oEh, 0x6800000b, false, 8),
+			sec("__unwind_info", oUnwind, 0, false, 4)
 		]);
 		seg("__DATA", dataStart, dataEnd - dataStart, dataStart, dataFileEnd - dataStart, 3, [
 			sec("__got", oGot, 0, false, 8),
@@ -627,20 +713,34 @@ class LinkMachO extends LinkCore {
 			h.u32(0);
 			h.u32(0);
 		}
-		// dyld info
-		ncmds++;
-		h.u32(0x80000022);
-		h.u32(48);
-		h.u32(leFileOff + rebaseOff);
-		h.u32(rebaseSize);
-		h.u32(leFileOff + bindOff);
-		h.u32(bindSize);
-		h.u32(0);
-		h.u32(0);
-		h.u32(0);
-		h.u32(0);
-		h.u32(leFileOff + exportOff);
-		h.u32(exportSize);
+		if (chained) {
+			// the chained fixups, the export trie
+			ncmds++;
+			h.u32(0x80000034); // LC_DYLD_CHAINED_FIXUPS
+			h.u32(16);
+			h.u32(leFileOff + fixupsOff);
+			h.u32(fixupsSize);
+			ncmds++;
+			h.u32(0x80000033); // LC_DYLD_EXPORTS_TRIE
+			h.u32(16);
+			h.u32(leFileOff + exportOff);
+			h.u32(exportSize);
+		} else {
+			// dyld info
+			ncmds++;
+			h.u32(0x80000022);
+			h.u32(48);
+			h.u32(leFileOff + rebaseOff);
+			h.u32(rebaseSize);
+			h.u32(leFileOff + bindOff);
+			h.u32(bindSize);
+			h.u32(0);
+			h.u32(0);
+			h.u32(0);
+			h.u32(0);
+			h.u32(leFileOff + exportOff);
+			h.u32(exportSize);
+		}
 		// symbol tables
 		ncmds++;
 		h.u32(0x2);
@@ -690,9 +790,10 @@ class LinkMachO extends LinkCore {
 		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64) or
 		// -D hxmc.macos-min-version's, built against the same SDK, 11.0 at
 		// least (to a program of an older SDK, macOS says it is 10.16, also
-		// dyld's _availability_version_check: hxmc.Platform.supports); iOS, its simulator and Mac
-		// Catalyst (abi.platform), minimum IOS_MIN or -D hxmc.ios-min-version's,
-		// built against IOS_SDK (what UIKit's linked-on-or-after behaviours
+		// dyld's _availability_version_check: hxmc.Platform.supports); iOS,
+		// its simulator and Mac Catalyst (abi.platform), minimum IOS_MIN or
+		// -D hxmc.ios-min-version's, built against sdk (IOS_SDK: what UIKit's
+		// linked-on-or-after behaviours
 		// go by; Catalyst's versions are iOS's, as clang's -target
 		// <arch>-apple-ios<v>-macabi writes them)
 		ncmds++;
@@ -701,10 +802,24 @@ class LinkMachO extends LinkCore {
 		// PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACCATALYST, PLATFORM_MACOS
 		h.u32(abi.platform == "ios" ? 2 : abi.platform == "ios-simulator" ? 7 : abi.platform == "maccatalyst" ? 6 : 1);
 		h.u32(minos);
-		h.u32(abi.uikit() ? IOS_SDK : minos < 0x000B0000 ? 0x000B0000 : minos); // sdk
+		h.u32(abi.uikit() ? sdk : minos < 0x000B0000 ? 0x000B0000 : minos); // sdk
 		h.u32(1);
 		h.u32(3); // TOOL_LD
 		h.u32(0x00010000);
+		// an iPhone's: LC_ENCRYPTION_INFO_64, __TEXT's pages after the
+		// header's, not encrypted (cryptid 0): the App Store encrypts them
+		// (FairPlay) and refuses a binary without the command (ITMS-90125,
+		// "not built with Apple's linker"); the simulator's and Mac
+		// Catalyst's have none, as ld64's
+		if (abi.platform == "ios") {
+			ncmds++;
+			h.u32(0x2c);
+			h.u32(24);
+			h.u32(PAGE); // cryptoff
+			h.u32(textEnd - PAGE); // cryptsize
+			h.u32(0); // cryptid
+			h.u32(0);
+		}
 		// main
 		if (!dylib) {
 			ncmds++;
@@ -749,6 +864,17 @@ class LinkMachO extends LinkCore {
 			h.u32(12);
 			fixed(h, r, rl - 12);
 		}
+		// the functions' starts, the data in code (none)
+		ncmds++;
+		h.u32(0x26); // LC_FUNCTION_STARTS
+		h.u32(16);
+		h.u32(leFileOff + startsOff);
+		h.u32(startsSize);
+		ncmds++;
+		h.u32(0x29); // LC_DATA_IN_CODE
+		h.u32(16);
+		h.u32(leFileOff + dataInCodeOff);
+		h.u32(0);
 		// the code signature
 		ncmds++;
 		h.u32(0x1d);
@@ -768,6 +894,126 @@ class LinkMachO extends LinkCore {
 		var codeLimit = leFileOff + sigOffInLe;
 		var sig = sign.sign(out.b, codeLimit, textEnd);
 		out.b.blit(codeLimit, sig, 0, sig.length);
+		if (wantDsym) {
+			var funcs = [];
+			codeSymbols(s -> funcs.push({name: "_" + s.name, addr: addr.get(s.section) + s.offset}));
+			funcs.sort((a, b) -> a.addr - b.addr);
+			dsym = dsymFile(digest, minos, abi.uikit() ? sdk : minos, funcs, {start: oText.start, end: addr.get(stubs) + stubs.size()}, textEnd, dataStart,
+				dataEnd, leVm, dwarf);
+		}
+		return out.toBytes();
+	}
+
+	// a dSYM's binary (MH_DSYM, as dsymutil writes it; Contents/Resources/DWARF/
+	// of the bundle Driver writes): the output's UUID and build version, its
+	// segments' addresses without their contents (__text's section header,
+	// for the symbols), the functions in a symbol table (local, __text's),
+	// and with -debug the DWARF sections (__DWARF), so that a crash report's
+	// addresses are given names (atos, Xcode, llvm-symbolizer) whatever the
+	// output itself keeps
+	function dsymFile(uuid:Bytes, minos:Int, sdk:Int, funcs:Array<{name:String, addr:Int}>, text:{start:Int, end:Int}, textEnd:Int, dataStart:Int,
+			dataEnd:Int, leVm:Int, dwarf:Array<{name:String, data:Buf}>):Bytes {
+		var strtab = new Buf(4096);
+		strtab.u8(0x20);
+		strtab.u8(0);
+		var syms = new Buf(16 * funcs.length + 16);
+		for (f in funcs) {
+			syms.u32(strtab.len);
+			strtab.str(f.name);
+			strtab.u8(0);
+			syms.u8(0x0e); // N_SECT, local
+			syms.u8(1); // __text
+			syms.u16(0);
+			syms.u64(f.addr, baseHi);
+		}
+		strtab.align(8);
+		var h = new Buf(HEADER_RESERVE);
+		h.u32(0xfeedfacf);
+		h.u32(arm ? 0x0100000c : 0x01000007);
+		h.u32(arm ? 0 : 3);
+		h.u32(0xa); // MH_DSYM
+		var ncmdsAt = h.len;
+		h.u32(0);
+		h.u32(0);
+		h.u32(0); // flags
+		h.u32(0);
+		var ncmds = 0;
+		ncmds++;
+		h.u32(0x1b); // LC_UUID
+		h.u32(24);
+		h.bytes(uuid);
+		ncmds++;
+		h.u32(0x32); // LC_BUILD_VERSION, no tools
+		h.u32(24);
+		h.u32(abi.platform == "ios" ? 2 : abi.platform == "ios-simulator" ? 7 : abi.platform == "maccatalyst" ? 6 : 1);
+		h.u32(minos);
+		h.u32(sdk);
+		h.u32(0);
+		ncmds++;
+		var symtabAt = h.len;
+		h.u32(0x2); // LC_SYMTAB (offsets below)
+		h.u32(24);
+		h.zeros(16);
+		// (the segments: addresses, no contents but __LINKEDIT's and __DWARF's)
+		var dsects = [];
+		function seg(name:String, vm:Int, vmsize:Int, fileoff:Int, filesize:Int, prot:Int, sects:Array<{name:String, start:Int, end:Int, off:Int, flags:Int}>) {
+			ncmds++;
+			h.u32(0x19);
+			h.u32(72 + 80 * sects.length);
+			fixed(h, name, 16);
+			h.u64(vm, name == "__PAGEZERO" ? 0 : baseHi);
+			h.u64(vmsize, name == "__PAGEZERO" ? 1 : 0);
+			h.u64(fileoff, 0);
+			h.u64(filesize, 0);
+			h.u32(prot);
+			h.u32(prot);
+			h.u32(sects.length);
+			h.u32(0);
+			for (x in sects) {
+				fixed(h, x.name, 16);
+				fixed(h, name, 16);
+				h.u64(x.start, baseHi);
+				h.u64(x.end - x.start, 0);
+				h.u32(x.off);
+				h.u32(0);
+				h.u32(0);
+				h.u32(0);
+				h.u32(x.flags);
+				h.u32(0);
+				h.u32(0);
+				h.u32(0);
+			}
+		}
+		// (the file: the header, the symbol table and its names, the DWARF sections)
+		var symOff = HEADER_RESERVE, strOff = symOff + syms.len, dwarfOff = LinkCore.align(strOff + strtab.len, PAGE);
+		var at = dwarfOff, dwarfVm = dataEnd, dwarfSize = 0;
+		for (d in dwarf) {
+			dsects.push({name: "__" + d.name, start: dwarfVm + at - dwarfOff, end: dwarfVm + at - dwarfOff + d.data.len, off: at, flags: 0x02000000});
+			at += d.data.len;
+			dwarfSize += d.data.len;
+		}
+		if (!dylib) seg("__PAGEZERO", 0, 0, 0, 0, 0, []);
+		seg("__TEXT", 0, textEnd, 0, 0, 5, [{name: "__text", start: text.start, end: text.end, off: 0, flags: 0x80000400}]);
+		seg("__DATA", dataStart, dataEnd - dataStart, 0, 0, 3, []);
+		seg("__LINKEDIT", leVm, LinkCore.align(syms.len + strtab.len, PAGE), symOff, syms.len + strtab.len, 1, []);
+		if (dwarf.length > 0) seg("__DWARF", dwarfVm, LinkCore.align(dwarfSize, PAGE), dwarfOff, dwarfSize, 1, dsects);
+		if (h.len > HEADER_RESERVE) throw "hxmc: link: dSYM load commands too large";
+		h.set32(symtabAt + 8, symOff);
+		h.set32(symtabAt + 12, funcs.length);
+		h.set32(symtabAt + 16, strOff);
+		h.set32(symtabAt + 20, strtab.len);
+		h.set32(ncmdsAt, ncmds);
+		h.set32(ncmdsAt + 4, h.len - 32);
+		var out = new Buf(at + 16);
+		out.zeros(at);
+		out.b.blit(0, h.b, 0, h.len);
+		out.b.blit(symOff, syms.b, 0, syms.len);
+		out.b.blit(strOff, strtab.b, 0, strtab.len);
+		var k = dwarfOff;
+		for (d in dwarf) {
+			out.b.blit(k, d.data.b, 0, d.data.len);
+			k += d.data.len;
+		}
 		return out.toBytes();
 	}
 
@@ -827,6 +1073,91 @@ class LinkMachO extends LinkCore {
 			buf.set64(r.offset, symAddr(r.sym) + A, baseHi);
 			rebases.push(P);
 		}
+	}
+
+	// LC_DYLD_CHAINED_FIXUPS' data (mach-o/fixup-chains.h, as lld writes
+	// it): the header, the starts in the image (each segment's, 0: none),
+	// __DATA's starts (each page's first fixup, DYLD_CHAINED_PTR_START_NONE
+	// 0xFFFF for a page without), the imports (DYLD_CHAINED_IMPORT, or
+	// _ADDEND when an addend is beyond a pointer's 8 bits) and their names.
+	// The fixups by address, the pointers' entries written once the file is
+	// (link): a rebase's bind -1, a bind's import and inline addend
+	function chainedFixups(le:Buf, ordinal:Map<String, Int>, importWeak:Map<String, Bool>, segCount:Int, dataSeg:Int, dataStart:Int,
+			dataFileEnd:Int):Array<{at:Int, bind:Int, addend:Int}> {
+		var imports:Array<{name:String, addend:Int}> = [], importOf = new Map<String, Int>();
+		var fixups = [for (at in rebases) {at: at, bind: -1, addend: 0}];
+		var outline = false;
+		for (b in binds) {
+			var small = b.addend >= 0 && b.addend < 256;
+			if (!small) outline = true;
+			var key = b.name + (small ? "" : "+" + b.addend);
+			var k = importOf.get(key);
+			if (k == null) {
+				importOf.set(key, k = imports.length);
+				imports.push({name: b.name, addend: small ? 0 : b.addend});
+			}
+			fixups.push({at: b.at, bind: k, addend: small ? b.addend : 0});
+		}
+		fixups.sort((a, b) -> a.at - b.at);
+		for (f in fixups)
+			if (f.at & 3 != 0 || f.at < dataStart || f.at + 8 > dataFileEnd) throw "hxmc: link: a fixup outside __DATA's file, or unaligned (chained fixups)";
+		var start = le.len;
+		// dyld_chained_fixups_header (version 0; its offsets below)
+		var headerAt = le.len;
+		le.zeros(28);
+		le.align(8);
+		var startsOffset = le.len - start;
+		le.u32(segCount);
+		var segInfoAt = le.len;
+		for (_ in 0...segCount)
+			le.u32(0);
+		le.align(8);
+		if (fixups.length > 0) {
+			le.set32(segInfoAt + 4 * dataSeg, le.len - start - startsOffset);
+			var pageCount = Std.int((fixups[fixups.length - 1].at - dataStart) / PAGE) + 1;
+			var segAt = le.len;
+			le.u32(0); // size (below)
+			le.u16(PAGE);
+			le.u16(2); // DYLD_CHAINED_PTR_64
+			le.u64(dataStart, 0); // segment_offset: from the header
+			le.u32(0); // max_valid_pointer (32-bit only)
+			le.u16(pageCount);
+			var pagesAt = le.len;
+			for (_ in 0...pageCount)
+				le.u16(0xFFFF);
+			for (k in 0...fixups.length) {
+				var page = Std.int((fixups[k].at - dataStart) / PAGE);
+				if (k == 0 || Std.int((fixups[k - 1].at - dataStart) / PAGE) != page) le.set16(pagesAt + 2 * page, fixups[k].at - dataStart - page * PAGE);
+			}
+			le.align(8);
+			le.set32(segAt, le.len - segAt);
+		}
+		// the imports, their names
+		var importsOffset = le.len - start;
+		var names = new Buf(256), nameAt = [];
+		for (im in imports) {
+			nameAt.push(names.len);
+			names.str("_" + im.name);
+			names.u8(0);
+		}
+		if (names.len >= 1 << 23) throw "hxmc: link: the imports' names over 8 MB (chained fixups)";
+		for (k in 0...imports.length) {
+			var im = imports[k], ord = ordinal.exists(im.name) ? ordinal.get(im.name) : 1;
+			if (ord > 0xF0) throw "hxmc: link: over 240 dylibs (chained fixups)";
+			le.u32(ord | (importWeak.get(im.name) ? 0x100 : 0) | (nameAt[k] << 9));
+			if (outline) le.u32(im.addend);
+		}
+		var symbolsOffset = le.len - start;
+		le.buf(names);
+		le.align(8);
+		le.set32(headerAt, 0); // fixups_version
+		le.set32(headerAt + 4, startsOffset);
+		le.set32(headerAt + 8, importsOffset);
+		le.set32(headerAt + 12, symbolsOffset);
+		le.set32(headerAt + 16, imports.length);
+		le.set32(headerAt + 20, outline ? 2 : 1); // DYLD_CHAINED_IMPORT(_ADDEND)
+		le.set32(headerAt + 24, 0); // the names uncompressed
+		return fixups;
 	}
 
 	function entrySymOrNull(name:String):Null<Symbol> {

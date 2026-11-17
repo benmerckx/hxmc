@@ -278,6 +278,13 @@ class EvalEncode {
 		return encodeStringMapDirect(h);
 	}
 
+	// port: encode_string_map of a PMap, whose keys are in order already.
+	public static function encodePMap<T>(convert:T->Value, m:core.ds.PMap<T>):Value {
+		var h = new RuntimeStringHashtbl<Value>();
+		for (key => value in m) h.add(EvalString.createAscii(key), convert(value));
+		return encodeStringMapDirect(h);
+	}
+
 	public static function fakeProto(cache:Map<Int, Vprototype>, path:Int):Vprototype {
 		var proto = cache.get(path);
 		if (proto != null) return proto;

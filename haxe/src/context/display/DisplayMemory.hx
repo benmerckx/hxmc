@@ -157,8 +157,8 @@ class DisplayMemory {
 								acc.unshift({cf: cf, size: size});
 								return acc;
 							}
-							var fields_ = Lambda.fold(c.clOrderedFields, (cf, acc) -> field(acc, cf), []);
-							var fields_ = Lambda.fold(c.clOrderedStatics, (cf, acc) -> field(acc, cf), fields_);
+							var fields_ = Lambda.fold(c.clFields, (cf, acc) -> field(acc, cf), []);
+							var fields_ = Lambda.fold(c.clStatics, (cf, acc) -> field(acc, cf), fields_);
 							haxe.ds.ArraySort.sort(fields_, (a, b) -> compareInt(b.size, a.size));
 							fields = fields_.map(e -> jobject([
 								kv("name", jstring(e.cf.cfName)),

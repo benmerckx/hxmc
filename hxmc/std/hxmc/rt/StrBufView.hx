@@ -7,10 +7,11 @@ import hxmc.rt.Repr;
 // written by code that allocates (growing, widening).
 @:keep @:hxmc.kernel @:hxmc.unsafe
 class StrBufView {
-	public static function length(b:Dynamic):Int
+	public static function length(b:StringBuf):Int
 		return Repr.sbLen(b);
 
-	// (no unit is freed nor read: a length of 0 is always within them)
-	public static function clear(b:Dynamic)
-		Repr.sbSetLen(b, 0);
+	// (no unit is freed nor read: a length of 0 is always within them; the
+	// slot's upper half, Repr.sbWideFrom, 0 too)
+	public static function clear(b:StringBuf)
+		Repr.sbClear(b);
 }

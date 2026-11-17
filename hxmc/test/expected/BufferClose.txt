@@ -1,0 +1,5 @@
+exit 0
+OutsideBounds OutsideBounds OutsideBounds OutsideBounds OutsideBounds OutsideBounds OutsideBounds
+abcdefgh 98
+Buffer: closed Buffer: closed Buffer: closed Buffer: closed Buffer: closed Buffer: closed
+200 of 200 ended by close, 0 wrong, 0 clobbered
