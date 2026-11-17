@@ -2186,9 +2186,7 @@ class Gc {
 
 	// (the nursery is empty: between collections)
 	@:hxmc.unsafe static function resizeNursery(size:I64) {
-		// (macOS: MADV_DONTNEED may leave the pages as they were, so they stay
-		// dirty: the nursery grows again into them)
-		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size) && Platform.os() != 1) {
+		if (size < minorSize && Os.decommit(youngStart.addL(size), minorSize - size)) {
 			// zeros again above (pages are released whole: the partial page below
 			// the next 64 KB boundary stays dirty)
 			var z = youngStart.addL((size + 0xFFFF) - ((size + 0xFFFF) & 0xFFFF));
