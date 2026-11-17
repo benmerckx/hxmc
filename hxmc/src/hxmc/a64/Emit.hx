@@ -8,7 +8,8 @@ import hxmc.a64.Isel.AOp;
 import haxe.ds.Vector;
 
 // Allocated LIR -> AArch64 machine code: frame (x29/x30 pair, then the
-// slots, the callee-saved registers and the outgoing arguments below),
+// callee-saved registers, the slots and the outgoing arguments below; on
+// Windows the slots above the callee-saved registers),
 // prologue and epilogues, jump tables, out-of-range immediates and offsets
 // through the scratch registers x16/x17. The prologue and epilogues record
 // what they do to the frame (Unwind: the unwind tables; Windows' unwind
@@ -122,23 +123,29 @@ class Emit implements hxmc.Target.Emitter {
 		lines = f.display != null ? [] : null;
 		lastPos = 0;
 		var off = f.outArgs;
+		var cs = hxmc.CallConv.Aapcs64.CALLEE_SAVED;
+		// callee-saved registers by pairs (x19/x20 ... d14/d15, both when
+		// either is used) packed below the frame record, as Mach-O's compact
+		// unwind encoding describes them (Unwind.compact); on Windows the
+		// used ones above the outgoing arguments, in its unwind codes' reach
 		var n = 0;
-		for (r in hxmc.CallConv.Aapcs64.CALLEE_SAVED)
-			if (usedRegs[r]) n++;
+		for (k in 0...cs.length)
+			if (usedRegs[cs[k]] || !probe && usedRegs[cs[k ^ 1]]) n++;
 		saved = new Vector(n);
 		n = 0;
-		for (r in hxmc.CallConv.Aapcs64.CALLEE_SAVED)
-			if (usedRegs[r]) saved[n++] = r;
+		for (k in 0...cs.length)
+			if (usedRegs[cs[k]] || !probe && usedRegs[cs[k ^ 1]]) saved[n++] = cs[k];
 		split = 0;
 		if (probe && off + 8 * saved.length > 504) {
 			off = (off + 15) & ~15;
 			split = off;
 		}
 		saveOff = new Vector(saved.length);
-		for (k in 0...saved.length) {
-			saveOff[k] = off - split;
-			off += 8;
-		}
+		if (probe)
+			for (k in 0...saved.length) {
+				saveOff[k] = off - split;
+				off += 8;
+			}
 		slotOff = new Vector(f.slots.length);
 		for (k in 0...f.slots.length) {
 			var s = f.slots[k];
@@ -148,6 +155,11 @@ class Emit implements hxmc.Target.Emitter {
 			off += s.size;
 		}
 		frameSize = (off + 15) & ~15;
+		if (!probe) {
+			frameSize += 8 * saved.length;
+			for (k in 0...saved.length)
+				saveOff[k] = frameSize - 8 - 8 * k;
+		}
 		// prologue
 		a.pair(false, Asm.FP, Asm.LR, SP, -16, 1);
 		op(Unwind.SAVEFPLR, 16);
@@ -156,7 +168,13 @@ class Emit implements hxmc.Target.Emitter {
 		subSp(frameSize - split);
 		var k = 0;
 		while (k < saved.length)
-			if (paired(k)) {
+			if (!probe) {
+				// (from the frame pointer: always within stp's reach)
+				a.pair(false, saved[k + 1], saved[k], Asm.FP, -8 - 8 * (k + 1), 0);
+				op(Unwind.SAVE, saved[k], saveOff[k]);
+				op(Unwind.SAVE, saved[k + 1], saveOff[k + 1]);
+				k += 2;
+			} else if (paired(k)) {
 				a.pair(false, saved[k], saved[k + 1], SP, saveOff[k], 0);
 				op(Unwind.SAVE, saved[k], saveOff[k]);
 				op(Unwind.SAVE, saved[k + 1], saveOff[k + 1]);
@@ -268,7 +286,12 @@ class Emit implements hxmc.Target.Emitter {
 		}
 		var k = 0;
 		while (k < saved.length)
-			if (paired(k)) {
+			if (!probe) {
+				a.pair(true, saved[k + 1], saved[k], Asm.FP, -8 - 8 * (k + 1), 0);
+				op(Unwind.RESTORE, saved[k], saveOff[k]);
+				op(Unwind.RESTORE, saved[k + 1], saveOff[k + 1]);
+				k += 2;
+			} else if (paired(k)) {
 				a.pair(true, saved[k], saved[k + 1], SP, saveOff[k], 0);
 				op(Unwind.RESTORE, saved[k], saveOff[k]);
 				op(Unwind.RESTORE, saved[k + 1], saveOff[k + 1]);

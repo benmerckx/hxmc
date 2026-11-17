@@ -110,15 +110,17 @@ class DebugCheck {
 			} else skip("llvm-dwarfdump --verify", "(no llvm-dwarfdump)");
 		}
 		// the sizes
+		function isUnwind(k:String)
+			return k.indexOf("eh_frame") >= 0 || k.indexOf("unwind_info") >= 0 || k == ".pdata" || k == ".xdata";
 		var sp = sizes(plain), sd = sizes(debug);
 		var total = FileSystem.stat(plain).size;
 		var unwind = 0;
 		for (k => v in sp)
-			if (k.indexOf("eh_frame") >= 0 || k == ".pdata" || k == ".xdata") unwind += v;
+			if (isUnwind(k)) unwind += v;
 		var dw = 0;
 		for (k => v in sd)
 			if (k.indexOf("debug_") >= 0) dw += v;
-		Sys.println('sizes: ${total} bytes; unwind tables ${unwind} (${pct(unwind, total)}: ${[for (k => v in sp) if (k.indexOf("eh_frame") >= 0 || k == ".pdata") '$k $v'].join(", ")}); -debug: DWARF ${dw} (${pct(dw, total)})');
+		Sys.println('sizes: ${total} bytes; unwind tables ${unwind} (${pct(unwind, total)}: ${[for (k => v in sp) if (isUnwind(k)) '$k $v'].join(", ")}); -debug: DWARF ${dw} (${pct(dw, total)})');
 		if (a.has("--stage")) {
 			var d = a.get("--stage");
 			mkdirs(d);

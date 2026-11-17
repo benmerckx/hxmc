@@ -360,7 +360,7 @@ class Unwind {
 		return {sec: s, fdes: fdes};
 	}
 
-	static function passes(ops:haxe.ds.Vector<Int>):Bool {
+	public static function passes(ops:haxe.ds.Vector<Int>):Bool {
 		var k = 0;
 		while (k < ops.length) {
 			if (ops[k] == PASS) return true;
@@ -391,54 +391,173 @@ class Unwind {
 
 	// ---- Mach-O's __unwind_info (compact unwind, mach-o/compact_unwind_encoding.h)
 
-	// the entries a regular second-level page holds (ld64's: a 4 KB page)
-	public static inline var UNWIND_PAGE_ENTRIES = 511;
+	// an encoding's flags: language-specific data (UNWIND_HAS_LSDA), the
+	// first personality (UNWIND_PERSONALITY_MASK's index 1)
+	public static inline var COMPACT_LSDA = 0x40000000;
+	public static inline var COMPACT_PERSONALITY = 0x10000000;
 
-	// __unwind_info of these functions (ascending starts, relative to the
-	// image; fde: the offset of the function's FDE in __eh_frame, -1 none)
-	// up to end, as ld64 writes it of functions without a compact encoding:
-	// each entry in DWARF mode (UNWIND_ARM64_MODE_DWARF,
-	// UNWIND_X86_64_MODE_DWARF) naming its FDE, whose CIE gives the
-	// personality and the language-specific data; a function without an FDE
-	// encoding 0 (none: the unwinder looks in __eh_frame, as without the
-	// section). The system's unwinder, the crash reporter and lldb read this
-	// first; no common encodings, personalities or LSDA entries (an FDE's own),
-	// regular second-level pages, an index entry each and the end's
-	public static function unwindInfo(funcs:Array<{start:Int, fde:Int}>, end:Int, arm:Bool):Buf {
-		var mode = arm ? 0x03000000 : 0x04000000;
-		var n = funcs.length, per = UNWIND_PAGE_ENTRIES;
-		var pages = Std.int((n + per - 1) / per);
-		var b = new Buf(64 + 12 * (pages + 1) + 8 * (n + pages));
-		var index = 28, lsda = index + 12 * (pages + 1);
+	// the compact unwind encoding of a function's frame, 0 where none
+	// describes it (its FDE does: DWARF mode). arm64: frame mode (the frame
+	// record at x29, the callee-saved pairs it names packed below it, as
+	// a64.Emit lays them out; LLVMFRAME's own) or frameless (sp and x30 left
+	// alone); x86-64: rbp frame mode (rbp pushed and set, then up to five
+	// callee-saved registers pushed) or frameless (sp left alone). As ld64's,
+	// an encoding holds in the body, not within the prologue and epilogues;
+	// what the unwinder reads there is the frame at a call
+	public static function compact(ops:haxe.ds.Vector<Int>, arm:Bool):Int {
+		if (ops.length >= 4 && ops[0] == LLVMFRAME) return ops[2] & 0x0F000FFF;
+		var sp = arm ? 0 : 8, fp = false, body = false;
+		var at = new Map<Int, Int>(); // a saved register -> CFA - where it is
+		var k = 0;
+		while (k < ops.length) {
+			var kind = ops[k], a = ops[k + 2], o = ops[k + 3];
+			k += 4;
+			switch kind {
+				case PASS | NOP | EPILOGUE | FREE | POP | RESTORE | SPFP | RESTOREFPLR | RET if (body || kind == PASS || kind == NOP):
+				case SAVEFPLR if (arm && sp == 0 && a == 16):
+					sp = 16;
+				case SETFP if (!fp && sp == 16 && (arm || at.get(5) == 16)):
+					fp = true;
+				case PUSH if (!arm && !body && (fp || sp == 8 && a == 5)):
+					sp += 8;
+					at.set(a, sp);
+				case ALLOC if (fp && !body):
+					sp += a;
+				case SAVE if (fp && !body):
+					at.set(a, sp - o);
+				case ENDPROLOGUE if (!body):
+					body = true;
+				case _:
+					return 0;
+			}
+		}
+		if (!fp) return sp == (arm ? 0 : 8) ? (arm ? 0x02000000 : 0x02010000) : 0;
+		if (!arm) {
+			// (rbx, r12-r15 by UNWIND_X86_64_REG_*, from rbp - 8 * n up)
+			at.remove(5);
+			var n = 0;
+			for (loc in at) {
+				if (loc & 7 != 0 || loc < 24) return 0;
+				if ((loc - 16) >> 3 > n) n = (loc - 16) >> 3;
+			}
+			if (n > 5) return 0;
+			var regs = 0;
+			for (r => loc in at) {
+				var code = r == 3 ? 1 : r >= 12 && r <= 15 ? r - 10 : 0;
+				if (code == 0) return 0;
+				regs |= code << (3 * (n - ((loc - 16) >> 3)));
+			}
+			return 0x01000000 | (n << 16) | regs;
+		}
+		// (x19/x20 ... x27/x28, d8/d9 ... d14/d15 from x29 - 8 down, the first
+		// of a pair above the second: UNWIND_ARM64_FRAME_*_PAIR)
+		var enc = 0x04000000, next = 24;
+		for (p in 0...9) {
+			var r = p < 5 ? 19 + 2 * p : 40 + 2 * (p - 5);
+			var x = at.get(r), y = at.get(r + 1);
+			if (x == null && y == null) continue;
+			if (x != next || y != next + 8) return 0;
+			at.remove(r);
+			at.remove(r + 1);
+			enc |= p < 5 ? 1 << p : 0x100 << (p - 5);
+			next += 16;
+		}
+		return at.keys().hasNext() ? 0 : enc;
+	}
+
+	// a compressed second-level page's bytes at most (ld64's)
+	static inline var UNWIND_PAGE = 4096;
+
+	// __unwind_info of these functions (ascending starts relative to the
+	// image, each with its encoding and, with COMPACT_LSDA, the image offset
+	// of its language-specific data) up to end, as ld64 writes it: the most
+	// frequent encodings common (up to 127), compressed second-level pages
+	// (4 KB at most, each with its other encodings), an index entry each and
+	// the end's, an LSDA entry per function that has one. personality: the
+	// image offset of the pointer to the personality COMPACT_PERSONALITY
+	// names (written later at the offset the header gives, its personalities'),
+	// -1 none. An encoding 0 is none (the unwinder looks in __eh_frame, as
+	// without the section); DWARF mode (UNWIND_ARM64_MODE_DWARF,
+	// UNWIND_X86_64_MODE_DWARF) names the function's FDE, whose CIE gives the
+	// personality and the language-specific data. The system's unwinder, the
+	// crash reporter and lldb read this first
+	public static function unwindInfo(funcs:Array<{start:Int, enc:Int, lsda:Int}>, end:Int, personality:Int):Buf {
+		var n = funcs.length;
+		var counts = new Map<Int, Int>();
+		for (f in funcs)
+			counts.set(f.enc, counts.exists(f.enc) ? counts.get(f.enc) + 1 : 1);
+		var common = [for (e => c in counts) if (c > 1) e];
+		common.sort((x, y) -> counts.get(y) != counts.get(x) ? counts.get(y) - counts.get(x) : x < y ? -1 : x > y ? 1 : 0);
+		if (common.length > 127) common = common.slice(0, 127);
+		var commonAt = new Map<Int, Int>();
+		for (k in 0...common.length)
+			commonAt.set(common[k], k);
+		// the pages: each from its first function, as many as fit
+		var pages:Array<{from:Int, count:Int, encs:Array<Int>, at:Map<Int, Int>}> = [];
+		var i = 0;
+		while (i < n) {
+			var p = {from: i, count: 0, encs: [], at: new Map<Int, Int>()};
+			while (i < n) {
+				var f = funcs[i];
+				var add = !commonAt.exists(f.enc) && !p.at.exists(f.enc);
+				var more = add ? 1 : 0;
+				if (f.start - funcs[p.from].start >= 0x1000000 || 12 + 4 * (p.count + 1) + 4 * (p.encs.length + more) > UNWIND_PAGE
+					|| common.length + p.encs.length + more > 256)
+					break;
+				if (add) {
+					p.at.set(f.enc, common.length + p.encs.length);
+					p.encs.push(f.enc);
+				}
+				p.count++;
+				i++;
+			}
+			pages.push(p);
+		}
+		var lsdas = [for (f in funcs) if (f.enc & COMPACT_LSDA != 0) f];
+		var np = personality >= 0 ? 1 : 0;
+		var index = 28 + 4 * common.length + 4 * np;
+		var lsda = index + 12 * (pages.length + 1);
+		var at = lsda + 8 * lsdas.length;
+		var b = new Buf(at + 16 * n);
 		b.u32(1); // version
-		b.u32(index); // common encodings: none
-		b.u32(0);
-		b.u32(index); // personalities: none
-		b.u32(0);
+		b.u32(28);
+		b.u32(common.length);
+		b.u32(28 + 4 * common.length);
+		b.u32(np);
 		b.u32(index);
-		b.u32(pages + 1);
-		var at = lsda; // (no LSDA entries: the pages start there)
-		for (p in 0...pages) {
-			var count = n - p * per < per ? n - p * per : per;
-			b.u32(funcs[p * per].start);
+		b.u32(pages.length + 1);
+		for (e in common)
+			b.u32(e);
+		if (np > 0) b.u32(personality);
+		var l = 0;
+		for (p in pages) {
+			b.u32(funcs[p.from].start);
 			b.u32(at);
-			b.u32(lsda);
-			at += 8 + 8 * count;
+			while (l < lsdas.length && lsdas[l].start < funcs[p.from].start)
+				l++;
+			b.u32(lsda + 8 * l);
+			at += 12 + 4 * p.count + 4 * p.encs.length;
 		}
 		b.u32(end); // the end: no page
 		b.u32(0);
-		b.u32(lsda);
-		for (p in 0...pages) {
-			var count = n - p * per < per ? n - p * per : per;
-			b.u32(2); // UNWIND_SECOND_LEVEL_REGULAR
-			b.u16(8); // the entries' offset in the page
-			b.u16(count);
-			for (k in p * per...p * per + count) {
+		b.u32(lsda + 8 * lsdas.length);
+		for (f in lsdas) {
+			b.u32(f.start);
+			b.u32(f.lsda);
+		}
+		for (p in pages) {
+			var first = funcs[p.from].start;
+			b.u32(3); // UNWIND_SECOND_LEVEL_COMPRESSED
+			b.u16(12); // the entries' offset in the page
+			b.u16(p.count);
+			b.u16(12 + 4 * p.count); // its encodings'
+			b.u16(p.encs.length);
+			for (k in p.from...p.from + p.count) {
 				var f = funcs[k];
-				if (f.fde >= 0x1000000) throw "hxmc: link: __eh_frame over 16 MB (an FDE beyond compact unwind's reach)";
-				b.u32(f.start);
-				b.u32(f.fde < 0 ? 0 : mode | f.fde);
+				b.u32((f.start - first) | ((commonAt.exists(f.enc) ? commonAt.get(f.enc) : p.at.get(f.enc)) << 24));
 			}
+			for (e in p.encs)
+				b.u32(e);
 		}
 		return b;
 	}
