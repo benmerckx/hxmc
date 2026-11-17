@@ -64,16 +64,22 @@ class Supports {
 		return ms;
 	}
 
-	// the later version of platform the metadata ask for (0: any)
+	// the later version of platform the metadata ask for (0: any); Mac
+	// Catalyst's, where an entry gives none, iOS's (hxmc.ir.Available.of)
 	static function need(metas:Array<Metadata>, platform:String):Int {
 		var v = 0;
 		for (ml in metas)
 			for (m in ml)
-				if (m.name == ":hxmc.available")
+				if (m.name == ":hxmc.available") {
+					var n = 0, ios = 0;
 					for (x in m.params) {
-						var n = entry(x, platform);
-						if (n > v) v = n;
+						var e = entry(x, platform), i = entry(x, "ios");
+						if (e > n) n = e;
+						if (i > ios) ios = i;
 					}
+					if (n == 0 && platform == "maccatalyst") n = ios;
+					if (n > v) v = n;
+				}
 		return v;
 	}
 

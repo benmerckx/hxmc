@@ -63,5 +63,11 @@ class ObjCAvailable {
 		// (a declaration's own versions: its class's, a C function's, an enum constant's)
 		if (Platform.supports(HxmcFuture.alloc)) trace(HxmcFuture.alloc().init()) else trace("supports: not yet");
 		trace(Platform.supports(HxmcFuture), Platform.supports(Sys2.getppid), Platform.supports(Sys2.getpid), Platform.supports(Mode.New));
+		// (no Catalyst entry: iOS's, weak and guarded there too)
+		if (Platform.supports(IosOnly.hxmc_future_ios)) trace(IosOnly.hxmc_future_ios()) else trace("ios only: not yet");
 	}
+}
+
+@:hxmc.c @:hxmc.lib("/usr/lib/libSystem.B.dylib") extern class IosOnly {
+	@:hxmc.available(macos >= 99.0, ios >= 99.0) static function hxmc_future_ios():Int;
 }

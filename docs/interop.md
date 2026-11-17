@@ -1691,7 +1691,9 @@ the way `#if` and `@:require` write them:
 function setPreferredFrameRateRange(range:CAFrameRateRange):Void;
 ```
 
-A platform it does not list has it in every version. A version is read
+A platform it does not list has it in every version, except Mac
+Catalyst, which takes iOS's version where it has none of its own (as
+clang infers it). A version is read
 from the literal as written, so `10.15` is newer than `10.9`; one with a
 patch level is `version("10.15.4")`. The platforms are `macos`, `ios`,
 `maccatalyst`, `tvos`, `watchos`, `visionos` and `driverkit`. A program

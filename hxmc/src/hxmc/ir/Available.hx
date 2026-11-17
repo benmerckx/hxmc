@@ -13,7 +13,8 @@ import core.Ast.Expr;
 // PLATFORMS' first). Versions
 // are numbers as LC_BUILD_VERSION writes them: major << 16 | minor << 8 |
 // patch (0: any version), read from the literal's text (10.15 is newer than
-// 10.9) or version("10.15.4"). Mac Catalyst's are iOS's. AvailCheck checks
+// 10.9) or version("10.15.4"). Mac Catalyst's are iOS's, and an entry
+// without one takes iOS's (Available.of). AvailCheck checks
 // the uses; Lower binds the imports of the newer ones weakly (CInterop.WEAK)
 // and lowers the tests (FnLower).
 class Available {
@@ -94,12 +95,16 @@ class Available {
 		return out;
 	}
 
-	// the version of platform an @:hxmc.available's list asks for (0: any)
+	// the version of platform an @:hxmc.available's list asks for (0: any);
+	// Mac Catalyst's, where the list gives none, is iOS's, as clang infers it
+	// (hxmc.Supports: the same)
 	public static function of(exprs:haxe.ds.Vector<Expr>, platform:String):Int {
-		var v = 0;
-		for (e in entries(exprs))
+		var v = 0, ios = 0;
+		for (e in entries(exprs)) {
 			if (e.platform == platform && e.version > v) v = e.version;
-		return v;
+			if (e.platform == "ios" && e.version > ios) ios = e.version;
+		}
+		return v == 0 && platform == "maccatalyst" ? ios : v;
 	}
 
 	public static function isMeta(m:core.Ast.MetadataEntry):Bool
