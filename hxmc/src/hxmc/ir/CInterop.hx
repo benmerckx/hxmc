@@ -83,6 +83,8 @@ class CInterop {
 	// @:hxmc.lib: the library a symbol comes from (a DLL, a dylib, a
 	// WebAssembly import module)
 	public static var LIBS = new Map<String, String>();
+	// imports newer than the deployment target, bound weakly (Available.weak: LinkMachO.weak)
+	public static var WEAK = new Map<String, Bool>();
 	// libraries loaded though the program imports nothing of them: the
 	// frameworks of the Objective-C category members it sends (ObjC.memberLibrary)
 	public static var LOADS = new Map<String, Bool>();
@@ -110,6 +112,7 @@ class CInterop {
 		SIGS = new Map();
 		BLOCKING = new Map();
 		LIBS = new Map();
+		WEAK = new Map();
 		LOADS = new Map();
 		IMPORT_NAMES = new Map();
 		USER = new Map();
@@ -555,6 +558,7 @@ class CInterop {
 			return sig;
 		}
 		if (lib != null) LIBS.set(sym, lib);
+		if (Available.weak(c, cf)) WEAK.set(sym, true);
 		// (the program's, not the runtime's: outside the package hxmc, or of a
 		// library, as packages/os and packages/gfx declare theirs)
 		if (lib != null || c.clPath.pack.length == 0 || c.clPath.pack[0] != "hxmc") USER.set(sym, true);
@@ -854,6 +858,7 @@ class CInterop {
 		VARS.set(sym, ct);
 		var lib = library(c, cf);
 		if (lib != null) LIBS.set(sym, lib);
+		if (Available.weak(c, cf)) WEAK.set(sym, true);
 		if (lib != null || c.clPath.pack.length == 0 || c.clPath.pack[0] != "hxmc") USER.set(sym, true);
 		return {args: [], ret: ct};
 	}

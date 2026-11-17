@@ -17,6 +17,7 @@ package hxmc;
 //                                   which a packager puts in an APK)
 //   -D hxmc.exports=<names>         the names a shared library exports (its soname: the output's file name)
 //   -D hxmc.ios-min-version=<x.y>   iOS, Mac Catalyst: the oldest iOS version an output runs on (15.0, the floor)
+//   -D hxmc.macos-min-version=<x.y> macOS: the oldest version an output runs on (11.0 arm64, 10.15 x86-64: the floors)
 //   -D hxmc.ios-sdk-version=<x.y>   iOS, Mac Catalyst: the SDK an output declares (26.0: the App Store's minimum)
 //   -D hxmc.fixup-chains[=0]        a Mach-O output's fixups as chains, or not (default: an iPhone's alone)
 //   -D hxmc.dsym                    a Mach-O output's debug symbols beside it: <output>.dSYM
@@ -200,6 +201,7 @@ class Main {
 		hxmc.ir.Lower.targetArm = abi.arm ? 1 : 0;
 		hxmc.ir.Lower.targetCode = MirBuild.targetCode(abi);
 		hxmc.ir.Lower.targetPlatform = abi.platformCode();
+		hxmc.ir.Lower.targetMin = abi.os == "macos" ? opts.minos(abi) : 0;
 		// (a compiler with Mir macros and --run, for a native target: Mem.mirHost)
 		hxmc.ir.Lower.mirHost = !abi.wasm && Lambda.exists(com.types, t -> switch t {
 			case TClassDecl(c): c.clPath.pack.join(".") == "hxmc.interp" && c.clPath.name == "MirMacros";
@@ -231,7 +233,7 @@ class Main {
 		var prog = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
-			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms');
+			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms, availability check ${Std.int(hxmc.ir.AvailCheck.seconds * 1000)} ms');
 		}
 		if (headerCheck != null) hxmc.ir.HeaderCheck.write(headerCheck, abi.name);
 		if (Options.on("hxmc.lower-only", false, com.defines)) return; // (profiling the lowering)

@@ -53,8 +53,16 @@ class LinkMachO extends LinkCore {
 	// SDK after 26's)
 	public static inline var IOS_MIN = 0x000F0000;
 	public static inline var IOS_SDK = 0x001A0000;
-	public var minos = IOS_MIN; // (iOS, Mac Catalyst: -D hxmc.ios-min-version, Options.iosMinos)
+	public var minos = IOS_MIN; // (-D hxmc.ios-min-version, -D hxmc.macos-min-version: Options.minos)
 	public var sdk = IOS_SDK; // (iOS, Mac Catalyst: -D hxmc.ios-sdk-version, Options.iosSdk)
+
+	// macOS's floor: 11.0 on arm64 (the first on Apple silicon), 10.15 on x86-64
+	public static function macosMin(arm:Bool):Int
+		return arm ? 0x000B0000 : 0x000A0F00;
+
+	// imports bound weakly (0 where the system lacks them): declarations newer
+	// than the deployment target (@:hxmc.available, CInterop.WEAK)
+	public var weak = new Map<String, Bool>();
 	// dyld's fixups as chains (LC_DYLD_CHAINED_FIXUPS, DYLD_CHAINED_PTR_64,
 	// and LC_DYLD_EXPORTS_TRIE) instead of the rebase and bind opcodes of
 	// LC_DYLD_INFO_ONLY: an iPhone's by default (ld64's and lld's for iOS
@@ -178,10 +186,11 @@ class LinkMachO extends LinkCore {
 		var importOrder:Array<String> = [];
 		function imported(s:Symbol):Bool {
 			if (target(s) != null) return false;
+			var w = s.weak || weak.exists(s.name);
 			if (!importWeak.exists(s.name)) {
-				importWeak.set(s.name, s.weak);
+				importWeak.set(s.name, w);
 				importOrder.push(s.name);
-			} else if (!s.weak) importWeak.set(s.name, false);
+			} else if (!w) importWeak.set(s.name, false);
 			return true;
 		}
 		// the template-start descriptor (hxmc_tls_start), and the first
@@ -778,19 +787,22 @@ class LinkMachO extends LinkCore {
 		h.u32(24);
 		var uuidAt = h.len;
 		h.zeros(16);
-		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64); iOS,
-		// its simulator and Mac Catalyst (abi.platform), minimum IOS_MIN,
-		// built against sdk (IOS_SDK: what UIKit's linked-on-or-after behaviours
+		// build version: macOS, minimum 11.0 (arm64) / 10.15 (x86-64) or
+		// -D hxmc.macos-min-version's, built against the same SDK, 11.0 at
+		// least (to a program of an older SDK, macOS says it is 10.16, also
+		// dyld's _availability_version_check: hxmc.Platform.supports); iOS,
+		// its simulator and Mac Catalyst (abi.platform), minimum IOS_MIN or
+		// -D hxmc.ios-min-version's, built against sdk (IOS_SDK: what UIKit's
+		// linked-on-or-after behaviours
 		// go by; Catalyst's versions are iOS's, as clang's -target
 		// <arch>-apple-ios<v>-macabi writes them)
 		ncmds++;
-		var minos = abi.uikit() ? this.minos : arm ? 0x000B0000 : 0x000A0F00;
 		h.u32(0x32);
 		h.u32(32);
 		// PLATFORM_IOS, PLATFORM_IOSSIMULATOR, PLATFORM_MACCATALYST, PLATFORM_MACOS
 		h.u32(abi.platform == "ios" ? 2 : abi.platform == "ios-simulator" ? 7 : abi.platform == "maccatalyst" ? 6 : 1);
 		h.u32(minos);
-		h.u32(abi.uikit() ? sdk : minos); // sdk
+		h.u32(abi.uikit() ? sdk : minos < 0x000B0000 ? 0x000B0000 : minos); // sdk
 		h.u32(1);
 		h.u32(3); // TOOL_LD
 		h.u32(0x00010000);

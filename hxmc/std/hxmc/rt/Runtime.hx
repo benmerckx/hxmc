@@ -44,6 +44,8 @@ import hxmc.rt.ObjCExceptions;
 // foreign objects (reference-counted objects of other systems: Foreign), Objective-C's the first kind
 import hxmc.rt.Foreign;
 import hxmc.rt.ObjCKind;
+// hxmc.Platform.supports' test at run time (Apple's systems)
+import hxmc.rt.OsVersion;
 // COM's kind (Windows only: hxmc.ir.Com's calls and thunks)
 import hxmc.rt.ComKind;
 // JNI's kinds (Linux, Android, macOS: hxmc.ir.Jni's calls and natives)

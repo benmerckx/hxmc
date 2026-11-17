@@ -499,11 +499,12 @@ class Driver {
 	public static function outputKey(kind:CacheKind, out:String):CacheKey
 		return CacheKey.of(kind, "hxmc-out|" + (try sys.FileSystem.absolutePath(out) catch (_:Dynamic) out));
 
+	// (+min=: the deployment target, which hxmc.Platform.supports folds against)
 	// (+pgo=: the LLVM profile's path, time and size: codeKey has only the flag)
 	function toolKey():String {
 		var p = Sys.programPath();
 		var st = try sys.FileSystem.stat(p) catch (_:Dynamic) null;
-		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
+		return "hxmc|" + abi.rtName + (abi.uikit() ? "+" + abi.platform : "") + (abi.os == "macos" && (o.iosMinos != LinkMachO.IOS_MIN || o.macosMinos != 0) ? "+min=" + StringTools.hex(o.minos(abi)) : "") + (o.wasmLegacyEh ? "+legacy-eh" : "") + (abi.framePointers ? "+fp" : "") + (hxmc.ir.Lower.lines ? "+lines" : "")
 			+ (hxmc.ir.Lower.nullChecks != abi.wasm ? "+null-checks=" + (hxmc.ir.Lower.nullChecks ? 1 : 0) : "") + (hxmc.ir.Lower.spanChecks ? "" : "+span-checks=0") + (hxmc.ir.Lower.verifyTags ? "+verify-tags" : "")
 			+ (abi.output == SharedLibrary ? "+shared" : "") + (o.interp != null ? "+interp=" + o.interp : "") + (o.mirHost ? "+mirhost" : "") + o.codeKey
 			+ (o.llvm != null && o.llvmPgo != null && o.llvmPgo != "gen" ? "+pgo=" + o.llvmPgo + "@" + sys.FileSystem.stat(o.llvmPgo).mtime.getTime() + ":" + sys.FileSystem.stat(o.llvmPgo).size : "") + "|" +(st == null ? "?" : st.size + "@" + st.mtime.getTime()) + "|";
@@ -890,10 +891,9 @@ class Driver {
 			l.dylibs = dylibs;
 			l.loads = [for (lib in hxmc.ir.CInterop.LOADS.keys()) LinkInputs.libFile(lib, abi)];
 			l.loads.sort(Reflect.compare);
-			if (abi.uikit()) {
-				l.minos = o.iosMinos;
-				l.sdk = o.iosSdk;
-			}
+			l.minos = o.minos(abi);
+			l.weak = hxmc.ir.CInterop.WEAK;
+			if (abi.uikit()) l.sdk = o.iosSdk;
 			l.fixupChains = o.fixupChains;
 			l.wantDsym = o.dsym;
 			if (o.codesigned()) {
