@@ -167,11 +167,15 @@ class Os {
 		if (windows()) WinRt.guard(p, bytes) else C.mprotect(p, bytes, L.PROT_NONE);
 
 	// the pages go back to the system (zeros when touched again); false: not done
+	// (Apple's: fresh pages mapped over them, as MADV_DONTNEED there leaves the
+	// pages as they were, dirty and counted in the task's footprint, which is
+	// what iOS ends an app for and what Activity Monitor shows)
 	@:hxmc.unsafe public static function decommit(p:Ptr, bytes:I64):Bool {
 		if (windows()) {
 			WinRt.decommit(p, bytes);
 			return true;
 		}
+		if (mac()) return !mapOver(p, bytes).isNull();
 		return C.madvise(p, bytes, L.MADV_DONTNEED) == 0;
 	}
 
