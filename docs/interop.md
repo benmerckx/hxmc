@@ -1526,8 +1526,8 @@ try {
   goes on as Haxe throws do (an `@catch` of the C code calling the callback
   does not see it).
 - **Natively**: the program's Haxe functions name a personality routine in
-  their unwind tables (`__eh_frame`, with the program's first Objective-C
-  reference), which claims an Objective-C exception for the first Haxe
+  their unwind tables (`__unwind_info`'s personalities, with the
+  program's first Objective-C reference), which claims an Objective-C exception for the first Haxe
   frame the C++ ABI's search reaches and resumes that frame in the
   runtime's catch. Exceptions of C++ pass through Haxe frames as before.
 
