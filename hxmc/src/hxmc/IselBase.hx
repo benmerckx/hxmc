@@ -155,6 +155,44 @@ class IselBase {
 		if (s >= LFunc.NPHYS) f.setHint(s, d);
 	}
 
+	// whether v's register holds it zero-extended (x86-64 and arm64: a 32-bit
+	// operation zeroes the upper half): an Int loaded (a load into
+	// a 32-bit register zeroes the upper half), a phi of such (its copies are
+	// of 64 bits); whose ZExt is then a copy, and with nonNeg, when it is not
+	// negative either (a byte or 16-bit unit loaded unsigned, a constant),
+	// its SExt
+	var counters:Null<hxmc.Opt> = null; // (the function's loop counters: Opt.nonNegative)
+
+	function zeroExtended(v:Int, nonNeg:Bool, depth = 0):Bool {
+		var i = m.vals[v];
+		if (folded[v] && i.op != Const) return false;
+		inline function nonNegConst(x:Int):Bool {
+			var c = m.vals[x];
+			return c.op == Const && c.ty == I32 && c.sym == null && c.imm >= 0;
+		}
+		return switch i.op {
+			case Load: i.ty == I32 && i.size <= 4 && (!nonNeg || i.size < 4 && !i.signed);
+			case Const: i.ty == I32 && i.sym == null && i.imm >= 0;
+			// (32-bit operations: the upper half zeroed; x >>> k, x & c not negative)
+			case Shr | Shl if (i.ty == I32 && nonNegConst(i.b) && m.vals[i.b].imm & 31 != 0): !nonNeg || i.op == Shr;
+			case And if (i.ty == I32): !nonNeg || nonNegConst(i.a) || nonNegConst(i.b);
+			case Or | Xor if (i.ty == I32 && depth < 2):
+				!nonNeg || zeroExtended(i.a, true, depth + 1) && zeroExtended(i.b, true, depth + 1);
+			// (a loop's counter, below a bound where incremented: 0 and up in
+			// the register too, a 64-bit lea of it never carrying into the upper half)
+			case Phi if (i.ty == I32 && (counters ?? (counters = new hxmc.Opt(m))).nonNegative(v)): true;
+			// (a step of such a counter, below 2^31: its 64-bit lea is the sum)
+			case Add if (i.ty == I32 && m.vals[i.b].op == Const && m.vals[i.b].sym == null && !folded[i.a] && depth < 4 && zeroExtended(i.a, true, depth + 1)
+				&& (counters ?? (counters = new hxmc.Opt(m))).nonNegativeSum(v)): true;
+			case Phi if (depth < 2 && i.ty == I32):
+				var all = true;
+				for (a in i.args)
+					if (a != v && !zeroExtended(a, nonNeg, depth + 1)) all = false;
+				all;
+			case _: false;
+		}
+	}
+
 	// the absolute symbol of a symbolic constant (its immediate is the addend)
 	function isymOf(v:Int):Null<String> {
 		var i = m.vals[v];
@@ -246,12 +284,18 @@ class IselBase {
 		for (b in mf.blocks)
 			if (b.id >= maxId) maxId = b.id + 1;
 		lb = new Vector<LBlock>(maxId);
+		// (the loops' depths from the Mir's loop nest: Regalloc's spill costs)
+		var cfg = mf.cfg();
+		cfg.loops();
 		for (b in layout) {
 			var l = new LBlock(f.blocks.length);
 			l.cold = b.cold;
+			var x = cfg.index(b);
+			l.loopDepth = x >= 0 ? cfg.loopDepth[x] : 0;
 			lb[b.id] = l;
 			f.blocks.push(l);
 		}
+		f.depths = true;
 		tlsBase = -1;
 		var usesTls = false;
 		if (abi.tls != LocalExec)
@@ -372,6 +416,7 @@ class IselBase {
 		flush();
 		var e = new LBlock(f.blocks.length);
 		e.cold = lb[to.id].cold;
+		e.loopDepth = lb[to.id].loopDepth;
 		f.blocks.push(e);
 		var saved = cur;
 		cur = e;

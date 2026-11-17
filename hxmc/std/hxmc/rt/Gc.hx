@@ -776,6 +776,13 @@ class Gc {
 					} while (false);
 				} else {
 					var j = 0;
+					while (j < words - 3) { // (4 words a round)
+						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
+						Mem.setI64At(dst, 8, j, Mem.getI64At(v, 0, j));
+						Mem.setI64At(dst, 16, j, Mem.getI64At(v, 8, j));
+						Mem.setI64At(dst, 24, j, Mem.getI64At(v, 16, j));
+						j += 4;
+					}
 					while (j < words) {
 						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
 						j++;
@@ -1823,6 +1830,13 @@ class Gc {
 					} while (false);
 				} else {
 					var j = 0;
+					while (j < words - 3) { // (4 words a round)
+						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
+						Mem.setI64At(dst, 8, j, Mem.getI64At(v, 0, j));
+						Mem.setI64At(dst, 16, j, Mem.getI64At(v, 8, j));
+						Mem.setI64At(dst, 24, j, Mem.getI64At(v, 16, j));
+						j += 4;
+					}
 					while (j < words) {
 						Mem.setI64At(dst, 0, j, Mem.getI64At(v, -8, j));
 						j++;
@@ -2582,9 +2596,21 @@ class Gc {
 		var m = Threads.self;
 		var n = m.value.remLen;
 		if (n == m.value.remCap) {
-			m.value.remCap = n == 0 ? 4096 : n * 2;
-			m.value.rem = LibC.realloc(m.value.rem, (m.value.remCap : I64) * 8);
+			rememberGrown(slot);
+			return;
 		}
+		Mem.setPtr(m.value.rem, 8 * n, slot);
+		m.value.remLen = n + 1;
+	}
+
+	// remember with the buffer full: grown, then the slot, out of line (the
+	// write barrier's common way, hxmc_barrier_slow, then keeps nothing
+	// across a call: no callee-saved register saved and restored each time)
+	@:hxmc.unsafe static function rememberGrown(slot:Ptr) {
+		var m = Threads.self;
+		var n = m.value.remLen;
+		m.value.remCap = n == 0 ? 4096 : n * 2;
+		m.value.rem = LibC.realloc(m.value.rem, (m.value.remCap : I64) * 8);
 		Mem.setPtr(m.value.rem, 8 * n, slot);
 		m.value.remLen = n + 1;
 	}

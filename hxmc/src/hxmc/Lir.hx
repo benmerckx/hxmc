@@ -110,6 +110,7 @@ class LFunc {
 	public var slots:Array<{size:Int, align:Int}> = []; // frame slots (MIR slots, then spills)
 	public var outArgs = 0; // bytes of outgoing stack arguments
 	public var hasCalls = false;
+	public var depths = false; // the blocks' loopDepth set (IselBase: the Mir's), else Regalloc's from the layout
 	public var display:Null<String>; // (-debug) the Haxe name of the function (FuncRec.name)
 	public var foreignPasses = false; // (FuncInfo.foreignPasses: Unwind.PASS)
 	var hints:Array<Int> = []; // vreg - NPHYS -> preferred register (physical or virtual), -1
@@ -161,7 +162,81 @@ class LFunc {
 				for (k in 0...i.table.length)
 					i.table[k] = dest(i.table[k]);
 			}
-		// (every block ends with its jumps: none falls into the next one)
+		prune();
+	}
+
+	// Loop rotation: a loop's head that only tests
+	// and branches (at most maxTests comparisons, isTest, then a conditional
+	// branch and a jump) copied into each block outside the slow paths that
+	// jumps back to it: the back edge tests and branches into the loop
+	// itself, a taken branch per round instead of a jump and a branch (its
+	// condition inverted, invert, so that the branch goes on into the loop:
+	// to a block laid out between). Forward jumps to such blocks (joins that
+	// test) stay: in tshx they saved 0.2% more instructions for 0.9% more code.
+	public function duplicateTests(isJump:LIns->Bool, isCond:LIns->Bool, isTest:LIns->Bool, invert:LIns->Void, maxTests:Int) {
+		var n = blocks.length;
+		for (k in 0...n)
+			blocks[k].id = k;
+		var any = false;
+		for (bi in 0...n) {
+			var b = blocks[bi], m = b.ins.length;
+			if (m == 0 || b.cold || !isJump(b.ins[m - 1])) continue;
+			var t = b.ins[m - 1].target, tn = t.ins.length;
+			if (t.id >= bi || tn < 3 || tn > maxTests + 2 || !isJump(t.ins[tn - 1]) || !isCond(t.ins[tn - 2])) continue;
+			var tests = true;
+			for (q in 0...tn - 2)
+				if (!isTest(t.ins[q])) tests = false;
+			if (!tests) continue;
+			b.ins.pop();
+			for (q in 0...tn - 2)
+				b.ins.push(t.ins[q].copy());
+			var c = t.ins[tn - 2].copy(), e = t.ins[tn - 1].copy();
+			inline function inLoop(x:LBlock):Bool
+				return x.id > t.id && x.id <= bi;
+			if (inLoop(e.target) && !inLoop(c.target)) {
+				var x = c.target;
+				invert(c);
+				c.target = e.target;
+				e.target = x;
+			}
+			b.ins.push(c);
+			b.ins.push(e);
+			any = true;
+		}
+		if (any) prune();
+	}
+
+	// A short block that returns (a function with
+	// a frame returns through one block: the frame's pop, the return; at most
+	// maxIns instructions, no branch but the return) copied into each block
+	// outside the slow paths that jumps to it (but the one laid out just
+	// before it, which falls into it), with the epilogue written at
+	// each return outside the slow paths (x64.Emit): a return path without a
+	// jump (tshx: 4.5% fewer taken branches, 2.6% fewer cycles, 1.4% more
+	// code; each alone gains next to nothing, the other's jump staying)
+	public function duplicateReturns(isJump:LIns->Bool, isRet:LIns->Bool, maxIns:Int) {
+		var any = false;
+		for (bi in 0...blocks.length) {
+			var b = blocks[bi];
+			var m = b.ins.length;
+			if (m == 0 || b.cold || !isJump(b.ins[m - 1])) continue;
+			var t = b.ins[m - 1].target, tn = t.ins.length;
+			if (t == b || bi + 1 < blocks.length && blocks[bi + 1] == t || tn == 0 || tn > maxIns || !isRet(t.ins[tn - 1])) continue;
+			var plain = true;
+			for (q in 0...tn - 1)
+				if (t.ins[q].target != null || t.ins[q].table.length > 0) plain = false;
+			if (!plain) continue;
+			b.ins.pop();
+			for (i in t.ins)
+				b.ins.push(i.copy());
+			any = true;
+		}
+		if (any) prune();
+	}
+
+	// the blocks no branch reaches go (every block ends with its jumps: none
+	// falls into the next one; the entry is reached)
+	function prune() {
 		var n = blocks.length;
 		for (k in 0...n)
 			blocks[k].id = k;

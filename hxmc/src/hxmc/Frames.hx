@@ -11,17 +11,137 @@ import haxe.ds.Vector;
 // nothing could collect in between, or the collection points were inlined
 // or replaced away), and a frame left without loads is not pushed at all:
 // the cold sites' slow paths push their spills instead. Functions with a
-// try (setjmp) keep theirs: a handler reads the slots.
+// try (setjmp) keep theirs: a handler reads the slots. First the frames of
+// the callees inlined into it become part of the function's (mergeInlined).
 class Frames {
 	var f:MFunc;
 
 	public var storesRemoved = 0;
 	public var frameRemoved = false;
+	public var merged = 0; // inlined frames merged into the function's
 
 	public function new(f:MFunc)
 		this.f = f;
 
 	static inline var NONE = 0x40000000; // (no offset: not the frame's address)
+
+	// The frames of inlined callees become part of the function's: an inlined
+	// push (rt_sp read, rt_sp + k stored and rt_sp_hw raised to it, rt_sp
+	// restored at the callee's exits) outside the slow paths makes the
+	// entry's push k bytes larger and its base the entry's base plus an
+	// offset, without a store, test or restore of rt_sp per inlined call. (A
+	// slot below rt_sp_hw holds 0 or a valid reference, MirBuild.push: what
+	// the collector finds in the new slots before the callee runs is valid.)
+	// The slots are the function's then too: those nothing reads go below.
+	function mergeInlined(r:MIns) {
+		var vals = f.vals;
+		var top:Null<MIns> = null;
+		for (i in f.entry.ins)
+			if (!i.dead && i.op == TlsStore && i.sym == "rt_sp") {
+				var a = vals[i.a];
+				if (a.op == Add && a.a == r.id && isConst(a.b)) top = a;
+				break;
+			}
+		if (top == null) return;
+		for (b in f.blocks)
+			for (i in b.ins)
+				if (i.op == Call && i.returnsTwice && !i.dead) return;
+		// the pushes: an rt_sp read whose top (rt_sp + k) is stored into rt_sp
+		var topOf = MFunc.ints(vals.length, -1), baseOf = MFunc.ints(vals.length, -1);
+		var pushes:Array<MIns> = [];
+		for (b in f.blocks)
+			if (!b.cold)
+				for (i in b.ins) {
+					if (i.dead || i.op != TlsStore || i.sym != "rt_sp") continue;
+					var t = vals[i.a];
+					if (t.op != Add || !isConst(t.b)) continue;
+					var s = vals[t.a], k = vals[t.b];
+					if (s == r || s.op != TlsLoad || s.sym != "rt_sp" || s.block.cold || topOf[s.id] != -1 || k.imm <= 0 || k.imm & 7 != 0
+						|| k.imm2 != 0) continue;
+					topOf[s.id] = t.id;
+					baseOf[t.id] = s.id;
+					pushes.push(s);
+				}
+		if (pushes.length == 0) return;
+		inline function isBase(x:Int):Bool
+			return x >= 0 && topOf[x] >= 0;
+		inline function isTop(x:Int):Bool
+			return x >= 0 && baseOf[x] >= 0 && topOf[baseOf[x]] == x;
+		function reject(x:Int)
+			if (isBase(x)) topOf[x] = -2 else if (isTop(x)) topOf[baseOf[x]] = -2;
+		// a push merges when its base is only the address of slots (as Frames
+		// reads them below) and restored, and its top only stored and tested
+		for (b in f.blocks)
+			for (i in b.ins) {
+				if (i.dead) continue;
+				var x = i.a;
+				if (isBase(x)) {
+					if (!(i.op == Add && i.id == topOf[x] || (i.op == Load || i.op == Store) && i.b < 0 && i.size == 8 || i.op == TlsStore && i.sym == "rt_sp"))
+						reject(x);
+				} else if (isTop(x)) {
+					if (!(i.op == TlsStore && (i.sym == "rt_sp" || i.sym == "rt_sp_hw") || i.op == Cmp && i.imm == CUGt && limit(i.b))) reject(x);
+				}
+				reject(i.b);
+				reject(i.c);
+				// (an operation's frame, OInfo.fr: its slow path's spills are then the merged slots)
+				var taken = i.isObj() && i.info.fr ? i.info.nspill : -1;
+				for (k in 0...i.args.length)
+					if (k != taken || !isBase(i.args[k])) reject(i.args[k]);
+			}
+		var bytes = vals[top.b].imm, merged = 0;
+		for (s in pushes) {
+			var t = topOf[s.id];
+			if (t < 0) continue;
+			var off = newConst(s, bytes);
+			s.op = Add;
+			s.sym = null;
+			s.a = r.id;
+			s.b = off.id;
+			bytes += vals[vals[t].b].imm;
+			merged++;
+		}
+		if (merged == 0) return;
+		top.b = newConst(top, bytes).id;
+		this.merged = merged;
+		// the merged pushes' stores of rt_sp, restores and rt_sp_hw's raises go,
+		// their tests are false (the tops, unused, go with the dead code)
+		for (b in f.blocks) {
+			var ins = b.ins, k = 0;
+			for (i in ins) {
+				if (i.op == Cmp && isTop(i.a)) {
+					i.op = Const;
+					i.imm = 0;
+					i.imm2 = 0;
+					i.a = i.b = -1;
+				}
+				if (!(i.op == TlsStore && (isTop(i.a) || i.sym == "rt_sp" && isBase(i.a)))) ins[k++] = i;
+			}
+			if (k < ins.length) ins.resize(k);
+		}
+	}
+
+	// rt_sp_hw, or on wasm rt_sp_limit (MirWriter.raiseHw)
+	function limit(v:Int):Bool {
+		var x = f.vals[v];
+		return x.op == TlsLoad && x.sym == "rt_sp_hw" || x.op == Load && x.a >= 0 && f.vals[x.a].op == SymAddr && f.vals[x.a].sym == "rt_sp_limit";
+	}
+
+	function isConst(v:Int):Bool {
+		var c = f.vals[v];
+		return c.op == Const && c.sym == null;
+	}
+
+	// a new 64-bit constant before instruction at
+	function newConst(at:MIns, v:Int):MIns {
+		var c = new MIns(Const, I64);
+		c.id = f.vals.length;
+		f.vals.push(c);
+		c.block = at.block;
+		c.imm = v;
+		var ins = at.block.ins;
+		ins.insert(ins.indexOf(at), c);
+		return c;
+	}
 
 	public function run() {
 		var r:Null<MIns> = null;
@@ -32,6 +152,7 @@ class Frames {
 			}
 		if (r == null) return;
 		var vals = f.vals;
+		mergeInlined(r);
 		var cfg = f.cfg();
 		var order = cfg.rpo;
 		var n = order.length;
@@ -81,13 +202,14 @@ class Frames {
 					manage.push(i);
 				} else if (op == Cmp && da && !db && i.imm == CUGt) {
 					manage.push(i);
-				} else if (i.isObj() && !da && !db && !dc && i.info.fr && i.args[i.info.nspill] == r.id) {
-					// (only as an operation's frame: OInfo.fr)
+				} else if (i.isObj() && !da && !db && !dc && i.info.fr && off[i.args[i.info.nspill]] != NONE && off[i.args[i.info.nspill]] & 7 == 0) {
+					// (only as an operation's frame, OInfo.fr; an inlined one's merged: at an offset)
 					for (k in 0...i.args.length)
 						if (k != i.info.nspill && off[i.args[k]] != NONE) return;
 					takers.push(i);
 					var s = i.info.rootSlot;
 					if (s >= 0) {
+						s += off[i.args[i.info.nspill]] >> 3;
 						slot[i.id] = s;
 						if (s >= nslots) nslots = s + 1;
 						reads++;

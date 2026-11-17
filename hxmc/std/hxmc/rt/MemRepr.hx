@@ -140,13 +140,52 @@ class MemRepr {
 
 	// dst[di, di + n) = src[si, si + n): one-byte units widened (widen), two-byte
 	// ones each below 0x100 narrowed (narrow)
-	@:hxmc.unsafe public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int)
-		for (k in 0...n)
+	// (four bytes a round: their 32 bits spread to four 16-bit lanes; then a
+	// byte at a time)
+	@:hxmc.unsafe public static inline function widen(dst:MemChars, di:Int, src:MemChars1, si:Int, n:Int) {
+		var s = src.at(si), d = dst.at(di), k = 0;
+		var low = ((0xFF : I64) << 16) | (0xFF : I64), word = ((0xFFFF : I64) << 32) | (0xFFFF : I64);
+		var bytes = (low << 32) | low, u32 = ((1 : I64) << 32) - 1;
+		while (k < n - 3) {
+			var w = (Mem.getI32(s, k) : I64) & u32;
+			w = (w | (w << 16)) & word;
+			Mem.setI64(d, 2 * k, (w | (w << 8)) & bytes);
+			k += 4;
+		}
+		while (k < n) {
 			dst.set(di + k, src.get(si + k));
+			k++;
+		}
+	}
 
 	@:hxmc.unsafe public static inline function narrow(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int)
 		for (k in 0...n)
 			dst.set(di + k, src.get(si + k));
+
+	// src[si, si + n) narrowed into dst from di, four units at a time, and
+	// whether each was below 0x100 (if not, dst's bytes are of no use): the
+	// test and the copy in one pass (Str.range, its one caller: inline)
+	@:hxmc.unsafe(gc) public static inline function narrowFits(dst:MemChars1, di:Int, src:MemChars, si:Int, n:Int):Bool {
+		var s = src.at(si), d = dst.at(di), k = 0;
+		var half = ((0xFF00 : I64) << 16) | (0xFF00 : I64), low = ((0xFF : I64) << 16) | (0xFF : I64);
+		var hi = (half << 32) | half, lo = (low << 32) | low, words = ((0xFFFF : I64) << 32) | (0xFFFF : I64), seen:I64 = 0;
+		while (k < n - 3) {
+			var w = Mem.getI64(s, 2 * k);
+			seen |= w;
+			var x = w & lo;
+			x = (x | (x >>> 8)) & words;
+			Mem.setI32(d, k, (x | (x >>> 16)).toInt());
+			k += 4;
+		}
+		var ok = seen & hi == (0 : I64);
+		while (ok && k < n) {
+			var u = src.get(si + k);
+			ok = u <= 0xFF;
+			dst.set(di + k, u);
+			k++;
+		}
+		return ok;
+	}
 
 	// whether the two-byte units src[si, si + n) are each below 0x100 (unitsFitOne)
 	@:hxmc.unsafe(gc) public static inline function fitsOne(src:MemChars, si:Int, n:Int):Bool
@@ -202,6 +241,14 @@ class MemRepr {
 	@:hxmc.unsafe(gc) public static inline function sbSetLen(b:Dynamic, n:Int)
 		Mem.setI32(Mem.addr(b), 0, n);
 
+	// (slot 0's upper half: where a two-byte buffer was widened, its units
+	// before that each below 0x100; StrBufView.clear sets it to 0 with the length)
+	@:hxmc.unsafe(gc) public static inline function sbWideFrom(b:Dynamic):Int
+		return Mem.getI32(Mem.addr(b), 4);
+
+	@:hxmc.unsafe(gc) public static inline function sbClear(b:Dynamic)
+		Mem.setI64(Mem.addr(b), 0, (0 : I64));
+
 	@:hxmc.unsafe(gc) static inline function sbData(b:Dynamic):String
 		return Mem.getRef(Mem.addr(b), 8);
 
@@ -232,6 +279,7 @@ class MemRepr {
 		var nd = make2(cap);
 		widen(chars2(nd), 0, sbChars1(b), 0, n);
 		Mem.setRefBarrier(b, 8, nd);
+		Mem.setI32(Mem.addr(b), 4, n);
 	}
 
 	// ---- arrays (Boxes): slot 0 the length and the element kind, slot 1 the

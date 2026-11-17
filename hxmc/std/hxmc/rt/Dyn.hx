@@ -29,7 +29,7 @@ class Dyn {
 		var v = Atomic.load64(e);
 		if ((v >>> 32).toInt() == h) {
 			var f = v.toInt() - 1;
-			if (f >= 0 && nameIs(Names.fidName(f), name)) return f;
+			if (f >= 0 && nameIs(Names.nameOf(f), name)) return f;
 		}
 		var f = Names.fidSlow(name);
 		Atomic.store64(e, ((h : I64) << 32) | ((f + 1 : I64) & (((1 : I64) << 32) - 1)));
@@ -62,28 +62,34 @@ class Dyn {
 
 	// ---- lookups (binary searches: the tables are sorted by fid)
 
-	@:hxmc.unsafe static function findField(ty:Ptr, fid:Int):Ptr {
-		var lo = 0, hi = nfields(ty) - 1;
+	@:hxmc.unsafe static inline function findField(ty:Ptr, fid:Int):Ptr {
+		var lo = 0, hi = nfields(ty) - 1, r = Ptr.nil();
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
 			var f = field(ty, mid);
 			var x = fFid(f);
-			if (x == fid) return f;
+			if (x == fid) {
+				r = f;
+				break;
+			}
 			if (x < fid) lo = mid + 1 else hi = mid - 1;
 		}
-		return Ptr.nil();
+		return r;
 	}
 
-	@:hxmc.unsafe static function findMethod(ty:Ptr, fid:Int):Ptr {
-		var lo = 0, hi = nmethods(ty) - 1;
+	@:hxmc.unsafe static inline function findMethod(ty:Ptr, fid:Int):Ptr {
+		var lo = 0, hi = nmethods(ty) - 1, r = Ptr.nil();
 		while (lo <= hi) {
 			var mid = (lo + hi) >> 1;
 			var m = method(ty, mid);
 			var x = mFid(m);
-			if (x == fid) return m;
+			if (x == fid) {
+				r = m;
+				break;
+			}
 			if (x < fid) lo = mid + 1 else hi = mid - 1;
 		}
-		return Ptr.nil();
+		return r;
 	}
 
 	// rt_icache (Names.hx): uint32 t, int32 slot (> 0: field slot + 1; 0: a
@@ -195,10 +201,9 @@ class Dyn {
 		var i = 0;
 		while (i + 1 < n) {
 			var k = Mem.getRefAt(Mem.addr(ov), 0, i);
-			if (!Str.isNull(k)) {
-				var kf:Int = k;
-				if (kf == fid) return i;
-			}
+			if (Str.isNull(k)) break; // (the room after the fields: overflowSet)
+			var kf:Int = k;
+			if (kf == fid) return i;
 			i += 2;
 		}
 		return -1;
@@ -211,10 +216,20 @@ class Dyn {
 			Mem.setRefBarrier(Mem.getRef(Mem.addr(o), 0), 8 * (i + 1), v);
 			return;
 		}
+		// (the fields' pairs first, then room, null keys: a new field in the
+		// room, else in storage twice as long, the fields copied once)
 		var ov = Mem.getRef(Mem.addr(o), 0);
 		var n = Str.isNull(ov) ? 0 : nslots(ov);
 		var key:Dynamic = fid;
-		var nv = Mem.alloc(n + 2, T_OVERFLOW, K_PARR);
+		var end = 0;
+		while (end + 1 < n && !Str.isNull(Mem.getRefAt(Mem.addr(ov), 0, end)))
+			end += 2;
+		if (end + 1 < n) {
+			Mem.setRefBarrier(ov, 8 * (end + 1), v);
+			Mem.setRefBarrier(ov, 8 * end, key);
+			return;
+		}
+		var nv = Mem.alloc(n == 0 ? 4 : 2 * n, T_OVERFLOW, K_PARR);
 		ov = Mem.getRef(Mem.addr(o), 0);
 		for (k in 0...n)
 			Mem.setRefBarrier(nv, 8 * k, Mem.getRefAt(Mem.addr(ov), 0, k));
@@ -756,6 +771,12 @@ class Dyn {
 			if (ta == T_BOXINT || ta == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
 			if (isString(ta)) return Str.eqSlow(TypeView.string(a), TypeView.string(b));
 		}
+		// (two of the program's types, neither a closure: the boxes, strings and
+		// type objects below are the runtime's types, below T_FIRST)
+		if (ta >= T_FIRST && tb >= T_FIRST) {
+			var ka = TypeView.kind(ta), kb = TypeView.kind(tb);
+			if (ka != TK_CLOSURE && ka != TK_BOUND && kb != TK_CLOSURE && kb != TK_BOUND) return false;
+		}
 		if ((ta == T_BOXI64 || tb == T_BOXI64) && isI64(a) && isI64(b)) return unboxI64(a) == unboxI64(b);
 		if (isNum(a) && isNum(b)) return unboxFloat(a) == unboxFloat(b);
 		if (ta == T_BOXBOOL && tb == T_BOXBOOL) return TypeView.int(a) == TypeView.int(b);
@@ -1062,7 +1083,8 @@ class Dyn {
 		// (read again after each value printed: printing allocates, and a
 		// toString may add fields)
 		var i = 0;
-		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
+		while (!Str.isNull(Mem.getRef(Mem.addr(o), 0)) && i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))
+			&& !Str.isNull(Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i))) {
 			b.add(n++ == 0 ? " " : ", ");
 			var k:Int = Mem.getRefAt(Mem.addr(Mem.getRef(Mem.addr(o), 0)), 0, i);
 			b.add(Names.fidStr(k));
@@ -1382,6 +1404,7 @@ class Dyn {
 			var i = 0;
 			while (i + 1 < nslots(Mem.getRef(Mem.addr(o), 0))) {
 				var ov = Mem.getRef(Mem.addr(o), 0);
+				if (Str.isNull(Mem.getRefAt(Mem.addr(ov), 0, i))) break; // (overflowSet's room)
 				var k:Int = Mem.getRefAt(Mem.addr(ov), 0, i);
 				a.push(Names.fidStr(k));
 				i += 2;

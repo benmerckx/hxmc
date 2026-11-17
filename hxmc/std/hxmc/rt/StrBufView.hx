@@ -10,7 +10,8 @@ class StrBufView {
 	public static function length(b:StringBuf):Int
 		return Repr.sbLen(b);
 
-	// (no unit is freed nor read: a length of 0 is always within them)
+	// (no unit is freed nor read: a length of 0 is always within them; the
+	// slot's upper half, Repr.sbWideFrom, 0 too)
 	public static function clear(b:StringBuf)
-		Repr.sbSetLen(b, 0);
+		Repr.sbClear(b);
 }

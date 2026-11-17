@@ -118,6 +118,7 @@ class Driver {
 	var rootStores = 0; // (Frames)
 	var freshStores = 0; // (Opt.freshTargets)
 	var framesRemoved = 0;
+	var framesMerged = 0;
 	var mirBefore = 0;
 	var mirAfter = 0;
 	var devirtualized = 0; // (Inline.devirtualize)
@@ -297,11 +298,12 @@ class Driver {
 				// (the rooted locals' slots nothing reads any more)
 				var fs = new Frames(mf);
 				fs.run();
-				if (fs.storesRemoved > 0 || fs.frameRemoved || op.freshStores > 0) {
+				if (fs.storesRemoved > 0 || fs.frameRemoved || fs.merged > 0 || op.freshStores > 0) {
 					lock.acquire();
 					freshStores += op.freshStores;
 					rootStores += fs.storesRemoved;
 					if (fs.frameRemoved) framesRemoved++;
+					framesMerged += fs.merged;
 					lock.release();
 				}
 			}
@@ -317,7 +319,7 @@ class Driver {
 			}
 			// divisions by constants multiplied (not interpreted: one instruction there)
 			if (o.opt && (interp == null || !interp.wants(fn))) DivConst.run(mf);
-			if (o.opt) Opt.lowered(mf);
+			if (o.opt) Opt.lowered(mf, abi.arm);
 			var before = mf.vals.length;
 			mf.compact();
 			if (o.stats) {
@@ -472,7 +474,7 @@ class Driver {
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
-		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
+		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed, $framesMerged inlined frames merged; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
 		escSlow.sort((a, b) -> a.t < b.t ? 1 : -1);
 		for (x in escSlow.slice(0, 8))
 			Sys.println('  escape ${ms(x.t)}\t${x.name}');
@@ -1007,13 +1009,44 @@ class Driver {
 
 // The order blocks are laid out in: reverse postorder (Cfg), the cold blocks
 // (slow paths) at the end.
+// The blocks' order in the code: reverse postorder, the slow paths last;
+// but after a block that branches out of its loop on one side, the side
+// staying in the loop (a loop's test in its middle, while (a && b): the
+// rest of the round falls through, not the code after the loop, so the
+// round takes one branch back instead of a branch to its end and one back)
 class Layout {
 	public static function order(f:MFunc):haxe.ds.Vector<MBlock> {
-		var rpo = f.cfg().rpo;
-		var r = new haxe.ds.Vector<MBlock>(rpo.length);
+		var cfg = f.cfg(), rpo = cfg.rpo, n = rpo.length;
+		var r = new haxe.ds.Vector<MBlock>(n);
 		var k = 0;
-		for (b in rpo)
-			if (!b.cold) r[k++] = b;
+		var placed = new haxe.ds.Vector<Bool>(n);
+		cfg.loops();
+		var head = cfg.loopHead;
+		// after a branch that leaves its loop on one side, the other side
+		function next(b:MBlock):Null<MBlock> {
+			var t = b.term();
+			if (t == null || t.op != Br) return null;
+			var h = head[cfg.index(b)];
+			if (h < 0) return null;
+			var x = cfg.index(t.targets[0]), y = cfg.index(t.targets[1]);
+			if (x < 0 || y < 0) return null;
+			var inX = head[x] == h, inY = head[y] == h;
+			if (inX == inY) return null;
+			var s = inX ? x : y;
+			return placed[s] || rpo[s].cold ? null : rpo[s];
+		}
+		var start = 0;
+		while (true) {
+			while (start < n && (placed[start] || rpo[start].cold))
+				start++;
+			if (start == n) break;
+			var b = rpo[start];
+			while (b != null) {
+				placed[cfg.index(b)] = true;
+				r[k++] = b;
+				b = next(b);
+			}
+		}
 		for (b in rpo)
 			if (b.cold) r[k++] = b;
 		return r;

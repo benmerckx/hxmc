@@ -161,22 +161,83 @@ class Emit implements hxmc.Target.Emitter {
 		epiLabel = -1;
 		// (a move of a register to itself: a zero or sign extension is not)
 		f.threadJumps(i -> (i.op : XOp) == JMP,
-			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && !(i.size == 4 && i.imm2 == 1)));
+			i -> (i.op : XOp) == MOV && i.d == i.s1 && (isX(i.d) || !i.flag && i.imm2 == 0));
 		f.duplicateDispatch(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JTABLE, 10);
+		f.duplicateReturns(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == RET, 3);
+		f.duplicateTests(i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> switch (i.op : XOp) {
+			case CMP | CMPI | TEST | TESTI: true;
+			case _: false;
+		}, i -> i.cond ^= 1, 2);
+		// a 4-byte store of a non-negative constant, then of 0 just after it
+		// (an object's header: its type index, then 0): one 8-byte store of
+		// the first, sign-extended (a symbol's too: RAbs32S)
+		for (b in f.blocks) {
+			var ins = b.ins, n = 0, j = 0;
+			while (j < ins.length) {
+				var x = ins[j], y = j + 1 < ins.length ? ins[j + 1] : null;
+				ins[n++] = x;
+				j++;
+				if (y != null && (x.op : XOp) == STOREI && (y.op : XOp) == STOREI && x.size == 4 && y.size == 4 && x.imm >= 0 && y.imm == 0
+					&& y.isym == null && x.sym == null && y.sym == null && x.dsym == null && y.dsym == null && x.secrel == null && y.secrel == null
+					&& y.base == x.base && y.index == x.index && y.scale == x.scale && y.slot == x.slot && y.disp == x.disp + 4) {
+					x.size = 8;
+					j++;
+				}
+			}
+			ins.resize(n);
+		}
+		// (x >>> 8) & 0xff of x in rax to rbx (d <- x; d >>= 8; movzx d, d8):
+		// movzx d, xh (MOV, imm2 9), as LLVM's
+		for (b in f.blocks) {
+			var ins = b.ins, n = 0, j = 0;
+			while (j < ins.length) {
+				var x = ins[j], k = (x.op : XOp) == MOV && !x.flag && x.imm2 == 0 && !isX(x.d) && !isX(x.s1) ? j + 1 : j;
+				var y = k < ins.length ? ins[k] : null, z = k + 1 < ins.length ? ins[k + 1] : null;
+				var s = k > j ? x.s1 : y == null ? -1 : y.d;
+				if (y != null && z != null && (y.op : XOp) == SHIFTI && y.cond == Asm.SHR && y.imm == 8 && (k == j || y.d == x.d)
+					&& (z.op : XOp) == MOV && z.imm2 == 8 && !z.flag && z.d == y.d && z.s1 == y.d && s >= 0 && s < 4 && z.d < 8) {
+					z.imm2 = 9;
+					z.s1 = s;
+					ins[n++] = z;
+					j = k + 2;
+					continue;
+				}
+				ins[n++] = x;
+				j++;
+			}
+			ins.resize(n);
+		}
 		for (b in f.blocks)
 			b.label = a.newLabel();
 		var tables:Array<{label:Int, entries:haxe.ds.Vector<LBlock>}> = [];
 		for (bi in 0...f.blocks.length) {
 			var b = f.blocks[bi];
 			a.bind(b.label);
+			coldBlock = b.cold;
 			var next = bi + 1 < f.blocks.length ? f.blocks[bi + 1] : null;
 			LFunc.fallThrough(b, next, i -> (i.op : XOp) == JMP, i -> (i.op : XOp) == JCC, i -> i.cond ^= 1);
 			// a zero constant may be xor where no flags are live (none are
-			// live at block ends: branches consume them in their block)
+			// live at block ends: branches consume them in their block); there
+			// too, a register copied and added to (the allocator kept both: mov
+			// d, a; add d, b) is one lea d, [a + b] (32 bits of a 32-bit add)
 			var live = false;
 			var k = b.ins.length;
 			while (k-- > 0) {
 				var i = b.ins[k];
+				if ((i.op : XOp) == ALU && i.cond == Asm.ADD && !live && k > 0 && i.s1 != i.d && (i.size == 4 || i.size == 8)) {
+					var p = b.ins[k - 1];
+					if ((p.op : XOp) == MOV && p.d == i.d && p.s1 != i.d && !isX(p.d) && !isX(p.s1) && !p.flag && p.size == i.size
+						&& (p.imm2 == 0 || p.size == 4 && p.imm2 == 1)) {
+						p.op = LEA;
+						p.base = p.s1;
+						p.index = i.s1;
+						p.scale = 1;
+						p.disp = 0;
+						p.imm2 = i.size == 4 ? 4 : 0;
+						b.ins.splice(k, 1);
+						continue;
+					}
+				}
 				switch i.op {
 					case JCC | SETCC | CMOV: live = true;
 					case CMP | CMPI | TEST | TESTI | UCOMI | ALU | ALUI | NEG | CALL: live = false;
@@ -350,6 +411,7 @@ class Emit implements hxmc.Target.Emitter {
 
 	var epilogueBytes = 0;
 	var epiLabel = -1; // the shared epilogue (this function's first)
+	var coldBlock = false; // (the block being written)
 
 	// the registers the prologue pushes (rbp first with frame pointers)
 	inline function pushed():Int
@@ -389,13 +451,14 @@ class Emit implements hxmc.Target.Emitter {
 			case MOV:
 				if (isX(i.d) && isX(i.s1)) a.movsdRR(i.d, i.s1) else if (isX(i.d)) a.movqXR(i.d, i.s1) else if (isX(i.s1)) a.movqRX(i.d, i.s1) else if (i.flag)
 					a.movsxdR(i.d, i.s1)
+				else if (i.imm2 == 8) a.movzx8R(i.d, i.s1) else if (i.imm2 == 16) a.movzx16R(i.d, i.s1) else if (i.imm2 == 9) a.movzxHighR(i.d, i.s1)
 				else if (i.d != i.s1 || i.size == 4 && i.imm2 == 1) a.movRR(i.size == 4 ? 4 : 8, i.d, i.s1);
 			case MOVI:
 				if (i.isym != null) a.movImm32(i.d, i.imm) else if (i.flag && i.imm == 0 && (i.size == 4 || i.imm2 == 0)) a.movImm32(i.d, 0) else if (i.size == 4) a.movRI(4, i.d, i.imm) else a.movRI64(i.d, i.imm, i.imm2);
 			case MOVF:
 				if (i.f == 0 && 1 / i.f > 0) a.xorpd(i.d, i.d) else a.movsdRM(i.d, Mem.rip(floatConst(i.f)));
 			case LEA:
-				a.lea(8, i.d, mem(i));
+				a.lea(i.imm2 == 4 ? 4 : 8, i.d, mem(i));
 			case LOAD:
 				var m = mem(i);
 				// (an xmm register: a double, a vector, or a vector's low 8 or 4 bytes, the rest zeroed)
@@ -437,7 +500,8 @@ class Emit implements hxmc.Target.Emitter {
 			case CMP:
 				a.aluRR(Asm.CMP, i.size, i.s1, i.s2);
 			case CMPI:
-				a.aluRI(Asm.CMP, i.size, i.s1, i.imm);
+				// (with 0: test r, r, the same flags, a byte shorter)
+				if (i.imm == 0 && i.isym == null) a.testRR(i.size, i.s1, i.s1) else a.aluRI(Asm.CMP, i.size, i.s1, i.imm);
 			case CMPM:
 				a.aluRM(Asm.CMP, i.size, i.s1, mem(i));
 			case CMPMI:
@@ -459,6 +523,8 @@ class Emit implements hxmc.Target.Emitter {
 				a.sdRR(i.cond, i.d, i.s1);
 			case FOPK:
 				a.sdRM(i.cond, i.d, Mem.rip(floatConst(i.f)));
+			case FOPM:
+				a.sdRM(i.cond, i.d, mem(i));
 			case FSQRT:
 				a.sdRR(0x51, i.d, i.s1);
 			case FMASK:
@@ -477,8 +543,9 @@ class Emit implements hxmc.Target.Emitter {
 				if (i.sym != null) a.callSym(obj.sym(i.sym)) else a.callR(i.s1);
 			case RET:
 				// the first return's epilogue is shared: later ones jump to it
-				// when it is longer than the jump
-				if (epiLabel >= 0) a.jmp(epiLabel) else {
+				// when it is longer than the jump, those of slow paths only when
+				// returns are copied (LFunc.duplicateReturns)
+				if (epiLabel >= 0 && coldBlock) a.jmp(epiLabel) else {
 					var at = text.buf.len;
 					var l = a.newLabel();
 					a.bind(l);

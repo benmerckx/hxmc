@@ -133,6 +133,8 @@ class MirBuild extends MirWriter {
 
 	// the continuations of operations (OInfo.cont), by block id
 	var conts = new Map<Int, OInfo>();
+	// the string literals' addresses made (strEq: not null, of a known length)
+	var strLits = new Map<Int, String>();
 
 	// a reference a cold site's slow path reads back gets a phi in its
 	// continuation, which keeps the index of that reference (MIns.imm, from
@@ -1193,7 +1195,10 @@ class MirBuild extends MirWriter {
 		return switch e {
 			case EInt(v): iconst(v);
 			case EF64(v): fconst(v);
-			case EStr(s): symAddr(p.strSym(s), 8);
+			case EStr(s):
+				var v = symAddr(p.strSym(s), 8);
+				strLits.set(v, s);
+				v;
 			case ENull(_): lconst(0, 0);
 			case ELocal(l): readLocal(l);
 			case EGlobal(g, _) if (p.p.globals[g].bss != null):
@@ -2477,18 +2482,22 @@ class MirBuild extends MirWriter {
 	function strEq(a:Int, b:Int):Int {
 		var r = newVar(I32);
 		writeVar(r, cur, iconst(1));
-		var ne = newBlock(), c2 = newBlock(), c3 = newBlock(), slow = newBlock(), join = newBlock();
+		var ne = newBlock(), slow = newBlock(), join = newBlock();
 		br(cmp(CEq, a, b), join, ne);
 		seal(ne);
 		cur = ne;
 		writeVar(r, cur, iconst(0));
-		br(cmp(CEq, a, lconst(0, 0)), join, c2);
-		seal(c2);
-		cur = c2;
-		br(cmp(CEq, b, lconst(0, 0)), join, c3);
-		seal(c3);
-		cur = c3;
-		br(cmp(CEq, strLen(a), strLen(b)), slow, join);
+		// (a literal is not null, and its length is known)
+		for (x in [a, b])
+			if (!strLits.exists(x)) {
+				var c = newBlock();
+				br(cmp(CEq, x, lconst(0, 0)), join, c);
+				seal(c);
+				cur = c;
+			}
+		inline function len(x:Int):Int
+			return strLits.exists(x) ? iconst(strLits.get(x).length) : strLen(x);
+		br(cmp(CEq, len(a), len(b)), slow, join);
 		seal(slow);
 		cur = slow;
 		writeVar(r, cur, call("hx_str_eq_slow", vector(a, b), I32));

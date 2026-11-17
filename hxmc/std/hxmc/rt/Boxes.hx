@@ -73,13 +73,17 @@ class Boxes {
 	static inline function f2i(f:Float):Int
 		return f > -2147483649.0 && f < 2147483648.0 ? (cast f : Int) : f2iSlow(f);
 
+	// (below 2^63: the low 32 bits of the 64-bit truncation, f % 2^32's,
+	// as fmod takes off a multiple of 2^32 of f's sign, which truncation
+	// towards zero takes off too; fmod beyond)
 	@:hxmc.export("hx_f2i_slow") @:hxmc.kernel static function f2iSlow(f:Float):Int {
 		if (f != f) return 0;
-		if (f >= 2147483648.0 || f <= -2147483649.0) {
-			var l:I64 = cast(f % 4294967296.0);
+		if (f >= -9223372036854775808.0 && f < 9223372036854775808.0) {
+			var l:I64 = cast f;
 			return l.toInt();
 		}
-		return cast f;
+		var l:I64 = cast(f % 4294967296.0);
+		return l.toInt();
 	}
 
 	// (null: T_NONE, 0; a Bool of null false)
