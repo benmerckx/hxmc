@@ -29,6 +29,7 @@ class UnitMain {
 		DefineTest.main();
 		AstTest.main();
 		LexerTest.main();
+		MarkupTest.main();
 		PreprocessorTest.main();
 		GrammarTest.main();
 		TTypeTest.main();
