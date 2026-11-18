@@ -340,6 +340,10 @@ class LambdaInfo {
 	// collector written in Haxe, whose code is otherwise no-GC): never noGc
 	public var collects:Bool = false;
 	public var cSymbol:Null<String>; // @:hxmc.export: the symbol (the runtime's C code calls it)
+	// a @:hxmc.callback's entry (Lower.callback): C finds cSymbol only through
+	// an address live code takes (Callback.addr, a typed binding's callback
+	// parameter: Mem.sym of it), so Reach makes it live there, not a root
+	public var callback:Bool = false;
 	// (Facts) of the runtime's exports: the families hxmc.ir.RuntimeSymbols
 	// lists it for, which MirWriter.call checks; -1: not the runtime's
 	public var rtFamilies:Int = -1;

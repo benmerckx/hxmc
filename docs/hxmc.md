@@ -584,9 +584,12 @@ missing one.
 Haxe's default DCE keeps every field of a user class.
 `ir/Reach.hx` then keeps only what the program can run, a rapid type
 analysis over the IR before anything is compiled. From `main`, the exported
-functions and `@:keep` methods:
+functions (and the other entries C finds by name: Objective-C, COM, JNI)
+and `@:keep` methods:
 
 - a function is live when live code calls it or makes a closure of it;
+- a `@:hxmc.callback` is live when live code takes its address
+  (`Callback.addr`, or passes it to a typed binding);
 - a static initializer is live when live code uses a static it sets;
 - a method is live when live code instantiates its class (or a subclass)
   and either dispatches on its selector or can look its name up.
