@@ -502,12 +502,19 @@ class Opt {
 				var in0 = t0.mark == inOrder && body[t0.tmp], in1 = t1.mark == inOrder && body[t1.tmp];
 				var bb = in0 ? t0 : t1;
 				if (in0 != in1 && bb != h && bb.preds.length == 1 && !bb.handler && !hasPhi(bb)) {
-					var n = 0;
-					for (i in h.ins)
-						if (!i.dead && i.op != Phi && i != ht) {
-							if (!(pure(i.op) || i.op == Const || i.op == ConstF) || i.ty == V128) n = 99;
-							n++;
+					var n = 0, li = h.preds.indexOf(latch);
+					for (i in h.ins) {
+						if (i.dead || i == ht) continue;
+						// (a phi taking from the latch a value of h, a rotation as
+						// hh = g; g = f: h then runs once, before the loop, so
+						// guard's latch would read that value's first round)
+						if (i.op == Phi) {
+							if (vals[i.args[li]].block == h) n = 99;
+							continue;
 						}
+						if (!(pure(i.op) || i.op == Const || i.op == ConstF) || i.ty == V128) n = 99;
+						n++;
+					}
 					if (n <= 8) {
 						guardTo = bb;
 						for (i in bb.ins) {
