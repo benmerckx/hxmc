@@ -878,6 +878,8 @@ has no safe region: a callback it calls must be `@:hxmc.unsafe` (it never
 collects); another one ends the program with a message, as the call's
 caller holds references a collection would not update. An `@:hxmc.unsafe`
 callback may run on any thread, including threads the runtime does not know.
+A callback whose address no live code takes is left out with what only it
+calls ([Reachability](hxmc.md#reachability)).
 
 ### Unsafe code
 

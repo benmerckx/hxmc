@@ -4,12 +4,14 @@ import hxmc.ir.Ir;
 
 // The functions the program can run, from what the lowering made (Lower
 // lowers every method of every class it sees: Haxe's default DCE keeps the
-// fields of user classes, and the method tables reach them all): a rapid
-// type analysis over the IR (docs/hxmc.md, "Reachability"). The roots: main,
-// the exported functions, @:keep methods (Program.roots) and the static
-// initializers that set no static. A function is live when live code calls
-// it directly or makes a closure of it; a static initializer when live code
-// uses a static it sets; a method also when it can be called on an
+// fields of user classes, and the method tables reach them all): a rapid type
+// analysis over the IR (docs/hxmc.md, "Reachability"). The roots: main, the
+// functions C finds by their symbol (@:hxmc.export, the Objective-C, COM and
+// JNI entries), @:keep methods (Program.roots) and the static initializers
+// that set no static. A function is live when live code calls it directly or
+// makes a closure of it, a @:hxmc.callback's entry when live code takes its
+// address (Mem.sym of its symbol: Callback.addr); a static initializer when
+// live code uses a static it sets; a method also when it can be called on an
 // instance: its class or a subclass is instantiated by live code and either
 // live code dispatches on its selector (virtual and interface calls) or its
 // name can reach a lookup that finds methods (structural and Dynamic access,
@@ -80,6 +82,7 @@ class Reach {
 	// named), and what makes them so
 	var named = new Map<ClassInfo, Bool>();
 	var byName = new Map<String, ClassInfo>();
+	var callbacks = new Map<String, FuncInfo>(); // the callbacks' entries by symbol
 	var tySeen = new Map<SigInfo, Bool>();
 	var enumSeen = new Map<EnumInfo, Bool>();
 	// HXMC_REACH_WHY=<function name>: why it is live (what reached it, and so on back to a root;
@@ -145,7 +148,7 @@ class Reach {
 		for (f in p.roots)
 			mark(f);
 		for (f in p.funcs)
-			if (f.cSymbol != null) mark(f);
+			if (f.callback) callbacks.set(f.cSymbol, f) else if (f.cSymbol != null) mark(f);
 		for (c in p.classes)
 			for (name => m in c.methods)
 				if (!live.exists(m)) pending.push({name: name, m: m});
@@ -236,6 +239,7 @@ class Reach {
 				c.unnamed = c != p.classes[0] && !named.exists(c);
 		if (stats)
 			Sys.println('hxmc: reach: ${p.funcs.length} live functions'
+				+ ', ${[for (f in callbacks) if (live.exists(f)) f].length} of ${Lambda.count(callbacks)} callbacks'
 				+ (anyName != null ? ', every method name (a name computed in $anyName)' : ', ${Lambda.count(names)} method names')
 				+ (resolveType ? ', ${Lambda.count(named)} of ${p.classes.length} classes found by name' : ''));
 	}
@@ -644,6 +648,8 @@ class Reach {
 					if (hint != null) shapes.set(hint, true);
 				case ENewAnon(s, _):
 					shapes.set(s, true);
+				case ECallHost("hxmc_unsafe_Mem_sym", [EStr(s)], _):
+					mark(callbacks.get(s));
 				case ECallHost("hx_dyn_get" | "hx_dyn_call_field", args, _):
 					nameArg(f, args[1], true);
 				case ECallHost("hx_dyn_set", args, _):
