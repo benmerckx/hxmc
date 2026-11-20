@@ -60,6 +60,17 @@ class ServerCache {
 	// ... a reason makes it typed from its source (loadDirtyModuleHook); always null in the compiler itself.
 	public static var readerFindModuleHook:Null<(com:CommonContext, mPath:GlobalTypePath) -> Null<ModuleSkipReason>> = null;
 
+	// port: a digest is the hexadecimal MD5 (Digest.to_hex), of the UTF-8 bytes of the string
+	public static function parseString(com:CommonContext, file:String, p:Pos, s:String):ParseResult<Package> {
+		return switch TypeloadParse.parseFileFromString(com, file, p, s) {
+			case ParseSuccess(data, pdi):
+				var pdi = pdi.clone();
+				pdi.pdDigest = haxe.crypto.Md5.make(haxe.io.Bytes.ofString(s)).toHex();
+				ParseSuccess(data, pdi);
+			case result: result;
+		}
+	}
+
 	public static function parseFile(sctx:ServerCompilationContext, com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package> {
 		var cc = CommonCache.getCache(com);
 		var file = rfile.file;
@@ -68,7 +79,7 @@ class ServerCache {
 		var isDisplayFile = DisplayPosition.displayPosition.isInFile(com.partScope.fileKeys.get(ffile));
 		switch [isDisplayFile, sctx.currentStdin] {
 			case [true, stdin] if (stdin != null && (com.fileContents.length > 0 || Common.defined(com, Define.DisplayStdin))):
-				return TypeloadParse.parseFileFromString(com, file, p, stdin);
+				return parseString(com, file, p, stdin);
 			case _:
 				var ftime = Common.fileTime(ffile);
 				var stop = Timer.startTimer(com.timerCtx, ["server", "parser cache"]);
@@ -78,7 +89,7 @@ class ServerCache {
 						if (cfile.cTime != ftime) throw NotFound.raise();
 						ParseSuccess(({pack: cfile.cPackage, declarations: cfile.cDecls} : Package), cfile.cPdi);
 					} catch (_:NotFound) {
-						var parseResult = TypeloadParse.parseFile(com, rfile, p);
+						var parseResult = parseString(com, file, p, TypeloadParse.readFile(com, rfile, p));
 						var info:String, isUnusual:Bool;
 						switch parseResult {
 							case ParseError(_, _, _):
@@ -321,8 +332,16 @@ class ServerCache {
 				}}
 			function checkFile() {
 				var file = core.Path.UniqueKey.lazyPath(mExtra.mFile);
-				if (Common.fileTime(file) != mExtra.mTime) {
-					if (hasPolicy(CheckFileContentModification) && !contentChanged(mPath, file)) {
+				var time = Common.fileTime(file);
+				if (time != mExtra.mTime) {
+					var sameDigest = switch mExtra.mDigest {
+						case null: false;
+						case digest: try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false;
+					}
+					if (sameDigest) {
+						ServerMessage.unchangedContent(com, "", file);
+						mExtra.mTime = time;
+					} else if (hasPolicy(CheckFileContentModification) && !contentChanged(mPath, file)) {
 						ServerMessage.unchangedContent(com, "", file);
 					} else {
 						ServerMessage.notCached(com, "", mPath);

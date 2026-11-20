@@ -795,6 +795,7 @@ enum ModuleDepOrigin {
 	public var mDisplay:ModuleDefDisplay;
 	public var mCheckPolicy:Array<ModuleCheckPolicy>;
 	public var mTime:Float;
+	public var mDigest:Null<String>;
 	public var mCacheState:ModuleCacheState;
 	public var mAdded:Int;
 	public var mChecked:Int;
@@ -806,7 +807,7 @@ enum ModuleDepOrigin {
 	public var mFeatures:Map<String, Bool>;
 
 	public inline function new(mFile:core.Path.LazyUniqueKey, mSign:String, mDisplay:ModuleDefDisplay,
-			mCheckPolicy:Array<ModuleCheckPolicy>, mTime:Float, mCacheState:ModuleCacheState, mAdded:Int, mChecked:Int, mProcessed:Int,
+			mCheckPolicy:Array<ModuleCheckPolicy>, mTime:Float, mDigest:Null<String>, mCacheState:ModuleCacheState, mAdded:Int, mChecked:Int, mProcessed:Int,
 			mDeps:IntMap<ModuleDep>, mDisplayDeps:Null<IntMap<ModuleDep>>, mKind:ModuleKind, mCacheBoundObjects:Array<CacheBoundObject>,
 			mFeatures:Map<String, Bool>) {
 		this.mFile = mFile;
@@ -814,6 +815,7 @@ enum ModuleDepOrigin {
 		this.mDisplay = mDisplay;
 		this.mCheckPolicy = mCheckPolicy;
 		this.mTime = mTime;
+		this.mDigest = mDigest;
 		this.mCacheState = mCacheState;
 		this.mAdded = mAdded;
 		this.mChecked = mChecked;
@@ -825,7 +827,7 @@ enum ModuleDepOrigin {
 		this.mFeatures = mFeatures;
 	}
 
-	public inline function clone():ModuleDefExtra return new ModuleDefExtra(mFile, mSign, mDisplay, mCheckPolicy, mTime, mCacheState,
+	public inline function clone():ModuleDefExtra return new ModuleDefExtra(mFile, mSign, mDisplay, mCheckPolicy, mTime, mDigest, mCacheState,
 		mAdded, mChecked, mProcessed, mDeps, mDisplayDeps, mKind, mCacheBoundObjects, mFeatures);
 }
 

@@ -402,7 +402,8 @@ class ParserEntry {
 				pdConditions: conds.getConditions(),
 				pdWasDisplayFile: ctx.config.inDisplayFile,
 				pdHadResume: ctx.hadResume,
-				pdDelayedSyntaxCompletion: ctx.delayedSyntaxCompletion
+				pdDelayedSyntaxCompletion: ctx.delayedSyntaxCompletion,
+				pdDigest: null
 			};
 			return ctx.config.inDisplayFile
 				|| errors.length == 0 ? ParseSuccess(data, display) : ParseError(data, errors[0], errors.slice(1));
