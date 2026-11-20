@@ -526,8 +526,14 @@ class Lexer {
 		return i;
 	}
 
+	// port: where the positions start (Sedlexing.set_position's pos_cnum)
+	var offset = 0;
+
+	// port: Sedlexing.set_position; only pos_cnum is read
+	public function setPosition(cnum:Int):Void offset = cnum;
+
 	// port: the position (code point offset) of the UTF-16 index `i`.
-	inline function cp(i:Int):Int return pairs == null ? i : cpPairs(i);
+	inline function cp(i:Int):Int return offset + (pairs == null ? i : cpPairs(i));
 
 	function cpPairs(i:Int):Int {
 		var lo = 0, hi = pairs.length;
