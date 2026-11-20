@@ -410,6 +410,60 @@ class Ssl {
 	@:hxmc.unsafe(gc) public static function pkParsePublicKeyfile(ctx:Dynamic, path:String):Int
 		return Arena.scopedValue(a -> camlRawInt(M.mbedtls_pk_parse_public_keyfile(ptr(ctx), a.cstring(path))));
 
+	// (Neko's ssl primitives, hxmc.neko: mbedtls' own codes, not halved as above;
+	// PEM's length counts the NUL after it, DER's not)
+	@:hxmc.unsafe(gc) public static function pkParse(ctx:Dynamic, key:Bytes, isPublic:Bool, password:Null<String>, pem:Bool):Int {
+		return Arena.scopedValue(a -> {
+			var len:I64 = pem ? key.length + 1 : key.length;
+			if (isPublic) return M.mbedtls_pk_parse_public_key(ptr(ctx), bytesZ(a, key), len);
+			var pwd = a.cstring(password);
+			var pwdlen:I64 = pwd.isNull() ? 0 : (pwd.length() : I64);
+			return M.mbedtls_pk_parse_key(ptr(ctx), bytesZ(a, key), len, pwd, pwdlen);
+		});
+	}
+
+	// ---- Md: digests by mbedtls' names (MD5, SHA1, SHA256, RIPEMD160...)
+
+	// the digest's size, 0 for an unknown name
+	@:hxmc.unsafe(gc) public static function mdSize(alg:String):Int
+		return Arena.scopedValue(a -> {
+			var md = M.mbedtls_md_info_from_string(a.cstring(alg));
+			md.isNull() ? 0 : M.mbedtls_md_get_size(md) & 0xFF;
+		});
+
+	// data's digest into out (mdSize bytes): 0, or mbedtls' error
+	@:hxmc.unsafe(gc) public static function md(alg:String, data:Bytes, out:Bytes):Int
+		return Arena.scopedValue(a -> {
+			var md = M.mbedtls_md_info_from_string(a.cstring(alg));
+			md.isNull() ? -1 : M.mbedtls_md(md, bytes(data), (data.length : I64), bytes(out));
+		});
+
+	// data's signature by the key into out (its size at least MBEDTLS_MPI_MAX_SIZE,
+	// 1024): its length, or mbedtls' error
+	@:hxmc.unsafe(gc) public static function pkSign(ctx:Dynamic, alg:String, data:Bytes, out:Bytes, rng:Dynamic):Int
+		return Arena.scopedValue(a -> {
+			var md = M.mbedtls_md_info_from_string(a.cstring(alg));
+			if (md.isNull()) return -1;
+			var hash = Mem.stack(64);
+			var r = M.mbedtls_md(md, bytes(data), (data.length : I64), hash);
+			if (r != 0) return r;
+			var olen = Mem.stack(8);
+			Mem.setI64(olen, 0, 0);
+			r = M.mbedtls_pk_sign(ptr(ctx), M.mbedtls_md_get_type(md), hash, 0, bytes(out), olen, Mem.sym("mbedtls_ctr_drbg_random"), ptr(rng));
+			return r != 0 ? r : Mem.getI64(olen, 0).toInt();
+		});
+
+	// 0 when sig is data's signature by the key
+	@:hxmc.unsafe(gc) public static function pkVerify(ctx:Dynamic, alg:String, data:Bytes, sig:Bytes):Int
+		return Arena.scopedValue(a -> {
+			var md = M.mbedtls_md_info_from_string(a.cstring(alg));
+			if (md.isNull()) return -1;
+			var hash = Mem.stack(64);
+			var r = M.mbedtls_md(md, bytes(data), (data.length : I64), hash);
+			if (r != 0) return r;
+			return M.mbedtls_pk_verify(ptr(ctx), M.mbedtls_md_get_type(md), hash, 0, bytes(sig), (sig.length : I64));
+		});
+
 	// ---- Ssl: the context and its BIO state (hx_ssl)
 
 	@:hxmc.unsafe(gc) public static function sslInit():Dynamic {
@@ -484,6 +538,10 @@ class Ssl {
 
 	@:hxmc.unsafe(gc) public static function sslSetHostname(ssl:Dynamic, hostname:String):Int
 		return Arena.scopedValue(a -> M.mbedtls_ssl_set_hostname(ptr(ssl), a.cstring(hostname)));
+
+	// the peer's verification flags, 0: verified, -1: not available (no handshake)
+	@:hxmc.unsafe(gc) public static function sslGetVerifyResult(ssl:Dynamic):Int
+		return M.mbedtls_ssl_get_verify_result(ptr(ssl));
 
 	@:hxmc.unsafe(gc) public static function sslSetup(ssl:Dynamic, conf:Dynamic):Int {
 		setRef(ssl, SSL_REF_CONF, conf);
@@ -562,6 +620,13 @@ class Ssl {
 	static function mbedtls_ssl_set_bio(ssl:Ptr, ctx:Ptr, send:Ptr, recv:Ptr, recvTimeout:Ptr):Void;
 	static function mbedtls_ssl_set_hostname(ssl:Ptr, host:CString):Int;
 	static function mbedtls_ssl_setup(ssl:Ptr, conf:Ptr):Int;
+	static function mbedtls_ssl_get_verify_result(ssl:Ptr):Int;
+	static function mbedtls_md_info_from_string(name:CString):Ptr;
+	static function mbedtls_md_get_size(md:Ptr):Int;
+	static function mbedtls_md_get_type(md:Ptr):Int;
+	static function mbedtls_md(md:Ptr, input:Ptr, ilen:I64, output:Ptr):Int;
+	static function mbedtls_pk_sign(pk:Ptr, mdAlg:Int, hash:Ptr, hashLen:I64, sig:Ptr, sigLen:Ptr, fRng:Ptr, pRng:Ptr):Int;
+	static function mbedtls_pk_verify(pk:Ptr, mdAlg:Int, hash:Ptr, hashLen:I64, sig:Ptr, sigLen:I64):Int;
 }
 
 @:hxmc.c private extern class MBlocking {

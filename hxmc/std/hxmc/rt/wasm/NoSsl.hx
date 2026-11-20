@@ -34,6 +34,12 @@ class NoSsl {
 	public static function pkParseKeyfile(pk:Dynamic, path:String, password:Null<String>, rng:Dynamic):Int { noSsl(); return 0; }
 	public static function pkParsePublicKey(pk:Dynamic, key:haxe.io.Bytes):Int { noSsl(); return 0; }
 	public static function pkParsePublicKeyfile(pk:Dynamic, path:String):Int { noSsl(); return 0; }
+	public static function pkParse(pk:Dynamic, key:haxe.io.Bytes, isPublic:Bool, password:Null<String>, pem:Bool):Int { noSsl(); return 0; }
+	public static function mdSize(alg:String):Int { noSsl(); return 0; }
+	public static function md(alg:String, data:haxe.io.Bytes, out:haxe.io.Bytes):Int { noSsl(); return 0; }
+	public static function pkSign(pk:Dynamic, alg:String, data:haxe.io.Bytes, out:haxe.io.Bytes, rng:Dynamic):Int { noSsl(); return 0; }
+	public static function pkVerify(pk:Dynamic, alg:String, data:haxe.io.Bytes, sig:haxe.io.Bytes):Int { noSsl(); return 0; }
+	public static function sslGetVerifyResult(ssl:Dynamic):Int { noSsl(); return 0; }
 	public static function sslInit():Dynamic { noSsl(); return null; }
 	public static function sslGetPeerCert(ssl:Dynamic):Dynamic { noSsl(); return null; }
 	public static function sslHandshake(ssl:Dynamic):Int { noSsl(); return 0; }
