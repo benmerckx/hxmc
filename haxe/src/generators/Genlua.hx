@@ -583,7 +583,7 @@ class Genlua {
 			case [TIdent("__lua_length__"), [e]]:
 				spr(ctx, "#");
 				genValue(ctx, e);
-			case [TField(_, FStatic({clPath: {pack: ["_G"], name: "table"}}, {cfName: "create"})), el] | [TIdent("__lua_table__"), el]:
+			case [TField(_, FStatic({clPath: {pack: ["_G"], name: "table"}}, {cfName: "create_literal"})), el] | [TIdent("__lua_table__"), el]:
 				var count = 0;
 				spr(ctx, "({");
 				for (e in el) {
@@ -2394,7 +2394,10 @@ class Genlua {
 		println(ctx, "local _hx_is_array, _hx_tab_array, _hx_print_class, _hx_print_enum, _hx_tostring, _hx_field_arr");
 
 		/* base table-to-array helpers and metatables */
-		if (ctx.luaJit) printFile(findFile("lua/_lua/_hx_tab_array_jit.lua")) else printFile(findFile("lua/_lua/_hx_tab_array.lua"));
+		printFile(findFile("lua/_lua/_hx_tab_array.lua"));
+
+		/* table.new polyfill for LuaJit 2.0 or Lua < 5.5 */
+		if (ctx.luaVer < 5.5) printFile(findFile("lua/_lua/_hx_table_new.lua"));
 
 		/* base lua "toString" functionality for haxe objects*/
 		printFile(findFile("lua/_lua/_hx_tostring.lua"));
