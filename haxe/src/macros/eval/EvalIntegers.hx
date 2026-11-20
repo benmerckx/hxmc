@@ -193,14 +193,14 @@ class EvalIntegers {
 				var a = decodeU64(v1);
 				var b = decodeU64(v2);
 				var c = Int64.ucompare(a, b);
-				VInt32(c < 0 ? -1 : c > 0 ? 1 : 0);
+				VInt(c < 0 ? -1 : c > 0 ? 1 : 0);
 			})
 		},
 		{
 			name: "toInt",
 			value: vfun1(v -> {
 				var u = decodeU64(v);
-				VInt32(u.low);
+				VInt(u.low);
 			})
 		},
 		{
@@ -385,7 +385,7 @@ class EvalIntegers {
 				var a = decodeI64(v1);
 				var b = decodeI64(v2);
 				var c = Int64.compare(a, b);
-				VInt32(c < 0 ? -1 : c > 0 ? 1 : 0);
+				VInt(c < 0 ? -1 : c > 0 ? 1 : 0);
 			})
 		},
 		{
@@ -401,12 +401,12 @@ class EvalIntegers {
 			name: "toInt",
 			value: vfun1(v -> {
 				var i = decodeI64(v);
-				VInt32(i.low);
+				VInt(i.low);
 			})
 		},
 		{
 			name: "toInt32",
-			value: vfun1(v -> VInt32(decodeI64(v).low))
+			value: vfun1(v -> VInt(decodeI64(v).low))
 		},
 		{
 			name: "toUInt64",

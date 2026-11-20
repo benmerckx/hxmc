@@ -118,7 +118,7 @@ class EvalEmitter {
 
 	public static function asInt(p:Pos, v:Value):Int {
 		return switch v {
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): Std.int(f);
 			case v: unexpectedValueP(v, "int", p);
 		}
@@ -137,7 +137,7 @@ class EvalEmitter {
 
 	public static function decodeIntP(v:Value, p:Pos):Int {
 		return switch v {
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): Std.int(f);
 			case _: unexpectedValueP(v, "int", p);
 		}
@@ -351,7 +351,7 @@ class EvalEmitter {
 	public static function emitIntSwitchMap(exec:Emitter, cases:GlobalsIntMap<Emitter>, execDef:Emitter, p:Pos):Emitter {
 		return function(env:Env):Value {
 			return switch exec(env) {
-				case VInt32(i):
+				case VInt(i):
 					// port: IntMap.find raising Not_found: emitters are never null
 					var f = cases.findOpt(i);
 					if (f == null) execDef(env) else f(env);
@@ -380,7 +380,7 @@ class EvalEmitter {
 	public static function emitIntSwitchArray(shift:Int, exec:Emitter, cases:Vector<Emitter>, execDef:Emitter, p:Pos):Emitter {
 		return function(env:Env):Value {
 			return switch exec(env) {
-				case VInt32(i32):
+				case VInt(i32):
 					var i = i32 + shift;
 					if (i >= cases.length || i < 0) execDef(env) else cases[i](env);
 				case VNull:
@@ -917,7 +917,7 @@ class EvalEmitter {
 
 	public static function doIncr(v:Value, p:Pos):Value {
 		return switch v {
-			case VInt32(i32): EvalValueTools.vint32(i32 + 1);
+			case VInt(i32): EvalValueTools.vint32(i32 + 1);
 			case VInt64(i64): VInt64(i64 + 1);
 			case VFloat(f): VFloat(f + 1.);
 			case v: unexpectedValueP(v, "number", p);
@@ -1124,7 +1124,7 @@ class EvalEmitter {
 			var v2 = exec2(env);
 			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt32(i1), VInt32(i2)]: EvalValueTools.vbool(i1 > i2);
+				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 > i2);
 				case _: EvalValueTools.vbool(EvalMisc.compare(v1, v2) == CSup);
 			}
 		}
@@ -1136,7 +1136,7 @@ class EvalEmitter {
 			var v2 = exec2(env);
 			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt32(i1), VInt32(i2)]: EvalValueTools.vbool(i1 >= i2);
+				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 >= i2);
 				case _: EvalValueTools.vbool(switch EvalMisc.compare(v1, v2) {
 						case CSup | CEq: true;
 						case _: false;
@@ -1151,7 +1151,7 @@ class EvalEmitter {
 			var v2 = exec2(env);
 			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt32(i1), VInt32(i2)]: EvalValueTools.vbool(i1 < i2);
+				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 < i2);
 				case _: EvalValueTools.vbool(EvalMisc.compare(v1, v2) == CInf);
 			}
 		}
@@ -1163,7 +1163,7 @@ class EvalEmitter {
 			var v2 = exec2(env);
 			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt32(i1), VInt32(i2)]: EvalValueTools.vbool(i1 <= i2);
+				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 <= i2);
 				case _: EvalValueTools.vbool(switch EvalMisc.compare(v1, v2) {
 						case CInf | CEq: true;
 						case _: false;
@@ -1255,7 +1255,7 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			return switch exec(env) {
 				case VFloat(f): VFloat(-f);
-				case VInt32(i): EvalValueTools.vint32(-i);
+				case VInt(i): EvalValueTools.vint32(-i);
 				case VInt64(i): VInt64(-i);
 				case _: EvalMisc.throwString("Invalid operation", p);
 			}

@@ -186,7 +186,7 @@ class EvalSsl {
 			{
 				name: "loadDefaults",
 				value: EvalEncode.vfun1(self -> {
-					VInt32(NativeSsl.certLoadDefaults(asX509Crt(self)));
+					VInt(NativeSsl.certLoadDefaults(asX509Crt(self)));
 				})
 			},
 			{
@@ -213,21 +213,21 @@ class EvalSsl {
 				name: "parse",
 				value: EvalEncode.vifun1((self, bytes) -> {
 					var crt = asX509Crt(self);
-					VInt32(NativeSsl.x509CrtParse(crt, EvalDecode.decodeBytes(bytes)));
+					VInt(NativeSsl.x509CrtParse(crt, EvalDecode.decodeBytes(bytes)));
 				})
 			},
 			{
 				name: "parse_file",
 				value: EvalEncode.vifun1((self, path) -> {
 					var crt = asX509Crt(self);
-					VInt32(NativeSsl.x509CrtParseFile(crt, EvalDecode.decodeString(path)));
+					VInt(NativeSsl.x509CrtParseFile(crt, EvalDecode.decodeString(path)));
 				})
 			},
 			{
 				name: "parse_path",
 				value: EvalEncode.vifun1((self, path) -> {
 					var crt = asX509Crt(self);
-					VInt32(NativeSsl.x509CrtParsePath(crt, EvalDecode.decodeString(path)));
+					VInt(NativeSsl.x509CrtParsePath(crt, EvalDecode.decodeString(path)));
 				})
 			},
 		]);
@@ -255,7 +255,7 @@ class EvalSsl {
 					var endpoint = EvalDecode.decodeInt(endpoint);
 					var transport = EvalDecode.decodeInt(transport);
 					var preset = EvalDecode.decodeInt(preset);
-					VInt32(NativeSsl.configDefaults(conf, endpoint, transport, preset));
+					VInt(NativeSsl.configDefaults(conf, endpoint, transport, preset));
 				})
 			},
 			{
@@ -274,7 +274,7 @@ class EvalSsl {
 					var ctr = asCtrDrbg(self);
 					var output = EvalDecode.decodeBytes(output);
 					var outputLen = EvalDecode.decodeInt(outputLen);
-					VInt32(NativeSsl.ctrDrbgRandom(ctr, output, outputLen));
+					VInt(NativeSsl.ctrDrbgRandom(ctr, output, outputLen));
 				})
 			},
 			{
@@ -282,7 +282,7 @@ class EvalSsl {
 				value: EvalEncode.vifun2((self, entropy, custom) -> {
 					// port: the custom string is ignored by the bindings (mbedtls_stubs.c)
 					var ctr = asCtrDrbg(self);
-					VInt32(NativeSsl.ctrDrbgSeed(ctr, asEntropy(entropy)));
+					VInt(NativeSsl.ctrDrbgSeed(ctr, asEntropy(entropy)));
 				})
 			},
 		]);
@@ -305,7 +305,7 @@ class EvalSsl {
 					var pk = asPkContext(self);
 					var key = EvalDecode.decodeBytes(key);
 					var password = decodePassword(password);
-					VInt32(NativeSsl.pkParseKey(pk, key, password, asCtrDrbg(rng)));
+					VInt(NativeSsl.pkParseKey(pk, key, password, asCtrDrbg(rng)));
 				})
 			},
 			{
@@ -314,21 +314,21 @@ class EvalSsl {
 					var pk = asPkContext(self);
 					var path = EvalDecode.decodeString(path);
 					var password = decodePassword(password);
-					VInt32(NativeSsl.pkParseKeyfile(pk, path, password, asCtrDrbg(rng)));
+					VInt(NativeSsl.pkParseKeyfile(pk, path, password, asCtrDrbg(rng)));
 				})
 			},
 			{
 				name: "parse_public_key",
 				value: EvalEncode.vifun1((self, key) -> {
 					var pk = asPkContext(self);
-					VInt32(NativeSsl.pkParsePublicKey(pk, EvalDecode.decodeBytes(key)));
+					VInt(NativeSsl.pkParsePublicKey(pk, EvalDecode.decodeBytes(key)));
 				})
 			},
 			{
 				name: "parse_public_keyfile",
 				value: EvalEncode.vifun1((self, path) -> {
 					var pk = asPkContext(self);
-					VInt32(NativeSsl.pkParsePublicKeyfile(pk, EvalDecode.decodeString(path)));
+					VInt(NativeSsl.pkParsePublicKeyfile(pk, EvalDecode.decodeString(path)));
 				})
 			},
 		]);
@@ -346,7 +346,7 @@ class EvalSsl {
 				name: "handshake",
 				value: EvalEncode.vifun0(self -> {
 					var ssl = asSsl(self);
-					VInt32(checkBio(ssl, NativeSsl.sslHandshake(ssl)));
+					VInt(checkBio(ssl, NativeSsl.sslHandshake(ssl)));
 				})
 			},
 			{
@@ -356,21 +356,21 @@ class EvalSsl {
 					var buf = EvalDecode.decodeBytes(buf);
 					var pos = EvalDecode.decodeInt(pos);
 					var len = EvalDecode.decodeInt(len);
-					VInt32(checkBio(ssl, NativeSsl.sslRead(ssl, buf, pos, len)));
+					VInt(checkBio(ssl, NativeSsl.sslRead(ssl, buf, pos, len)));
 				})
 			},
 			{
 				name: "set_hostname",
 				value: EvalEncode.vifun1((self, hostname) -> {
 					var ssl = asSsl(self);
-					VInt32(NativeSsl.sslSetHostname(ssl, EvalDecode.decodeString(hostname)));
+					VInt(NativeSsl.sslSetHostname(ssl, EvalDecode.decodeString(hostname)));
 				})
 			},
 			{
 				name: "setup",
 				value: EvalEncode.vifun1((self, conf) -> {
 					var ssl = asSsl(self);
-					VInt32(NativeSsl.sslSetup(ssl, asConfig(conf)));
+					VInt(NativeSsl.sslSetup(ssl, asConfig(conf)));
 				})
 			},
 			{
@@ -380,7 +380,7 @@ class EvalSsl {
 					var buf = EvalDecode.decodeBytes(buf);
 					var pos = EvalDecode.decodeInt(pos);
 					var len = EvalDecode.decodeInt(len);
-					VInt32(checkBio(ssl, NativeSsl.sslWrite(ssl, buf, pos, len)));
+					VInt(checkBio(ssl, NativeSsl.sslWrite(ssl, buf, pos, len)));
 				})
 			},
 		]);

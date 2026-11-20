@@ -102,7 +102,7 @@ class EvalDebugSocket {
 				case VNull: "null";
 				case VTrue: "true";
 				case VFalse: "false";
-				case VInt32(i): Std.string(i);
+				case VInt(i): Std.string(i);
 				case VInt64(i): haxe.Int64.toStr(i);
 				case VUInt64(u): EvalIntegers.uint64ToString(u);
 				case VFloat(f): stringOfFloat(f);
@@ -139,7 +139,7 @@ class EvalDebugSocket {
 					return jv("Bool", "true", 0);
 				case VFalse:
 					return jv("Bool", "false", 0);
-				case VInt32(i):
+				case VInt(i):
 					return jv("Int", Std.string(i), 0);
 				case VInt64(i):
 					return jv("Int64", haxe.Int64.toStr(i), 0);
@@ -344,7 +344,7 @@ class EvalDebugSocket {
 	public static function outputInnerVars(v:Value, env:Env):JsonValue {
 		function loop(v:Value):Array<{n:String, v:Value}> {
 			switch v {
-				case VNull | VTrue | VFalse | VInt32(_) | VInt64(_) | VUInt64(_) | VFloat(_) | VFunction(_) | VFieldClosure(_) | VNativeString(_) |
+				case VNull | VTrue | VFalse | VInt(_) | VInt64(_) | VUInt64(_) | VFloat(_) | VFunction(_) | VFieldClosure(_) | VNativeString(_) |
 					VHandle(_):
 					return [];
 				case VEnumValue(ve):
@@ -527,7 +527,7 @@ class EvalDebugSocket {
 		}
 		function loop(v:Value):Array<Completion> {
 			switch v {
-				case VNull | VTrue | VFalse | VInt32(_) | VInt64(_) | VUInt64(_) | VFloat(_) | VFunction(_) | VFieldClosure(_) | VNativeString(_) |
+				case VNull | VTrue | VFalse | VInt(_) | VInt64(_) | VUInt64(_) | VFloat(_) | VFunction(_) | VFieldClosure(_) | VNativeString(_) |
 					VHandle(_):
 					return [];
 				case VObject(o):
