@@ -1123,6 +1123,7 @@ class Common {
 			if (field == "*") result = !hasDce(com) || switch found {
 				case TClassDecl(c): hasClassFlag(c, CUsed);
 				case TAbstractDecl(a): Meta.has(Meta.ValueUsed, a.aMeta);
+				case TEnumDecl(e): hasEnumFlag(e, EnUsed);
 				case _: Meta.has(Meta.Used, tInfos(found).mtMeta);
 			};
 			else switch found {

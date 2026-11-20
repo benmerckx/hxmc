@@ -250,11 +250,14 @@ class Dce {
 		}
 	}
 
+	public static function isMaybeUsed(cf:TClassField):Bool
+		return hasClassFieldFlag(cf, CfMaybeUsed) || hasClassFieldFlag(cf, CfStructurallyUsed);
+
 	public static function updateMarkedClassFields(dce:DceData, c:TClass):Void {
 		dce = pushClass(dce, c);
 		// mark all :?used fields as surely :used now
-		for (cf in c.clStatics) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(dce, c, cf, CfrStatic);
-		for (cf in c.clFields) if (hasClassFieldFlag(cf, CfMaybeUsed)) markField(dce, c, cf, CfrMember);
+		for (cf in c.clStatics) if (isMaybeUsed(cf)) markField(dce, c, cf, CfrStatic);
+		for (cf in c.clFields) if (isMaybeUsed(cf)) markField(dce, c, cf, CfrMember);
 		// we always have to keep super classes and implemented interfaces
 		var init = core.TOther.TClassTools.getClInit(c);
 		if (init != null) dce.followExpr(dce, init);
@@ -279,12 +282,10 @@ class Dce {
 		return keys;
 	}
 
-	// port: metadata is replaced, never changed in place: marking runs in parallel and readers
-	// don't lock (upstream conses onto immutable lists).
-	public static function markEnum(dce:DceData, en:TEnum):Void if (!Meta.has(Used, en.eMeta)) {
+	public static function markEnum(dce:DceData, en:TEnum):Void if (!hasEnumFlag(en, EnUsed)) {
 		dce.usedMutex.acquire();
-		if (!Meta.has(Used, en.eMeta)) {
-			en.eMeta = core.ds.VectorTools.cons(mkUsedMeta(en.ePos), en.eMeta);
+		if (!hasEnumFlag(en, EnUsed)) {
+			addEnumFlag(en, EnUsed);
 			dce.usedMutex.release();
 			checkAndAddFeature(dce, "has_enum");
 			checkFeature(dce, Globals.sTypePath(en.ePath) + ".*");
@@ -292,6 +293,8 @@ class Dce {
 		} else dce.usedMutex.release();
 	}
 
+	// port: metadata is replaced, never changed in place: marking runs in parallel and readers
+	// don't lock (upstream conses onto immutable lists).
 	public static function markAbstract(dce:DceData, a:TAbstract):Void if (!Meta.has(Used, a.aMeta)) {
 		dce.usedMutex.acquire();
 		if (!Meta.has(Used, a.aMeta)) {
@@ -821,6 +824,9 @@ class Dce {
 		return [];
 	}
 
+	public static function removeUsageMeta(meta:Metadata):Metadata
+		return core.ds.VectorTools.filter(meta, m -> m.meta != core.MetaList.StrictMeta.Used && m.meta != core.MetaList.StrictMeta.DirectlyUsed);
+
 	public static function collectEntryPoints(dce:DceData, types:Array<ModuleType>):Void {
 		// port: `f :: !delayed` as a push, run from the end
 		var delayed:Array<Void->Void> = [];
@@ -835,6 +841,7 @@ class Dce {
 				var keepClass = keepWholeClass(dce, c) && (!hasClassFlag(c, CExtern) || hasClassFlag(c, CInterface));
 				var isStruct = dce.scom.platform == Hl && Meta.has(Struct, c.clMeta);
 				inline function loop(kind:ClassFieldRefKind, cf:TClassField):Void {
+					removeClassFieldFlag(cf, CfMaybeUsed);
 					var ref = mkClassFieldRef(c, cf, kind, dce.scom.isMacroContext);
 					feature(ref, classFeatures.concat(extractIfFeature(cf.cfMeta)));
 					// Have to delay mark_field so that we see all @:ifFeature
@@ -847,12 +854,18 @@ class Dce {
 				if (c.clConstructor != null) loop(CfrConstructor, c.clConstructor);
 				if (c.clInit != null && (keepClass || Meta.has(KeepInit, c.clMeta))) loop(CfrInit, c.clInit);
 			case TEnumDecl(en) if (keepWholeEnum(dce, en)):
-				en.eMeta = Meta.remove(Used, en.eMeta);
+				removeEnumFlag(en, EnUsed);
+				en.eMeta = removeUsageMeta(en.eMeta);
 				delayed.push(function() {
 					var c:TClass = core.ds.Record.copy(nullClass);
 					c.clModule = en.eModule;
 					markEnum(pushClass(dce, c), en);
 				});
+			case TEnumDecl(en):
+				removeEnumFlag(en, EnUsed);
+				en.eMeta = removeUsageMeta(en.eMeta);
+			case TAbstractDecl(a):
+				a.aMeta = core.ds.VectorTools.filter(removeUsageMeta(a.aMeta), m -> m.meta != core.MetaList.StrictMeta.ValueUsed);
 			case _:
 		}
 		var i = delayed.length;
@@ -942,7 +955,7 @@ class Dce {
 					addClassFlag(c, CExtern);
 					acc.push(mt);
 				} else if (dce.debug) Sys.println("[DCE] Removed class " + Globals.sTypePath(c.clPath));
-			case TEnumDecl(en) if (Meta.has(Used, en.eMeta) || hasEnumFlag(en, EnExtern) || keepWholeEnum(dce, en)):
+			case TEnumDecl(en) if (hasEnumFlag(en, EnUsed) || hasEnumFlag(en, EnExtern) || keepWholeEnum(dce, en)):
 				acc.push(mt);
 			case TEnumDecl(en):
 				if (dce.debug) Sys.println("[DCE] Removed enum " + Globals.sTypePath(en.ePath));
