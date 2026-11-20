@@ -264,10 +264,10 @@ class Filters {
 					case "no": DceNo;
 					case _: throw "Unknown DCE mode " + mode;
 				};
-				var stdPaths = com.classPaths.getStdPaths();
+				var isStdFile = function(file) return core.SourceScope.matcher(com.classPaths, file)(core.SourceScope.SourceScopeKind.Std);
 				var macros = com.getMacros();
 				var mscom = macros == null ? null : SafeCom.ofCom(macros);
-				return Dce.run(pool, scom, mscom, com.main.mainExpr, mode, stdPaths, allTypes);
+				return Dce.run(pool, scom, mscom, com.main.mainExpr, mode, isStdFile, allTypes);
 			});
 			var allTypesArray = allTypes.copy();
 			Common.enterStage(com, CDceDone);

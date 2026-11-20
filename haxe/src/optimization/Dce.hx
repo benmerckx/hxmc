@@ -43,7 +43,7 @@ enum DceMode {
 	public var scom:SafeContext;
 	public var mscom:Null<SafeContext>;
 	public var full:Bool;
-	public var stdDirs:Array<String>;
+	public var isStdFile:String->Bool;
 	public var debug:Bool;
 	public var followExpr:DceData->TExpr->Void;
 	public var curclass:TClass;
@@ -61,7 +61,7 @@ enum DceMode {
 	// port: markT's type stack, reused across calls; a nested markT only scans its own part.
 	public var typeStack:Array<T> = [];
 
-	public inline function new(scom:SafeContext, mscom:Null<SafeContext>, full:Bool, stdDirs:Array<String>, debug:Bool,
+	public inline function new(scom:SafeContext, mscom:Null<SafeContext>, full:Bool, isStdFile:String->Bool, debug:Bool,
 			followExpr:DceData->TExpr->Void, curclass:TClass, addedFields:Array<{
 			cls:TClass,
 			field:TClassField,
@@ -73,7 +73,7 @@ enum DceMode {
 		this.scom = scom;
 		this.mscom = mscom;
 		this.full = full;
-		this.stdDirs = stdDirs;
+		this.isStdFile = isStdFile;
 		this.debug = debug;
 		this.followExpr = followExpr;
 		this.curclass = curclass;
@@ -88,7 +88,7 @@ enum DceMode {
 		this.addFeatureManager = addFeatureManager;
 	}
 
-	public inline function clone():DceData return new DceData(scom, mscom, full, stdDirs, debug, followExpr, curclass, addedFields,
+	public inline function clone():DceData return new DceData(scom, mscom, full, isStdFile, debug, followExpr, curclass, addedFields,
 		markedFields, features, checkedFeatures, mergeMutex, fieldMarkerMutex, usedMutex, featureMutex, addFeatureManager);
 }
 
@@ -127,14 +127,12 @@ class Dce {
 		return hasClassFlag(sup, CExtern) && field.cfExpr == null || overridesExternField(field, sup);
 	}
 
-	public static function isStdFile(dce:DceData, file:String):Bool return exists(dir -> StringTools.startsWith(file, dir), dce.stdDirs);
-
 	public static var keepMetas:Array<core.MetaList.StrictMeta> = [Keep, Expose];
 
 	// check if a class is kept entirely
 	public static function keepWholeClass(dce:DceData,
 			c:TClass):Bool return Meta.hasOneOf(keepMetas, c.clMeta)
-			|| !(dce.full || isStdFile(dce, core.Path.UniqueKey.lazyPath(c.clModule.mExtra.mFile)) || Meta.has(Dce, c.clMeta))
+			|| !(dce.full || dce.isStdFile(core.Path.UniqueKey.lazyPath(c.clModule.mExtra.mFile)) || Meta.has(Dce, c.clMeta))
 			|| superForcesKeep(c)
 			|| switch c.clPath {
 				case {pack: [], name: "Math" | "Array"} if (dce.scom.platform == Js): false;
@@ -146,7 +144,7 @@ class Dce {
 
 	public static function keepWholeEnum(dce:DceData,
 			en:TEnum):Bool return Meta.hasOneOf(keepMetas, en.eMeta)
-			|| !(dce.full || isStdFile(dce, core.Path.UniqueKey.lazyPath(en.eModule.mExtra.mFile)) || Meta.has(Dce, en.eMeta));
+			|| !(dce.full || dce.isStdFile(core.Path.UniqueKey.lazyPath(en.eModule.mExtra.mFile)) || Meta.has(Dce, en.eMeta));
 
 	// check if a field carries @:dce, forcing it to be DCE-eligible even if its class is kept
 	public static function fieldForcesDce(cf:TClassField):Bool return Meta.has(Dce, cf.cfMeta);
@@ -956,13 +954,13 @@ class Dce {
 	}
 
 	public static function run(pool:Null<core.ds.TaskPool>, scom:SafeContext, mscom:Null<SafeContext>, main:Null<TExpr>, mode:DceMode,
-			stdPaths:Array<core.ClassPath.IClassPath>, types:Array<ModuleType>):Array<ModuleType> {
+			isStdFile:String->Bool, types:Array<ModuleType>):Array<ModuleType> {
 		var full = mode == DceFull;
 		var dce:DceData = {
 			scom: scom,
 			mscom: mscom,
 			full: full,
-			stdDirs: full ? [] : stdPaths.map(path -> core.Path.getFullPath(path.path)),
+			isStdFile: isStdFile,
 			debug: core.Define.defined(scom.defines, core.Define.DceDebug),
 			addedFields: [],
 			followExpr: expr,
