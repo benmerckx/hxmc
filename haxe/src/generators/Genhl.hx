@@ -114,6 +114,9 @@ class MethodContext {
 	public var massign:Array<Lassign> = []; // port: in chronological order (upstream keeps it reversed)
 	/* lookup into massign by variable id, so we can set the scope end when the block closes */
 	public final mvarAssigns:IntMap<Array<Lassign>> = new IntMap();
+	public var mlocal:String = "";
+	public var mlnames:Array<{e:TExpr, n:String}> = []; // port: (texpr * string) list
+	public var mlcount:StringMap<Int> = new StringMap();
 
 	public function new(mid:Int, mret:Ttype, mcaptured:MethodCapture, mhasthis:Bool) {
 		this.mid = mid;
@@ -163,6 +166,7 @@ class HlContext {
 	public var cfunctions:Array<Fundecl> = [];
 	public var cconstants:Lookup<{g:Int, fields:Vector<Int>}> = new Lookup();
 	public var hlVer:String;
+	public var hl2:Bool;
 	public var optimize:Bool;
 	public var wNullCompare:Bool;
 	public var overrides:StringMap<Bool> = new StringMap();
@@ -304,7 +308,7 @@ class Genhl {
 		var key = HFun(tl, HVoid);
 		var ct = ctx.cachedTuples.get(key);
 		if (ct != null) return ct;
-		var ct = HEnum(new EnumProto("", 0, null, vector({name: "", nid: 0, args: Vector.fromArrayCopy(tl)})));
+		var ct = HEnum(new EnumProto("", 0, null, vector({name: "", nid: 0, args: Vector.fromArrayCopy(tl)}), vector()));
 		ctx.cachedTuples.set(key, ct);
 		return ct;
 	}
@@ -329,6 +333,42 @@ class Genhl {
 
 	static function methodContext(id:Int, t:Ttype, captured:MethodCapture, hasthis:Bool):MethodContext
 		return new MethodContext(id, t, captured, hasthis);
+
+	static function localFunctionNames(e:TExpr):Array<{e:TExpr, n:String}> {
+		var names:Array<{e:TExpr, n:String}> = [];
+		function strip(e:TExpr):TExpr return switch e.eexpr {
+			case TCast(e, null) | TMeta(_, e) | TParenthesis(e): strip(e);
+			case _: e;
+		}
+		function nameOf(e:TExpr):String return switch strip(e).eexpr {
+			case TLocal(v): v.vName;
+			case TField(_, fa): TFunctions.fieldName(fa);
+			case TTypeExpr(t): tPath(t).name;
+			case TCall(e, _) | TArray(e, _): nameOf(e);
+			case _: "";
+		}
+		function add(e:TExpr, n:String) {
+			var e = strip(e);
+			switch e.eexpr {
+				case TFunction(_) if (!core.ds.ArrayTools.exists(names, x -> x.e == e)): names.push({e: e, n: n});
+				case _:
+			}
+		}
+		function loop(e:TExpr) {
+			switch e.eexpr {
+				case TVar(v, e) if (e != null): add(e, v.vName);
+				case TBinop(OpAssign | OpAssignOp(_), e1, e2): add(e2, nameOf(e1));
+				case TCall(c, el): for (e in el) add(e, nameOf(c));
+				case TNew(c, _, el): for (e in el) add(e, c.clPath.name);
+				case TObjectDecl(fl): for (f in fl) add(f.expr, f.key.name);
+				case TReturn(e) if (e != null): add(e, "return");
+				case _:
+			}
+			core.Texpr.iter(loop, e);
+		}
+		loop(e);
+		return names;
+	}
 
 	static function fieldName(c:TClass, f:TClassField):String return sTypePath(c.clPath) + ":" + f.cfName;
 
@@ -858,7 +898,7 @@ class Genhl {
 		var cached = ctx.cachedTypes.get(keyPath);
 		if (cached != null) return cached;
 		var ename = sTypePath(e.ePath);
-		var et = new EnumProto(ename, allocString(ctx, ename), null, vector());
+		var et = new EnumProto(ename, allocString(ctx, ename), null, vector(), vector());
 		var t = HEnum(et);
 		if (tref != null) tref.v = t;
 		ctx.cachedTypes.set(keyPath, t);
@@ -870,6 +910,14 @@ class Genhl {
 				case _: vector();
 			}
 			({name: f.efName, nid: allocString(ctx, f.efName), args: args} : EField);
+		});
+		if (ctx.hl2) et.eparams = e.eConstrs.keyArray().mapToVector(n -> {
+			var f = e.eConstrs.get(n);
+			if (f == null) throw NotFound.raise();
+			(switch f.efType {
+				case TFun(s): s.args.map(a -> allocString(ctx, a.name));
+				case _: vector();
+			} : Vector<Int>);
 		});
 		var ct = enumClass(ctx, e);
 		et.eglobal = allocGlobal(ctx, switch ct {
@@ -920,7 +968,7 @@ class Genhl {
 					op(ctx, OMakeEnum(retReg, ef.efIndex, argRegs));
 					op(ctx, ORet(retReg));
 					var hlf = new Fundecl({fst: "", snd: ""}, eid, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-						makeAssigns(ctx.m.massign), false);
+						makeAssigns(ctx.m.massign), false, -1);
 					ctx.m = old;
 					ctx.definedFuns.set(eid, true);
 					ctx.cfunctions.push(hlf);
@@ -2683,7 +2731,18 @@ class Genhl {
 				}
 			case TFunction(f):
 				var fid = allocFunctionName(ctx, "function#" + ctx.cfids.arr.length);
-				var capt = makeFun(ctx, {fst: "", snd: ""}, fid, f, null, ctx.m.mcaptured);
+				var lname = {
+					var x = core.ds.ArrayTools.find(ctx.m.mlnames, x -> x.e == e);
+					x == null ? "" : x.n;
+				}
+				var lname = if (ctx.m.mlocal == "") lname else ctx.m.mlocal + "." + lname;
+				var rank = {
+					var r = ctx.m.mlcount.get(lname);
+					r == null ? 0 : r;
+				}
+				ctx.m.mlcount.set(lname, rank + 1);
+				var lname = if (rank == 0) lname else lname + "#" + rank;
+				var capt = makeFun(ctx, {fst: "", snd: ""}, fid, f, null, ctx.m.mcaptured, null, lname);
 				var r = allocTmp(ctx, toType(ctx, e.etype));
 				if (capt == ctx.m.mcaptured) op(ctx, OInstanceClosure(r, fid, ctx.m.mcaptreg)) else switch capt.cVars.length {
 					case 0:
@@ -3668,13 +3727,14 @@ class Genhl {
 		op(ctx, OCallClosure(rret, rfun, casts));
 		op(ctx, ORet(castTo(ctx, rret, tret, p)));
 		var f = new Fundecl({fst: "", snd: ""}, fid, HFun([rt].concat(targs), tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-			makeAssigns(ctx.m.massign), false);
+			makeAssigns(ctx.m.massign), false, -1);
 		ctx.m = old;
 		ctx.cfunctions.push(f);
 		return fid;
 	}
 
-	static function makeFun(ctx:HlContext, name:FPath, fidx:Int, f:TFunc, cthis:Null<TClass>, cparent:Null<MethodCapture>, ?genContent:Void->Void):MethodCapture {
+	static function makeFun(ctx:HlContext, name:FPath, fidx:Int, f:TFunc, cthis:Null<TClass>, cparent:Null<MethodCapture>, ?genContent:Void->Void,
+			?lname:String):MethodCapture {
 		var old = ctx.m;
 		var capt = buildCaptureVars(ctx, f);
 		var hasCapturedVars = capt.cVars.length > 0;
@@ -3685,6 +3745,14 @@ class Genhl {
 		}
 
 		ctx.m = methodContext(fidx, toType(ctx, f.tfType), capt, cthis != null);
+		switch lname {
+			case null:
+				if (ctx.hl2) ctx.m.mlnames = localFunctionNames(f.tfExpr);
+			case n:
+				ctx.m.mlocal = n;
+				ctx.m.mlnames = old.mlnames;
+				ctx.m.mlcount = old.mlcount;
+		}
 
 		setCurpos(ctx, f.tfExpr.epos);
 
@@ -3830,7 +3898,7 @@ class Genhl {
 
 		var fargs = (if (tthis == null) [] else [tthis]).concat(if (rcapt == null) [] else [rtype(ctx, rcapt)]).concat(args);
 		var hlf = new Fundecl(name, fidx, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-			makeAssigns(ctx.m.massign, true), genContent == null || !(name.fst == "" && name.snd == ""));
+			makeAssigns(ctx.m.massign, true), genContent == null || !(name.fst == "" && name.snd == ""), if (lname != null && ctx.hl2) allocString(ctx, lname) else -1);
 		ctx.m = old;
 		ctx.definedFuns.set(fidx, true);
 		ctx.cfunctions.push(hlf);
@@ -4561,11 +4629,16 @@ class Genhl {
 						case g: writeIndex(g + 1);
 					}
 					writeIndex(e.efields.length);
-					for (f in e.efields) {
+					for (i in 0...e.efields.length) {
+						var f = e.efields[i];
 						writeIndex(f.nid);
 						if (f.args.length > 0xFF) die("", "genhl.ml");
 						byte(f.args.length);
 						for (t in f.args) writeType(t);
+						if (code.version >= 7) {
+							var names = if (i < e.eparams.length) e.eparams[i] else vector();
+							for (k in 0...f.args.length) writeIndex(if (k < names.length) names[k] + 1 else 0);
+						}
 					}
 				case HNull(t):
 					byte(19);
@@ -4633,6 +4706,7 @@ class Genhl {
 			writeIndex(f.code.length);
 			for (r in f.regs) writeType(r);
 			for (o in f.code) writeOp(o);
+			if (code.version >= 7) writeIndex(f.flocal + 1);
 			if (debug) {
 				writeDebugInfos(f.debug);
 				writeIndex(f.assigns.length);
@@ -4651,6 +4725,21 @@ class Genhl {
 	}
 
 	/* --------------------------------------------------------------------------------------------------------------------- */
+
+	static final headerSize = 4 + 16;
+
+	static function addHeader(code:Code, data:haxe.io.Bytes):haxe.io.Bytes {
+		if (code.version < 7) return data;
+		var len = data.length + headerSize;
+		var header = haxe.io.Bytes.alloc(headerSize);
+		header.setInt32(0, len);
+		header.blit(4, haxe.crypto.Md5.make(data), 0, 16);
+		var b = new haxe.io.BytesBuffer();
+		b.addBytes(data, 0, 4);
+		b.add(header);
+		b.addBytes(data, 4, data.length - 4);
+		return b.getBytes();
+	}
 
 	static function createContext(com:Gctx):HlContext {
 		function getType(name:String):ModuleType {
@@ -4678,6 +4767,7 @@ class Genhl {
 		var ctx = new HlContext();
 		ctx.com = com;
 		ctx.hlVer = hlVer;
+		ctx.hl2 = compareVersion(hlVer, "2.0.0") >= 0;
 		ctx.optimize = !Gctx.rawDefined(com, "hl_no_opt");
 		ctx.wNullCompare = Gctx.rawDefined(com, "hl_w_null_compare");
 		ctx.numDomains = core.ds.TaskPool.recommendedDomainCount();
@@ -4803,7 +4893,7 @@ class Genhl {
 	static function buildCode(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Code {
 		var ep = generateStaticInit(ctx, types, main);
 		var bytes = Vector.fromArrayCopy(ctx.cbytes.arr);
-		return new Code(if (compareVersion(ctx.hlVer, "2.0.0") >= 0) 6 else if (bytes.length == 0) 4 else 5, ep, Vector.fromArrayCopy(ctx.cstrings.arr),
+		return new Code(if (ctx.hl2) 7 else if (bytes.length == 0) 4 else 5, ep, Vector.fromArrayCopy(ctx.cstrings.arr),
 			Vector.fromArrayCopy(ctx.cints.arr), Vector.fromArrayCopy(ctx.cfloats.arr), bytes, Vector.fromArrayCopy(ctx.cglobals.arr),
 			Vector.fromArrayCopy(ctx.cnatives.arr), Vector.fromArrayCopy(ctx.cfunctions), Vector.fromArrayCopy(ctx.cdebugFiles.arr),
 			Vector.fromArrayCopy(ctx.cconstants.arr));
@@ -4915,7 +5005,7 @@ class Genhl {
 		} else {
 			var ch = new haxe.io.BytesBuffer();
 			writeCode(ch, code, !Gctx.rawDefined(com, "hl_no_debug"));
-			var str = ch.getBytes();
+			var str = addHeader(code, ch.getBytes());
 			sys.io.File.saveBytes(com.file, str);
 			prevSign = sign;
 			prevData = str;

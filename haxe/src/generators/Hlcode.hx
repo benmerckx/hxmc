@@ -135,12 +135,14 @@ class EnumProto {
 	public var eid:Int;
 	public var eglobal:Null<Int>;
 	public var efields:Vector<EField>;
+	public var eparams:Vector<Vector<Int>>;
 
-	public function new(ename:String, eid:Int, eglobal:Null<Int>, efields:Vector<EField>) {
+	public function new(ename:String, eid:Int, eglobal:Null<Int>, efields:Vector<EField>, eparams:Vector<Vector<Int>>) {
 		this.ename = ename;
 		this.eid = eid;
 		this.eglobal = eglobal;
 		this.efields = efields;
+		this.eparams = eparams;
 	}
 }
 
@@ -325,9 +327,10 @@ class Fundecl {
 	public var debug:Vector<DebugInfo>;
 	public var assigns:Vector<Assign>;
 	public var needOpt:Bool;
+	public var flocal:Int;
 
 	public function new(fpath:FPath, findex:Int, ftype:Ttype, regs:Vector<Ttype>, code:Vector<Opcode>, debug:Vector<DebugInfo>, assigns:Vector<Assign>,
-			needOpt:Bool) {
+			needOpt:Bool, flocal:Int) {
 		this.fpath = fpath;
 		this.findex = findex;
 		this.ftype = ftype;
@@ -336,11 +339,12 @@ class Fundecl {
 		this.debug = debug;
 		this.assigns = assigns;
 		this.needOpt = needOpt;
+		this.flocal = flocal;
 	}
 
 	// port: `{ f with ... }`
 	public function with(code:Vector<Opcode>, regs:Vector<Ttype>, debug:Vector<DebugInfo>, assigns:Vector<Assign>):Fundecl
-		return new Fundecl(fpath, findex, ftype, regs, code, debug, assigns, needOpt);
+		return new Fundecl(fpath, findex, ftype, regs, code, debug, assigns, needOpt, flocal);
 }
 
 // port: the `(string index * string index * ttype * functable index)` natives.

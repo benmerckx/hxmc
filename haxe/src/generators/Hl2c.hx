@@ -293,7 +293,7 @@ private class OcamlExtern {
 					int(idx);
 				});
 			case HEnum(e):
-				block(tag, 1, t, () -> block(0, 4, e, () -> {
+				block(tag, 1, t, () -> block(0, 5, e, () -> {
 					str(e.ename, e.ename == "" ? emptyEname : e);
 					int(e.eid);
 					if (e.eglobal == null) int(0) else block(0, 1, null, () -> int(e.eglobal));
@@ -302,6 +302,7 @@ private class OcamlExtern {
 						int(f.nid);
 						block(0, f.args.length, f.args, () -> for (a in f.args) ttype(a));
 					}));
+					block(0, e.eparams.length, e.eparams, () -> for (a in e.eparams) intArray(a));
 				}));
 			case HObj(p) | HStruct(p):
 				block(tag, 1, t, () -> classProto(p));
@@ -574,7 +575,7 @@ class Hl2c {
 
 	static final coreTypes:Array<Ttype> = [
 		HVoid, HUI8, HUI16, HI32, HI64, HF32, HF64, HBool, HBytes, HDyn, HFun([], HVoid), HObj(nullProto), HArray(HDyn), HType, HRef(HVoid),
-		HVirtual(new VirtualProto()), HDynObj, HAbstract("", 0, null), HEnum(new EnumProto("", 0, null, vector())), HMethod([], HVoid), HStruct(nullProto)
+		HVirtual(new VirtualProto()), HDynObj, HAbstract("", 0, null), HEnum(new EnumProto("", 0, null, vector(), vector())), HMethod([], HVoid), HStruct(nullProto)
 	];
 
 	// port: ExtString.String.nsplit (an empty string gives [])
