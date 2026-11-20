@@ -898,6 +898,7 @@ class HxbReader {
 			case 13:
 				var e = readExpr();
 				var c = TFunctions.nullClass.clone();
+				c.clPath = {pack: [], name: core.Ast.Ast.exprTypeParamName(e)};
 				c.clKind = KExpr(e);
 				c.clModule = currentModule;
 				TInst(c, vector());
