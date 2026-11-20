@@ -5055,7 +5055,7 @@ class Genhl {
 		var sign = makeContextSign(com);
 		if (sign == prevSign && !dump && !hlCheck) {
 			/* reuse previously generated data */
-			sys.io.File.saveBytes(com.file, prevData);
+			context.Common.writeFileIfChanged(com.file, prevData);
 			return;
 		}
 

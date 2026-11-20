@@ -169,8 +169,9 @@ class Generate {
 	// port: HXB output is emitted by the after-save callback before backend destruction.
 	public static function generate(com:CommonContext, tctx:context.Typecore.Typer, ext:String, actx:compiler.ParsedArg.ArgContext):Void {
 		// check file extension. In case of wrong commandline, we don't want
-		// to accidentaly delete a source file.
-		if (Path.fileExtension(com.file) == ext) deleteFile(com.file);
+		// to accidentaly delete a source file. HL leaves its bytecode alone when it
+		// has not changed (see Genhl.generate), so it needs the previous file.
+		if (Path.fileExtension(com.file) == ext && com.platform != Hl) deleteFile(com.file);
 		if (com.platform == Flash || com.platform == Cpp || com.platform == Hl) for (t in com.types) codegen.FixOverrides.fixOverrides(com,
 			t);
 		switch com.platform {
