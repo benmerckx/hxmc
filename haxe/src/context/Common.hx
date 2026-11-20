@@ -1000,7 +1000,17 @@ class Common {
 
 	// port: Extc.filetime returns zero when stat fails (including absent import.hx).
 	// port: Extc.filetime: full precision (st_mtim, macOS st_mtimespec; GetFileTime's 100 ns units on Windows)
-	public static function fileTime(file:String):Float return try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.;
+	public static function fileTime(file:String):Float {
+		#if (target.name == "hxmc")
+		// port: on POSIX, tv_sec + tv_nsec / 1e9 as Extc computes it: a Date's
+		// milliseconds / 1000 rounds differently in the last digit (server/files)
+		if (!isWindows) {
+			final t = hxmc.NativeSys.statTimes(file);
+			return t == null ? 0. : t[2] + t[3] / 1e9;
+		}
+		#end
+		return try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.;
+	}
 
 	/* Writes [content] to [file] unless the file already has exactly this content. */
 	public static function writeFileIfChanged(file:String, content:haxe.io.Bytes):Void {
