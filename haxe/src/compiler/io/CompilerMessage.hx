@@ -120,7 +120,11 @@ class CompilerMessage {
 		?depth:Int) -> Void return function(w:core.Message.WarningCode, options:Array<Array<core.Message.WarningOption>>, msg:String,
 				p:Pos, ?depth:Int) {
 			if (depth == null) depth = 0;
-			switch Warning.getMode(w, options.concat(com.warningOptions)) {
+			var mode = switch Common.scopedWarningMode(com, w, p) {
+				case null: Warning.getMode(w, options.concat(com.warningOptions));
+				case mode: mode;
+			}
+			switch mode {
 				case WMEnable:
 					var obj = WarningList.warningObj(w);
 					if (!obj.wGeneric) msg = "(" + obj.wName + ") " + msg;

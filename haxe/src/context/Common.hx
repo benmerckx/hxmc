@@ -436,6 +436,7 @@ typedef CommonContext = {
 	var info:(msg:String, p:Pos, ?depth:Int) -> Void;
 	var warning:(w:WarningCode, options:Array<Array<WarningOption>>, msg:String, p:Pos, ?depth:Int) -> Void;
 	var warningOptions:Array<Array<WarningOption>>;
+	var scopedWarningOptions:Array<core.Warning.ScopedWarningOption>;
 	var getMessages:Void->Array<CompilerMessage>;
 	var filterMessages:(CompilerMessage->Bool)->Void;
 	var runCommand:String->Int;
@@ -533,6 +534,13 @@ class Common {
 		if (com.display.dmsFullTyping) m.mExtra.mCacheBoundObjects.push(Message(Message.makeMessage(com.isMacroContext, msg, p, 0,
 			MKWarning(w, options))));
 		com.warning(w, options, msg, p);
+	}
+
+	public static function scopedWarningMode(com:CommonContext, w:WarningCode, p:Pos):Null<WarningMode> {
+		var scoped = com.scopedWarningOptions;
+		if (scoped.length == 0) return null;
+		var inScope = p.pfile == "?" ? function(_) return false : core.SourceScope.matcher(com.classPaths, p.pfile);
+		return core.Warning.matchesScoped(w, scoped, inScope);
 	}
 
 	// Defines
@@ -862,6 +870,10 @@ class Common {
 					woWarning: w,
 					woMode: WMDisable
 				} : core.Message.WarningOption))
+			],
+			scopedWarningOptions: [
+				{opt: {woWarning: WDeprecated, woMode: WMDisable}, scope: core.SourceScope.SourceScopeKind.Lib(null)},
+				{opt: {woWarning: WDeprecated, woMode: WMDisable}, scope: core.SourceScope.SourceScopeKind.Std}
 			],
 			error: function(_, _) throw "Uninitialized error handler",
 			errorExt: function(_) throw "Uninitialized error handler",

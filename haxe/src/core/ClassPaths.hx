@@ -77,6 +77,36 @@ class ClassPaths {
 		throw core.ds.NotFound.raise();
 	}
 
+	function locate(file:String):Null<{dir:String, cp:IClassPath}> {
+		var file = core.Path.comparablePath(file);
+		var acc:Null<{dir:String, cp:IClassPath}> = null;
+		for (cp in paths) {
+			var dir = core.Path.addTrailingSlash(core.Path.comparablePath(cp.path));
+			if (StringTools.startsWith(file, dir)) {
+				if (acc == null || acc.dir.length < dir.length) acc = {dir: dir, cp: cp};
+			}
+		}
+		return acc;
+	}
+
+	public function scopeOf(file:String):Null<ClassPathScope> {
+		var located = locate(file);
+		return located == null ? null : located.cp.scope;
+	}
+
+	public function packageOf(file:String):Null<Array<String>> {
+		var located = locate(file);
+		if (located == null) return null;
+		var dir = located.dir;
+		var full = core.Path.getFullPath(file);
+		var rel = full.substr(dir.length, full.length - dir.length);
+		var parts = rel.split("\\").join("/").split("/").filter(function(s) return s != "");
+		if (parts.length == 0) return [];
+		var last = parts.pop();
+		parts.push(try core.OcamlFilename.chopExtension(last) catch (_:core.ds.InvalidArgument) last);
+		return parts;
+	}
+
 	public function iter(callback:IClassPath->Void):Void {
 		for (path in paths) callback(path);
 	}
