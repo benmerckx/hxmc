@@ -272,9 +272,10 @@ class ServerCache {
 			}
 		}
 		function checkModuleShadowing(paths:Array<CachedDirectory>, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
+			var ownFile = core.Path.UniqueKey.lazyKey(mExtra.mFile);
 			for (dir in paths) {
 				var file = (dir.cPath + mPath.name) + ".hx";
-				if (sys.FileSystem.exists(file)) {
+				if (sys.FileSystem.exists(file) && com.partScope.fileKeys.get(file) != ownFile) {
 					var time = Common.fileTime(file);
 					if (time > mExtra.mTime) {
 						ServerMessage.modulePathChanged(com, "", mPath, mExtra, time, file);
