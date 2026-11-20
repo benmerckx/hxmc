@@ -533,6 +533,11 @@ class Threads {
 	@:hxmc.collects static function preempt()
 		safepoint();
 
+	// the slow path of a poll the compiler adds (hxmc.ir.Safepoints): rt_gc_requested
+	// was set; a GC point, where the caller's references are rooted as at an allocation
+	@:hxmc.export("rt_poll") @:hxmc.collects static function poll()
+		safepoint();
+
 	// <= 0: gives way to the other runnable threads
 	@:hxmc.host("rt_sleep") @:hxmc.collects static function sleep(seconds:Float):Void {
 		if (seconds <= 0) {

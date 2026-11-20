@@ -339,6 +339,7 @@ class LambdaInfo {
 	// declared @:hxmc.collects: it runs the collector (the entries of a
 	// collector written in Haxe, whose code is otherwise no-GC): never noGc
 	public var collects:Bool = false;
+	public var polled:Bool = false; // (Safepoints: its polls added, once)
 	public var cSymbol:Null<String>; // @:hxmc.export: the symbol (the runtime's C code calls it)
 	// a @:hxmc.callback's entry (Lower.callback): C finds cSymbol only through
 	// an address live code takes (Callback.addr, a typed binding's callback
@@ -541,6 +542,9 @@ class Program {
 	// (Reach) whether the program reads stacks (haxe.NativeStackTrace.toHaxe live, or -D hxmc.stacks): the table of its functions and lines (hxmc.StackTable)
 	public var stacks = false;
 	public var liveSelectors:Null<Vector<Bool>> = null;
+	// (Options.safepoints) polls added after the no-GC functions are known (hxmc.ir.Safepoints);
+	// null: when the program starts threads (Safepoints.on)
+	public var safepoints:Null<Bool> = false;
 
 	public function new() {}
 
