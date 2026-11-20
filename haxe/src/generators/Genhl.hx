@@ -5099,7 +5099,7 @@ class Genhl {
 			var ch = new haxe.io.BytesBuffer();
 			writeCode(ch, code, !Gctx.rawDefined(com, "hl_no_debug"));
 			var str = addHeader(code, ch.getBytes());
-			sys.io.File.saveBytes(com.file, str);
+			context.Common.writeFileIfChanged(com.file, str);
 			prevSign = sign;
 			prevData = str;
 		}
