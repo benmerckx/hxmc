@@ -271,10 +271,14 @@ class ServerCache {
 				return true;
 			}
 		}
-		/* A file written again with the same content is not a change. */
+		/* A file written again with the same content is not a change. Contents sent with the request
+			take precedence over the file, so they are never compared. */
 		function unchangedContent(mPath:GlobalTypePath, mExtra:ModuleDefExtra, file:String, time:Float):Bool {
+			var key = core.Path.UniqueKey.lazyKey(mExtra.mFile);
 			return switch mExtra.mDigest {
-				case digest if (digest != null && (try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false)):
+				case digest if (digest != null
+					&& !Lambda.exists(com.fileContents, e -> e.fileKey == key)
+					&& (try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false)):
 					ServerMessage.unchangedContent(com, "", file);
 					mExtra.mTime = time;
 					true;
