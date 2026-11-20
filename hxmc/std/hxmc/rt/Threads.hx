@@ -533,7 +533,7 @@ class Threads {
 	@:hxmc.collects static function preempt()
 		safepoint();
 
-	// the slow path of a poll the compiler adds (-D hxmc.safepoints, hxmc.ir.Safepoints): rt_gc_requested
+	// the slow path of a poll the compiler adds (hxmc.ir.Safepoints): rt_gc_requested
 	// was set; a GC point, where the caller's references are rooted as at an allocation
 	@:hxmc.export("rt_poll") @:hxmc.collects static function poll()
 		safepoint();

@@ -716,8 +716,12 @@ for (row in 0...height) {
 }
 ```
 
-`-D hxmc.safepoints` has the compiler add them: a poll at the head of each
-loop and at the entry of each function that calls another (`hxmc.ir.Safepoints`:
+In a program that starts threads (`hxmc.rt.Threads.spawn` reachable:
+`sys.thread.Thread.create`, a pool's) the compiler adds them, and so with
+`-D hxmc.safepoints=1` in any program (`=0`: none; a thread only C starts,
+calling Haxe through callbacks, does not count): a poll at the head of each
+loop and at the entry of each function on a cycle of direct calls, which can
+recurse (`hxmc.ir.Safepoints`:
 one load and a branch, the runtime's `rt_poll` when the flag is set), in the
 functions that reach a GC point already. A no-GC function (one a kernel may
 call), `@:hxmc.unsafe` code and the runtime's own get none. So a long loop in a
@@ -725,10 +729,15 @@ function that reaches no GC point at all (pure arithmetic) still holds
 collections: it needs an explicit poll. The cost is more than the load in
 a loop over Bytes or an Array: after a poll (a GC point) the loop takes the
 data's address again, and a bounds test the compiler drops without one can
-stay (`BytesReadLoops` with the define: 1 or 2 in 4 of its functions). Measured: an
+stay (`BytesReadLoops` with polls: 1 or 2 in 4 of its functions). A recursion
+through dynamic calls (a method dispatched, a closure) gets no entry poll: one
+without a loop needs an explicit poll. Measured: an
 HTTP server whose handler spends 100 ms in a loop that allocates nothing, on 1 request in
-10,000, 35,000 requests a second on one core: p99 61-70 ms without, 5-15 ms with
-(the unikernel, app threads: docs/unikernel.md); code 0.8% larger.
+10,000, 35,000 requests a second on one core for 30 s: p99 23 ms without, 0.84
+ms with (on a unikernel, the handlers on threads of their own). The compiler
+compiling itself (its own threads): 3% less time, its collections starting
+sooner, 3% more CPU time (a poll at every calling function's entry: 7% more
+time).
 
 ### Handles
 

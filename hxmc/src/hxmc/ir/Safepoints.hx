@@ -4,13 +4,15 @@ import hxmc.ir.Ir;
 import haxe.ds.Vector;
 import core.ds.VectorTools.vector;
 
-// Polls the compiler adds (-D hxmc.safepoints, docs/interop.md "Safepoints"): a
+// Polls the compiler adds (in a program that starts threads, or -D
+// hxmc.safepoints=1; =0 none: docs/interop.md "Safepoints"): a
 // collection waits for every other thread to reach a safepoint, and a loop or a
 // recursion that allocates nothing never does, holding every other thread
 // until it ends. A poll is hxmc.Safepoint.poll's: rt_gc_requested read, and
 // when it is set the runtime's rt_poll (a GC point). One at the head of each
-// loop, and at the entry of each function that calls another (a recursion
-// passes one: straight code without either ends soon).
+// loop, and at the entry of each function on a cycle of direct calls (a
+// recursion passes one: straight code without either ends soon). Not at every
+// calling function's entry: the compiler compiling itself 7% slower, where now 3% faster.
 //
 // Only in the functions that reach a GC point already (Facts.findNoGc, before
 // this): a no-GC function stays one (a kernel calls it, holding loans no
@@ -19,14 +21,19 @@ import core.ds.VectorTools.vector;
 // (@:hxmc.collects, @:hxmc.blocking), in safe code taking a raw heap address (Mem.addr:
 // it may hold one across), or in the runtime's own modules.
 class Safepoints {
+	// -D hxmc.safepoints=1, or not defined and hxmc.rt.Threads.spawn live (one thread holds no other)
+	public static function on(p:Program):Bool
+		return p.safepoints == true || (p.safepoints == null && Lambda.exists(p.funcs, f -> f.display == "hxmc.rt.Threads.spawn" && p.isLive(f)));
+
 	// (addr: the functions taking raw heap addresses, Mem.addr, which may hold one across a poll: none)
 	public static function insert(p:Program, addr:Array<FuncInfo>) {
 		var raw = [for (f in addr) f => true];
+		var rec = recursive(p);
 		for (f in p.funcs)
 			if (!f.polled && p.isLive(f) && !raw.exists(f) && wants(f)) {
 				f.polled = true;
 				var body = loops(f.body);
-				f.body = calls(body) ? prepend(body) : body;
+				f.body = rec.exists(f) ? prepend(body) : body;
 			}
 	}
 
@@ -63,21 +70,80 @@ class Safepoints {
 		return r;
 	}
 
-	// whether the body calls a function (not one of the runtime's by name: the intrinsics, allocation)
-	static function calls(b:Vector<Stmt>):Bool {
-		var found = false;
-		function ex(e:Ex) {
-			if (found) return;
-			switch e {
-				case ECall(_, _) | ECallDispatch(_, _, _) | ECallClos(_, _, _) | ECallAnon(_, _, _, _): found = true;
-				case _: Facts.iterEx(ex, e);
+	// the functions on a cycle of direct calls (Tarjan's components, iteratively)
+	static function recursive(p:Program):Map<FuncInfo, Bool> {
+		var funcs = [for (f in p.funcs) if (p.isLive(f)) f];
+		var id = new Map<FuncInfo, Int>();
+		for (i in 0...funcs.length)
+			id.set(funcs[i], i);
+		var n = funcs.length;
+		var succ = [for (f in funcs) callees(f.body, id)];
+		var index = new Vector<Int>(n), low = new Vector<Int>(n), on = new Vector<Bool>(n);
+		for (i in 0...n)
+			index[i] = -1;
+		var rec = new Map<FuncInfo, Bool>();
+		var stack:Array<Int> = [], work:Array<Int> = [], next = 0;
+		for (root in 0...n) {
+			if (index[root] >= 0) continue;
+			var pos:Array<Int> = [];
+			work.push(root);
+			pos.push(0);
+			index[root] = low[root] = next++;
+			stack.push(root);
+			on[root] = true;
+			while (work.length > 0) {
+				var v = work[work.length - 1], k = pos[pos.length - 1];
+				if (k < succ[v].length) {
+					pos[pos.length - 1] = k + 1;
+					var w = succ[v][k];
+					if (index[w] < 0) {
+						index[w] = low[w] = next++;
+						stack.push(w);
+						on[w] = true;
+						work.push(w);
+						pos.push(0);
+					} else if (on[w] && index[w] < low[v]) low[v] = index[w];
+					continue;
+				}
+				work.pop();
+				pos.pop();
+				if (work.length > 0) {
+					var u = work[work.length - 1];
+					if (low[v] < low[u]) low[u] = low[v];
+				}
+				if (low[v] != index[v]) continue;
+				var w = stack.pop();
+				on[w] = false;
+				if (w != v) {
+					rec.set(funcs[w], true);
+					do {
+						w = stack.pop();
+						on[w] = false;
+						rec.set(funcs[w], true);
+					} while (w != v);
+				} else if (succ[v].indexOf(v) >= 0) rec.set(funcs[v], true);
 			}
 		}
-		function st(s:Stmt) {
-			if (!found) Facts.iterStmt(st, ex, s);
+		return rec;
+	}
+
+	// the functions the body calls directly (a dispatch's, a closure's: unknown; recursion
+	// through them in practice walks a structure, in a loop that polls)
+	static function callees(b:Vector<Stmt>, id:Map<FuncInfo, Int>):Array<Int> {
+		var r:Array<Int> = [];
+		function ex(e:Ex) {
+			switch e {
+				case ECall(g, _):
+					var i = id.get(g);
+					if (i != null && r.indexOf(i) < 0) r.push(i);
+				case _:
+			}
+			Facts.iterEx(ex, e);
 		}
+		function st(s:Stmt)
+			Facts.iterStmt(st, ex, s);
 		for (s in b)
 			st(s);
-		return found;
+		return r;
 	}
 }

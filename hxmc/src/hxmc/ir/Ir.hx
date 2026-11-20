@@ -542,8 +542,9 @@ class Program {
 	// (Reach) whether the program reads stacks (haxe.NativeStackTrace.toHaxe live, or -D hxmc.stacks): the table of its functions and lines (hxmc.StackTable)
 	public var stacks = false;
 	public var liveSelectors:Null<Vector<Bool>> = null;
-	// (Options.safepoints) polls added after the no-GC functions are known (hxmc.ir.Safepoints)
-	public var safepoints = false;
+	// (Options.safepoints) polls added after the no-GC functions are known (hxmc.ir.Safepoints);
+	// null: when the program starts threads (Safepoints.on)
+	public var safepoints:Null<Bool> = false;
 
 	public function new() {}
 

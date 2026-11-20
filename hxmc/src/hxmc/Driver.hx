@@ -26,7 +26,7 @@ class Driver {
 		this.o = o;
 		this.out = o.output != null ? o.output : out;
 		abi = Abi.get(o.target);
-		prog.safepoints = o.safepoints && !abi.wasm;
+		prog.safepoints = abi.wasm ? false : o.safepoints;
 		prep = new Prep(prog);
 		abi.setLibc(o.libc);
 		abi.framePointers = !abi.wasm && (abi.arm || o.framePointers);

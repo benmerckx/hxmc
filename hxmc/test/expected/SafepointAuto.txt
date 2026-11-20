@@ -1,0 +1,2 @@
+exit 0
+SafepointAuto.hx:49: main: 300 kept
