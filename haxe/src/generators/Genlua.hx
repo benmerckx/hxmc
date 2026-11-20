@@ -938,7 +938,7 @@ class Genlua {
 	static function genExprDefault(ctx:LuaCtx, e:TExpr):Void genExpr(ctx, e, true);
 
 	static function genExpr(ctx:LuaCtx, e:TExpr, local = true):Void {
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		switch e.eexpr {
 			case TConst(c):
 				genConstant(ctx, e.epos, c);
@@ -1411,7 +1411,7 @@ class Genlua {
 			case TIdent(s):
 				spr(ctx, s);
 
-				clearMapping();
+				JsSourcemap.clearMapping(ctx.smap, mapping);
 		}
 	}
 
@@ -1427,7 +1427,7 @@ class Genlua {
 	/* It handles no-op situations, and ensures that expressions are formatted with newlines */
 	static function genBlockElement(ctx:LuaCtx, e:TExpr):Void {
 		ctx.iifeAssign = false;
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		switch e.eexpr {
 			case TTypeExpr(_) | TConst(_) | TLocal(_) | TFunction(_):
 			case TCast(e1, t) if (t != null):
@@ -1498,7 +1498,7 @@ class Genlua {
 				genExpr(ctx, e);
 				semicolon(ctx);
 		}
-		clearMapping();
+		JsSourcemap.clearMapping(ctx.smap, mapping);
 	}
 
 	/* values generated in anon structures can get modified.  Functions are bind-ed */
@@ -1528,7 +1528,7 @@ class Genlua {
 	}
 
 	static function genValue(ctx:LuaCtx, e:TExpr):Void {
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		function assign(e:TExpr):TExpr {
 			return mk(TBinop(OpAssign, mk(TLocal(switch ctx.inValue {
 				case null: Globals.die("", "genlua.ml");
@@ -1634,7 +1634,7 @@ class Genlua {
 				function block(e:TExpr):TExpr return mk(TBlock(vector(e)), e.etype, e.epos);
 				genBlockElement(ctx, mk(TTry(block(assign(b)), catchs.map(c -> {variable: c.variable, expr: block(assign(c.expr))})), e.etype, e.epos));
 				v();
-				clearMapping();
+				JsSourcemap.clearMapping(ctx.smap, mapping);
 		}
 	}
 
@@ -2258,6 +2258,7 @@ class Genlua {
 			sourcesHash: new StringMap(),
 			mappings: new StringBuf(),
 			currentExpr: null,
+			lastFile: null,
 		} : Sourcemap) else null;
 		var ctx = new LuaCtx();
 		ctx.com = com;

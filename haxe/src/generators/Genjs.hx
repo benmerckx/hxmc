@@ -634,7 +634,7 @@ class Genjs {
 	}
 
 	public static function genExpr(ctx:JsCtx, e:TExpr):Void {
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		switch e.eexpr {
 			case TConst(c):
 				genConstant(ctx, e.epos, c);
@@ -934,7 +934,7 @@ class Genjs {
 			case TIdent(s):
 				spr(ctx, s);
 		}
-		clearMapping();
+		JsSourcemap.clearMapping(ctx.smap, mapping);
 	}
 
 	// port: `{ null_class with cl_path = ["js"],"Boot" }`.
@@ -1024,7 +1024,7 @@ class Genjs {
 	}
 
 	public static function genValue(ctx:JsCtx, e:TExpr):Void {
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		function assign(e:TExpr):TExpr {
 			return mk(TBinop(OpAssign, mk(TLocal(switch ctx.inValue {
 				case null: die("", "genjs.ml");
@@ -1122,7 +1122,7 @@ class Genjs {
 				genExpr(ctx, mk(TTry(block(assign(b)), catchs.map(c -> {variable: c.variable, expr: block(assign(c.expr))})), e.etype, e.epos));
 				v();
 		}
-		clearMapping();
+		JsSourcemap.clearMapping(ctx.smap, mapping);
 	}
 
 	public static function genSyntax(ctx:JsCtx, meth:String, args:Vector<TExpr>, pos:Pos):Void {
@@ -1906,6 +1906,7 @@ class Genjs {
 			sourcesHash: new StringMap(),
 			mappings: new StringBuf(),
 			currentExpr: null,
+			lastFile: null,
 		} else null;
 		var ctx = new JsCtx();
 		ctx.com = com;

@@ -38,69 +38,81 @@ import core.TType;
 	public var outputLastCol:Int;
 	public var outputCurrentCol:Int;
 	public var currentExpr:Null<SourcemapPos>;
+	/* the file of the last mapping, its index in [sources] and its lines */
+	public var lastFile:Null<{name:String, file:Int, lexerFile:syntax.Lexer.LexerFile}>;
 }
 
 class JsSourcemap {
-	static final chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	static final base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	/* Adds [number] to [b] as a base64 VLQ. */
+	static function addVlqDigits(b:StringBuf, vlq:Int):Void {
+		var digit = vlq & 31, next = vlq >> 5;
+		b.addChar(StringTools.fastCodeAt(base64Chars, if (next > 0) digit | 32 else digit));
+		if (next > 0) addVlqDigits(b, next);
+	}
+
+	static function addBase64Vlq(b:StringBuf, number:Int):Void {
+		addVlqDigits(b, if (number < 0) ((-number) << 1) + 1 else number << 1);
+	}
 
 	public static function encodeMapping(smap:Sourcemap, pos:SourcemapPos):Void {
 		if (smap.printComma) smap.mappings.addChar(",".code) else smap.printComma = true;
-
-		function base64Vlq(number:Int):Void {
-			inline function encodeDigit(digit:Int):Int return StringTools.fastCodeAt(chars, digit);
-			inline function toVlq(number:Int):Int return if (number < 0) ((-number) << 1) + 1 else number << 1;
-			function loop(vlq:Int):Void {
-				var shift = 5;
-				var base = 1 << shift;
-				var mask = base - 1;
-				var continuationBit = base;
-				var digit = vlq & mask;
-				var next = vlq >> shift;
-				smap.mappings.addChar(encodeDigit(if (next > 0) digit | continuationBit else digit));
-				if (next > 0) loop(next);
-			}
-			loop(toVlq(number));
-		}
-
-		base64Vlq(smap.outputCurrentCol - smap.outputLastCol);
-		base64Vlq(pos.file - smap.sourceLastPos.file);
-		base64Vlq(pos.line - smap.sourceLastPos.line);
-		base64Vlq(pos.col - smap.sourceLastPos.col);
-
+		var b = smap.mappings, last = smap.sourceLastPos;
+		addBase64Vlq(b, smap.outputCurrentCol - smap.outputLastCol);
+		addBase64Vlq(b, pos.file - last.file);
+		addBase64Vlq(b, pos.line - last.line);
+		addBase64Vlq(b, pos.col - last.col);
 		smap.sourceLastPos = pos;
 		smap.outputLastCol = smap.outputCurrentCol;
 	}
 
 	public static function noop():Void {}
 
-	static function addMappingPos(smap:Sourcemap, pos:Pos):Void->Void {
-		if (pos.pmin < 0) return noop;
-
-		var file = smap.sourcesHash.get(pos.pfile);
+	/* The index of [file_name] in the sources (in their order of first use), and its lines. */
+	static function sourceFile(smap:Sourcemap, fileName:String):{name:String, file:Int, lexerFile:syntax.Lexer.LexerFile} {
+		var last = smap.lastFile;
+		if (last != null && last.name == fileName) return last;
+		var file = smap.sourcesHash.get(fileName);
 		if (file == null) {
 			var length = smap.sources.length;
-			smap.sourcesHash.set(pos.pfile, length);
-			smap.sources.push(pos.pfile);
+			smap.sourcesHash.set(fileName, length);
+			smap.sources.push(fileName);
 			file = length;
 		}
+		return smap.lastFile = {name: fileName, file: file, lexerFile: syntax.Lexer.findFile(fileName)};
+	}
 
-		var pos:SourcemapPos = {
-			var lc = syntax.Lexer.findPos(pos);
-			var line = lc.line - 1;
-			{file: file, line: line, col: lc.column};
-		}
+	/* What [add_mapping] gives when the mapping did not change: nothing to put
+		back. */
+	public static final unchanged:SourcemapPos = {file: -2, line: 0, col: 0};
 
+	/* Maps the output that follows to [pos]: gives the mapping to put back with
+		[clear_mapping] once the expression is output (no closure, no option is
+		allocated for it). */
+	static function addSourceMapping(smap:Sourcemap, pos:SourcemapPos):Null<SourcemapPos> {
 		var last = smap.sourceLastPos;
 		if (last.file != pos.file || last.line != pos.line || last.col != pos.col) {
 			var oldCurrentExpr = smap.currentExpr;
 			smap.currentExpr = pos;
 			encodeMapping(smap, pos);
-			return function() smap.currentExpr = oldCurrentExpr;
-		} else return noop;
+			return oldCurrentExpr;
+		} else return unchanged;
 	}
 
-	public static function addMapping(smap:Null<Sourcemap>, e:TExpr):Void->Void {
-		return smap == null ? noop : addMappingPos(smap, e.epos);
+	static function addMappingPos(smap:Sourcemap, pos:Pos):Null<SourcemapPos> {
+		if (pos.pmin < 0) return unchanged;
+		var sf = sourceFile(smap, pos.pfile);
+		var lc = syntax.Lexer.findLine(pos.pmin, sf.lexerFile);
+		return addSourceMapping(smap, {file: sf.file, line: lc.line - 1, col: lc.column});
+	}
+
+	public static function addMapping(smap:Null<Sourcemap>, e:TExpr):Null<SourcemapPos> {
+		return smap == null ? unchanged : addMappingPos(smap, e.epos);
+	}
+
+	public static function clearMapping(smap:Null<Sourcemap>, old:Null<SourcemapPos>):Void {
+		if (old != unchanged && smap != null) smap.currentExpr = old;
 	}
 
 	// port: OCaml strings are UTF-8 bytes, so String.length counts bytes; the host strings are UTF-16
@@ -125,23 +137,37 @@ class JsSourcemap {
 		return n;
 	}
 
-	public static function handleNewlines(smap:Null<Sourcemap>, str:String):Void {
-		if (smap != null) {
-			function loop(from:Int):Void {
-				var idx = str.indexOf("\n", from);
-				if (idx >= 0) {
-					var next = idx + 1;
-					smap.mappings.addChar(";".code);
-					smap.outputLastCol = 0;
-					smap.outputCurrentCol = 0;
-					smap.printComma = false;
-					if (smap.currentExpr != null) encodeMapping(smap, smap.currentExpr);
-					loop(next);
-				} else smap.outputCurrentCol = smap.outputCurrentCol + utf8Length(str, from, str.length);
-			}
-			loop(0);
+	/* The text [str] from [from] to [upto] is output. */
+	public static function handleNewlinesSub(smap:Sourcemap, str:String, from:Int, upto:Int):Void {
+		function loop(from:Int):Void {
+			var i = str.indexOf("\n", from);
+			if (i >= 0 && i < upto) {
+				smap.mappings.addChar(";".code);
+				smap.outputLastCol = 0;
+				smap.outputCurrentCol = 0;
+				smap.printComma = false;
+				if (smap.currentExpr != null) encodeMapping(smap, smap.currentExpr);
+				loop(i + 1);
+			} else smap.outputCurrentCol = smap.outputCurrentCol + utf8Length(str, from, upto);
 		}
+		loop(from);
 	}
+
+	public static function handleNewlines(smap:Null<Sourcemap>, str:String):Void {
+		if (smap != null) handleNewlinesSub(smap, str, 0, str.length);
+	}
+
+	public static function create():Sourcemap return {
+		sourceLastPos: {file: 0, line: 0, col: 0},
+		printComma: false,
+		outputLastCol: 0,
+		outputCurrentCol: 0,
+		sources: [],
+		sourcesHash: new haxe.ds.StringMap(),
+		mappings: new StringBuf(),
+		currentExpr: null,
+		lastFile: null,
+	};
 
 	/* The source map as JSON text. */
 	public static function mappingsJson(com:Gctx, smap:Sourcemap, sourcePathPrefix:String):String {
