@@ -12,7 +12,8 @@ import core.ds.VectorTools.vector;
 // when it is set the runtime's rt_poll (a GC point). One at the head of each
 // loop, and at the entry of each function on a cycle of direct calls (a
 // recursion passes one: straight code without either ends soon). Not at every
-// calling function's entry: the compiler compiling itself 7% slower, where now 3% faster.
+// calling function's entry: the compiler compiling itself (-D disable-parallelism) 7% slower
+// there, 3% faster here.
 //
 // Only in the functions that reach a GC point already (Facts.findNoGc, before
 // this): a no-GC function stays one (a kernel calls it, holding loans no

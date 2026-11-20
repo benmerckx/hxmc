@@ -735,9 +735,9 @@ without a loop needs an explicit poll. Measured: an
 HTTP server whose handler spends 100 ms in a loop that allocates nothing, on 1 request in
 10,000, 35,000 requests a second on one core for 30 s: p99 23 ms without, 0.84
 ms with (on a unikernel, the handlers on threads of their own). The compiler
-compiling itself (its own threads): 3% less time, its collections starting
-sooner, 3% more CPU time (a poll at every calling function's entry: 7% more
-time).
+compiling itself (its own threads): 2% more time, 4% more CPU time (with
+`-D disable-parallelism` 3% less time, its collections starting sooner; a
+poll at every calling function's entry there: 7% more).
 
 ### Handles
 
