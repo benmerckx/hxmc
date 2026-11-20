@@ -5073,7 +5073,7 @@ class Genhl {
 			function opt(idx:Int) {
 				var f = ctx.cfunctions[idx];
 				if (f.needOpt) {
-					var r = Hlopt.optimize(dump, i -> code.strings[i], f, "todosign");
+					var r = Hlopt.optimize(dump, i -> code.strings[i], f);
 					if (dumpOut != null) dumpOut.add(r.dump);
 					code.functions[idx] = r.f;
 				}
