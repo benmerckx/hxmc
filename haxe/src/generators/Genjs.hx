@@ -1262,9 +1262,8 @@ class Genjs {
 		}
 	}
 
-	/* Generates [types] with [generate_type], each on its own buffer and on several
-		domains, then puts their code in order, creating the packages where the
-		first type of each creates them, as when they are generated in order. */
+	/* Generates [types] with [generate_type] on several domains, each on its own
+		buffer and source map, then puts their code and source maps in order. */
 	public static function generateTypesParallel(ctx:JsCtx, generateType:(JsCtx, ModuleType) -> Void, types:Array<ModuleType>):Void {
 		var subs = [for (_ in types) {
 			var sub = new JsCtx();
@@ -1272,7 +1271,7 @@ class Genjs {
 			sub.buf = new JsBuffer();
 			sub.chan = ctx.chan;
 			sub.packages = ctx.packages;
-			sub.smap = ctx.smap;
+			sub.smap = if (ctx.smap == null) null else JsSourcemap.create();
 			sub.jsModern = ctx.jsModern;
 			sub.jsFlatten = ctx.jsFlatten;
 			sub.hasResolveClass = ctx.hasResolveClass;
@@ -1293,30 +1292,68 @@ class Genjs {
 			sub.featureCache = new StringMap();
 			sub;
 		}];
+		var encoded:Array<Null<JsSourcemap.EncodedFragment>> = [for (_ in types) null];
 		context.Parallel.runWithPool(ctx.com.pool, pool -> {
-			context.Parallel.ParallelArray.iter(pool, i -> generateType(subs[i], types[i]), [for (i in 0...types.length) i]);
+			context.Parallel.ParallelArray.iter(pool, i -> {
+				generateType(subs[i], types[i]);
+				encoded[i] = if (subs[i].smap == null) null else JsSourcemap.encodedFragment(subs[i].smap);
+			}, [for (i in 0...types.length) i]);
 			null;
 		});
-		for (sub in subs) {
+		/* the mappings transcoded in parallel for the global indices their sources
+			will get, then spliced in order */
+		switch ctx.smap {
+			case null:
+			case sm:
+				var globals = JsSourcemap.predictGlobals(sm, encoded);
+				context.Parallel.runWithPool(ctx.com.pool, pool -> {
+					context.Parallel.ParallelArray.iter(pool, i -> {
+						var ef = encoded[i], g = globals[i];
+						if (ef != null && g != null && !JsSourcemap.shifted(g)) JsSourcemap.splicedTail(ef, g);
+					}, [for (i in 0...types.length) i]);
+					null;
+				});
+		}
+		for (i in 0...types.length) {
+			var mt = types[i];
+			var sub = subs[i];
 			var marks = sub.packageMarks;
 			var code = sub.buf.contents();
-			var pos = 0;
-			function append(upto:Int):Bool {
-				if (upto > pos) {
-					ctx.buf.addString(code.substring(pos, upto));
-					pos = upto;
-					return true;
+			function output():Void {
+				ctx.statics = sub.statics.concat(ctx.statics);
+				ctx.inits = sub.inits.concat(ctx.inits);
+				if (sub.foundExpose) ctx.foundExpose = true;
+			}
+			var sm = ctx.smap, ef = encoded[i];
+			if (sm != null && ef != null && Lambda.foreach(marks, mark -> mark.offset == 0)) {
+				/* the packages first, then the text and its mappings */
+				for (mark in marks) generatePackageCreateNow(ctx, mark.pack);
+				var col0 = sm.outputCurrentCol, lastCol0 = sm.outputLastCol, comma0 = sm.printComma;
+				if (JsSourcemap.spliceFragment(sm, ef, col0, lastCol0, comma0)) {
+					ctx.buf.addString(code);
+					if (code != "") ctx.separator = sub.separator;
+					output();
+				} else generateType(ctx, mt);
+			} else if (sm != null) {
+				/* a package created in the middle of the type */
+				generateType(ctx, mt);
+			} else {
+				var pos = 0;
+				function append(upto:Int):Bool {
+					if (upto > pos) {
+						ctx.buf.addString(code.substring(pos, upto));
+						pos = upto;
+						return true;
+					}
+					return false;
 				}
-				return false;
+				for (mark in marks) {
+					append(mark.offset);
+					generatePackageCreateNow(ctx, mark.pack);
+				}
+				if (append(code.length)) ctx.separator = sub.separator;
+				output();
 			}
-			for (mark in marks) {
-				append(mark.offset);
-				generatePackageCreateNow(ctx, mark.pack);
-			}
-			if (append(code.length)) ctx.separator = sub.separator;
-			ctx.statics = sub.statics.concat(ctx.statics);
-			ctx.inits = sub.inits.concat(ctx.inits);
-			if (sub.foundExpose) ctx.foundExpose = true;
 		}
 	}
 
@@ -2200,8 +2237,7 @@ class Genjs {
 						+ "}\n";
 					spr(ctx, extendCode);
 				}
-				/* not with a source map, whose positions follow the output */
-				if (ctx.smap == null && context.Parallel.isEnabled()) generateTypesParallel(ctx, generateType, com.types) else
+				if (context.Parallel.isEnabled()) generateTypesParallel(ctx, generateType, com.types) else
 					for (t in com.types) generateType(ctx, t);
 				function chkFeatures(e:TExpr):Void {
 					if (isDynamicIterator(ctx, e)) addFeature(ctx, "use.$iterator");
