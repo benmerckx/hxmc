@@ -3555,7 +3555,7 @@ class Hlinterp {
 						reg(r, HDyn);
 					case OGetArray(v, a, i):
 						switch rtype(a) {
-							case HAbstract("hl_carray", _, _) | HArray(_):
+							case HAbstract("hl_carray", _) | HArray(_):
 							case _: reg(a, HArray(HDyn));
 						}
 						reg(i, HI32);
@@ -3586,7 +3586,7 @@ class Hlinterp {
 						}
 					case OSetArray(a, i, v):
 						switch rtype(a) {
-							case HAbstract("hl_carray", _, _) | HArray(_):
+							case HAbstract("hl_carray", _) | HArray(_):
 							case _: reg(a, HArray(HDyn));
 						}
 						reg(i, HI32);

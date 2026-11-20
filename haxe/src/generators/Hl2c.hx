@@ -119,349 +119,23 @@ class FileContext {
 enum TypeDesc {
 	DSimple(t:Ttype);
 	DFun(args:Array<TypeDesc>, ret:TypeDesc, isFun:Bool);
-	// port: `ident` stands for the physical identity of the name string (Marshal sharing)
-	DNamed(n:String, ident:Dynamic);
+	DNamed(n:String);
 	DVirtual(arr:Vector<VDescField>);
 	DContext(arr:Vector<TypeDesc>);
 }
 
 class VDescField {
 	public var name:String;
-	// port: the name string itself where strings have an identity
-	// (core.ds.StrTools.hasIdentity): field names are shared between the
-	// virtuals of copies of one class field (`{cf with cf_type = ...}` in
-	// apply_params), and Marshal shares them. Elsewhere the HField, so that a
-	// name is never shared outside its own virtual.
-	public var ident:Dynamic;
 	public var d:TypeDesc;
 
-	public function new(name:String, ident:Dynamic, d:TypeDesc) {
+	public function new(name:String, d:TypeDesc) {
 		this.name = name;
-		this.ident = ident;
 		this.d = d;
 	}
 }
 
-// port: OCaml 5 `Marshal.to_bytes v [Marshal.Closures]` (runtime/extern.c), for the
-// values make_sign digests. Physical sharing is reproduced through identity
-// tokens, separately for strings and for blocks.
-//
-// The prototype records of HObj/HStruct/HVirtual hold PMaps, and a PMap holds its
-// comparison closure (extlib's `PMap.empty`: `{ cmp = compare; map = Empty }`, one
-// static closure shared by every map). OCaml writes a closure's code pointers as
-// their offset in the reference compiler's code fragment followed by that
-// fragment's MD5 (extern_code_pointer), i.e. bytes of the reference binary's own
-// machine code. The port writes the closure in the same format (CODE_CODEPOINTER,
-// the closure info of a 2-ary closure) with offset 0 and an all-zero digest, so
-// the `t$fun_`/`t$vrt_`/`t$ctx_` names of the descriptions that reach a prototype
-// intentionally differ from the reference's (the conformance harnesses normalize
-// them: docs/testing.md). Everything else of the value is written as OCaml
-// does: the records in their field order, the PMaps' AVL trees (rebuilt from the
-// keys' first-insertion order, as extlib's PMap.add builds them), sharing and cycles.
-private class OcamlExtern {
-	final out = new haxe.io.BytesBuffer();
-	var objCounter = 0;
-	var size32 = 0;
-	var size64 = 0;
-	final strIds = new IdTable();
-	final strsByValue = new StringMap<Array<{s:String, pos:Int}>>();
-	final blockIds = new IdTable();
-	final listTokens:Array<{arr:Array<Ttype>, tokens:Array<{}>}> = [];
-
-	public function new() {}
-
-	inline function byte(b:Int) out.addByte(b & 0xFF);
-
-	function code8(c:Int, v:Int) {
-		byte(c);
-		byte(v);
-	}
-
-	function code16(c:Int, v:Int) {
-		byte(c);
-		byte(v >> 8);
-		byte(v);
-	}
-
-	function code32(c:Int, v:Int) {
-		byte(c);
-		byte(v >>> 24);
-		byte(v >> 16);
-		byte(v >> 8);
-		byte(v);
-	}
-
-	function lookupStr(id:Dynamic):Int {
-		if (id == null) return -1;
-		if (Std.isOfType(id, String)) {
-			var b = strsByValue.get(id);
-			if (b != null) for (e in b) if (core.ds.StrTools.physEq(e.s, id)) return e.pos;
-			return -1;
-		}
-		return strIds.get(id);
-	}
-
-	function recordStr(id:Dynamic) {
-		if (id != null) {
-			if (Std.isOfType(id, String)) {
-				var b = strsByValue.get(id);
-				if (b == null) strsByValue.set(id, b = []);
-				b.push({s: id, pos: objCounter});
-			} else {
-				strIds.set(id, objCounter);
-			}
-		}
-		objCounter++;
-	}
-
-	function shared(pos:Int) {
-		var d = objCounter - pos;
-		if (d < 0x100) code8(0x04, d) else if (d < 0x10000) code16(0x05, d) else code32(0x06, d);
-	}
-
-	public function int(n:Int) {
-		if (n >= 0 && n < 0x40) byte(0x40 + n) else if (n >= -(1 << 7) && n < (1 << 7)) code8(0x00, n) else if (n >= -(1 << 15) && n < (1 << 15))
-			code16(0x01, n) else code32(0x02, n);
-	}
-
-	function intOpt(n:Null<Int>) {
-		if (n == null) int(0) else block(0, 1, null, () -> int(n));
-	}
-
-	function intArray(a:Vector<Int>) {
-		block(0, a.length, a, () -> for (n in a) int(n));
-	}
-
-	public function str(s:String, id:Dynamic) {
-		var p = lookupStr(id);
-		if (p >= 0) return shared(p);
-		var b = haxe.io.Bytes.ofString(s);
-		var len = b.length;
-		if (len < 0x20) byte(0x20 + len) else if (len < 0x100) code8(0x09, len) else code32(0x0A, len);
-		out.add(b);
-		size32 += 1 + Std.int((len + 4) / 4);
-		size64 += 1 + Std.int((len + 8) / 8);
-		recordStr(id);
-	}
-
-	public function block(tag:Int, sz:Int, id:Dynamic, fields:Void->Void) {
-		if (sz == 0) return header(0, tag);
-		var p = id == null ? -1 : blockIds.get(id);
-		if (p >= 0) return shared(p);
-		header(sz, tag);
-		size32 += 1 + sz;
-		size64 += 1 + sz;
-		if (id != null) blockIds.set(id, objCounter);
-		objCounter++;
-		fields();
-	}
-
-	function header(sz:Int, tag:Int) {
-		if (tag < 16 && sz < 8) byte(0x80 + tag + (sz << 4)) else code32(0x08, (sz << 10) | 0x300 | tag);
-	}
-
-	function listToken(arr:Array<Ttype>, i:Int):{} {
-		for (e in listTokens) if (e.arr == arr) return e.tokens[i];
-		var tokens:Array<{}> = [for (_ in 0...arr.length) {}];
-		listTokens.push({arr: arr, tokens: tokens});
-		return tokens[i];
-	}
-
-	function ttypeList(arr:Array<Ttype>, i:Int) {
-		if (i == arr.length) return int(0);
-		block(0, 2, listToken(arr, i), () -> {
-			ttype(arr[i]);
-			ttypeList(arr, i + 1);
-		});
-	}
-
-	public function ttype(t:Ttype) {
-		var c = constIndex(t);
-		if (c >= 0) return int(c);
-		var tag = blockTag(t);
-		switch t {
-			case HFun(args, ret) | HMethod(args, ret):
-				block(tag, 2, t, () -> {
-					ttypeList(args, 0);
-					ttype(ret);
-				});
-			case HArray(x) | HRef(x) | HNull(x) | HPacked(x):
-				block(tag, 1, t, () -> ttype(x));
-			case HAbstract(name, idx, ident):
-				block(tag, 2, t, () -> {
-					str(name, ident);
-					int(idx);
-				});
-			case HEnum(e):
-				block(tag, 1, t, () -> block(0, 5, e, () -> {
-					str(e.ename, e.ename == "" ? emptyEname : e);
-					int(e.eid);
-					if (e.eglobal == null) int(0) else block(0, 1, null, () -> int(e.eglobal));
-					block(0, e.efields.length, e.efields, () -> for (f in e.efields) block(0, 3, f, () -> {
-						str(f.name, f.name == "" ? emptyEfield : f);
-						int(f.nid);
-						block(0, f.args.length, f.args, () -> for (a in f.args) ttype(a));
-					}));
-					block(0, e.eparams.length, e.eparams, () -> for (a in e.eparams) intArray(a));
-				}));
-			case HObj(p) | HStruct(p):
-				block(tag, 1, t, () -> classProto(p));
-			case HVirtual(vp):
-				block(tag, 1, t, () -> block(0, 2, vp, () -> {
-					hfields(vp.vfields);
-					strPMap(vp.vindex, int);
-				}));
-			case _:
-				core.Globals.die("", "hl2c.ml");
-		}
-	}
-
-	static final emptyEname = {};
-	static final emptyEfield = {};
-
-	// port: hlcode.ml's class_proto record, in its field order.
-	function classProto(p:ClassProto) {
-		block(0, 12, p, () -> {
-			str(p.pname, p); // port: the token of DNamed (p.pname, p)
-			int(p.pid);
-			intOpt(p.pclassglobal);
-			if (p.psuper == null) int(0) else block(0, 1, null, () -> classProto(p.psuper));
-			intArray(p.pvirtuals);
-			block(0, p.pproto.length, p.pproto, () -> for (f in p.pproto) block(0, 4, f, () -> {
-				str(f.fname, if (core.ds.StrTools.hasIdentity) f.fname else f);
-				int(f.fid);
-				int(f.fmethod);
-				intOpt(f.fvirtual);
-			}));
-			int(p.pnfields);
-			hfields(p.pfields);
-			strPMap(p.pindex, v -> block(0, 2, v, () -> {
-				int(v.fid);
-				ttype(v.t);
-			}));
-			strPMap(p.pfunctions, int);
-			var keys = [for (k in p.pinterfaces.keys) p.pinterfaces.keyOf(k)];
-			pmap(keys, Hlcode.tCompare, p.pinterfaces, k -> ttype(k), k -> int(p.pinterfaces.get(k)));
-			function bindings(i:Int) {
-				if (i == p.pbindings.length) return int(0);
-				block(0, 2, null, () -> {
-					var b = p.pbindings[i];
-					block(0, 2, b, () -> {
-						int(b.fid);
-						int(b.fidx);
-					});
-					bindings(i + 1);
-				});
-			}
-			bindings(0);
-		});
-	}
-
-	// port: `(string * string index * ttype) array`
-	function hfields(arr:Vector<HField>) {
-		block(0, arr.length, arr, () -> for (f in arr) block(0, 3, f, () -> {
-			str(f.name, if (core.ds.StrTools.hasIdentity) f.name else f);
-			int(f.nid);
-			ttype(f.t);
-		}));
-	}
-
-	function strPMap<V>(m:StrPMap<V>, value:V->Void) {
-		pmap(m.keys, Hlcode.strCompare, m, k -> str(k, if (core.ds.StrTools.hasIdentity) k else null), k -> value(m.get(k)));
-	}
-
-	// port: extlib's `('k, 'v) PMap.t` record `{ cmp; map }`, the tree built by
-	// PMap.add from PMap.empty with the keys in their first-insertion order.
-	function pmap<K>(keys:Array<K>, cmp:K->K->Int, token:{}, key:K->Void, value:K->Void) {
-		var tree:Null<PMapNode<K>> = null;
-		for (k in keys) tree = PMapNode.add(cmp, k, tree);
-		block(0, 2, token, () -> {
-			compareClosure();
-			function node(n:Null<PMapNode<K>>) {
-				if (n == null) return int(0); // Empty
-				block(0, 5, n, () -> {
-					node(n.l);
-					key(n.k);
-					value(n.k);
-					node(n.r);
-					int(n.h);
-				});
-			}
-			node(tree);
-		});
-	}
-
-	static final compareToken = {};
-
-	// port: the closure of `compare` (arity 2: caml_curry2, the closure info, the
-	// direct entry point; no environment) as extern.c writes it, with the code
-	// pointers' offset 0 and digest all zeros in place of the reference binary's
-	// (see the comment of this class).
-	function compareClosure() {
-		block(247, 3, compareToken, () -> {
-			codePointer();
-			// Long_val (Make_closinfo (2, 3)): arity 2 in the top byte, the environment at 3
-			byte(0x03);
-			for (b in [0x01, 0, 0, 0, 0, 0, 0, 0x03]) byte(b);
-			codePointer();
-		});
-	}
-
-	function codePointer() {
-		code32(0x10, 0);
-		for (_ in 0...16) byte(0);
-	}
-
-	public function desc(d:TypeDesc) {
-		switch d {
-			case DSimple(t):
-				block(0, 1, d, () -> ttype(t));
-			case DFun(args, ret, b):
-				block(1, 3, d, () -> {
-					function list(i:Int) {
-						if (i == args.length) return int(0);
-						block(0, 2, null, () -> {
-							desc(args[i]);
-							list(i + 1);
-						});
-					}
-					list(0);
-					desc(ret);
-					int(b ? 1 : 0);
-				});
-			case DNamed(n, ident):
-				block(2, 1, d, () -> str(n, ident));
-			case DVirtual(arr):
-				block(3, 1, d, () -> block(0, arr.length, arr, () -> for (f in arr) block(0, 2, f, () -> {
-					str(f.name, f.ident);
-					desc(f.d);
-				})));
-			case DContext(arr):
-				block(4, 1, d, () -> block(0, arr.length, arr, () -> for (x in arr) desc(x)));
-		}
-	}
-
-	public function getBytes():haxe.io.Bytes {
-		var data = out.getBytes();
-		var b = new haxe.io.BytesBuffer();
-		function w32(v:Int) {
-			b.addByte((v >>> 24) & 0xFF);
-			b.addByte((v >> 16) & 0xFF);
-			b.addByte((v >> 8) & 0xFF);
-			b.addByte(v & 0xFF);
-		}
-		w32(0x8495A6BE);
-		w32(data.length);
-		w32(objCounter);
-		w32(size32);
-		w32(size64);
-		b.add(data);
-		return b.getBytes();
-	}
-}
-
 // port: extlib's PMap tree (`Node (l, k, v, r, h)`, Empty is null), built by
-// `add` with `bal` as in extlib/pMap.ml; the values are looked up when written.
+// `add` with `bal` as in extlib/pMap.ml; the values are looked up when visited.
 private class PMapNode<K> {
 	public final l:Null<PMapNode<K>>;
 	public final k:K;
@@ -506,37 +180,6 @@ private class PMapNode<K> {
 	}
 }
 
-// port: physical identity of the marshalled values' tokens.
-private class IdTable {
-	#if (target.name == "hxmc")
-	final m = new haxe.ds.ObjectMap<{}, Int>();
-
-	public function new() {}
-
-	public function get(id:Dynamic):Int {
-		var p = m.get(id);
-		return p == null ? -1 : p;
-	}
-
-	public function set(id:Dynamic, pos:Int) m.set(id, pos);
-	#else
-	final ids:Array<Dynamic> = [];
-	final poss:Array<Int> = [];
-
-	public function new() {}
-
-	public function get(id:Dynamic):Int {
-		for (i in 0...ids.length) if (ids[i] == id) return poss[i];
-		return -1;
-	}
-
-	public function set(id:Dynamic, pos:Int) {
-		ids.push(id);
-		poss.push(pos);
-	}
-	#end
-}
-
 class Hl2c {
 	static final keywords:StringMap<Bool> = {
 		var cKwds = [
@@ -575,7 +218,7 @@ class Hl2c {
 
 	static final coreTypes:Array<Ttype> = [
 		HVoid, HUI8, HUI16, HI32, HI64, HF32, HF64, HBool, HBytes, HDyn, HFun([], HVoid), HObj(nullProto), HArray(HDyn), HType, HRef(HVoid),
-		HVirtual(new VirtualProto()), HDynObj, HAbstract("", 0, null), HEnum(new EnumProto("", 0, null, vector(), vector())), HMethod([], HVoid), HStruct(nullProto)
+		HVirtual(new VirtualProto()), HDynObj, HAbstract("", 0), HEnum(new EnumProto("", 0, null, vector(), vector())), HMethod([], HVoid), HStruct(nullProto)
 	];
 
 	// port: ExtString.String.nsplit (an empty string gives [])
@@ -621,7 +264,7 @@ class Hl2c {
 				{s: r.s, n: r.n + 1};
 			case HVirtual(_): {s: "vvirtual", n: 1};
 			case HDynObj: {s: "vdynobj", n: 1};
-			case HAbstract(name, _, _): {s: name, n: 1};
+			case HAbstract(name, _): {s: name, n: 1};
 			case HEnum(_): {s: "venum", n: 1};
 			case HNull(_): {s: "vdynamic", n: 1};
 			case HMethod(_): {s: "void", n: 1};
@@ -1749,37 +1392,94 @@ class Hl2c {
 					var args = [for (x in tl) makeDesc(x)];
 					DFun(args, makeDesc(t), false);
 				case HObj(p) | HStruct(p):
-					DNamed(p.pname, p);
+					DNamed(p.pname);
 				case HPacked(t):
 					switch makeDesc(t) {
-						case DNamed(n, _): DNamed("packed_" + n, null);
+						case DNamed(n): DNamed("packed_" + n);
 						case _: core.Globals.die("", "hl2c.ml");
 					}
-				case HAbstract(n, _, ident):
-					DNamed(n, ident);
+				case HAbstract(n, _):
+					DNamed(n);
 				case HEnum(e) if (e.ename == ""):
 					var tl = e.efields[0].args;
 					DContext(tl.map(x -> makeDesc(x)));
 				case HEnum(e):
-					DNamed(e.ename, e);
+					DNamed(e.ename);
 				case HVirtual(vp):
 					var d = typesDescs.get(t);
 					if (d != null) return d;
-					var arr = new Vector(vp.vfields.length, new VDescField("", null, DSimple(HVoid)));
+					var arr = new Vector(vp.vfields.length, new VDescField("", DSimple(HVoid)));
 					var td = DVirtual(arr);
 					typesDescs.set(t, td);
 					for (i in 0...vp.vfields.length) {
 						var f = vp.vfields[i];
-						arr[i] = new VDescField(f.name, if (core.ds.StrTools.hasIdentity) f.name else f, makeDesc(f.t));
+						arr[i] = new VDescField(f.name, makeDesc(f.t));
 					}
 					td;
 			}
 		}
 		var hashes = new StringMap<Bool>();
+		/* the description written out canonically, whatever the sharing of its values */
+		function canonical(d:TypeDesc):String {
+			var b = new StringBuf();
+			function str(s:String) {
+				b.add(haxe.io.Bytes.ofString(s).length);
+				b.addChar(":".code);
+				b.add(s);
+			}
+			function ser(stack:Array<Vector<VDescField>>, d:TypeDesc) {
+				switch d {
+					case DSimple(HArray(t)):
+						b.addChar("A".code);
+						ser(stack, makeDesc(t));
+					case DSimple(HRef(t)):
+						b.addChar("R".code);
+						ser(stack, makeDesc(t));
+					case DSimple(HNull(t)):
+						b.addChar("N".code);
+						ser(stack, makeDesc(t));
+					case DSimple(t):
+						b.addChar("S".code);
+						str(tstr(t));
+					case DFun(tl, r, closure):
+						b.addChar(if (closure) "F".code else "M".code);
+						b.add(tl.length);
+						for (x in tl) ser(stack, x);
+						ser(stack, r);
+					case DNamed(n):
+						b.addChar("T".code);
+						str(n);
+					case DVirtual(arr):
+						// port: stack is head first
+						var index:Null<Int> = null;
+						for (i in 0...stack.length) if (stack[i] == arr) {
+							index = i;
+							break;
+						}
+						switch index {
+							case null:
+								b.addChar("V".code);
+								b.add(arr.length);
+								var stack = [arr].concat(stack);
+								for (f in arr) {
+									str(f.name);
+									ser(stack, f.d);
+								}
+							case i:
+								b.addChar("^".code);
+								b.add(i);
+						}
+					case DContext(arr):
+						b.addChar("C".code);
+						b.add(arr.length);
+						for (x in arr) ser(stack, x);
+				}
+			}
+			ser([], d);
+			return b.toString();
+		}
 		function makeSign(d:TypeDesc):String {
-			var m = new OcamlExtern();
-			m.desc(d);
-			var dig = md5hex(m.getBytes());
+			var dig = md5hex(haxe.io.Bytes.ofString(canonical(d)));
 			var h = dig.substr(0, 7);
 			var h = if (hashes.exists(h)) dig else h;
 			hashes.set(h, true);
@@ -1800,7 +1500,7 @@ class Hl2c {
 					"t$_" + tstr(t);
 				case DFun(_):
 					"t$fun_" + makeSign(d);
-				case DNamed(n, _):
+				case DNamed(n):
 					"t$" + nsplit(n, ".").join("_");
 				case DVirtual(_):
 					"t$vrt_" + (makeSign(d));
@@ -2132,8 +1832,8 @@ class Hl2c {
 			define(ctx, "// Abstract decls");
 			var abstracts = [
 				for (t in allTypes) switch t {
-					case HAbstract("hl_tls" | "hl_mutex" | "hl_thread", _, _): continue; /* ignore / defined in hl.h already */
-					case HAbstract(name, _, _): name;
+					case HAbstract("hl_tls" | "hl_mutex" | "hl_thread", _): continue; /* ignore / defined in hl.h already */
+					case HAbstract(name, _): name;
 					case _: continue;
 				}
 			];
@@ -2487,9 +2187,9 @@ class Hl2c {
 				/* add cfiles in deterministic order */
 				if (m.mFunctions.length != 0) saveCfile(gctx, m.mName + ".c");
 			}
-			// port: upstream generates the modules in parallel; the hash cache they share
-			// would then make hashes.c depend on scheduling. Sequential, as with
-			// -D disable-parallelism.
+			// port: upstream generates the modules in parallel, on the compilation's pool;
+			// the hash cache they share then makes the hashes of colliding strings depend
+			// on scheduling. Sequential, as with -D disable-parallelism.
 			for (idx in 0...modules.length) {
 				var m = modules[idx];
 				var definedTypes = new TtypeMap<Bool>();
@@ -2561,9 +2261,15 @@ class Hl2c {
 			line("");
 			line("void hl_init_hashes() {");
 			block(ctx);
-			var l = gctx.hashCacheList.copy();
-			l.reverse();
-			for (i in l) exprc(ctx, 'hl_hash((vbyte*)${string(gctx, ctx, i)})');
+			/* in the order of the strings, unless two hashes collided */
+			var collided = Lambda.count(gctx.hashMem) != gctx.hashCacheList.length || {
+				var c = false;
+				for (sid => h in gctx.hashCache) if (h != hlHash(gctx.hlcode.strings[sid])) c = true;
+				c;
+			}
+			var sids = gctx.hashCacheList.copy();
+			if (collided) sids.reverse() else sids.sort((a, b) -> a - b);
+			for (i in sids) exprc(ctx, 'hl_hash((vbyte*)${string(gctx, ctx, i)})');
 			unblock(ctx);
 			line("}");
 			closeFile(ctx);

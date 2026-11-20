@@ -47,9 +47,7 @@ enum Ttype {
 	HRef(t:Ttype);
 	HVirtual(v:VirtualProto);
 	HDynObj;
-	// port: `ident` stands for the physical identity of the OCaml name string (the
-	// source expression it comes from); only Hl2c's Marshal emulation reads it.
-	HAbstract(name:String, idx:Int, ident:Dynamic);
+	HAbstract(name:String, idx:Int);
 	HEnum(e:EnumProto);
 	HNull(t:Ttype); /* for not nullable type only */
 	HMethod(args:Array<Ttype>, ret:Ttype);
@@ -73,14 +71,9 @@ typedef EField = {
 }
 
 // port: the `(string, 'v) PMap.t` fields of the prototypes (pindex, pfunctions,
-// vindex): looked up through a StringMap; `keys` holds the keys in first-insertion
-// order (a re-added key keeps its place and takes the new key string, as PMap.add
-// does), from which Hl2c's Marshal rebuilds the PMap's AVL tree.
+// vindex), looked up through a StringMap (their order never reaches the output).
 class StrPMap<V> {
 	final m:StringMap<V> = new StringMap();
-	final pos:StringMap<Int> = new StringMap();
-
-	public final keys:Array<String> = [];
 
 	public function new() {}
 
@@ -88,16 +81,7 @@ class StrPMap<V> {
 
 	public inline function exists(k:String):Bool return m.exists(k);
 
-	public function set(k:String, v:V):Void {
-		var i = pos.get(k);
-		if (i == null) {
-			pos.set(k, keys.length);
-			keys.push(k);
-		} else {
-			keys[i] = k;
-		}
-		m.set(k, v);
-	}
+	public inline function set(k:String, v:V):Void m.set(k, v);
 }
 
 class ClassProto {
@@ -484,7 +468,7 @@ class Hlcode {
 			case [HObj(p1), HObj(p2)]: p1 == p2;
 			case [HEnum(e1), HEnum(e2)]: e1 == e2;
 			case [HStruct(p1), HStruct(p2)]: p1 == p2;
-			case [HAbstract(_, a1, _), HAbstract(_, a2, _)]: a1 == a2;
+			case [HAbstract(_, a1), HAbstract(_, a2)]: a1 == a2;
 			case [HVirtual(v1), HVirtual(v2)]:
 				if (v1 == v2) true else if (v1.vfields.length != v2.vfields.length) false else {
 					var i = 0;
@@ -702,7 +686,7 @@ class Hlcode {
 				"virtual(" + [for (f in v.vfields) f.name + ":" + tstr(f.t, [v].concat(stack))].join(",") + ")";
 			case HDynObj:
 				"dynobj";
-			case HAbstract(s, _, _):
+			case HAbstract(s, _):
 				"abstract(" + s + ")";
 			case HEnum(e) if (e.eid == 0):
 				var fl = e.efields[0].args;
@@ -1030,7 +1014,7 @@ class Hlcode {
 			case HVirtual(v):
 				mix(v.vfields.length);
 				for (f in v.vfields) mix(strHash(f.name));
-			case HAbstract(name, idx, _):
+			case HAbstract(name, idx):
 				mix(strHash(name));
 				mix(idx);
 			case HEnum(e):
@@ -1102,7 +1086,7 @@ class Hlcode {
 				tCompare(x, y);
 			case [HVirtual(v1), HVirtual(v2)]:
 				v1 == v2 ? 0 : fieldsCmp(v1.vfields, v2.vfields);
-			case [HAbstract(n1, i1, _), HAbstract(n2, i2, _)]:
+			case [HAbstract(n1, i1), HAbstract(n2, i2)]:
 				var c = strCompare(n1, n2);
 				c != 0 ? c : icmp(i1, i2);
 			case [HEnum(e1), HEnum(e2)]:
@@ -1266,7 +1250,7 @@ private class TtypeEq {
 					stack.pop();
 					r;
 				}
-			case [HAbstract(n1, i1, _), HAbstract(n2, i2, _)]: n1 == n2 && i1 == i2;
+			case [HAbstract(n1, i1), HAbstract(n2, i2)]: n1 == n2 && i1 == i2;
 			case [HEnum(e1), HEnum(e2)]:
 				if (e1 == e2) true else if (e1.ename != e2.ename || e1.eid != e2.eid || e1.eglobal != e2.eglobal
 					|| e1.efields.length != e2.efields.length) false else if (inStack(e1, e2)) true else {
@@ -1355,12 +1339,6 @@ class TtypeMap<V> {
 	}
 
 	public function exists(t:Ttype):Bool return find(t) != null;
-
-	// port: the key a binding holds (PMap.add stores the key of the latest add).
-	public function keyOf(t:Ttype):Null<Ttype> {
-		var e = find(t);
-		return e == null ? null : e.k;
-	}
 
 	public function set(t:Ttype, v:V):Void {
 		var e = find(t);
