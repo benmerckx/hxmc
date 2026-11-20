@@ -154,8 +154,6 @@ class CompilerCallbacks {
 
 class FileKeys {
 	var cache:Map<String, String> = [];
-	var virtualCounter = 0;
-
 	public function new() {}
 
 	public function get(file:String):String {
@@ -166,8 +164,7 @@ class FileKeys {
 	}
 
 	public function generateVirtual(mpath:GlobalTypePath, step:Int):String {
-		virtualCounter++;
-		return (mpath.pack.length == 0 ? "." : mpath.pack.join("/")) + "/" + mpath.name + "_" + step + "_" + virtualCounter;
+		return (mpath.pack.length == 0 ? "." : mpath.pack.join("/")) + "/" + mpath.name + "_" + step;
 	}
 }
 
@@ -502,7 +499,20 @@ class Common {
 		modules: com.modules,
 		main: com.main,
 		types: com.types,
-		resources: com.resources,
+		resources: {
+			var l = com.resources.fold((k, v, acc:Array<{k:String, v:haxe.io.Bytes}>) -> {
+				acc.push({k: k, v: v});
+				acc;
+			}, []);
+			// port: OCaml 'compare' on the pairs: the name, then the bytes
+			l.sort((a, b) -> {
+				var c = core.ds.Key.compareStrings(a.k, b.k);
+				c != 0 ? c : a.v.compare(b.v);
+			});
+			var h = new core.ds.OcamlHashtbl(core.ds.OcamlHash.hashString, (a:String, b:String) -> a == b, l.length);
+			for (e in l) h.add(e.k, e.v);
+			h;
+		},
 		nativeLibs: switch com.platform {
 			case Jvm: [for (l in com.nativeLibs.javaLibs) (cast l : NativeLibraries.NativeLibraryBase)];
 			case Flash: [for (l in com.nativeLibs.swfLibs) (cast l : NativeLibraries.NativeLibraryBase)];
