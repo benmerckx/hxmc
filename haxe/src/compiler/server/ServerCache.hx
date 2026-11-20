@@ -271,13 +271,25 @@ class ServerCache {
 				return true;
 			}
 		}
+		/* A file written again with the same content is not a change. */
+		function unchangedContent(mPath:GlobalTypePath, mExtra:ModuleDefExtra, file:String, time:Float):Bool {
+			return switch mExtra.mDigest {
+				case digest if (digest != null && (try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false)):
+					ServerMessage.unchangedContent(com, "", file);
+					mExtra.mTime = time;
+					true;
+				case _:
+					false;
+			}
+		}
 		function checkModuleShadowing(paths:Array<CachedDirectory>, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
 			var ownFile = core.Path.UniqueKey.lazyKey(mExtra.mFile);
 			for (dir in paths) {
 				var file = (dir.cPath + mPath.name) + ".hx";
-				if (sys.FileSystem.exists(file) && com.partScope.fileKeys.get(file) != ownFile) {
+				if (sys.FileSystem.exists(file)) {
 					var time = Common.fileTime(file);
-					if (time > mExtra.mTime) {
+					/* The file of the module does not shadow it, unless its content changed. */
+					if (time > mExtra.mTime && !(com.partScope.fileKeys.get(file) == ownFile && unchangedContent(mPath, mExtra, file, time))) {
 						ServerMessage.modulePathChanged(com, "", mPath, mExtra, time, file);
 						throw new Dirty(Shadowed(file));
 					}
@@ -334,15 +346,8 @@ class ServerCache {
 			function checkFile() {
 				var file = core.Path.UniqueKey.lazyPath(mExtra.mFile);
 				var time = Common.fileTime(file);
-				if (time != mExtra.mTime) {
-					var sameDigest = switch mExtra.mDigest {
-						case null: false;
-						case digest: try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false;
-					}
-					if (sameDigest) {
-						ServerMessage.unchangedContent(com, "", file);
-						mExtra.mTime = time;
-					} else if (hasPolicy(CheckFileContentModification) && !contentChanged(mPath, file)) {
+				if (time != mExtra.mTime && !unchangedContent(mPath, mExtra, file, time)) {
+					if (hasPolicy(CheckFileContentModification) && !contentChanged(mPath, file)) {
 						ServerMessage.unchangedContent(com, "", file);
 					} else {
 						ServerMessage.notCached(com, "", mPath);
