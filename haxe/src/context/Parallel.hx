@@ -22,6 +22,8 @@ import sys.thread.Mutex;
 class Parallel {
 	public static var enable = true;
 
+	public static function isEnabled():Bool return enable;
+
 	public static function runParallelFor(numDomains:Int, length:Int, f:Int->Void, chunkSize:Int = 0):Void {
 		if (!enable) {
 			for (i in 0...length) f(i);
