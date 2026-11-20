@@ -737,9 +737,12 @@ class Hl2c {
 
 	static function defineType(gctx:GlobalContext, ctx:FileContext, t:Ttype):Void {
 		switch t {
-			case HVoid | HUI8 | HUI16 | HI32 | HI64 | HF32 | HF64 | HBool | HBytes | HDyn | HArray(_) | HType | HDynObj | HNull(_) | HRef(_) | HGUID:
+			case HVoid | HUI8 | HUI16 | HI32 | HI64 | HF32 | HF64 | HBool | HBytes | HDyn | HArray(_) | HType | HDynObj | HNull(_) | HGUID:
 			case HAbstract(_):
 				define(ctx, "#include <hl/natives.h>");
+			case HRef(t):
+				/* a pointer to the C type of [t] (hl.Ref<String> is String* ) */
+				defineType(gctx, ctx, t);
 			case HFun(args, ret) | HMethod(args, ret):
 				for (a in args) defineType(gctx, ctx, a);
 				defineType(gctx, ctx, ret);
