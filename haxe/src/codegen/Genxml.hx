@@ -251,7 +251,7 @@ class Genxml {
 		}
 	}
 
-	// port: XML-Light's `Xml.to_string (Xml.PCData s)`, including its preservation of numeric entities.
+	/* as [Xml.to_string (Xml.PCData s)], without its shared buffer */
 	static function escapeEntities(value:String):String {
 		var out = new StringBuf();
 		for (i in 0...value.length) out.add(switch value.charAt(i) {
@@ -293,21 +293,44 @@ class Genxml {
 	}
 
 	public static function generate(com:context.Common.CommonContext, file:String):Void {
-		function f(_:Null<Bool>):RttiXml {
-			return node("haxe", [], com.types.filter(t -> !Meta.has(Meta.NoDoc, tInfos(t).mtMeta)).map(t -> genTypeDecl(true, t)));
-		}
-		var x = core.Timer.time(com.timerCtx, ["generate", "xml"], f, null);
-
-		function f2(_:Null<Bool>):Null<Bool> {
+		var types = com.types.filter(t -> !Meta.has(Meta.NoDoc, tInfos(t).mtMeta));
+		function toString(tabs:String, t:ModuleType):String {
 			var out = new StringBuf();
-			out.add("<!-- This file can be parsed by haxe.rtti.XmlParser -->\n");
-			writeXml(out, "", x);
+			writeXml(out, tabs, genTypeDecl(true, t));
+			return out.toString();
+		}
+		function f(_:Null<Bool>):String {
+			var b = new StringBuf();
+			b.add("<!-- This file can be parsed by haxe.rtti.XmlParser -->\n");
+			switch types {
+				case []:
+					b.add("<haxe/>");
+				case [t]:
+					b.add("<haxe>");
+					b.add(toString("", t));
+					b.add("</haxe>");
+				case _:
+					var l = context.Parallel.runWithPool(com.sctx.pool, pool -> context.Parallel.ParallelArray.map(pool, toString.bind("\t"), types, ""));
+					b.add("<haxe>\n");
+					for (s in l) {
+						b.add(s);
+						b.add("\n");
+					}
+					b.add("</haxe>");
+			}
+			return b.toString();
+		}
+		var content = core.Timer.time(com.timerCtx, ["generate", "xml"], f, null);
+		core.Timer.time(com.timerCtx, ["write", "xml"], function(_:Null<Bool>):Null<Bool> {
 			var ch = sys.io.File.write(file, true);
-			ch.writeString(out.toString());
+			try ch.writeString(content)
+			catch (e:haxe.Exception) {
+				ch.close();
+				throw e;
+			}
 			ch.close();
 			return null;
-		}
-		core.Timer.time(com.timerCtx, ["write", "xml"], f2, null);
+		}, null);
 	}
 
 	public static function genTypeString(t:ModuleType):String {
