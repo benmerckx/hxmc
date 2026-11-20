@@ -451,7 +451,7 @@ class RenameVars {
 					}
 				),
 				pos: Globals.nullPos
-			} : core.Ast.MetadataEntry), v.vMeta);
+			} : core.Ast.MetadataEntry), core.ds.VectorTools.filter(v.vMeta, m -> m.meta != core.MetaList.StrictMeta.RealPath));
 			// removes v under its old name
 			VarsByName.remove(vars, v);
 			v.vName = name;
