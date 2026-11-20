@@ -992,15 +992,13 @@ class Common {
 	// port: Extc.filetime: full precision (st_mtim, macOS st_mtimespec; GetFileTime's 100 ns units on Windows)
 	public static function fileTime(file:String):Float return try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.;
 
-	/* Writes [content] to [file] unless the file already has exactly this content.
-		Returns whether the file was written. */
-	public static function writeFileIfChanged(file:String, content:haxe.io.Bytes):Bool {
+	/* Writes [content] to [file] unless the file already has exactly this content. */
+	public static function writeFileIfChanged(file:String, content:haxe.io.Bytes):Void {
 		var same = try {
 			var old = sys.io.File.getBytes(file);
 			old.length == content.length && old.compare(content) == 0;
 		} catch (_:Dynamic) false;
 		if (!same) sys.io.File.saveBytes(file, content);
-		return !same;
 	}
 
 	public static final flashVersions = [

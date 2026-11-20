@@ -467,10 +467,7 @@ class Hl2c {
 		ctx.hdefines = new StringMap();
 		ctx.definedFuns = new IntMap();
 		ctx.out = new StringBuf();
-		var fpath = ctx.dir + "/" + ctx.curfile;
-		var bytes = haxe.io.Bytes.ofString(str);
-		var fcontent = try sys.io.File.getBytes(fpath) catch (_:Dynamic) null;
-		if (fcontent == null || fcontent.compare(bytes) != 0) sys.io.File.saveBytes(fpath, bytes);
+		context.Common.writeFileIfChanged(ctx.dir + "/" + ctx.curfile, haxe.io.Bytes.ofString(str));
 	}
 
 	static function defineGlobal(gctx:GlobalContext, ctx:FileContext, g:Int):Void {
