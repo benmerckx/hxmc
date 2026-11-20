@@ -4976,7 +4976,9 @@ class Genhl {
 				case _:
 			}
 		}
+		var t = core.Timer.startTimer(ctx.com.timerCtx, ["generate", "hl", "functions"]);
 		for (t in types) generateType(ctx, t);
+		t();
 	}
 
 	static function buildCode(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Code {
@@ -5032,7 +5034,9 @@ class Genhl {
 		var ctx = createContext(com);
 		addTypes(ctx, com.types);
 
+		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "init"]);
 		var code = buildCode(ctx, com.types, com.main.mainExpr);
+		t();
 		ocamlVectorSort((n1:Native, n2:Native) -> n1.lib - n2.lib, code.natives);
 
 		if (ctx.optimize) {
