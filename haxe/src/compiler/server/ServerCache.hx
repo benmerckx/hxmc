@@ -280,6 +280,11 @@ class ServerCache {
 					&& !Lambda.exists(com.fileContents, e -> e.fileKey == key)
 					&& (try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false)):
 					ServerMessage.unchangedContent(com, "", file);
+					/* [m_extra] may be the copy of a binary module made for this request, which is not kept. */
+					switch com.cs.getContext(mExtra.mSign).getHxb().findOpt(mPath) {
+						case mc if (mc != null && mc.mcExtra.mTime == mExtra.mTime): mc.mcExtra.mTime = time;
+						case _:
+					}
 					mExtra.mTime = time;
 					true;
 				case _:
