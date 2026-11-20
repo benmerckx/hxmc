@@ -4519,10 +4519,18 @@ class Genhl {
 		}
 	}
 
-	public static function writeCode(ch:haxe.io.BytesBuffer, code:Code, debug:Bool):Void {
+	/* Where the domain writing a part of the functions writes (see [write_code]). */
+	// port: Domain.DLS is sys.thread.Tls (null: None)
+	static final parallelByte = new sys.thread.Tls<Null<Int->Void>>();
+
+	public static function writeCode(ch:haxe.io.BytesBuffer, code:Code, debug:Bool, ?pool:core.ds.TaskPool):Void {
 		var gt = gatherTypes(code);
 		var allTypes = gt.all, htypes = gt.types;
-		function byte(v:Int) ch.addByte(v & 0xFF);
+		function byteCh(v:Int) ch.addByte(v & 0xFF);
+		function byte(v:Int) switch parallelByte.value {
+			case null: byteCh(v);
+			case f: f(v);
+		}
 		function writeIndex(i:Int) writeIndexGen(byte, i);
 
 		function writeType(t:Ttype):Void {
@@ -4788,7 +4796,7 @@ class Genhl {
 			writeType(n.t);
 			writeIndex(n.findex);
 		}
-		for (f in code.functions) {
+		function writeFunction(f:Fundecl):Void {
 			writeType(f.ftype);
 			writeIndex(f.findex);
 			writeIndex(f.regs.length);
@@ -4805,6 +4813,26 @@ class Genhl {
 					if (code.version >= 6) writeIndex(a.scopeEnd + 1);
 				}
 			}
+		}
+		switch pool {
+			case pool if (pool != null && code.functions.length > 1024):
+				var n = code.functions.length, chunk = 256;
+				var parts = new Vector<haxe.io.Bytes>(Std.int((n + chunk - 1) / chunk));
+				pool.parallelFor(0, parts.length - 1, k -> {
+					var o = new haxe.io.BytesBuffer();
+					parallelByte.value = v -> o.addByte(v & 0xFF);
+					try {
+						for (i in k * chunk...(n < (k + 1) * chunk ? n : (k + 1) * chunk)) writeFunction(code.functions[i]);
+					} catch (e:haxe.Exception) {
+						parallelByte.value = null;
+						throw e;
+					}
+					parallelByte.value = null;
+					parts[k] = o.getBytes();
+				}, 1);
+				for (p in parts) ch.add(p);
+			case _:
+				for (f in code.functions) writeFunction(f);
 		}
 		for (c in code.constants) {
 			writeIndex(c.g);
@@ -5097,7 +5125,10 @@ class Genhl {
 			t();
 		} else {
 			var ch = new haxe.io.BytesBuffer();
-			writeCode(ch, code, !Gctx.rawDefined(com, "hl_no_debug"));
+			context.Parallel.runWithPool(com.pool, pool -> {
+				writeCode(ch, code, !Gctx.rawDefined(com, "hl_no_debug"), pool);
+				null;
+			});
 			var str = addHeader(code, ch.getBytes());
 			context.Common.writeFileIfChanged(com.file, str);
 			prevSign = sign;
