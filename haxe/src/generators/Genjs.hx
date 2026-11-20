@@ -1271,7 +1271,7 @@ class Genjs {
 			sub.buf = new JsBuffer();
 			sub.chan = ctx.chan;
 			sub.packages = ctx.packages;
-			sub.smap = if (ctx.smap == null) null else JsSourcemap.create();
+			sub.smap = if (ctx.smap == null) null else JsSourcemap.createFragment();
 			sub.jsModern = ctx.jsModern;
 			sub.jsFlatten = ctx.jsFlatten;
 			sub.hasResolveClass = ctx.hasResolveClass;

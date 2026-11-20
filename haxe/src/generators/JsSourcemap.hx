@@ -185,6 +185,16 @@ class JsSourcemap {
 		lastFile: null,
 	};
 
+	/* The state a fragment starts from: no position of a source can be the same,
+		so that its first mapping is always encoded. */
+	static final fragmentStart:SourcemapPos = {file: -1, line: 0, col: 0};
+
+	public static function createFragment():Sourcemap {
+		var smap = create();
+		smap.sourceLastPos = fragmentStart;
+		return smap;
+	}
+
 	public static function encodedFragment(smap:Sourcemap):EncodedFragment {
 		var mappings = smap.mappings.toString();
 		return {
@@ -226,7 +236,7 @@ class JsSourcemap {
 		var d2 = decodeVlq(m, d1.next);
 		var d3 = decodeVlq(m, d2.next);
 		var d4 = decodeVlq(m, d3.next);
-		return {next: d4.next, file: d2.value};
+		return {next: d4.next, file: fragmentStart.file + d2.value};
 	}
 
 	/* Whether the sources of a fragment keep their order once global: the
@@ -342,8 +352,9 @@ class JsSourcemap {
 		var d3 = decodeVlq(m, d2.next);
 		var d4 = decodeVlq(m, d3.next);
 		var dcol = d1.value, dfile = d2.value, dline = d3.value, dscol = d4.value, i4 = d4.next;
+		var local = fragmentStart.file + dfile;
 		function index(name:String):Null<Int> return smap.sourcesHash.get(name);
-		var firstFile = switch index(ef.efSources[dfile]) {
+		var firstFile = switch index(ef.efSources[local]) {
 			case null: smap.sources.length;
 			case i: i;
 		}
@@ -368,7 +379,7 @@ class JsSourcemap {
 		smap.outputLastCol = if (newlines == 0) lastCol0 else 0;
 		smap.printComma = if (newlines == 0) comma0 else false;
 		smap.outputCurrentCol = col;
-		encodeMapping(smap, {file: globals[dfile], line: dline, col: dscol});
+		encodeMapping(smap, {file: globals[local], line: dline, col: dscol});
 		/* the others: the same deltas, but the one of their source */
 		if (shifted(globals)) smap.mappings.addSub(m, i4, len - i4) else smap.mappings.add(splicedTail(ef, globals));
 		/* the final state */
