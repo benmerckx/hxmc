@@ -151,12 +151,3 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   `ServerCache.cleanup`, taint reason `MacroInterpreterReset`;
   server-verify's `a build macro's persistent state, after an error in a
   macro`, `make dev-check`).
-
-## The one exception to byte identity
-
-hl/c's digest names of types whose description holds a closure depend on
-the reference binary's own machine code. The port writes a documented
-placeholder instead, and the harnesses normalize only those names
-([testing.md](testing.md#two-exceptions-to-byte-identity),
-`haxe/test/HlcNames.hx`). A new case of this kind extends both, never a
-general tolerance.

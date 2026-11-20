@@ -33,7 +33,7 @@ of each file.
 
 | Script | Lane | Compares | Result |
 | --- | --- | --- | --- |
-| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 68/68, 8/8 |
+| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 69/69, 8/8 |
 | `Display` | `display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
 | `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, an empty connection ([a divergence](porting.md#divergences-from-the-reference)), `--server-connect` | 674/674 |
 | `ServerJsonRpc` | `jsonrpc` | the `server/*` methods, both cache modes | 107/107 |
@@ -55,20 +55,14 @@ context, null safety, misc, sys on Eval, threads, third-party projects)
 runs with the release binaries as `haxe` (`upstream-tests.yml`). No target
 runtime is installed: other targets' outputs are compared, not run.
 
-### Two exceptions to byte identity
+### The one exception to byte identity
 
-- **hl/c digest names** (`HlcNames.hx`). hl2c names some types after the
-  MD5 of a marshalled description that, for object prototypes, contains a
-  code pointer into the reference's own binary. The port writes a fixed
-  placeholder (`Hl2c.hx`). Where hl/c output is compared, the digest names
-  found on one side only are renamed on both sides in order of appearance;
-  every other byte must match.
-- **Printed floats**. The port's Math is musl's libm everywhere
-  (`LibM.hx`); the reference's is glibc's. They can differ by an ulp, which
-  arithmetic can widen. The fuzzer's output comparison
-  (`Runner.sameOutput`) accepts two printed floats at the same place when
-  they are at most 4 ulps apart (`Runner.MAX_ULPS`), finite and of the same
-  sign.
+**Printed floats**. The port's Math is musl's libm everywhere
+(`LibM.hx`); the reference's is glibc's. They can differ by an ulp, which
+arithmetic can widen. The fuzzer's output comparison
+(`Runner.sameOutput`) accepts two printed floats at the same place when
+they are at most 4 ulps apart (`Runner.MAX_ULPS`), finite and of the same
+sign.
 
 ### The fuzzer's exec lanes
 

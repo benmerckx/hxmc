@@ -18,7 +18,7 @@ playground: <https://haxe-in-haxe.ben.mk>.
 | | |
 | --- | --- |
 | **Supported** | |
-| Compiler port | Haxe 5.0.0-preview.1, upstream commit `b347207` |
+| Compiler port | Haxe 5.0.0-preview.1, upstream commit `8c05a2c` |
 | Native targets | Linux, macOS, Windows; x86-64 and ARM64 |
 | WebAssembly | `wasm32-wasi` (node, wasmtime, browsers) |
 | Macros | Eval, as upstream |
