@@ -570,8 +570,11 @@ class Args {
 				actx.measureTimes = true;
 			case AddWarning(s):
 				var p = Globals.fakePos("-w " + s);
-				var l = Warning.parseOptions(s, p);
-				com.warningOptions.unshift(l);
+				var l = Warning.parseScopedOptions(s, p);
+				var unscoped = [for (o in l) if (o.scope == null) o.opt];
+				var scoped:Array<core.Warning.ScopedWarningOption> = [for (o in l) if (o.scope != null) {opt: o.opt, scope: o.scope}];
+				com.warningOptions.unshift(unscoped);
+				com.scopedWarningOptions = scoped.concat(com.scopedWarningOptions);
 			case AddClass(cpath):
 				actx.classes.unshift(toPath(cpath));
 			case IncludeModule(cl):

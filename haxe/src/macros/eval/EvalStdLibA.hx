@@ -236,7 +236,7 @@ class StdArray {
 		var fromIndex = EvalDecode.defaultInt(fromIndex, 0);
 		var fromIndex = if (fromIndex < 0) self.alength + fromIndex else fromIndex;
 		var fromIndex = if (fromIndex < 0) 0 else fromIndex;
-		return VInt32(EvalArray.indexOf(self, EvalValueTools.equals, x, fromIndex));
+		return VInt(EvalArray.indexOf(self, EvalValueTools.equals, x, fromIndex));
 	});
 
 	public static final insert = EvalEncode.vifun2((vthis, pos, x) -> {
@@ -282,7 +282,7 @@ class StdArray {
 		var fromIndex = EvalDecode.defaultInt(fromIndex, last);
 		var fromIndex = if (fromIndex < 0) self.alength + fromIndex else fromIndex;
 		var fromIndex = if (fromIndex < 0) 0 else if (fromIndex > last) last else fromIndex;
-		return VInt32(EvalArray.lastIndexOf(self, EvalValueTools.equals, x, fromIndex));
+		return VInt(EvalArray.lastIndexOf(self, EvalValueTools.equals, x, fromIndex));
 	});
 
 	public static final map = EvalEncode.vifun1((vthis, f) -> {
@@ -304,7 +304,7 @@ class StdArray {
 
 	public static final push = EvalEncode.vifun1((vthis, v) -> {
 		var self = thisValue(vthis);
-		return VInt32(EvalArray.push(self, v));
+		return VInt(EvalArray.push(self, v));
 	});
 
 	public static final remove = EvalEncode.vifun1((vthis, x) -> {
@@ -438,13 +438,13 @@ class StdBytes {
 	public static final compare = EvalEncode.vifun1((vthis, other) -> {
 		var self = thisValue(vthis);
 		var other = EvalDecode.decodeBytes(other);
-		return VInt32(compareBytes(self, other));
+		return VInt(compareBytes(self, other));
 	});
 
 	public static final fastGet = EvalEncode.vfun2((b, pos) -> {
 		var b = EvalDecode.decodeBytes(b);
 		var pos = EvalDecode.decodeInt(pos);
-		return if (pos < 0 || pos >= b.length) VNull else VInt32(b.get(pos));
+		return if (pos < 0 || pos >= b.length) VNull else VInt(b.get(pos));
 	});
 
 	public static final fill = EvalEncode.vifun3((vthis, pos, len, value) -> {
@@ -460,7 +460,7 @@ class StdBytes {
 	public static final get = EvalEncode.vifun1((vthis, pos) -> {
 		var self = thisValue(vthis);
 		var pos = EvalDecode.decodeInt(pos);
-		return try VInt32(BytesIo.readByte(self, pos)) catch (_:InvalidArgument) VNull;
+		return try VInt(BytesIo.readByte(self, pos)) catch (_:InvalidArgument) VNull;
 	});
 
 	public static final getData = EvalEncode.vifun0(vthis -> vthis);
@@ -478,7 +478,7 @@ class StdBytes {
 	});
 
 	public static final getInt32 = EvalEncode.vifun1((vthis, pos) -> {
-		return try VInt32(BytesIo.readI32(thisValue(vthis), EvalDecode.decodeInt(pos))) catch (_:InvalidArgument) outsideBounds();
+		return try VInt(BytesIo.readI32(thisValue(vthis), EvalDecode.decodeInt(pos))) catch (_:InvalidArgument) outsideBounds();
 	});
 
 	public static final getInt64 = EvalEncode.vifun1((vthis, pos) -> {
@@ -502,7 +502,7 @@ class StdBytes {
 	});
 
 	public static final getUInt16 = EvalEncode.vifun1((vthis, pos) -> {
-		return try VInt32(BytesIo.readUi16(thisValue(vthis), EvalDecode.decodeInt(pos))) catch (_:InvalidArgument) outsideBounds();
+		return try VInt(BytesIo.readUi16(thisValue(vthis), EvalDecode.decodeInt(pos))) catch (_:InvalidArgument) outsideBounds();
 	});
 
 	public static final ofData = EvalEncode.vfun1(v -> v);
@@ -660,7 +660,7 @@ class StdBytesBuffer {
 
 	public static final getLength = EvalEncode.vifun0(vthis -> {
 		var self = thisValue(vthis);
-		return VInt32(self.length);
+		return VInt(self.length);
 	});
 
 	public static function addChar(self:haxe.io.BytesBuffer, i:Int):Void {
@@ -790,8 +790,8 @@ class StdCompress {
 			self.zFlush) catch (_:Dynamic) EvalContext.excString("oops");
 		return EvalEncode.encodeObj([
 			{name: EvalHash.key_done, value: r.z_finish.vbool()},
-			{name: EvalHash.key_read, value: VInt32(r.z_read)},
-			{name: EvalHash.key_write, value: VInt32(r.z_wrote)}
+			{name: EvalHash.key_read, value: VInt(r.z_read)},
+			{name: EvalHash.key_write, value: VInt(r.z_wrote)}
 		]);
 	}
 
@@ -875,7 +875,7 @@ class StdCrc32 {
 	public static final make = EvalEncode.vfun1(data -> {
 		var data = EvalDecode.decodeBytes(data);
 		var crc32 = haxe.crypto.Crc32.make(data);
-		return VInt32(crc32);
+		return VInt(crc32);
 	});
 }
 
@@ -939,20 +939,20 @@ class StdDate {
 		}
 	});
 
-	public static final getDate = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getDate()));
-	public static final getDay = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getDay()));
-	public static final getFullYear = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getFullYear()));
-	public static final getHours = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getHours()));
-	public static final getMinutes = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getMinutes()));
-	public static final getMonth = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getMonth()));
-	public static final getSeconds = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getSeconds()));
-	public static final getUTCDate = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCDate()));
-	public static final getUTCDay = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCDay()));
-	public static final getUTCFullYear = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCFullYear()));
-	public static final getUTCHours = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCHours()));
-	public static final getUTCMinutes = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCMinutes()));
-	public static final getUTCMonth = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCMonth()));
-	public static final getUTCSeconds = EvalEncode.vifun0(vthis -> VInt32(tm(thisValue(vthis)).getUTCSeconds()));
+	public static final getDate = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getDate()));
+	public static final getDay = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getDay()));
+	public static final getFullYear = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getFullYear()));
+	public static final getHours = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getHours()));
+	public static final getMinutes = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getMinutes()));
+	public static final getMonth = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getMonth()));
+	public static final getSeconds = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getSeconds()));
+	public static final getUTCDate = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCDate()));
+	public static final getUTCDay = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCDay()));
+	public static final getUTCFullYear = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCFullYear()));
+	public static final getUTCHours = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCHours()));
+	public static final getUTCMinutes = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCMinutes()));
+	public static final getUTCMonth = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCMonth()));
+	public static final getUTCSeconds = EvalEncode.vifun0(vthis -> VInt(tm(thisValue(vthis)).getUTCSeconds()));
 	public static final getTime = EvalEncode.vifun0(vthis -> VFloat(thisValue(vthis) * 1000.));
 
 	public static final getTimezoneOffset = EvalEncode.vifun0(vthis -> {
@@ -960,7 +960,7 @@ class StdDate {
 		// port: mktime of the local and of the UTC broken-down times
 		var tsLocal = mktime(t.getFullYear(), t.getMonth(), t.getDate(), t.getHours(), t.getMinutes(), t.getSeconds());
 		var tsUTC = mktime(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), t.getUTCHours(), t.getUTCMinutes(), t.getUTCSeconds());
-		return VInt32(Std.int((tsUTC - tsLocal) / 60.));
+		return VInt(Std.int((tsUTC - tsLocal) / 60.));
 	});
 
 	// port: Unix.time (whole seconds)
@@ -1195,8 +1195,8 @@ class StdEReg {
 			var first = charOffset(self.rString, first);
 			var last = charOffset(self.rString, last);
 			EvalEncode.encodeObj([
-				{name: EvalHash.key_pos, value: VInt32(first)},
-				{name: EvalHash.key_len, value: VInt32(last - first)}
+				{name: EvalHash.key_pos, value: VInt(first)},
+				{name: EvalHash.key_len, value: VInt(last - first)}
 			]);
 		});
 	});
@@ -1227,10 +1227,10 @@ class StdEReg {
 	public static final matchedNum = EvalEncode.vifun0(vthis -> {
 		var self = thisValue(vthis);
 		if (self.rGroups.length == 0)
-			return VInt32(0);
+			return VInt(0);
 		else {
 			var substrings = self.rGroups[0];
-			return VInt32(substrings.groups.length);
+			return VInt(substrings.groups.length);
 		}
 	});
 
@@ -1553,7 +1553,7 @@ class StdFileInput {
 
 	public static final tell = EvalEncode.vifun0(vthis -> {
 		var ch:sys.io.FileInput = cast thisValue(vthis).ch;
-		return VInt32(ch.tell());
+		return VInt(ch.tell());
 	});
 
 	public static final readByte = EvalEncode.vifun0(vthis -> {
@@ -1564,7 +1564,7 @@ class StdFileInput {
 			t.eof.v = true;
 			raiseEof();
 		}
-		return VInt32(i);
+		return VInt(i);
 	});
 
 	public static final readBytes = EvalEncode.vifun3((vthis, bytes, pos, len) -> {
@@ -1579,7 +1579,7 @@ class StdFileInput {
 			t.eof.v = true;
 			raiseEof();
 		}
-		return VInt32(i);
+		return VInt(i);
 	});
 }
 
@@ -1616,7 +1616,7 @@ class StdFileOutput {
 
 	public static final tell = EvalEncode.vifun0(vthis -> {
 		var self:sys.io.FileOutput = cast thisValue(vthis);
-		return VInt32(self.tell());
+		return VInt(self.tell());
 	});
 
 	public static final writeByte = EvalEncode.vifun1((vthis, c) -> {
@@ -1634,7 +1634,7 @@ class StdFileOutput {
 		var len = EvalDecode.decodeInt(len);
 		if (pos < 0 || len < 0 || pos > bytes.length - len) throw new InvalidArgument("output");
 		self.writeFullBytes(bytes, pos, len);
-		return VInt32(len);
+		return VInt(len);
 	});
 }
 
@@ -1648,7 +1648,7 @@ class StdFPHelper {
 	public static final floatToI32 = EvalEncode.vfun1(f -> {
 		var f = EvalDecode.num(f);
 		var i32 = haxe.io.FPHelper.floatToI32(f);
-		return VInt32(i32);
+		return VInt(i32);
 	});
 
 	public static final i32ToFloat = EvalEncode.vfun1(i -> {
@@ -1748,18 +1748,18 @@ class StdFileSystem {
 	public static final stat = EvalEncode.vfun1(path -> {
 		var s:sys.FileStat = EvalStdLib.catchUnixError(p -> sys.FileSystem.stat(p), patchPath(EvalDecode.decodeString(path)));
 		return EvalEncode.encodeObj([
-			{name: EvalHash.key_gid, value: VInt32(s.gid)},
-			{name: EvalHash.key_uid, value: VInt32(s.uid)},
+			{name: EvalHash.key_gid, value: VInt(s.gid)},
+			{name: EvalHash.key_uid, value: VInt(s.uid)},
 			{name: EvalHash.key_atime, value: StdDate.encodeDate(s.atime.getTime() / 1000.)},
 			{name: EvalHash.key_mtime, value: StdDate.encodeDate(s.mtime.getTime() / 1000.)},
 			{name: EvalHash.key_ctime, value: StdDate.encodeDate(s.ctime.getTime() / 1000.)},
-			{name: EvalHash.key_dev, value: VInt32(s.dev)},
-			{name: EvalHash.key_ino, value: VInt32(s.ino)},
-			{name: EvalHash.key_nlink, value: VInt32(s.nlink)},
-			{name: EvalHash.key_rdev, value: VInt32(s.rdev)},
-			{name: EvalHash.key_size, value: VInt32(s.size)},
+			{name: EvalHash.key_dev, value: VInt(s.dev)},
+			{name: EvalHash.key_ino, value: VInt(s.ino)},
+			{name: EvalHash.key_nlink, value: VInt(s.nlink)},
+			{name: EvalHash.key_rdev, value: VInt(s.rdev)},
+			{name: EvalHash.key_size, value: VInt(s.size)},
 			// port: st_perm
-			{name: EvalHash.key_mode, value: VInt32(s.mode & 0xFFF)},
+			{name: EvalHash.key_mode, value: VInt(s.mode & 0xFFF)},
 		]);
 	});
 }
@@ -1812,19 +1812,19 @@ class StdGc {
 			{name: key_minor_words, value: VFloat(0.)},
 			{name: key_promoted_words, value: VFloat(0.)},
 			{name: key_major_words, value: VFloat(0.)},
-			{name: key_minor_collections, value: VInt32(0)},
-			{name: key_major_collections, value: VInt32(0)},
-			{name: key_heap_words, value: VInt32(heapWords)},
-			{name: key_heap_chunks, value: VInt32(0)},
-			{name: key_live_words, value: VInt32(0)},
-			{name: key_live_blocks, value: VInt32(0)},
-			{name: key_free_words, value: VInt32(0)},
-			{name: key_free_blocks, value: VInt32(0)},
-			{name: key_largest_free, value: VInt32(0)},
-			{name: key_fragments, value: VInt32(0)},
-			{name: key_compactions, value: VInt32(0)},
-			{name: key_top_heap_words, value: VInt32(heapWords)},
-			{name: key_stack_size, value: VInt32(0)}
+			{name: key_minor_collections, value: VInt(0)},
+			{name: key_major_collections, value: VInt(0)},
+			{name: key_heap_words, value: VInt(heapWords)},
+			{name: key_heap_chunks, value: VInt(0)},
+			{name: key_live_words, value: VInt(0)},
+			{name: key_live_blocks, value: VInt(0)},
+			{name: key_free_words, value: VInt(0)},
+			{name: key_free_blocks, value: VInt(0)},
+			{name: key_largest_free, value: VInt(0)},
+			{name: key_fragments, value: VInt(0)},
+			{name: key_compactions, value: VInt(0)},
+			{name: key_top_heap_words, value: VInt(heapWords)},
+			{name: key_stack_size, value: VInt(0)}
 		]);
 	}
 
@@ -1879,13 +1879,13 @@ class StdGc {
 
 	public static final get = EvalEncode.vfun0(() -> {
 		EvalEncode.encodeObj([
-			{name: key_minor_heap_size, value: VInt32(control.minorHeapSize)},
-			{name: key_major_heap_increment, value: VInt32(control.majorHeapIncrement)},
-			{name: key_space_overhead, value: VInt32(control.spaceOverhead)},
-			{name: key_verbose, value: VInt32(control.verbose)},
-			{name: key_max_overhead, value: VInt32(control.maxOverhead)},
-			{name: key_stack_limit, value: VInt32(control.stackLimit)},
-			{name: key_allocation_policy, value: VInt32(control.allocationPolicy)}
+			{name: key_minor_heap_size, value: VInt(control.minorHeapSize)},
+			{name: key_major_heap_increment, value: VInt(control.majorHeapIncrement)},
+			{name: key_space_overhead, value: VInt(control.spaceOverhead)},
+			{name: key_verbose, value: VInt(control.verbose)},
+			{name: key_max_overhead, value: VInt(control.maxOverhead)},
+			{name: key_stack_limit, value: VInt(control.stackLimit)},
+			{name: key_allocation_policy, value: VInt(control.allocationPolicy)}
 		]);
 	});
 
@@ -1898,7 +1898,7 @@ class StdGc {
 	public static final majorSlice = EvalEncode.vfun1(n -> {
 		EvalDecode.decodeInt(n);
 		hostCollect(false);
-		VInt32(0);
+		VInt(0);
 	});
 
 	public static final minor = EvalEncode.vfun0(() -> {
@@ -1977,13 +1977,13 @@ class StdHost {
 		// port: Unix.gethostbyname raises Not_found; the address is h_addr_list.(0)
 		var a = NativeNet.resolve(name);
 		if (a == null) EvalContext.excString('Could not resolve host $name');
-		return VInt32(a[0]);
+		return VInt(a[0]);
 		#else
 		var h = try new sys.net.Host(name) catch (_:Dynamic) EvalContext.excString('Could not resolve host $name');
 		var addr = h.toString();
 		var parts = addr.split(".").map(Std.parseInt);
 		var a = parts[0], b = parts[1], c = parts[2], d = parts[3];
-		return VInt32((a << 24) | (d | (c << 8) | (b << 16)));
+		return VInt((a << 24) | (d | (c << 8) | (b << 16)));
 		#end
 	});
 }

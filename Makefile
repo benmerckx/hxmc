@@ -85,7 +85,7 @@ HXMC_SRC := $(shell find hxmc/src -name '*.hx' 2>/dev/null)
 STD_SRC := $(shell find hxmc/std hxmc/portable 2>/dev/null)
 RT_SRC := $(wildcard hxmc/deps/*)
 LIX_SRC := $(shell find tools/lix/src -name '*.hx' 2>/dev/null)
-FUZZ_SRC := $(wildcard haxe/test/fuzz/*.hx haxe/test/fuzz/fuzz/*.hx) haxe/test/HlcNames.hx
+FUZZ_SRC := $(wildcard haxe/test/fuzz/*.hx haxe/test/fuzz/fuzz/*.hx)
 
 TOOL := bin/hxmc/hxmc
 STAGE0 := hxmc/bootstrap/stage0.wasm.br

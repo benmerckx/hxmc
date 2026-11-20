@@ -89,7 +89,7 @@ class Variant {
 	public var blobOff:Int = 0;
 	public var deps:haxe.ds.Vector<StoredDep>;
 	// the class fields its typing marked as maybe used through a structure
-	// (CfMaybeUsed, which DCE reads): role|module|class|kind|field
+	// (CfStructurallyUsed, which DCE reads): role|module|class|kind|field
 	public var marks:Array<String> = [];
 	// the macro classes whose static variables the macros run in its typing
 	// used (state kept between macro calls, for other modules' macros too):

@@ -71,7 +71,7 @@ class EvalExceptions {
 			case VNull: "VNull";
 			case VTrue: "VTrue";
 			case VFalse: "VFalse";
-			case VInt32(_): "VInt32";
+			case VInt(_): "VInt";
 			case VInt64(_): "VInt64";
 			case VUInt64(_): "VUInt64";
 			case VFloat(_): "VFloat";
@@ -264,11 +264,11 @@ class EvalExceptions {
 										throw NotFound.raise();
 									}
 									var min = switch assoc(EvalHash.key_min) {
-										case VInt32(i): i;
+										case VInt(i): i;
 										case _: throw NotFound.raise();
 									}
 									var max = switch assoc(EvalHash.key_max) {
-										case VInt32(i): i;
+										case VInt(i): i;
 										case _: throw NotFound.raise();
 									}
 									var file = switch assoc(EvalHash.key_file) {

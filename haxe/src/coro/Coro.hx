@@ -490,7 +490,7 @@ class Coro {
 						b.string(cf.cfName, p),
 						b.int(0, p)
 					];
-				case LocalFunc(_, v): [b.int(1, p), b.string("", p), b.string("", p), b.int(v.vId, p)]; // Placeholder values for ClassFunction-only parameters.
+				case LocalFunc(_, v): [b.int(1, p), b.string("", p), b.string("", p), b.int(v.vPos.pmin, p)]; // Placeholder values for ClassFunction-only parameters.
 			};
 			var coords = Lexer.getPosCoords(pos);
 			args = args.concat([

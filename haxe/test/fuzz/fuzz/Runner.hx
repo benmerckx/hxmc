@@ -497,14 +497,7 @@ class Runner {
 		return detail;
 	}
 
-	// hl/c: the digest names that depend on the reference's machine code are
-	// renamed on both sides first (haxe/test/HlcNames.hx)
 	static function compareDirs(a:Map<String, Bytes>, b:Map<String, Bytes>):Null<String> {
-		if (HlcNames.isHlc([for (k in a.keys()) k])) {
-			var n = HlcNames.normalize(a, b);
-			a = n.a;
-			b = n.b;
-		}
 		return compareMaps(a, b, _ -> true);
 	}
 

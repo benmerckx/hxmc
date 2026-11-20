@@ -213,6 +213,11 @@ class Path {
 		}
 	}
 
+	public static function comparablePath(f:String):String {
+		var f = getFullPath(f == "" ? "." : f);
+		return isWindows ? lowercaseAscii(f.split("\\").join("/")) : f;
+	}
+
 	public static function removeTrailingSlash(p:String):String {
 		var l = p.length;
 		return if (l == 0) "./" else switch p.charAt(l - 1) {

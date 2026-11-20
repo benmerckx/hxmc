@@ -170,7 +170,7 @@ class UpstreamTargets {
 						line = 'FAIL  ${pad(s.name, 13)} $d';
 					} else {
 						passed.push(s.name);
-						line = 'PASS  ${pad(s.name, 13)} ${walk('$gen/${s.name}/reference').length} files identical' + (renamedNames > 0 ? ' ($renamedNames hl/c digest names renamed)' : '');
+						line = 'PASS  ${pad(s.name, 13)} ${walk('$gen/${s.name}/reference').length} files identical';
 					}
 				}
 			}
@@ -197,31 +197,16 @@ class UpstreamTargets {
 
 	static function isZip(p:String) return p.endsWith(".jar") || p.endsWith(".zip");
 
-	// the hl/c digest names the last compareTrees renamed (HlcNames)
-	static var renamedNames = 0;
-
 	static function compareTrees(a:String, b:String, window:{from:Float, to:Float}):Null<String> {
 		var fa = walk(a), fb = walk(b);
-		renamedNames = 0;
 		if (fa.length == 0) return "reference wrote no files";
-		// hl/c: the digest names that depend on the reference's machine code are
-		// renamed on both sides first (HlcNames)
-		var hlc:Null<{a:Map<String, Bytes>, b:Map<String, Bytes>, renamed:Int}> = null;
-		if (HlcNames.isHlc(fa)) {
-			hlc = HlcNames.normalize([for (f in fa) f => File.getBytes('$a/$f')], [for (f in fb) f => File.getBytes('$b/$f')]);
-			fa = [for (f in hlc.a.keys()) f];
-			fb = [for (f in hlc.b.keys()) f];
-			fa.sort(compare);
-			fb.sort(compare);
-			renamedNames = hlc.renamed;
-		}
 		if (fa.join("\n") != fb.join("\n")) {
 			var onlyA = [for (f in fa) if (!fb.contains(f)) f], onlyB = [for (f in fb) if (!fa.contains(f)) f];
 			return 'file set differs (reference-only ${onlyA.length} ${onlyA.slice(0, 3)}, port-only ${onlyB.length} ${onlyB.slice(0, 3)})';
 		}
 		var differing = [], first = null, members = 0;
 		for (name in fa) {
-			var x = hlc != null ? hlc.a[name] : File.getBytes('$a/$name'), y = hlc != null ? hlc.b[name] : File.getBytes('$b/$name');
+			var x = File.getBytes('$a/$name'), y = File.getBytes('$b/$name');
 			if (isZip(name)) {
 				var za, zb;
 				try {

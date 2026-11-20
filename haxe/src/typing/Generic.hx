@@ -329,7 +329,7 @@ class Generic {
 		mg.mTypes = [TClassDecl(cg)];
 		ctx.com.moduleLut.add(mg.mPath, mg);
 		addDependency(mg, c.clModule, MDepFromTyping);
-		addDependency(ctx.m.curmod, mg, MDepFromTyping);
+		addDependency(g.ctx.m.curmod, mg, MDepFromTyping);
 		setTypeParameterDependencies(mg, tl);
 		inline function buildField(old:TClassField):TClassField {
 			var params = old.cfParams.map(function(ttp) return {

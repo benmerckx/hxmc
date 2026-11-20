@@ -1299,66 +1299,172 @@ class Hlopt {
 	}
 
 	static var optCache = new StringMap<CacheElt>();
+	static final optMutex = new sys.thread.Mutex();
 	static var usedMark = 0;
 
-	public static function optimize(dump:Bool, getStr:Int->String, f:Fundecl, hxf:String):{f:Fundecl, dump:String} {
-		var oldCode:Vector<Opcode> = if (dump) f.code.copy() else f.code;
-		var c = optCache.get(hxf);
-		if (c != null) {
-			c.cLastUsed = usedMark;
-			if (f.code.length != c.cCode.length) core.Globals.die("", "hlopt.ml");
-			var code = c.cCode;
-			for (i in c.cRemapIndexes) {
-				var op = switch [code[i], f.code[i]] {
-					case [OInt(r, _), OInt(_, idx)]: OInt(r, idx);
-					case [OFloat(r, _), OFloat(_, idx)]: OFloat(r, idx);
-					case [OBytes(r, _), OBytes(_, idx)]: OBytes(r, idx);
-					case [OString(r, _), OString(_, idx)]: OString(r, idx);
-					case [OCall0(r, _), OCall0(_, idx)]: OCall0(r, idx);
-					case [OCall1(r, _, a), OCall1(_, idx, _)]: OCall1(r, idx, a);
-					case [OCall2(r, _, a, b), OCall2(_, idx, _, _)]: OCall2(r, idx, a, b);
-					case [OCall3(r, _, a, b, c), OCall3(_, idx, _, _, _)]: OCall3(r, idx, a, b, c);
-					case [OCall4(r, _, a, b, c, d), OCall4(_, idx, _, _, _, _)]: OCall4(r, idx, a, b, c, d);
-					case [OCallN(r, _, pl), OCallN(_, idx, _)]: OCallN(r, idx, pl);
-					case [OStaticClosure(r, _), OStaticClosure(_, idx)]: OStaticClosure(r, idx);
-					case [OInstanceClosure(r, _, v), OInstanceClosure(_, idx, _)]: OInstanceClosure(r, idx, v);
-					case [OGetGlobal(r, _), OGetGlobal(_, g)]: OGetGlobal(r, g);
-					case [OSetGlobal(_, v), OSetGlobal(g, _)]: OSetGlobal(g, v);
-					case [ODynGet(r, o, _), ODynGet(_, _, idx)]: ODynGet(r, o, idx);
-					case [ODynSet(o, _, v), ODynSet(_, idx, _)]: ODynSet(o, idx, v);
-					case [OType(r, _), OType(_, t)]: OType(r, t);
-					case _: core.Globals.die("", "hlopt.ml");
-				}
-				code[i] = op;
-			}
-			return remapFun(c.cRctx, f.with(code, f.regs, f.debug, f.assigns), dump, getStr, oldCode);
+	// port: Mutex.protect
+	static function protectCache<A>(f:Void->A):A {
+		optMutex.acquire();
+		var r:A;
+		try r = f()
+		catch (e:haxe.Exception) {
+			optMutex.release();
+			throw e;
 		}
-		var rctx = _optimize(f);
-		var oldOps = f.code;
-		var fopt = remapFun(rctx, f, dump, getStr, oldCode);
+		optMutex.release();
+		return r;
+	}
+
+	static function hasIndex(op:Opcode):Bool {
+		return switch op {
+			case OInt(_) | OFloat(_) | OBytes(_) | OString(_) | OCall0(_) | OCall1(_) | OCall2(_) | OCall3(_) | OCall4(_) | OCallN(_) | OStaticClosure(_) |
+				OInstanceClosure(_) | OGetGlobal(_) | OSetGlobal(_) | ODynGet(_) | ODynSet(_) | OType(_): true;
+			case _: false;
+		}
+	}
+
+	static function clearIndex(op:Opcode):Opcode {
+		return switch op {
+			case OInt(r, _): OInt(r, 0);
+			case OFloat(r, _): OFloat(r, 0);
+			case OBytes(r, _): OBytes(r, 0);
+			case OString(r, _): OString(r, 0);
+			case OCall0(r, _): OCall0(r, 0);
+			case OCall1(r, _, a): OCall1(r, 0, a);
+			case OCall2(r, _, a, b): OCall2(r, 0, a, b);
+			case OCall3(r, _, a, b, c): OCall3(r, 0, a, b, c);
+			case OCall4(r, _, a, b, c, d): OCall4(r, 0, a, b, c, d);
+			case OCallN(r, _, pl): OCallN(r, 0, pl);
+			case OStaticClosure(r, _): OStaticClosure(r, 0);
+			case OInstanceClosure(r, _, v): OInstanceClosure(r, 0, v);
+			case OGetGlobal(r, _): OGetGlobal(r, 0);
+			case OSetGlobal(_, v): OSetGlobal(0, v);
+			case ODynGet(r, o, _): ODynGet(r, o, 0);
+			case ODynSet(o, _, v): ODynSet(o, 0, v);
+			case OType(r, _): OType(r, HVoid);
+			case op: op;
+		}
+	}
+
+	// port: raises Exit, signalled here by null.
+	static function patchIndex(cached:Opcode, op:Opcode):Null<Opcode> {
+		return switch [cached, op] {
+			case [OInt(r, _), OInt(_, idx)]: OInt(r, idx);
+			case [OFloat(r, _), OFloat(_, idx)]: OFloat(r, idx);
+			case [OBytes(r, _), OBytes(_, idx)]: OBytes(r, idx);
+			case [OString(r, _), OString(_, idx)]: OString(r, idx);
+			case [OCall0(r, _), OCall0(_, idx)]: OCall0(r, idx);
+			case [OCall1(r, _, a), OCall1(_, idx, _)]: OCall1(r, idx, a);
+			case [OCall2(r, _, a, b), OCall2(_, idx, _, _)]: OCall2(r, idx, a, b);
+			case [OCall3(r, _, a, b, c), OCall3(_, idx, _, _, _)]: OCall3(r, idx, a, b, c);
+			case [OCall4(r, _, a, b, c, d), OCall4(_, idx, _, _, _, _)]: OCall4(r, idx, a, b, c, d);
+			case [OCallN(r, _, pl), OCallN(_, idx, _)]: OCallN(r, idx, pl);
+			case [OStaticClosure(r, _), OStaticClosure(_, idx)]: OStaticClosure(r, idx);
+			case [OInstanceClosure(r, _, v), OInstanceClosure(_, idx, _)]: OInstanceClosure(r, idx, v);
+			case [OGetGlobal(r, _), OGetGlobal(_, g)]: OGetGlobal(r, g);
+			case [OSetGlobal(_, v), OSetGlobal(g, _)]: OSetGlobal(g, v);
+			case [ODynGet(r, o, _), ODynGet(_, _, idx)]: ODynGet(r, o, idx);
+			case [ODynSet(o, _, v), ODynSet(_, idx, _)]: ODynSet(o, idx, v);
+			case [OType(r, _), OType(_, t)]: OType(r, t);
+			case _: null;
+		}
+	}
+
+	static function typeKey(t:Ttype):String {
+		return switch t {
+			case HObj(p) | HStruct(p):
+				var b = new StringBuf();
+				b.add(switch t {
+					case HObj(_): "o";
+					case _: "s";
+				});
+				function loop(p:ClassProto):Void {
+					if (p.psuper != null) loop(p.psuper);
+					for (f in p.pfields) b.add(switch f.t {
+						case HPacked(_): "p";
+						case _: "-";
+					});
+				}
+				loop(p);
+				b.toString();
+			case HFun(_, rt): if (isDynamic(rt)) "fd" else "f";
+			case HMethod(_): "m";
+			case HAbstract(_): "a";
+			case HDyn: "d";
+			case _: "-";
+		}
+	}
+
+	static function cacheKey(f:Fundecl):String {
+		var code = f.code.map(clearIndex);
+		var nargs = switch f.ftype {
+			case HFun(args, _): args.length;
+			case _: -1;
+		}
+		// port: Marshal.to_string of (code, type keys, nargs): an unambiguous text of the same values.
+		var b = new StringBuf();
+		for (op in code) {
+			switch op {
+				case ONop(s): b.add('ONop(${s.length}:$s)');
+				case OSwitch(r, idx, eend): b.add('OSwitch($r,[${idx.toArray().join(",")}],$eend)');
+				case _: b.add(Std.string(op));
+			}
+			b.add(";");
+		}
+		b.add("|");
+		for (t in f.regs) {
+			b.add(typeKey(t));
+			b.add(";");
+		}
+		b.add("|");
+		b.add(nargs);
+		return haxe.crypto.Md5.encode(b.toString());
+	}
+
+	static function findCached(f:Fundecl, key:String):Null<{rctx:Rctx, code:Vector<Opcode>}> {
+		var c = protectCache(() -> optCache.get(key));
+		if (c == null || f.code.length != c.cCode.length) return null;
+		c.cLastUsed = usedMark;
+		var code = c.cCode.copy();
+		for (i in c.cRemapIndexes) {
+			var op = patchIndex(code[i], f.code[i]);
+			if (op == null) return null;
+			code[i] = op;
+		}
+		return {rctx: c.cRctx, code: code};
+	}
+
+	static function addCached(key:String, rctx:Rctx, code:Vector<Opcode>):Void {
 		for (b in rctx.rBlocksPos) {
 			b.bstate = null;
-			if (!dump) {
-				b.bneed = ISet.empty;
-				b.bneedAll = null;
-			}
+			b.bneed = ISet.empty;
+			b.bneedAll = null;
 		}
 		var idxs = [];
-		for (i in 0...oldOps.length) {
-			switch oldOps[i] {
-				case OInt(_) | OFloat(_) | OBytes(_) | OString(_) | OCall0(_) | OCall1(_) | OCall2(_) | OCall3(_) | OCall4(_) | OCallN(_) | OStaticClosure(_) |
-					OInstanceClosure(_) | OGetGlobal(_) | OSetGlobal(_) | ODynGet(_) | ODynSet(_) | OType(_):
-					idxs.push(i);
-				case _:
-			}
+		for (i in 0...code.length) if (hasIndex(code[i])) idxs.push(i);
+		var c:CacheElt = {
+			cCode: code.copy(),
+			cRctx: rctx,
+			cLastUsed: usedMark,
+			cRemapIndexes: Vector.fromArrayCopy(idxs)
+		};
+		protectCache(() -> optCache.set(key, c));
+	}
+
+	public static function optimize(dump:Bool, getStr:Int->String, f:Fundecl):{f:Fundecl, dump:String} {
+		if (dump) {
+			var oldCode = f.code.copy();
+			var rctx = _optimize(f);
+			return remapFun(rctx, f, dump, getStr, oldCode);
+		} else {
+			var key = cacheKey(f);
+			var r = findCached(f, key);
+			if (r != null) return remapFun(r.rctx, f.with(r.code, f.regs, f.debug, f.assigns), dump, getStr, r.code);
+			var rctx = _optimize(f);
+			var fopt = remapFun(rctx, f, dump, getStr, f.code);
+			addCached(key, rctx, f.code);
+			return fopt;
 		}
-		/*opt_cache := PMap.add hxf {
-			c_code = old_ops;
-			c_rctx = rctx;
-			c_last_used = !used_mark;
-			c_remap_indexes = DynArray.to_array idxs;
-		} (!opt_cache); */
-		return fopt;
 	}
 
 	public static function cleanCache():Void {

@@ -52,27 +52,31 @@ using core.ds.VectorTools;
 @:structInit class SourceParseResult {
 	public var data:Package;
 	public var warnings:Array<ParseWarning>;
+	public var digest:Null<String>;
 
-	public inline function new(data:Package, warnings:Array<ParseWarning>) {
+	public inline function new(data:Package, warnings:Array<ParseWarning>, digest:Null<String>) {
 		this.data = data;
 		this.warnings = warnings;
+		this.digest = digest;
 	}
 
-	public inline function clone():SourceParseResult return new SourceParseResult(data, warnings);
+	public inline function clone():SourceParseResult return new SourceParseResult(data, warnings, digest);
 }
 
 @:structInit class SourceModuleResult {
 	public var file:ResolvedFile;
 	public var declarations:Vector<TypeDecl>;
 	public var warnings:Array<ParseWarning>;
+	public var digest:Null<String>;
 
-	public inline function new(file:ResolvedFile, declarations:Vector<TypeDecl>, warnings:Array<ParseWarning>) {
+	public inline function new(file:ResolvedFile, declarations:Vector<TypeDecl>, warnings:Array<ParseWarning>, digest:Null<String>) {
 		this.file = file;
 		this.declarations = declarations;
 		this.warnings = warnings;
+		this.digest = digest;
 	}
 
-	public inline function clone():SourceModuleResult return new SourceModuleResult(file, declarations, warnings);
+	public inline function clone():SourceModuleResult return new SourceModuleResult(file, declarations, warnings, digest);
 }
 
 @:structInit class SourceModuleParts {
@@ -81,14 +85,16 @@ using core.ds.VectorTools;
 	public var pack:Array<String>;
 	public var declarations:Vector<TypeDecl>;
 	public var warnings:Array<ParseWarning>;
+	public var digest:Null<String>;
 
 	public inline function new(file:ResolvedFile, remap:Array<String>, pack:Array<String>, declarations:Vector<TypeDecl>,
-			warnings:Array<ParseWarning>) {
+			warnings:Array<ParseWarning>, digest:Null<String>) {
 		this.file = file;
 		this.remap = remap;
 		this.pack = pack;
 		this.declarations = declarations;
 		this.warnings = warnings;
+		this.digest = digest;
 	}
 }
 
@@ -129,7 +135,7 @@ class TypeloadParse {
 		}, source);
 	}
 
-	public static function parseFile(com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package> {
+	public static function readFile(com:CommonContext, rfile:ResolvedFile, p:Pos):String {
 		var key = com.partScope.fileKeys.get(rfile.file),
 			contents:Null<String> = null;
 		if (com.fileContents.length == 0
@@ -151,8 +157,11 @@ class TypeloadParse {
 			// lexer rejects as upstream's does (syntax.Lexer.MalFormed)
 			contents = core.StringHelper.ofBytes(bytes);
 		}
-		return parseFileFromString(com, rfile.file, p, contents);
+		return contents;
 	}
+
+	public static function parseFile(com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package>
+		return parseFileFromString(com, rfile.file, p, readFile(com, rfile, p));
 
 	// port: (hxmc) whether a file's method bodies are parsed when they are
 	// asked for (syntax.ParserEntry.SkippedBodies): -D hxmc.macros=mir, the
@@ -185,10 +194,10 @@ class TypeloadParse {
 					if (pdi.pdErrors.length > 0) handleError(pdi.pdErrors[0]);
 					PdiHandler.handlePdi(com, pdi);
 				}
-				{data: data, warnings: pdi.pdWarnings};
+				{data: data, warnings: pdi.pdWarnings, digest: pdi.pdDigest};
 			case ParseError(data, error, _):
 				handleError(error);
-				{data: data, warnings: []};
+				{data: data, warnings: [], digest: null};
 		};
 	}
 
@@ -260,7 +269,8 @@ class TypeloadParse {
 			remap: remap.value,
 			pack: parsed.data.pack,
 			declarations: parsed.data.declarations,
-			warnings: parsed.warnings
+			warnings: parsed.warnings,
+			digest: parsed.digest
 		};
 	}
 
@@ -328,7 +338,7 @@ class TypeloadParse {
 			}
 			declarations = Vector.fromArrayCopy(redirected);
 		}
-		return {file: rfile, declarations: declarations, warnings: parsed.warnings};
+		return {file: rfile, declarations: declarations, warnings: parsed.warnings, digest: parsed.digest};
 	}
 }
 

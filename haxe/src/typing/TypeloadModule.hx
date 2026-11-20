@@ -746,11 +746,13 @@ class TypeloadModule {
 			} catch (_:NotFound) {
 				imported = vector();
 				var warnings:Array<syntax.Parser.ParseWarning> = [];
+				var digest:Null<String> = null;
 				var exists = sys.FileSystem.exists(file);
 				if (exists) {
 					var parsed = TypeloadParse.parseModuleFile(com, {file: file, classPath: com.emptyClassPath}, p);
 					imported = parsed.data.declarations;
 					warnings = parsed.warnings;
+					digest = parsed.digest;
 					for (decl in imported) switch decl.definition {
 						case EImport(_) | EUsing(_):
 						case _:
@@ -763,6 +765,7 @@ class TypeloadModule {
 				// Add empty decls so we don't check the file system all the time.
 				im.mExtra.mKind = exists ? MImport : MFake;
 				if (exists) {
+					im.mExtra.mDigest = digest;
 					com.moduleLut.add(im.mPath, im);
 					addDependency(m, im, MDepFromImport);
 					for (w in warnings) Common.moduleWarning(com, m, WIfDisplay, [], core.WarningList.warningObj(WIfDisplay).wDoc, w.pos);
@@ -843,13 +846,14 @@ class TypeloadModule {
 		} catch (_:NotFound) {}
 		inline function missing():Dynamic return Error.raiseErrorMsg(ModuleNotFound(path), p);
 		if (com.moduleNonexistentLut.mem(path) || g.loadOnlyCachedModules) return missing();
-		var isExtern = false, file:String, decls:Vector<TypeDecl>, warnings:Array<syntax.Parser.ParseWarning>;
+		var isExtern = false, file:String, decls:Vector<TypeDecl>, warnings:Array<syntax.Parser.ParseWarning>, digest:Null<String>;
 		try {
 			// Try parsing
 			var parsed = TypeloadParse.parseModule(com, path, p);
 			file = parsed.file.file;
 			decls = parsed.declarations;
 			warnings = parsed.warnings;
+			digest = parsed.digest;
 		} catch (_:NotFound) {
 			// Nothing to parse, try loading extern type
 			// port: entries are {name, load:(path,pos)->Null<core.Ast.Package>}
@@ -869,6 +873,7 @@ class TypeloadModule {
 			file = found.file;
 			decls = found.decls;
 			warnings = [];
+			digest = null;
 		}
 		if (typeFromSourceHook != null) typeFromSourceHook(com, path, true);
 		var m = try typeModule(com, g, path, file, decls, p, false, isExtern) catch (e:Dynamic) {
@@ -876,6 +881,7 @@ class TypeloadModule {
 			throw e;
 		}
 		if (typeFromSourceHook != null) typeFromSourceHook(com, path, false);
+		m.mExtra.mDigest = digest;
 		for (w in warnings) Common.moduleWarning(com, m, WIfDisplay, [], core.WarningList.warningObj(WIfDisplay).wDoc, w.pos);
 		return m;
 	}

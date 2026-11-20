@@ -39,7 +39,11 @@ class DisplayProcessing {
 				Common.addDiagnosticsMessage(com, s, p, core.Message.CompilerMessageKind.MKInfo, depth);
 			};
 			com.warning = function(w, options, s, p, ?depth:Int = 0) {
-				switch core.Warning.getMode(w, options.concat(com.warningOptions)) {
+				var mode = switch Common.scopedWarningMode(com, w, p) {
+					case null: core.Warning.getMode(w, options.concat(com.warningOptions));
+					case mode: mode;
+				}
+				switch mode {
 					case WMEnable:
 						Common.addDiagnosticsMessage(com, s, p, core.Message.CompilerMessageKind.MKWarning(w, options), depth);
 					case WMDisable:

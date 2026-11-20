@@ -281,9 +281,9 @@ class MacroApiImpl {
 
 	static inline function get_vnull():Value return nativeValues ? null : VNull;
 
-	static inline function vint(i:Int):Value return nativeValues ? ((i : Dynamic) : Value) : VInt32(i);
+	static inline function vint(i:Int):Value return nativeValues ? ((i : Dynamic) : Value) : VInt(i);
 
-	static inline function vint32(i:Int):Value return nativeValues ? ((i : Dynamic) : Value) : VInt32(i);
+	static inline function vint32(i:Int):Value return nativeValues ? ((i : Dynamic) : Value) : VInt(i);
 
 	static inline function vfloat(f:Float):Value return nativeValues ? ((f : Dynamic) : Value) : VFloat(f);
 
@@ -3666,7 +3666,7 @@ class MacroNativeValues {
 			return {expr: EBinop(OpArrow, k, valueToExpr(x, p)), pos: p};
 		if (v == null) return {expr: EConst(Ident("null")), pos: p};
 		if (Std.isOfType(v, StdTypes.Bool)) return {expr: EConst(Ident(v ? "true" : "false")), pos: p};
-		// port: by the value's kind, as Eval's VInt32 and VFloat (an integral Float is an Int to Std.isOfType)
+		// port: by the value's kind, as Eval's VInt and VFloat (an integral Float is an Int to Std.isOfType)
 		switch Type.typeof(v) {
 			case TInt: return {expr: EConst(Int(Std.string(v), null)), pos: p};
 			case TFloat: return MacroApi.haxeFloat(v, p);

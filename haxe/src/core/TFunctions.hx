@@ -236,6 +236,7 @@ class TFunctions {
 			mAdded: added,
 			mChecked: 0,
 			mTime: time,
+			mDigest: null,
 			mProcessed: 0,
 			mDeps: new IntMap(),
 			mDisplayDeps: null,

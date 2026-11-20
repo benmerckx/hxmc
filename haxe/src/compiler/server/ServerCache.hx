@@ -60,6 +60,17 @@ class ServerCache {
 	// ... a reason makes it typed from its source (loadDirtyModuleHook); always null in the compiler itself.
 	public static var readerFindModuleHook:Null<(com:CommonContext, mPath:GlobalTypePath) -> Null<ModuleSkipReason>> = null;
 
+	// port: a digest is the hexadecimal MD5 (Digest.to_hex), of the UTF-8 bytes of the string
+	public static function parseString(com:CommonContext, file:String, p:Pos, s:String):ParseResult<Package> {
+		return switch TypeloadParse.parseFileFromString(com, file, p, s) {
+			case ParseSuccess(data, pdi):
+				var pdi = pdi.clone();
+				pdi.pdDigest = haxe.crypto.Md5.make(haxe.io.Bytes.ofString(s)).toHex();
+				ParseSuccess(data, pdi);
+			case result: result;
+		}
+	}
+
 	public static function parseFile(sctx:ServerCompilationContext, com:CommonContext, rfile:ResolvedFile, p:Pos):ParseResult<Package> {
 		var cc = CommonCache.getCache(com);
 		var file = rfile.file;
@@ -68,7 +79,7 @@ class ServerCache {
 		var isDisplayFile = DisplayPosition.displayPosition.isInFile(com.partScope.fileKeys.get(ffile));
 		switch [isDisplayFile, sctx.currentStdin] {
 			case [true, stdin] if (stdin != null && (com.fileContents.length > 0 || Common.defined(com, Define.DisplayStdin))):
-				return TypeloadParse.parseFileFromString(com, file, p, stdin);
+				return parseString(com, file, p, stdin);
 			case _:
 				var ftime = Common.fileTime(ffile);
 				var stop = Timer.startTimer(com.timerCtx, ["server", "parser cache"]);
@@ -78,7 +89,7 @@ class ServerCache {
 						if (cfile.cTime != ftime) throw NotFound.raise();
 						ParseSuccess(({pack: cfile.cPackage, declarations: cfile.cDecls} : Package), cfile.cPdi);
 					} catch (_:NotFound) {
-						var parseResult = TypeloadParse.parseFile(com, rfile, p);
+						var parseResult = parseString(com, file, p, TypeloadParse.readFile(com, rfile, p));
 						var info:String, isUnusual:Bool;
 						switch parseResult {
 							case ParseError(_, _, _):
@@ -260,12 +271,34 @@ class ServerCache {
 				return true;
 			}
 		}
+		/* A file written again with the same content is not a change. Contents sent with the request
+			take precedence over the file, so they are never compared. */
+		function unchangedContent(mPath:GlobalTypePath, mExtra:ModuleDefExtra, file:String, time:Float):Bool {
+			var key = core.Path.UniqueKey.lazyKey(mExtra.mFile);
+			return switch mExtra.mDigest {
+				case digest if (digest != null
+					&& !Lambda.exists(com.fileContents, e -> e.fileKey == key)
+					&& (try haxe.crypto.Md5.make(sys.io.File.getBytes(file)).toHex() == digest catch (_:Dynamic) false)):
+					ServerMessage.unchangedContent(com, "", file);
+					/* [m_extra] may be the copy of a binary module made for this request, which is not kept. */
+					switch com.cs.getContext(mExtra.mSign).getHxb().findOpt(mPath) {
+						case mc if (mc != null && mc.mcExtra.mTime == mExtra.mTime): mc.mcExtra.mTime = time;
+						case _:
+					}
+					mExtra.mTime = time;
+					true;
+				case _:
+					false;
+			}
+		}
 		function checkModuleShadowing(paths:Array<CachedDirectory>, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
+			var ownFile = core.Path.UniqueKey.lazyKey(mExtra.mFile);
 			for (dir in paths) {
 				var file = (dir.cPath + mPath.name) + ".hx";
 				if (sys.FileSystem.exists(file)) {
 					var time = Common.fileTime(file);
-					if (time > mExtra.mTime) {
+					/* The file of the module does not shadow it, unless its content changed. */
+					if (time > mExtra.mTime && !(com.partScope.fileKeys.get(file) == ownFile && unchangedContent(mPath, mExtra, file, time))) {
 						ServerMessage.modulePathChanged(com, "", mPath, mExtra, time, file);
 						throw new Dirty(Shadowed(file));
 					}
@@ -321,7 +354,8 @@ class ServerCache {
 				}}
 			function checkFile() {
 				var file = core.Path.UniqueKey.lazyPath(mExtra.mFile);
-				if (Common.fileTime(file) != mExtra.mTime) {
+				var time = Common.fileTime(file);
+				if (time != mExtra.mTime && !unchangedContent(mPath, mExtra, file, time)) {
 					if (hasPolicy(CheckFileContentModification) && !contentChanged(mPath, file)) {
 						ServerMessage.unchangedContent(com, "", file);
 					} else {

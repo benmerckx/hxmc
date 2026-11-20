@@ -128,7 +128,7 @@ class EvalDecode {
 
 	public static function decodeI32(v:Value):Int {
 		return switch v {
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): truncFloat(f);
 			case _: unexpectedValue(v, "int");
 		}
@@ -136,7 +136,7 @@ class EvalDecode {
 
 	public static function decodeInt(v:Value):Int {
 		return switch v {
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): truncFloat(f);
 			case _: unexpectedValue(v, "int");
 		}
@@ -153,7 +153,7 @@ class EvalDecode {
 	public static function defaultInt(v:Value, vd:Int):Int {
 		return switch v {
 			case VNull: vd;
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): truncFloat(f);
 			case _: unexpectedValue(v, "int");
 		}
@@ -196,7 +196,7 @@ class EvalDecode {
 
 	public static function num(v:Value):Float {
 		return switch v {
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): f;
 			case v: unexpectedValue(v, "number");
 		}

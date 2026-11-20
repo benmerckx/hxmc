@@ -237,7 +237,7 @@ class ModuleCache {
 	}
 
 	// TUnification.maybeUsedHook: a class field marked as maybe used through
-	// a structure (CfMaybeUsed, which DCE reads), and its accessors, by the
+	// a structure (CfStructurallyUsed, which DCE reads), and its accessors, by the
 	// module being typed
 	static function onMaybeUsed(cl:Null<TClass>, f1:TClassField, f2:Null<TClassField>) {
 		var s = state;
@@ -667,7 +667,7 @@ class ModuleCache {
 								if (cf == null) return;
 								refs.set(cf, base + k + cf.cfName);
 								byRef.set(base + k + cf.cfName, cf);
-								if (r) core.TFunctions.removeClassFieldFlag(cf, CfMaybeUsed);
+								if (r) core.TFunctions.removeClassFieldFlag(cf, CfStructurallyUsed);
 							}
 							add(c.clConstructor, "c|");
 							for (cf in c.clFields)
@@ -679,7 +679,7 @@ class ModuleCache {
 			}
 		var unattributed = 0;
 		for (lm in s.liveMarks) {
-			core.TFunctions.addClassFieldFlag(lm.cf, CfMaybeUsed);
+			core.TFunctions.addClassFieldFlag(lm.cf, CfStructurallyUsed);
 			var ref = refs.get(lm.cf);
 			if (ref == null) continue;
 			var maker:Null<ModuleDef> = lm.maker == null ? null : Std.isOfType(lm.maker, core.TType.ModuleDef) ? lm.maker : {
@@ -698,7 +698,7 @@ class ModuleCache {
 		for (m in restored)
 			for (ref in s.restored(m).marks) {
 				var cf = byRef.get(ref);
-				if (cf != null) core.TFunctions.addClassFieldFlag(cf, CfMaybeUsed);
+				if (cf != null) core.TFunctions.addClassFieldFlag(cf, CfStructurallyUsed);
 			}
 		for (l in s.madeMarks)
 			l.sort(Reflect.compare);

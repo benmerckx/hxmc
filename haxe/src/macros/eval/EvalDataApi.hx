@@ -51,7 +51,7 @@ class EvalWriterApi {
 
 	public static function writeBool(b:Bool):Value return b ? VTrue : VFalse;
 
-	public static function writeInt(i:Int):Value return VInt32(i);
+	public static function writeInt(i:Int):Value return VInt(i);
 
 	public static function api():core.data.DataWriterApi<Value> {
 		return new core.data.DataWriterApi(writeOptional, writeObject, writeArray, writeString, writeBool, writeInt);

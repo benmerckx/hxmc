@@ -171,7 +171,7 @@ class EvalPrinting {
 		if (depth > EvalContext.getCtx().maxPrintDepth) return rstop;
 		return switch v {
 			case VNull: rnull;
-			case VInt32(i32): EvalString.createAscii(Std.string(i32));
+			case VInt(i32): EvalString.createAscii(Std.string(i32));
 			case VInt64(i): EvalString.createAscii(haxe.Int64.toStr(i));
 			case VUInt64(u): EvalString.createAscii(EvalIntegers.uint64ToString(u));
 			case VTrue: rtrue;

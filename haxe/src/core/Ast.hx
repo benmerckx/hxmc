@@ -1148,6 +1148,14 @@ class Ast {
 		case Regexp(pattern, _): "~/" + pattern + "/";
 	};
 
+	/* The name of the class standing for an expression used as a type parameter. */
+	public static function exprTypeParamName(e:Expr):String return switch e.expr {
+		case EConst(String(s, _)): "S" + s;
+		case EConst(Int(value, suffix)): "I" + sConstant(Int(value, suffix));
+		case EConst(Float(value, suffix)): "F" + sConstant(Float(value, suffix));
+		case _: "Expr";
+	};
+
 	public static function sAccess(value:Access):String return switch value {
 		case APublic: "public";
 		case APrivate: "private";

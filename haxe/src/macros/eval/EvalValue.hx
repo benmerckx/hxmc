@@ -272,7 +272,8 @@ enum Value {
 	VNull;
 	VTrue;
 	VFalse;
-	VInt32(i:Int);
+	// An Int: a signed 32-bit value, unboxed (see [wrap32]).
+	VInt(i:Int);
 	VFloat(f:Float);
 	VEnumValue(e:VenumValue);
 	VObject(o:Vobject);
@@ -546,10 +547,10 @@ class EvalValueTools {
 	public static function equals(a:Value, b:Value):Bool {
 		return switch [a, b] {
 			case [VTrue, VTrue] | [VFalse, VFalse] | [VNull, VNull]: true;
-			case [VInt32(a), VInt32(b)]: a == b;
+			case [VInt(a), VInt(b)]: a == b;
 			case [VFloat(a), VFloat(b)]: a == b;
-			case [VFloat(a), VInt32(b)]: a == (b : Float);
-			case [VInt32(a), VFloat(b)]: (a : Float) == b;
+			case [VFloat(a), VInt(b)]: a == (b : Float);
+			case [VInt(a), VFloat(b)]: (a : Float) == b;
 			case [VEnumValue(a), VEnumValue(b)]: a == b || (a.eindex == b.eindex && a.eargs.length == 0 && b.eargs.length == 0
 					&& a.epath == b.epath);
 			case [VObject(vo1), VObject(vo2)]: vo1 == vo2;
@@ -596,13 +597,17 @@ class EvalValueTools {
 	// and HashLink allocations cost more than OCaml's (deviation: upstream boxes each).
 	static final smallInts:Vector<Value> = {
 		var v = new Vector<Value>(1024 + 128);
-		for (i in 0...v.length) v[i] = VInt32(i - 128);
+		for (i in 0...v.length) v[i] = VInt(i - 128);
 		v;
 	};
 
+	// [i] wrapped to a signed 32-bit value, as an Int holds it. This needs an OCaml [int] of
+	// at least 32 bits, so 32-bit builds (31-bit [int]) are not supported.
+	// port: a Haxe Int already is a wrapped signed 32-bit value, so wrap32 is the identity
+	// and vint and vint32 are the same.
 	public static inline function vint(i:Int):Value return vint32(i);
 
-	public static inline function vint32(i:Int):Value return i >= -128 && i < 1024 ? smallInts[i + 128] : VInt32(i);
+	public static inline function vint32(i:Int):Value return i >= -128 && i < 1024 ? smallInts[i + 128] : VInt(i);
 
 	public static inline function vint64(i:haxe.Int64):Value return VInt64(i);
 
