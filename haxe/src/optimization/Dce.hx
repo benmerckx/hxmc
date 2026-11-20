@@ -834,6 +834,7 @@ class Dce {
 			if (dce.features.exists(s)) dce.features.get(s).unshift(ref);
 			else dce.features.set(s, [ref]);
 		}
+		for (t in types) tInfos(t).mtModule.mExtra.mFeatures.clear();
 		for (t in types) switch t {
 			case TClassDecl(c):
 				removeClassFlag(c, CUsed);

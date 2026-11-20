@@ -58,7 +58,7 @@ import haxe.ds.StringMap;
 import core.ds.VectorTools.vector;
 
 // port: save_class_state: the saved fields of one class field (mk_field_restore)
-private typedef FieldRestoreState = {name:String, kind:FieldKind, expr:Null<TExpr>, type:T, meta:Metadata, params:TypeParams};
+private typedef FieldRestoreState = {name:String, kind:FieldKind, expr:Null<TExpr>, type:T, meta:Metadata, params:TypeParams, isOverride:Bool};
 private typedef FieldRestore = {field:TClassField, state:FieldRestoreState, overloads:Array<{field:TClassField, state:FieldRestoreState}>};
 
 class Filters {
@@ -373,7 +373,8 @@ class Filters {
 						expr: f.cfExpr,
 						type: f.cfType,
 						meta: f.cfMeta,
-						params: f.cfParams.copy()
+						params: f.cfParams.copy(),
+						isOverride: TypeOps.hasClassFieldFlag(f, CfOverride)
 					};
 				}
 				function mkFieldRestore(f:TClassField):FieldRestore {
@@ -394,6 +395,7 @@ class Filters {
 					f.cfType = s.type;
 					f.cfMeta = s.meta;
 					f.cfParams = s.params.copy();
+					if (s.isOverride) TypeOps.addClassFieldFlag(f, CfOverride) else TypeOps.removeClassFieldFlag(f, CfOverride);
 					return f;
 				}
 				function restoreField(saved:FieldRestore):TClassField {
