@@ -214,6 +214,13 @@ private enum Access {
 	ACaptured(fid:Int);
 }
 
+// port: genhl.ml declares it before generate_static_content
+private enum InitItem {
+	IClassInit(c:TClass, e:TExpr);
+	IStatic(c:TClass, cf:TClassField, e:TExpr);
+	IMain(e:TExpr);
+}
+
 private class ExitException extends haxe.Exception {
 	public function new() super("Exit");
 }
@@ -4103,7 +4110,7 @@ class Genhl {
 		}
 	}
 
-	static function generateStaticContent(ctx:HlContext, types:Array<ModuleType>, f:TFunc):Void {
+	static function generateStaticContent(ctx:HlContext, types:Array<ModuleType>, f:TFunc, items:Array<InitItem>):Void {
 		var isInit = allocTmp(ctx, HBool);
 		op(ctx, OCall0(isInit, allocFunPath(ctx, {pack: [], name: "Type"}, "init")));
 		hold(ctx, isInit);
@@ -4305,24 +4312,106 @@ class Genhl {
 			}
 		}
 
-		var j = jump(ctx, d -> OJTrue(isInit, d));
-		op(ctx, ORet(allocTmp(ctx, HVoid)));
-		j();
-		free(ctx, isInit);
-		evalExpr(ctx, f.tfExpr);
+		if (!ctx.hl2 || core.Path.fileExtension(ctx.com.file) == "c") {
+			var j = jump(ctx, d -> OJTrue(isInit, d));
+			op(ctx, ORet(allocTmp(ctx, HVoid)));
+			j();
+			free(ctx, isInit);
+			evalExpr(ctx, f.tfExpr);
+		} else {
+			var nid = lookup(ctx.cnatives, "$hot_sync_statics@?std\x00-1", () -> {
+				var fid = allocFunPath(ctx, {pack: [], name: "std"}, "hot_sync_statics");
+				ctx.definedFuns.set(fid, true);
+				// port: OCaml evaluates the tuple right to left
+				var n = allocString(ctx, "hot_sync_statics");
+				var l = allocString(ctx, "?std");
+				({lib: l, name: n, t: HFun([HType, HI32], HI32), findex: fid} : Native);
+			});
+			var native = ctx.cnatives.arr[nid].findex;
+			function loadBits(c:TClass, w:Int):Int {
+				var r = allocTmp(ctx, HI32);
+				hold(ctx, r);
+				var j = jump(ctx, d -> OJFalse(isInit, d));
+				op(ctx, OInt(r, allocI32(ctx, -1)));
+				var jend = jump(ctx, d -> OJAlways(d));
+				j();
+				var rt = allocTmp(ctx, HType);
+				op(ctx, OType(rt, classGlobal(ctx, c).t));
+				op(ctx, OCall2(r, native, rt, regInt(ctx, w)));
+				jend();
+				return r;
+			}
+			function guard(bits:Int, mask:Int, f:Void->Void) {
+				var m = allocTmp(ctx, HI32);
+				op(ctx, OInt(m, allocI32(ctx, mask)));
+				op(ctx, OAnd(m, bits, m));
+				hold(ctx, m);
+				var zero = regInt(ctx, 0);
+				free(ctx, m);
+				var j = jump(ctx, d -> OJEq(m, zero, d));
+				f();
+				j();
+			}
+			var curClass:Null<TClass> = null;
+			var words:Array<{w:Int, r:Int}> = []; // port: assoc list, head first
+			function flush() {
+				for (x in words) free(ctx, x.r);
+				words = [];
+				curClass = null;
+			}
+			function bits(c:TClass, w:Int):Int {
+				if (curClass != c) {
+					flush();
+					curClass = c;
+				}
+				for (x in words) if (x.w == w) return x.r;
+				var r = loadBits(c, w);
+				words.unshift({w: w, r: r});
+				return r;
+			}
+			function fieldIndex(c:TClass, cf:TClassField):Null<Int> {
+				return switch classGlobal(ctx, c).t {
+					case HObj(o):
+						var x = o.pindex.get(cf.cfName);
+						if (x == null) null else {
+							var start = if (o.psuper == null) 0 else o.psuper.pnfields;
+							if (x.fid < start) null else x.fid - start;
+						}
+					case _: null;
+				}
+			}
+			for (item in items) switch item {
+				case IClassInit(c, e):
+					guard(bits(c, -1), -1, () -> evalExpr(ctx, e));
+				case IStatic(_, cf, e) if (Meta.has(Meta.HotReload, cf.cfMeta)):
+					evalExpr(ctx, e);
+				case IStatic(c, cf, e):
+					switch fieldIndex(c, cf) {
+						case null: guard(bits(c, -1), -1, () -> evalExpr(ctx, e));
+						case i: guard(bits(c, i >>> 5), 1 << (i & 31), () -> evalExpr(ctx, e));
+					}
+				case IMain(e):
+					flush();
+					var j = jump(ctx, d -> OJFalse(isInit, d));
+					evalExpr(ctx, e);
+					j();
+			}
+			flush();
+			free(ctx, isInit);
+		}
 		op(ctx, ORet(allocTmp(ctx, HVoid)));
 	}
 
 	static function generateStaticInit(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Int {
-		var exprs:Array<TExpr> = []; // port: chronological (upstream builds the list reversed)
+		var exprs:Array<InitItem> = []; // port: chronological (upstream builds the list reversed)
 		var tVoid = ctx.com.basic.tvoid;
 
 		/* init class statics */
-		var initExprs:Array<TExpr> = [];
+		var initExprs:Array<InitItem> = [];
 		for (t in types) {
 			switch t {
 				case TClassDecl(c) if (c.clInit != null && c.clInit.cfExpr != null && !isExcluded(c)):
-					initExprs.push(c.clInit.cfExpr);
+					initExprs.push(IClassInit(c, c.clInit.cfExpr));
 				case _:
 			}
 			switch t {
@@ -4332,7 +4421,7 @@ class Genhl {
 							case [Var(_), e] if (e != null):
 								var p = e.epos;
 								var e = mk(TBinop(OpAssign, (mk(TField(mk(TTypeExpr(t), tDynamic, p), FStatic(c, f)), f.cfType, p)), e), f.cfType, p);
-								exprs.push(e);
+								exprs.push(IStatic(c, f, e));
 							case _:
 						}
 					}
@@ -4340,12 +4429,15 @@ class Genhl {
 			}
 		}
 		/* call main() */
-		if (main != null) exprs.push(main);
+		if (main != null) exprs.push(IMain(main));
 		var fid = lookupAlloc(ctx.cfids, true);
-		var exprs = initExprs.concat(exprs);
+		var items = initExprs.concat(exprs);
+		var exprs = items.map(i -> switch i {
+			case IClassInit(_, e) | IStatic(_, _, e) | IMain(e): e;
+		});
 		var initpos = fakePos("fun$init");
 		var f:TFunc = {tfExpr: mk(TBlock(Vector.fromArrayCopy(exprs)), tVoid, initpos), tfArgs: vector(), tfType: tVoid};
-		function genContent() generateStaticContent(ctx, types, f);
+		function genContent() generateStaticContent(ctx, types, f, items);
 		makeFun(ctx, {fst: "", snd: ""}, fid, f, null, null, genContent);
 		return fid;
 	}

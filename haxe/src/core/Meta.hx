@@ -325,6 +325,7 @@ class Meta {
 	public static final HeaderInclude:StrictMeta = StrictMeta.HeaderInclude;
 	public static final HeaderNamespaceCode:StrictMeta = StrictMeta.HeaderNamespaceCode;
 	public static final HlNative:StrictMeta = StrictMeta.HlNative;
+	public static final HotReload:StrictMeta = StrictMeta.HotReload;
 	public static final HxbId:StrictMeta = StrictMeta.HxbId;
 	public static final HxCompletion:StrictMeta = StrictMeta.HxCompletion;
 	public static final HxGen:StrictMeta = StrictMeta.HxGen;
