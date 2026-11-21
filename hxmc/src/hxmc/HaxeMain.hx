@@ -282,6 +282,11 @@ class HaxeMain {
 		var env = Sys.getEnv("HXMC_HOST");
 		if (env != null) return env;
 		var t = haxe.macro.Compiler.getDefine("hxmc.target");
-		return t == null || t == "1" ? "linux-x86_64" : t == "wasm32-wasi" ? null : t;
+		if (t != null && t != "1") return t == "wasm32-wasi" ? null : t;
+		#if (hxmc.target == "wasm32-wasi")
+		return null;
+		#else
+		return Options.host();
+		#end
 	}
 }

@@ -107,7 +107,7 @@ COMPILER_ARGS := -D hxmc.gc-prefault
 # its generate hook, typed against hxmc's std, without the port's other
 # target generators
 TOOL_CP := -cp haxe/src -cp hxmc/src -main hxmc.Main -D disable-parallelism -D hih_no_generators -cp bin/hxmc/std
-TOOL_ARGS := $(TOOL_CP) $(COMPILER_ARGS) --custom-target hxmc
+TOOL_ARGS := $(TOOL_CP) $(COMPILER_ARGS) --custom-target hxmc -D hxmc.target=$(HOST)
 # the port (typed with -D disable-parallelism; the binary runs its parallel
 # passes unless its own invocation passes that define)
 PORT_ARGS := -cp haxe/src -main haxe.Main -D disable-parallelism $(COMPILER_ARGS) $(HXFLAGS) $(HXMC_ARGS)
