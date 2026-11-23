@@ -19,14 +19,17 @@ playground: <https://haxe-in-haxe.ben.mk>.
 | --- | --- |
 | **Supported** | |
 | Compiler port | Haxe 5.0.0-preview.1, upstream commit `8c05a2c` |
-| Native targets | Linux, macOS, Windows; x86-64 and ARM64 |
+| Native targets | Linux (static musl, or glibc), macOS, Windows; x86-64 and ARM64 |
 | WebAssembly | `wasm32-wasi` (node, wasmtime, browsers) |
+| Interop | C with structs by value, Objective-C, COM, Java through JNI ([docs](docs/interop.md)) |
+| Low-level code | GC-free kernels, typed C bindings, portable 128-bit SIMD (`hxmc.simd`) |
 | Macros | Eval, as upstream |
 | Coroutines | upstream's `TestCoroutines` passes natively and on wasm32-wasi |
 | Rebuilds | the module cache on disk, the compilation server, `haxe --dev` |
 | **Experimental** | |
-| Android, iOS | the shared library and the executable a packager puts in an app ([docs](docs/using.md#native-output-for-a-packager)) |
-| Mir macros | `-D hxmc.macros=mir`: macros on hxmc's own interpreter |
+| Android, iOS, Mac Catalyst | the shared library and the executable a packager puts in an app ([docs](docs/using.md#native-output-for-a-packager)); Apple API availability checks |
+| Mir macros | `-D hxmc.macros=mir`: macros on hxmc's own interpreter, in the native compiler |
+| LLVM back end | `-D hxmc.llvm`: the functions it takes compiled by clang ([plan](docs/plans/llvm.md)) |
 | **Not yet** | |
 | | WebAssembly threads, sockets and processes; call stacks on WebAssembly |
 | | debugger variables (lines and backtraces work), Windows PDB |
@@ -82,10 +85,6 @@ npx haxe --dev build.hxml          # rebuild and rerun on every save
 | [docs/hxmc.md](docs/hxmc.md) | how the target works: pipeline, runtime, collector, linkers |
 | [ROADMAP.md](ROADMAP.md) | direction and what comes next |
 | [docs/plans/](docs/plans/README.md) | open designs, by area |
-
-[universe](https://github.com/benmerckx/universe) is a separate,
-experimental app and GUI stack built on hxmc (windows, GPU, UI). hxmc does
-not depend on it.
 
 ## Building from source
 
