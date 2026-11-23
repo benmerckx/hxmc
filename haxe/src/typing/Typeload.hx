@@ -386,15 +386,11 @@ class Typeload {
 		function loadParam(param:TypeParamOrConst, ttp:Null<TypedTypeParam>):{type:T, pos:Pos}
 			return switch param {
 				case TPExpr(e):
-					var name = switch e.expr {
-						case EConst(String(s, _)): "S" + s;
-						case EConst(Int(value, suffix)): "I" + Ast.sConstant(Int(value, suffix));
-						case EConst(Float(value, suffix)): "F" + Ast.sConstant(Float(value, suffix));
-						case EDisplay(_):
-							typeExpr(ctx, e, WithTypeTools.value);
-							"Expr";
-						case _: "Expr";
-					};
+					switch e.expr {
+						case EDisplay(_): typeExpr(ctx, e, WithTypeTools.value);
+						case _:
+					}
+					var name = Ast.exprTypeParamName(e);
 					var c = mkClass(ctx.m.curmod, {pack: [], name: name}, p, e.pos);
 					c.clKind = KExpr(e);
 					{type: TInst(c, vector()), pos: e.pos};

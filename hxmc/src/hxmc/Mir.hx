@@ -403,6 +403,7 @@ class MFunc {
 	public var vals:Array<MIns> = [];
 	public var slots:Array<{size:Int, align:Int}> = []; // frame slots (StackAddr)
 	public var blocksHere = false; // FuncInfo.blocksHere (Inline: its calls never keep the frame)
+	public var polls = false; // FuncInfo.polled (Inline: a copy of a callee's polls stays only in a function that takes them)
 	public var allocs = 0; // objects allocated inline and boxes made, at most (Escape: none, nothing to do)
 	// entered from C with structs by value (MirBuild.cEntry): the parameters'
 	// groups (MIns.cGroups) and C sizes (MIns.cSizes); a Param of index -1

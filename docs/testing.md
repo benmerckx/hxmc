@@ -33,7 +33,7 @@ of each file.
 
 | Script | Lane | Compares | Result |
 | --- | --- | --- | --- |
-| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 68/68, 8/8 |
+| `Conformance` | `hxb`, `macro`, `hxblib` | HXB archives of `conformance-cases.txt` (upstream's suites and the port's own cases), `conformance-macro-cases.txt`, `conformance-hxblib-cases.txt`; `--hxb-lib`, `--eval`, `--parallel N` modes; a case that `diverges` ([a divergence](porting.md#divergences-from-the-reference)) passes when the reference cannot read its archive back and the port can | 300 + 24 expected failures, 69/69, 8/8 |
 | `Display` | `display` | `--display` JSON-RPC requests from upstream's removed display suite | 679/679 |
 | `Server` | `server` | the compilation server: cases twice, edits and invalidation, stdin, `--cmd`, errors, an empty connection ([a divergence](porting.md#divergences-from-the-reference)), `--server-connect` | 674/674 |
 | `ServerJsonRpc` | `jsonrpc` | the `server/*` methods, both cache modes | 107/107 |
@@ -55,20 +55,14 @@ context, null safety, misc, sys on Eval, threads, third-party projects)
 runs with the release binaries as `haxe` (`upstream-tests.yml`). No target
 runtime is installed: other targets' outputs are compared, not run.
 
-### Two exceptions to byte identity
+### The one exception to byte identity
 
-- **hl/c digest names** (`HlcNames.hx`). hl2c names some types after the
-  MD5 of a marshalled description that, for object prototypes, contains a
-  code pointer into the reference's own binary. The port writes a fixed
-  placeholder (`Hl2c.hx`). Where hl/c output is compared, the digest names
-  found on one side only are renamed on both sides in order of appearance;
-  every other byte must match.
-- **Printed floats**. The port's Math is musl's libm everywhere
-  (`LibM.hx`); the reference's is glibc's. They can differ by an ulp, which
-  arithmetic can widen. The fuzzer's output comparison
-  (`Runner.sameOutput`) accepts two printed floats at the same place when
-  they are at most 4 ulps apart (`Runner.MAX_ULPS`), finite and of the same
-  sign.
+**Printed floats**. The port's Math is musl's libm everywhere
+(`LibM.hx`); the reference's is glibc's. They can differ by an ulp, which
+arithmetic can widen. The fuzzer's output comparison
+(`Runner.sameOutput`) accepts two printed floats at the same place when
+they are at most 4 ulps apart (`Runner.MAX_ULPS`), finite and of the same
+sign.
 
 ### The fuzzer's exec lanes
 
@@ -98,7 +92,7 @@ each lane on the kept cases and 400 random programs.
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `native-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
 | `JniCheck` | `native-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
-| `MachOCheck` | `native-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform, minimum and SDK, a device's `LC_ENCRYPTION_INFO_64`, `LC_FUNCTION_STARTS`, `LC_DATA_IN_CODE`, the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit); macOS's minimum (`-D hxmc.macos-min-version`) and SDK, and the imports newer than it weak (`hxmc/test/macos/AvailWeak.hx`) |
+| `MachOCheck` | `native-check` | IosHello as a plain iOS and Mac Catalyst executable and dylib: `LC_BUILD_VERSION`'s platform, minimum and SDK, a device's `LC_ENCRYPTION_INFO_64`, `LC_FUNCTION_STARTS`, `LC_DATA_IN_CODE`, `__unwind_info` (most functions compact, `__eh_frame` only the others' FDEs; ObjCUIKit's personality and LSDA entries; macOS's too), the code signature (linker-signed, or binding `-D hxmc.codesign-*`'s files); UIKit's install name (ObjCUIKit); macOS's minimum (`-D hxmc.macos-min-version`) and SDK, and the imports newer than it weak (`hxmc/test/macos/AvailWeak.hx`) |
 | `UIKitCheck` | `native-check` | UIKitHello, a UIKit app with its own `hxmc_ui_main`, in its bundle: run as a Mac Catalyst agent app and in the iOS simulator's iPhone and iPad (the delegate, the body after launch, the window key and sized); a Mac with Xcode |
 | `dev-console.mjs`, `server-verify.mjs` | `dev-check` | `hxmc dev` through edits and a compile error; a compilation server's builds byte-identical to fresh ones (on macOS, an Objective-C program's, run), a class a macro's callback defines and a build macro's persistent state in builds of two signatures (with an initializer or without, and after an error in a macro) among them, in memory, from HXB and connected (`--server-connect`: each answer arriving whole); the modules an edit compiles; two programs in turn under a cap of 1 MB (`hxmc.server-mb`: each build drops the other program's) |
 | `MirCheck` | `mir-check` | the Mir lane: the corpus run inside the compiler on the Mir interpreter (`Corpus --mir-run`), the macro cases with Mir macros against the reference (`Conformance --target-only`; Issue11631 uses Eval's `mbedtls`: `MirCheck.KNOWN`), Mir macros' compiled functions kept across builds (`MirCacheCheck`), their statics in the compilation server against the reference (`MirServerCheck`, not on Windows) |

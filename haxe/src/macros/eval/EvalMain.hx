@@ -254,9 +254,9 @@ class EvalMain {
 					addc('t');
 				case VFalse:
 					addc('f');
-				case VInt32(0):
+				case VInt(0):
 					addc('z');
-				case VInt32(i):
+				case VInt(i):
 					addc('i');
 					add(Std.string(i));
 				case VInt64(i):
@@ -536,7 +536,7 @@ class EvalMain {
 			case VNull: {expr: EConst(Ident("null")), pos: p};
 			case VTrue: {expr: EConst(Ident("true")), pos: p};
 			case VFalse: {expr: EConst(Ident("false")), pos: p};
-			case VInt32(i): {expr: EConst(Int(Std.string(i), null)), pos: p};
+			case VInt(i): {expr: EConst(Int(Std.string(i), null)), pos: p};
 			case VFloat(f): haxeFloat(f, p);
 			case VString(s): {expr: EConst(String(s.sstring, SDoubleQuotes)), pos: p};
 			case VArray(va): {expr: EArrayDecl(EvalArray.toList(va).mapToVector(v -> valueToExpr(v, p))), pos: p};
@@ -674,7 +674,7 @@ class EvalMain {
 					}
 				case TAbstract({aPath: {pack: [], name: "Int" | "Float"}}, _):
 					switch v {
-						case VInt32(_) | VFloat(_): f(valueString(v));
+						case VInt(_) | VFloat(_): f(valueString(v));
 						case _: error("expected Bool", v);
 					}
 				case TType(t, tl):

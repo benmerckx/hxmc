@@ -1102,12 +1102,12 @@ class TUnification {
 							function(f1o) return typeIseqCustom(c, f1o.cfType, f2o.cfType))) error([MissingOverload(f1, f2o.cfType)]);
 						// we mark the field as :?used because it might be used through the structure
 						if (maybeUsedHook != null) maybeUsedHook(cl, f1, f2);
-						if (!hasClassFieldFlag(f1, CfMaybeUsed)) {
-							addClassFieldFlag(f1, CfMaybeUsed);
+						if (!hasClassFieldFlag(f1, CfStructurallyUsed)) {
+							addClassFieldFlag(f1, CfStructurallyUsed);
 							switch f2.cfKind {
 								case Var(v):
 									inline function check(name:String):Void try {
-										addClassFieldFlag(rawClassField(makeType, cl, tl, name).field, CfMaybeUsed);
+										addClassFieldFlag(rawClassField(makeType, cl, tl, name).field, CfStructurallyUsed);
 									} catch (_:NotFound) {}
 									switch v.vRead {
 										case AccCall, AccPrivateCall: check("get_" + f1.cfName);
@@ -1275,7 +1275,7 @@ class TUnification {
 			case [ClassStatics(c1), _]:
 				unifyFields(c1.clStatics.byName, function(f1) {
 					if (maybeUsedHook != null) maybeUsedHook(null, f1, null);
-					addClassFieldFlag(f1, CfMaybeUsed);
+					addClassFieldFlag(f1, CfStructurallyUsed);
 				}, function(_) return false);
 			case _:
 				unifyFields(a1.aFields, function(_) {}, function(_) return false);

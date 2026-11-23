@@ -96,6 +96,7 @@ enum StrictMeta {
 	HeaderInclude;
 	HeaderNamespaceCode;
 	HlNative;
+	HotReload;
 	HxbId;
 	HxCompletion;
 	HxGen;
@@ -533,6 +534,11 @@ class MetaList {
 					name: ":hlNative",
 					doc: "Specifies `hdll` name and function prefix for native functions.",
 					flags: [Platforms([Hl]), UsedOn([TClass, TClassField])]
+				};
+			case HotReload: {
+					name: ":hotReload",
+					doc: "The initializer of this static variable runs again after every hot reload (HL 2.0), so that its value follows the code.",
+					flags: [Platforms([Hl]), UsedOn([TClassField])]
 				};
 			case HxbId: {name: ":hxb.id", doc: "Internally used by hxb", flags: [UsedInternally]};
 			case HxCompletion: {name: ":hx.completion", doc: "Internally used for completion", flags: [UsedInternally]};
@@ -1118,6 +1124,7 @@ class MetaList {
 		HeaderInclude,
 		HeaderNamespaceCode,
 		HlNative,
+		HotReload,
 		HxbId,
 		HxCompletion,
 		HxGen,

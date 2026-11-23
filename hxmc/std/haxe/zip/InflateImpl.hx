@@ -137,7 +137,7 @@ class InflateImpl {
 	var fast:Null<haxe.io.Bytes> = null;
 	var fastPos = 0;
 
-	static var FIXED_HUFFMAN = null;
+	static var FIXED_HUFFMAN:Null<Huffman> = null;
 
 	public function new(i, header = true, crc = true) {
 		isFinal = false;

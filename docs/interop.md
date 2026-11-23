@@ -716,6 +716,29 @@ for (row in 0...height) {
 }
 ```
 
+In a program that starts threads (`hxmc.rt.Threads.spawn` reachable:
+`sys.thread.Thread.create`, a pool's) the compiler adds them, and so with
+`-D hxmc.safepoints=1` in any program (`=0`: none; a thread only C starts,
+calling Haxe through callbacks, does not count): a poll at the head of each
+loop and at the entry of each function on a cycle of direct calls, which can
+recurse (`hxmc.ir.Safepoints`:
+one load and a branch, the runtime's `rt_poll` when the flag is set), in the
+functions that reach a GC point already. A no-GC function (one a kernel may
+call), `@:hxmc.unsafe` code and the runtime's own get none. So a long loop in a
+function that reaches no GC point at all (pure arithmetic) still holds
+collections: it needs an explicit poll. The cost is more than the load in
+a loop over Bytes or an Array: after a poll (a GC point) the loop takes the
+data's address again, and a bounds test the compiler drops without one can
+stay (`BytesReadLoops` with polls: 1 or 2 in 4 of its functions). A recursion
+through dynamic calls (a method dispatched, a closure) gets no entry poll: one
+without a loop needs an explicit poll. Measured: an
+HTTP server whose handler spends 100 ms in a loop that allocates nothing, on 1 request in
+10,000, 35,000 requests a second on one core for 30 s: p99 23 ms without, 0.84
+ms with (on a unikernel, the handlers on threads of their own). The compiler
+compiling itself (its own threads): 2% more time, 4% more CPU time (with
+`-D disable-parallelism` 3% less time, its collections starting sooner; a
+poll at every calling function's entry there: 7% more).
+
 ### Handles
 
 A `@:hxmc.handle` abstract is a value only C makes, as .NET's `SafeHandle`
@@ -878,6 +901,8 @@ has no safe region: a callback it calls must be `@:hxmc.unsafe` (it never
 collects); another one ends the program with a message, as the call's
 caller holds references a collection would not update. An `@:hxmc.unsafe`
 callback may run on any thread, including threads the runtime does not know.
+A callback whose address no live code takes is left out with what only it
+calls ([Reachability](hxmc.md#reachability)).
 
 ### Unsafe code
 
@@ -1526,8 +1551,8 @@ try {
   goes on as Haxe throws do (an `@catch` of the C code calling the callback
   does not see it).
 - **Natively**: the program's Haxe functions name a personality routine in
-  their unwind tables (`__eh_frame`, with the program's first Objective-C
-  reference), which claims an Objective-C exception for the first Haxe
+  their unwind tables (`__unwind_info`'s personalities, with the
+  program's first Objective-C reference), which claims an Objective-C exception for the first Haxe
   frame the C++ ABI's search reaches and resumes that frame in the
   runtime's catch. Exceptions of C++ pass through Haxe frames as before.
 

@@ -7,6 +7,13 @@ enum ClassPathScope {
 	User;
 }
 
+class ClassPath {
+	public static function sameLibName(a:String, b:String):Bool {
+		function normalize(s:String) return Path.lowercaseAscii(s.split("-").join("_"));
+		return normalize(a) == normalize(b);
+	}
+}
+
 enum FileKind {
 	FFile;
 }

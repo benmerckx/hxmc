@@ -134,7 +134,7 @@ class EvalAtomic {
 
 	public static final atomicIntFields:Array<{name:String, value:Value}> = [
 		{name: "_hx_new", value: vfun1(v -> EvalEncode.encodeInstance(EvalHash.key_haxe_atomic_AtomicInt, IAtomicInt({v: decodeInt(v)})))},
-		{name: "load", value: vfun1(v -> VInt32(get(asAtomicInt(v))))},
+		{name: "load", value: vfun1(v -> VInt(get(asAtomicInt(v))))},
 		{
 			name: "store",
 			value: vfun2((a, v) -> {
@@ -147,7 +147,7 @@ class EvalAtomic {
 			name: "exchange",
 			value: vfun2((a, v) -> {
 				var x = decodeInt(v);
-				VInt32(exchange(asAtomicInt(a), x));
+				VInt(exchange(asAtomicInt(a), x));
 			})
 		},
 		{
@@ -156,7 +156,7 @@ class EvalAtomic {
 				var vthis = asAtomicInt(vthis);
 				var a = decodeInt(a);
 				var b = decodeInt(b);
-				VInt32(atomically(() -> {
+				VInt(atomically(() -> {
 					var original = vthis.v;
 					var realReplacement = if (original == a) b else original;
 					vthis.v = realReplacement;
@@ -169,7 +169,7 @@ class EvalAtomic {
 			value: vfun2((a, v) -> {
 				var d = decodeInt(v);
 				var a = asAtomicInt(a);
-				VInt32(fetchUpdate(a, orig -> orig + d));
+				VInt(fetchUpdate(a, orig -> orig + d));
 			})
 		},
 		{
@@ -177,28 +177,28 @@ class EvalAtomic {
 			value: vfun2((a, v) -> {
 				var d = -decodeInt(v);
 				var a = asAtomicInt(a);
-				VInt32(fetchUpdate(a, orig -> orig + d));
+				VInt(fetchUpdate(a, orig -> orig + d));
 			})
 		},
 		{
 			name: "and",
 			value: vfun2((a, v) -> {
 				var v = decodeInt(v);
-				VInt32(fetchUpdate(asAtomicInt(a), orig -> orig & v));
+				VInt(fetchUpdate(asAtomicInt(a), orig -> orig & v));
 			})
 		},
 		{
 			name: "or",
 			value: vfun2((a, v) -> {
 				var v = decodeInt(v);
-				VInt32(fetchUpdate(asAtomicInt(a), orig -> orig | v));
+				VInt(fetchUpdate(asAtomicInt(a), orig -> orig | v));
 			})
 		},
 		{
 			name: "xor",
 			value: vfun2((a, v) -> {
 				var v = decodeInt(v);
-				VInt32(fetchUpdate(asAtomicInt(a), orig -> orig ^ v));
+				VInt(fetchUpdate(asAtomicInt(a), orig -> orig ^ v));
 			})
 		},
 	];

@@ -767,7 +767,7 @@ class EvalContext {
 	public static function is(v:Value, path:Int):Bool {
 		if (path == EvalHash.key_Dynamic) return v != VNull;
 		return switch v {
-			case VInt32(_): path == EvalHash.key_Int || path == EvalHash.key_Float;
+			case VInt(_): path == EvalHash.key_Int || path == EvalHash.key_Float;
 			case VInt64(_): path == EvalHash.key_eval_integers_Int64;
 			case VFloat(f): path == EvalHash.key_Float || (path == EvalHash.key_Int && f == Std.int(f)
 					&& f <= 2147483647. && f >= -2147483648.);

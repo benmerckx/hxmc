@@ -63,6 +63,7 @@ lists the ones marked with *.
 | `-D hxmc.no-cache=<packages>` | type these packages, modules or library directories in every build ([Macros and the cache](#macros-and-the-module-cache)) |
 | `-D hxmc.macros=mir` | experimental: run macros on hxmc's Mir interpreter instead of Eval ([Mir macros](#mir-macros)) |
 | `-D hxmc.run=mir` | experimental: run `--interp`/`--run` on the Mir interpreter |
+| `-D hxmc.markup-braces` | markup literals read the code in their braces as an expression, as JSX does, so `<x y={a < b} />` ends at its `/>`; for every file of the build, an unbalanced `{` in a literal's text is an error (`&lbrace;` instead). Stock Haxe and its tools (completion, formatters) still read such literals the stock way ([porting.md](porting.md#divergences-from-the-reference)) |
 
 The diagnostics are flags too ([the table](hxmc.md#flags-and-environment-variables));
 `-D hxmc.opt=0` turns the optimizer off.

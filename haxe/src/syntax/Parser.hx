@@ -226,9 +226,11 @@ typedef ParseData = Package;
 	public var pdWasDisplayFile:Bool;
 	public var pdHadResume:Bool;
 	public var pdDelayedSyntaxCompletion:Null<SyntaxCompletionOn>;
+	public var pdDigest:Null<String>;
 
 	public inline function new(pdErrors:Array<ParseErrorInfo>, pdWarnings:Array<ParseWarning>, pdDeadBlocks:Array<{pos:Pos, expr:Expr}>,
-			pdConditions:Array<Expr>, pdWasDisplayFile:Bool, pdHadResume:Bool, pdDelayedSyntaxCompletion:Null<SyntaxCompletionOn>) {
+			pdConditions:Array<Expr>, pdWasDisplayFile:Bool, pdHadResume:Bool, pdDelayedSyntaxCompletion:Null<SyntaxCompletionOn>,
+			pdDigest:Null<String>) {
 		this.pdErrors = pdErrors;
 		this.pdWarnings = pdWarnings;
 		this.pdDeadBlocks = pdDeadBlocks;
@@ -236,10 +238,11 @@ typedef ParseData = Package;
 		this.pdWasDisplayFile = pdWasDisplayFile;
 		this.pdHadResume = pdHadResume;
 		this.pdDelayedSyntaxCompletion = pdDelayedSyntaxCompletion;
+		this.pdDigest = pdDigest;
 	}
 
 	public inline function clone():ParserDisplayInformation return new ParserDisplayInformation(pdErrors, pdWarnings, pdDeadBlocks,
-		pdConditions, pdWasDisplayFile, pdHadResume, pdDelayedSyntaxCompletion);
+		pdConditions, pdWasDisplayFile, pdHadResume, pdDelayedSyntaxCompletion, pdDigest);
 }
 
 enum ParseResult<T> {

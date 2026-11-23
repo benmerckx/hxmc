@@ -519,7 +519,7 @@ class StdMath {
 
 	public static final abs = EvalEncode.vfun1(v -> {
 		switch v {
-			case VInt32(i): VInt32(i < 0 ? -i : i); // port: Int32.abs (min_int stays min_int)
+			case VInt(i): VInt(i < 0 ? -i : i); // port: abs wrapped to 32 bits (min_int stays min_int)
 			case VFloat(f): VFloat(Math.abs(f));
 			case _: EvalExceptions.unexpectedValue(v, "number");
 		}
@@ -530,16 +530,16 @@ class StdMath {
 	public static final atan = EvalEncode.vfun1(v -> VFloat(Math.atan(EvalDecode.num(v))));
 	public static final atan2 = EvalEncode.vfun2((a, b) -> VFloat(Math.atan2(EvalDecode.num(a), EvalDecode.num(b))));
 	public static final ceil = EvalEncode.vfun1(v -> switch v {
-		case VInt32(_): v;
-		case _: VInt32(toInt(Math.fceil(EvalDecode.num(v))));
+		case VInt(_): v;
+		case _: VInt(toInt(Math.fceil(EvalDecode.num(v))));
 	});
 	public static final cos = EvalEncode.vfun1(v -> VFloat(Math.cos(EvalDecode.num(v))));
 	public static final exp = EvalEncode.vfun1(v -> VFloat(Math.exp(EvalDecode.num(v))));
 	public static final fceil = EvalEncode.vfun1(v -> VFloat(Math.fceil(EvalDecode.num(v))));
 	public static final ffloor = EvalEncode.vfun1(v -> VFloat(Math.ffloor(EvalDecode.num(v))));
 	public static final floor = EvalEncode.vfun1(v -> switch v {
-		case VInt32(_): v;
-		case _: VInt32(toInt(Math.ffloor(EvalDecode.num(v))));
+		case VInt(_): v;
+		case _: VInt(toInt(Math.ffloor(EvalDecode.num(v))));
 	});
 	public static final fround = EvalEncode.vfun1(v -> VFloat(Math.ffloor(EvalDecode.num(v) + 0.5)));
 	public static final isFinite = EvalEncode.vfun1(v -> (switch v {
@@ -548,7 +548,7 @@ class StdMath {
 	}).vbool());
 	public static final isNaN = EvalEncode.vfun1(v -> (switch v {
 		case VFloat(f): f != f;
-		case VInt32(_): false;
+		case VInt(_): false;
 		case _: true;
 	}).vbool());
 	public static final log = EvalEncode.vfun1(v -> VFloat(Math.log(EvalDecode.num(v))));
@@ -568,8 +568,8 @@ class StdMath {
 	public static final pow = EvalEncode.vfun2((a, b) -> VFloat(Math.pow(EvalDecode.num(a), EvalDecode.num(b))));
 	public static final random = EvalEncode.vfun0(() -> VFloat(Math.random()));
 	public static final round = EvalEncode.vfun1(v -> switch v {
-		case VInt32(_): v;
-		case _: VInt32(toInt(Math.ffloor(EvalDecode.num(v) + 0.5)));
+		case VInt(_): v;
+		case _: VInt(toInt(Math.ffloor(EvalDecode.num(v) + 0.5)));
 	});
 	public static final sin = EvalEncode.vfun1(v -> VFloat(Math.sin(EvalDecode.num(v))));
 
@@ -1023,15 +1023,15 @@ class StdSocket {
 		if (a == null) unixError(cmd);
 		if (a[1] < 0) Globals.die("", "evalStdLib.ml:StdSocket");
 		return EvalEncode.encodeObj([
-			{name: EvalHash.key_ip, value: VInt32(a[0])},
-			{name: EvalHash.key_port, value: VInt32(a[1])}
+			{name: EvalHash.key_ip, value: VInt(a[0])},
+			{name: EvalHash.key_port, value: VInt(a[1])}
 		]);
 	}
 
 	static function timeoutValue(timeout:Value):Float {
 		return switch timeout {
 			case VNull: 0.;
-			case VInt32(i): i;
+			case VInt(i): i;
 			case VFloat(f): f;
 			case _: EvalExceptions.unexpectedValue(timeout, "number");
 		}
@@ -1125,7 +1125,7 @@ class StdSocket {
 		var pos = EvalDecode.decodeInt(pos);
 		var len = EvalDecode.decodeInt(len);
 		#if (target.name == "hxmc" || hl)
-		VInt32(check(EvalLock.blocking(() -> SocketHost.recv(self, buf, pos, len)), "recv"));
+		VInt(check(EvalLock.blocking(() -> SocketHost.recv(self, buf, pos, len)), "recv"));
 		#else
 		StdLibBHelpers.socketsNotSupported();
 		#end
@@ -1137,7 +1137,7 @@ class StdSocket {
 		buf.set(0, 0);
 		var self = thisValue(vthis);
 		check(EvalLock.blocking(() -> SocketHost.recv(self, buf, 0, 1)), "recv");
-		VInt32(buf.get(0));
+		VInt(buf.get(0));
 		#else
 		thisValue(vthis);
 		StdLibBHelpers.socketsNotSupported();
@@ -1205,7 +1205,7 @@ class StdSocket {
 		var pos = EvalDecode.decodeInt(pos);
 		var len = EvalDecode.decodeInt(len);
 		#if (target.name == "hxmc" || hl)
-		VInt32(check(EvalLock.blocking(() -> SocketHost.send(self, buf, pos, len)), "send"));
+		VInt(check(EvalLock.blocking(() -> SocketHost.send(self, buf, pos, len)), "send"));
 		#else
 		StdLibBHelpers.socketsNotSupported();
 		#end
@@ -1445,7 +1445,7 @@ class StdString {
 				} else cPos;
 			var cLen = switch len {
 					case VNull: clThis - cPos;
-					case VInt32(i): i;
+					case VInt(i): i;
 					case _: EvalExceptions.unexpectedValue(len, "int");
 				}
 			var cLen = if (cLen < 0) clThis + cLen - cPos else if (cLen > clThis - cPos) clThis - cPos else cLen;
@@ -1523,7 +1523,7 @@ class StdStringBuf {
 		var cPos = EvalDecode.decodeInt(pos);
 		var cLen = switch len {
 				case VNull: s.slength - cPos;
-				case VInt32(i): i;
+				case VInt(i): i;
 				case _: EvalExceptions.unexpectedValue(len, "int");
 			}
 		if (cLen > 0) {
@@ -2125,7 +2125,7 @@ class StdType {
 		function loop(v:Value):{i:Int, vl:Array<Value>} {
 			return switch v {
 				case VNull: {i: 0, vl: []};
-				case VInt32(_): {i: 1, vl: []};
+				case VInt(_): {i: 1, vl: []};
 				case VInt64(_) | VUInt64(_): {i: 2, vl: []};
 				case VFloat(_): {i: 3, vl: []};
 				case VTrue | VFalse: {i: 4, vl: []};

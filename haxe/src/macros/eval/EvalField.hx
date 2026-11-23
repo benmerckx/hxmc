@@ -70,14 +70,14 @@ class EvalField {
 	public static function fieldRaise(v:Value, f:Int):Value {
 		return switch v.vresolve() {
 			case VObject(o): objectFieldRaise(o, f);
-			case VInstance({ikind: IBytes(s)}) if (f == EvalHash.key_length): VInt32(s.length);
+			case VInstance({ikind: IBytes(s)}) if (f == EvalHash.key_length): VInt(s.length);
 			case VPrototype(proto): protoFieldRaise(proto, f);
 			case VArray(va):
-				if (f == EvalHash.key_length) VInt32(va.alength) else protoFieldDirect(EvalContext.getCtx().arrayPrototype, f);
+				if (f == EvalHash.key_length) VInt(va.alength) else protoFieldDirect(EvalContext.getCtx().arrayPrototype, f);
 			case VVector(vv):
-				if (f == EvalHash.key_length) VInt32(vv.length) else protoFieldDirect(EvalContext.getCtx().vectorPrototype, f);
+				if (f == EvalHash.key_length) VInt(vv.length) else protoFieldDirect(EvalContext.getCtx().vectorPrototype, f);
 			case VString(s):
-				if (f == EvalHash.key_length) VInt32(s.slength) else protoFieldDirect(EvalContext.getCtx().stringPrototype, f);
+				if (f == EvalHash.key_length) VInt(s.slength) else protoFieldDirect(EvalContext.getCtx().stringPrototype, f);
 			case VInstance(vi):
 				var i = vi.iproto.pinstanceNames.findOpt(f);
 				if (i != null) vi.ifields[i] else protoFieldRaise(vi.iproto, f);

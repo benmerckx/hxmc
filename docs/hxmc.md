@@ -584,9 +584,12 @@ missing one.
 Haxe's default DCE keeps every field of a user class.
 `ir/Reach.hx` then keeps only what the program can run, a rapid type
 analysis over the IR before anything is compiled. From `main`, the exported
-functions and `@:keep` methods:
+functions (and the other entries C finds by name: Objective-C, COM, JNI)
+and `@:keep` methods:
 
 - a function is live when live code calls it or makes a closure of it;
+- a `@:hxmc.callback` is live when live code takes its address
+  (`Callback.addr`, or passes it to a typed binding);
 - a static initializer is live when live code uses a static it sets;
 - a method is live when live code instantiates its class (or a subclass)
   and either dispatches on its selector or can look its name up.
@@ -1659,10 +1662,13 @@ a stripped binary) and an empty `LC_DATA_IN_CODE`. Its fixups are chains
 the other Mach-O outputs keep `LC_DYLD_INFO_ONLY`'s opcodes, and `-D
 hxmc.fixup-chains[=0]` makes either the other.
 
-Every Mach-O output has `__unwind_info` beside `__eh_frame`, as ld64
-writes it of functions without a compact encoding: each function's entry
-names its FDE (DWARF mode), which the system's unwinder, the crash reporter
-and lldb read first. `-D hxmc.dsym` writes `<output>.dSYM` beside the
+Every Mach-O output has `__unwind_info`, as ld64 writes it, which the
+system's unwinder, the crash reporter and lldb read first: each function's
+compact encoding (arm64's frame mode, x86-64's rbp frame mode, frameless
+stubs; with Objective-C the personality and an LSDA entry), compressed
+pages, the common encodings shared. A function no encoding describes (an
+LLVM function's own CFI) names its FDE in `__eh_frame` (DWARF mode); the
+generated code needs none. `-D hxmc.dsym` writes `<output>.dSYM` beside the
 output, as dsymutil does: the output's UUID, its functions' symbol table
 and, with `-debug`, the DWARF sections; crash reports are symbolicated with
 it (atos, Xcode).
@@ -1833,13 +1839,18 @@ space's region"). Natively, large objects are copied like any other.
 
 **Frame pointers.** Every function keeps a frame record (x86-64: `push
 rbp; mov rbp, rsp`, rbp out of register allocation; arm64: x29/x30, always),
-so `perf record -g`, debuggers and `Mem.frame()` walk the stack.
+so `perf record -g`, debuggers and `Mem.frame()` walk the stack. Below
+the record, arm64 saves the callee-saved registers by pairs (x19/x20 ...
+d14/d15, both when either is used), as Mach-O's compact encodings describe
+them; Windows saves the used ones above the outgoing arguments, within its
+unwind codes' reach.
 `-D hxmc.frame-pointers=0` drops them on
 x86-64.
 
 **Unwind tables** are always written (`Unwind.hx`), from the frame records
 the emitters keep (`Obj.FuncRec`): ELF `.eh_frame` with `.eh_frame_hdr`,
-Mach-O `__eh_frame` (no `__unwind_info`), Windows `.pdata`/`.xdata` for
+Mach-O `__unwind_info`'s compact encodings (`__eh_frame` for the
+functions none describes), Windows `.pdata`/`.xdata` for
 x86-64 and arm64. A function's frame is the same at every instruction of
 its body: outgoing arguments are part of it and nothing allocates on the
 stack dynamically. `hxmc_call_on_stack`, the main thread's stack switch,

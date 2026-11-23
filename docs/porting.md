@@ -155,21 +155,11 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   braces as an expression, as JSX does: its strings (with `${}`), comments
   and braces are passed over, and a `<` is markup only where an expression
   starts. In a tag, a `(` right after a name is read the same way
-  (domkit's `<view(a, b)` and `if(c)`).
-  Upstream's `not_xml` reads tags everywhere, so a comparison or markup in
-  an attribute (`<x y={a < b} />`, `<x y={i -> <b/>} />`) leaves the root's
-  opening tag: its `/>` no longer closes the literal, which is then
-  unterminated. Tags outside braces are read as upstream reads them.
+  (domkit's `<view(a, b)` and `if(c)`). Upstream's `not_xml` reads tags
+  everywhere, so a comparison or markup in an attribute (`<x y={a < b} />`,
+  `<x y={i -> <b/>} />`) leaves the root's opening tag: its `/>` no longer
+  closes the literal, which is then unterminated. Tags outside braces are read as upstream reads them.
   Unlike upstream, an unbalanced `{` in a literal's text leaves it
   unterminated (`&lbrace;` instead). Without the define, literals are read
   as upstream reads them (`syntax.Lexer.lexXmlBraces`, `markupEnd`; the
   unit test `MarkupTest`; #194).
-
-## The one exception to byte identity
-
-hl/c's digest names of types whose description holds a closure depend on
-the reference binary's own machine code. The port writes a documented
-placeholder instead, and the harnesses normalize only those names
-([testing.md](testing.md#two-exceptions-to-byte-identity),
-`haxe/test/HlcNames.hx`). A new case of this kind extends both, never a
-general tolerance.

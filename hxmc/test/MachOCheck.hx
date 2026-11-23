@@ -21,8 +21,8 @@ using StringTools;
 //   LC_ENCRYPTION_INFO_64 (cryptoff one page, __text from it, the rest of
 //   __TEXT, cryptid 0; none on the simulator and Mac Catalyst),
 //   LC_FUNCTION_STARTS (ascending, in __TEXT, the entry point's among
-//   them), an empty LC_DATA_IN_CODE, __unwind_info (each entry's FDE in
-//   __eh_frame the function's: its pc_begin), a device's fixups as chains
+//   them), an empty LC_DATA_IN_CODE, __unwind_info (most functions' compact
+//   encodings, the others' FDEs in __eh_frame: unwindInfo), a device's fixups as chains
 //   (LC_DYLD_CHAINED_FIXUPS and LC_DYLD_EXPORTS_TRIE, no LC_DYLD_INFO_ONLY;
 //   every chain walked: a rebase's target in the image, a bind's import
 //   among the imports, each import's dylib loaded and its name), the others'
@@ -40,13 +40,14 @@ using StringTools;
 //   files given, 2 the empty requirement set's;
 // - UIKit's install name (hxmc/test/cases/ObjCUIKit.hx): iOS's
 //   /System/Library/Frameworks, Mac Catalyst's /System/iOSSupport, a
-//   framework both share macOS's there;
+//   framework both share macOS's there; its __unwind_info's personality
+//   and LSDA entries;
 // - the defines' errors: a minimum or SDK below 15.0, codesign-* on an ELF output;
 // - macOS (hxmc/test/macos/AvailWeak.hx, -D hxmc.strict, arm64 and x86-64):
 //   the build version's minimum (11.0 or 10.15, -D hxmc.macos-min-version's)
 //   and SDK (the minimum, 11.0 at least), the imports newer than the minimum
 //   weak (N_WEAK_REF, the bind's weak-import flag), the others not; a
-//   minimum below the floor an error;
+//   minimum below the floor an error; IosHello's __unwind_info;
 // - llvm-objdump's view of the load commands, when there.
 // Exits non-zero on a failure; a missing tool is skipped.
 class MachOCheck {
@@ -127,6 +128,7 @@ class MachOCheck {
 			var uikit = t == "ios-arm64" ? "/System/Library/Frameworks/UIKit.framework/UIKit" : "/System/iOSSupport/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit";
 			check('$t ObjCUIKit: UIKit is $uikit', libs.indexOf(uikit) >= 0, libs.join(" "));
 			check('$t ObjCUIKit: CoreFoundation is /System/Library/Frameworks\'s', libs.indexOf("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation") >= 0, libs.join(" "));
+			unwindInfo('$t ObjCUIKit', b, t.endsWith("arm64"), true);
 		}
 		macos();
 		// the defines' errors
@@ -192,6 +194,7 @@ class MachOCheck {
 			var out = '$dir/AvailWeakSdk';
 			var r = exec([tool, out, "-cp", "hxmc/test/ios", "-cp", "bin/hxmc/std", "-main", "IosHello", "--custom-target", "hxmc", "-D", "disable-parallelism",
 				"-D", 'hxmc.target=$t'], {merge: true});
+			if (r.code == 0) unwindInfo('$t IosHello', File.getBytes(out), t == "macos-arm64");
 			if (r.code == 0)
 				for (lc in MachOReader.commands(File.getBytes(out)))
 					if (lc.cmd == 0x32) {
@@ -294,7 +297,7 @@ class MachOCheck {
 			starts != null && fs.length > 0 && fs[0] >= textSect && fs[fs.length - 1] < textFileSize && (dylib || fs.contains(entry)),
 			starts == null ? "none" : fs.length + " functions");
 		check('$what: LC_DATA_IN_CODE, empty', dic != null && dic.size == 0);
-		unwindInfo(what, b, textSects.get("__unwind_info"), textSects.get("__eh_frame"), target.endsWith("arm64"));
+		unwindInfo(what, b, arm);
 		if (wantChains) {
 			check('$what: LC_DYLD_CHAINED_FIXUPS and LC_DYLD_EXPORTS_TRIE, no LC_DYLD_INFO_ONLY', fixups != null && trie && !dyldInfo);
 			if (fixups != null) chainedFixups(what, b, fixups.off, libs.length, dylib ? 0 : 1, vmEnd);
@@ -360,39 +363,103 @@ class MachOCheck {
 	}
 
 	// __unwind_info: version 1, the index's functions ascending to the end's,
-	// each page's entries in DWARF mode naming an FDE in __eh_frame whose
-	// pc_begin is the entry's function (file offsets are the image's in __TEXT)
-	static function unwindInfo(what:String, b:Bytes, uw:Null<{off:Int, size:Int}>, eh:Null<{off:Int, size:Int}>, arm:Bool) {
-		check('$what: __unwind_info beside __eh_frame', uw != null && eh != null && uw.size > 0);
-		if (uw == null || eh == null) return;
-		var u = uw.off, mode = arm ? 0x03000000 : 0x04000000;
-		var index = b.getInt32(u + 20), count = b.getInt32(u + 24);
-		var entries = 0, dwarf = 0, bad = [], prev = -1;
+	// compressed pages whose entries ascend, each encoding the common ones'
+	// or its page's; most functions with a compact encoding (arm64 frame
+	// mode: the code starts with stp x29, x30, [sp, #-16]!; mov x29, sp;
+	// x86-64 rbp frame mode: push rbp; mov rbp, rsp), the others in DWARF
+	// mode naming an FDE in __eh_frame whose pc_begin is the entry's
+	// function, and __eh_frame's FDEs only theirs; an encoding with
+	// language-specific data has its LSDA entry in its page's range, one with
+	// a personality a personality there (objc: some do). File offsets are the
+	// image's in __TEXT
+	static function unwindInfo(what:String, b:Bytes, arm:Bool, objc = false) {
+		var s = textSections(b);
+		var uw = s.get("__unwind_info"), eh = s.get("__eh_frame");
+		check('$what: __unwind_info', uw != null && uw.size > 0);
+		if (uw == null) return;
+		var u = uw.off, dwarfMode = arm ? 0x03000000 : 0x04000000, frameMode = arm ? 0x04000000 : 0x01000000;
+		var common = u + b.getInt32(u + 4), ncommon = b.getInt32(u + 8), npers = b.getInt32(u + 16);
+		var index = u + b.getInt32(u + 20), count = b.getInt32(u + 24);
+		var entries = 0, compact = 0, dwarf = 0, lsdas = 0, personal = 0, bad = [], prev = -1;
+		function hex(x:Int)
+			return StringTools.hex(x);
 		for (i in 0...count - 1) {
-			var ix = u + index + 12 * i, page = u + b.getInt32(ix + 4);
-			if (b.getInt32(page) != 2) bad.push("page " + i + ": kind " + b.getInt32(page));
+			var ix = index + 12 * i, page = u + b.getInt32(ix + 4), base = b.getInt32(ix);
+			var lsda = u + b.getInt32(ix + 8), lsdaEnd = u + b.getInt32(ix + 20);
+			if (b.getInt32(page) != 3) {
+				bad.push("page " + i + ": kind " + b.getInt32(page));
+				continue;
+			}
 			var first = page + b.getUInt16(page + 4), n = b.getUInt16(page + 6);
-			if (n > 0 && b.getInt32(first) != b.getInt32(ix)) bad.push("page " + i + ": its index entry's function");
+			var encs = page + b.getUInt16(page + 8), nencs = b.getUInt16(page + 10);
+			if (n > 0 && b.getInt32(first) & 0xFFFFFF != 0) bad.push("page " + i + ": its index entry's function");
 			for (k in 0...n) {
-				var start = b.getInt32(first + 8 * k), enc = b.getInt32(first + 8 * k + 4);
-				if (start <= prev) bad.push("not ascending at " + StringTools.hex(start));
+				var e = b.getInt32(first + 4 * k), start = base + (e & 0xFFFFFF), x = e >>> 24;
+				if (start <= prev) bad.push("not ascending at " + hex(start));
 				prev = start;
 				entries++;
-				if (enc == 0) continue;
-				dwarf++;
-				var fde = eh.off + (enc & 0xFFFFFF);
-				if (enc & 0x0F000000 != mode || fde + 12 > eh.off + eh.size) {
-					bad.push(StringTools.hex(start) + ": encoding " + StringTools.hex(enc));
+				if (x >= ncommon + nencs) {
+					bad.push(hex(start) + ": encoding " + x + " of " + (ncommon + nencs));
 					continue;
 				}
-				var pc = fde + 8 + b.getInt32(fde + 8);
-				if (pc != start) bad.push(StringTools.hex(start) + ": its FDE's function at " + StringTools.hex(pc));
+				var enc = x < ncommon ? b.getInt32(common + 4 * x) : b.getInt32(encs + 4 * (x - ncommon));
+				if (enc == 0) continue;
+				var mode = enc & 0x0F000000;
+				if (mode == dwarfMode) {
+					dwarf++;
+					var fde = eh == null ? 0 : eh.off + (enc & 0xFFFFFF);
+					if (eh == null || fde + 12 > eh.off + eh.size) {
+						bad.push(hex(start) + ": encoding " + hex(enc));
+						continue;
+					}
+					var pc = fde + 8 + b.getInt32(fde + 8);
+					if (pc != start) bad.push(hex(start) + ": its FDE's function at " + hex(pc));
+					continue;
+				}
+				compact++;
+				if (mode == frameMode && (arm ? b.getInt32(start) != 0xa9bf7bfd || b.getInt32(start + 4) != 0x910003fd : b.getInt32(start) != 0xe5894855))
+					bad.push(hex(start) + ": frame mode without the frame's prologue");
+				if (enc & 0x30000000 != 0) {
+					personal++;
+					if ((enc >>> 28) & 3 > npers) bad.push(hex(start) + ": personality " + ((enc >>> 28) & 3) + " of " + npers);
+				}
+				if (enc & 0x40000000 != 0) {
+					lsdas++;
+					var l = lsda;
+					while (l < lsdaEnd && b.getInt32(l) != start)
+						l += 8;
+					if (l >= lsdaEnd) bad.push(hex(start) + ": no LSDA entry");
+				}
 			}
 		}
-		var end = b.getInt32(u + index + 12 * (count - 1));
-		if (end <= prev) bad.push("the end " + StringTools.hex(end) + " before the last function");
-		check('$what: __unwind_info: each function\'s FDE in __eh_frame its own', b.getInt32(u) == 1 && dwarf > 0 && bad.length == 0,
-			entries + " functions, " + dwarf + " with an FDE" + (bad.length > 0 ? "; " + bad.slice(0, 3).join("; ") : ""));
+		var end = b.getInt32(index + 12 * (count - 1));
+		if (end <= prev) bad.push("the end " + hex(end) + " before the last function");
+		var fdes = 0;
+		if (eh != null) {
+			var at = eh.off;
+			while (at + 8 <= eh.off + eh.size && b.getInt32(at) != 0) {
+				if (b.getInt32(at + 4) != 0) fdes++;
+				at += 4 + b.getInt32(at);
+			}
+		}
+		check('$what: __unwind_info: compact encodings, DWARF mode naming its FDE', b.getInt32(u) == 1 && bad.length == 0,
+			entries + " functions, " + compact + " compact, " + dwarf + " with an FDE" + (bad.length > 0 ? "; " + bad.slice(0, 3).join("; ") : ""));
+		check('$what: __unwind_info: most functions compact, __eh_frame only the others\'', compact > 0 && 10 * dwarf <= compact + dwarf && fdes == dwarf,
+			compact + " compact, " + dwarf + " DWARF, " + fdes + " FDEs");
+		if (objc) check('$what: __unwind_info: the personality and language-specific data of compact entries', npers == 1 && personal > 0 && lsdas > 0,
+			npers + " personalities, " + personal + " entries with one, " + lsdas + " with an LSDA");
+	}
+
+	// the sections of __TEXT by name (file offset and size)
+	static function textSections(b:Bytes):Map<String, {off:Int, size:Int}> {
+		var m = new Map();
+		for (c in MachOReader.commands(b))
+			if (c.cmd == 0x19 && cstr(b, c.at + 8, 16) == "__TEXT")
+				for (k in 0...b.getInt32(c.at + 64)) {
+					var sh = c.at + 72 + 80 * k;
+					m.set(cstr(b, sh, 16), {off: b.getInt32(sh + 48), size: b.getInt32(sh + 40)});
+				}
+		return m;
 	}
 
 	// LC_DYLD_CHAINED_FIXUPS: each segment's page starts and chains walked

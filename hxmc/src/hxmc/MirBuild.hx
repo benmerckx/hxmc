@@ -358,6 +358,7 @@ class MirBuild extends MirWriter {
 	public function objects():MFunc {
 		f = new MFunc(p.funcSym(fn));
 		f.blocksHere = fn.blocksHere;
+		f.polls = fn.polled;
 		// (a parameter of type Void, a T->Void callback of a C<Void>: an i32, as a Void
 		// local is; WebAssembly has no value type for Void: corpus case VoidParam)
 		f.params = fn.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));

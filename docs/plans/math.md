@@ -2,7 +2,7 @@
 
 Math is one implementation on every target: `hxmc/std/hxmc/rt/LibM.hx`,
 musl's algorithms in Haxe, bit-identical to musl's C. Why printed floats
-can differ from the reference's: [testing.md](../testing.md#two-exceptions-to-byte-identity).
+can differ from the reference's: [testing.md](../testing.md#the-one-exception-to-byte-identity).
 
 ## Correctly rounded math
 

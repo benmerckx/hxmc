@@ -90,6 +90,7 @@ typedef ErrorFunction = String->Pos->Void;
 							!hasDce(gctx) || switch t {
 								case TClassDecl(c): hasClassFlag(c, CUsed);
 								case TAbstractDecl(a): Meta.has(Meta.ValueUsed, a.aMeta);
+								case TEnumDecl(e): hasEnumFlag(e, EnUsed);
 								case _: Meta.has(Meta.Used, tInfos(t).mtMeta);
 							};
 						case TClassDecl(c) if (hasClassFlag(c, CExtern) && (gctx.platform != Js || cl != "Array" && cl != "Math")):

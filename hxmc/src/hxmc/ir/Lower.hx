@@ -1659,6 +1659,7 @@ class Lower {
 			if (fi.cSymbol != null) throw new LowerError('@:hxmc.callback ${cf.cfName} is also @:hxmc.export', where);
 			var w = new FuncInfo(fi.name + "__callback", fi.module);
 			w.cSymbol = sym;
+			w.callback = true;
 			w.display = fi.display;
 			w.pos = fi.pos;
 			w.cAbi = {args: cargs, ret: CInterop.ctype(tf.tfType)};
@@ -1694,10 +1695,12 @@ class Lower {
 			// (WebAssembly: one thread, no safe region)
 			if (fi.cSymbol != null) throw new LowerError('@:hxmc.callback ${cf.cfName} is also @:hxmc.export', where);
 			fi.cSymbol = sym;
+			fi.callback = true;
 			return;
 		}
 		var w = new FuncInfo(fi.name + "__callback", fi.module);
 		w.cSymbol = sym;
+		w.callback = true;
 		w.display = fi.display;
 		w.pos = fi.pos;
 		w.args = [for (a in fi.args) new Local(a.id, a.name, a.ty)];
@@ -1738,6 +1741,7 @@ class Lower {
 		if (p.ret >= 0) throw new LowerError('@:hxmc.callback ${cf.cfName}: a callback returns no span', where);
 		var w = new FuncInfo(fi.name + "__callback", fi.module);
 		w.cSymbol = callbackSym(fi);
+		w.callback = true;
 		w.display = fi.display;
 		w.pos = fi.pos;
 		var cargs:Array<CTy> = [], body:Array<Stmt> = [], id = 0;

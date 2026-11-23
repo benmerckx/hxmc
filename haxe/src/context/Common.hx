@@ -154,8 +154,6 @@ class CompilerCallbacks {
 
 class FileKeys {
 	var cache:Map<String, String> = [];
-	var virtualCounter = 0;
-
 	public function new() {}
 
 	public function get(file:String):String {
@@ -166,8 +164,7 @@ class FileKeys {
 	}
 
 	public function generateVirtual(mpath:GlobalTypePath, step:Int):String {
-		virtualCounter++;
-		return (mpath.pack.length == 0 ? "." : mpath.pack.join("/")) + "/" + mpath.name + "_" + step + "_" + virtualCounter;
+		return (mpath.pack.length == 0 ? "." : mpath.pack.join("/")) + "/" + mpath.name + "_" + step;
 	}
 }
 
@@ -436,6 +433,7 @@ typedef CommonContext = {
 	var info:(msg:String, p:Pos, ?depth:Int) -> Void;
 	var warning:(w:WarningCode, options:Array<Array<WarningOption>>, msg:String, p:Pos, ?depth:Int) -> Void;
 	var warningOptions:Array<Array<WarningOption>>;
+	var scopedWarningOptions:Array<core.Warning.ScopedWarningOption>;
 	var getMessages:Void->Array<CompilerMessage>;
 	var filterMessages:(CompilerMessage->Bool)->Void;
 	var runCommand:String->Int;
@@ -501,7 +499,20 @@ class Common {
 		modules: com.modules,
 		main: com.main,
 		types: com.types,
-		resources: com.resources,
+		resources: {
+			var l = com.resources.fold((k, v, acc:Array<{k:String, v:haxe.io.Bytes}>) -> {
+				acc.push({k: k, v: v});
+				acc;
+			}, []);
+			// port: OCaml 'compare' on the pairs: the name, then the bytes
+			l.sort((a, b) -> {
+				var c = core.ds.Key.compareStrings(a.k, b.k);
+				c != 0 ? c : a.v.compare(b.v);
+			});
+			var h = new core.ds.OcamlHashtbl(core.ds.OcamlHash.hashString, (a:String, b:String) -> a == b, l.length);
+			for (e in l) h.add(e.k, e.v);
+			h;
+		},
 		nativeLibs: switch com.platform {
 			case Jvm: [for (l in com.nativeLibs.javaLibs) (cast l : NativeLibraries.NativeLibraryBase)];
 			case Flash: [for (l in com.nativeLibs.swfLibs) (cast l : NativeLibraries.NativeLibraryBase)];
@@ -533,6 +544,13 @@ class Common {
 		if (com.display.dmsFullTyping) m.mExtra.mCacheBoundObjects.push(Message(Message.makeMessage(com.isMacroContext, msg, p, 0,
 			MKWarning(w, options))));
 		com.warning(w, options, msg, p);
+	}
+
+	public static function scopedWarningMode(com:CommonContext, w:WarningCode, p:Pos):Null<WarningMode> {
+		var scoped = com.scopedWarningOptions;
+		if (scoped.length == 0) return null;
+		var inScope = p.pfile == "?" ? function(_) return false : core.SourceScope.matcher(com.classPaths, p.pfile);
+		return core.Warning.matchesScoped(w, scoped, inScope);
 	}
 
 	// Defines
@@ -863,6 +881,10 @@ class Common {
 					woMode: WMDisable
 				} : core.Message.WarningOption))
 			],
+			scopedWarningOptions: [
+				{opt: {woWarning: WDeprecated, woMode: WMDisable}, scope: core.SourceScope.SourceScopeKind.Lib(null)},
+				{opt: {woWarning: WDeprecated, woMode: WMDisable}, scope: core.SourceScope.SourceScopeKind.Std}
+			],
 			error: function(_, _) throw "Uninitialized error handler",
 			errorExt: function(_) throw "Uninitialized error handler",
 			getMessages: function() return [],
@@ -977,10 +999,26 @@ class Common {
 	}
 
 	// port: Extc.filetime returns zero when stat fails (including absent import.hx).
-	// port: Extc.filetime: st_mtime, whole seconds, on POSIX; GetFileTime's 100 ns units on Windows
+	// port: Extc.filetime: full precision (st_mtim, macOS st_mtimespec; GetFileTime's 100 ns units on Windows)
 	public static function fileTime(file:String):Float {
-		var t = try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) return 0.;
-		return core.Globals.isWindows ? t : Math.ffloor(t);
+		#if (target.name == "hxmc")
+		// port: on POSIX, tv_sec + tv_nsec / 1e9 as Extc computes it: a Date's
+		// milliseconds / 1000 rounds differently in the last digit (server/files)
+		if (!isWindows) {
+			final t = hxmc.NativeSys.statTimes(file);
+			return t == null ? 0. : t[2] + t[3] / 1e9;
+		}
+		#end
+		return try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.;
+	}
+
+	/* Writes [content] to [file] unless the file already has exactly this content. */
+	public static function writeFileIfChanged(file:String, content:haxe.io.Bytes):Void {
+		var same = try {
+			var old = sys.io.File.getBytes(file);
+			old.length == content.length && old.compare(content) == 0;
+		} catch (_:Dynamic) false;
+		if (!same) sys.io.File.saveBytes(file, content);
 	}
 
 	public static final flashVersions = [
@@ -1105,6 +1143,7 @@ class Common {
 			if (field == "*") result = !hasDce(com) || switch found {
 				case TClassDecl(c): hasClassFlag(c, CUsed);
 				case TAbstractDecl(a): Meta.has(Meta.ValueUsed, a.aMeta);
+				case TEnumDecl(e): hasEnumFlag(e, EnUsed);
 				case _: Meta.has(Meta.Used, tInfos(found).mtMeta);
 			};
 			else switch found {

@@ -114,6 +114,9 @@ class MethodContext {
 	public var massign:Array<Lassign> = []; // port: in chronological order (upstream keeps it reversed)
 	/* lookup into massign by variable id, so we can set the scope end when the block closes */
 	public final mvarAssigns:IntMap<Array<Lassign>> = new IntMap();
+	public var mlocal:String = "";
+	public var mlnames:Array<{e:TExpr, n:String}> = []; // port: (texpr * string) list
+	public var mlcount:StringMap<Int> = new StringMap();
 
 	public function new(mid:Int, mret:Ttype, mcaptured:MethodCapture, mhasthis:Bool) {
 		this.mid = mid;
@@ -163,6 +166,7 @@ class HlContext {
 	public var cfunctions:Array<Fundecl> = [];
 	public var cconstants:Lookup<{g:Int, fields:Vector<Int>}> = new Lookup();
 	public var hlVer:String;
+	public var hl2:Bool;
 	public var optimize:Bool;
 	public var wNullCompare:Bool;
 	public var overrides:StringMap<Bool> = new StringMap();
@@ -210,14 +214,18 @@ private enum Access {
 	ACaptured(fid:Int);
 }
 
+// port: genhl.ml declares it before generate_static_content
+private enum InitItem {
+	IClassInit(c:TClass, e:TExpr);
+	IStatic(c:TClass, cf:TClassField, e:TExpr);
+	IMain(e:TExpr);
+}
+
 private class ExitException extends haxe.Exception {
 	public function new() super("Exit");
 }
 
 class Genhl {
-	// port: the HAbstract identity of the "macro_pos" literal
-	static final macroPosIdent:Dynamic = {};
-
 	// port: ocamlopt shares identical structured constants of a compilation unit, so
 	// these literal types are physically equal wherever genhl.ml writes them (tsame on
 	// HArray is physical).
@@ -304,7 +312,7 @@ class Genhl {
 		var key = HFun(tl, HVoid);
 		var ct = ctx.cachedTuples.get(key);
 		if (ct != null) return ct;
-		var ct = HEnum(new EnumProto("", 0, null, vector({name: "", nid: 0, args: Vector.fromArrayCopy(tl)})));
+		var ct = HEnum(new EnumProto("", 0, null, vector({name: "", nid: 0, args: Vector.fromArrayCopy(tl)}), vector()));
 		ctx.cachedTuples.set(key, ct);
 		return ct;
 	}
@@ -329,6 +337,42 @@ class Genhl {
 
 	static function methodContext(id:Int, t:Ttype, captured:MethodCapture, hasthis:Bool):MethodContext
 		return new MethodContext(id, t, captured, hasthis);
+
+	static function localFunctionNames(e:TExpr):Array<{e:TExpr, n:String}> {
+		var names:Array<{e:TExpr, n:String}> = [];
+		function strip(e:TExpr):TExpr return switch e.eexpr {
+			case TCast(e, null) | TMeta(_, e) | TParenthesis(e): strip(e);
+			case _: e;
+		}
+		function nameOf(e:TExpr):String return switch strip(e).eexpr {
+			case TLocal(v): v.vName;
+			case TField(_, fa): TFunctions.fieldName(fa);
+			case TTypeExpr(t): tPath(t).name;
+			case TCall(e, _) | TArray(e, _): nameOf(e);
+			case _: "";
+		}
+		function add(e:TExpr, n:String) {
+			var e = strip(e);
+			switch e.eexpr {
+				case TFunction(_) if (!core.ds.ArrayTools.exists(names, x -> x.e == e)): names.push({e: e, n: n});
+				case _:
+			}
+		}
+		function loop(e:TExpr) {
+			switch e.eexpr {
+				case TVar(v, e) if (e != null): add(e, v.vName);
+				case TBinop(OpAssign | OpAssignOp(_), e1, e2): add(e2, nameOf(e1));
+				case TCall(c, el): for (e in el) add(e, nameOf(c));
+				case TNew(c, _, el): for (e in el) add(e, c.clPath.name);
+				case TObjectDecl(fl): for (f in fl) add(f.expr, f.key.name);
+				case TReturn(e) if (e != null): add(e, "return");
+				case _:
+			}
+			core.Texpr.iter(loop, e);
+		}
+		loop(e);
+		return names;
+	}
 
 	static function fieldName(c:TClass, f:TClassField):String return sTypePath(c.clPath) + ":" + f.cfName;
 
@@ -480,11 +524,11 @@ class Genhl {
 	}
 
 	// port: the name of `TInst ({ cl_path = ["hl"],"Abstract" },[TInst({ cl_kind = KExpr (EConst (String(name,_)),_) },_)])`
-	static function hlAbstractName(t:T):Null<{name:String, ident:Dynamic}> {
+	static function hlAbstractName(t:T):Null<String> {
 		return switch t {
 			case TInst(c, [TInst({clKind: KExpr(e)}, _)]) if (isPath(c.clPath, ["hl"], "Abstract")):
 				switch e.expr {
-					case EConst(String(name, _)): {name: name, ident: e};
+					case EConst(String(name, _)): name;
 					case _: null;
 				}
 			case _: null;
@@ -542,7 +586,7 @@ class Genhl {
 				return enumType(ctx, e, tref);
 			case TInst(_, _) if (hlAbstractName(t) != null):
 				var a = hlAbstractName(t);
-				return HAbstract(a.name, allocString(ctx, a.name), a.ident);
+				return HAbstract(a, allocString(ctx, a));
 			case TInst(c, pl):
 				switch c.clKind {
 					case KTypeParameter(ttp):
@@ -583,7 +627,7 @@ class Genhl {
 						case ["hl", "I64"]: HI64;
 						case ["hl", "GUID"]: HGUID;
 						case ["hl", "NativeArray"]: HArray(toType(ctx, pl[0]));
-						case ["haxe.macro", "Position"]: HAbstract("macro_pos", allocString(ctx, "macro_pos"), macroPosIdent);
+						case ["haxe.macro", "Position"]: HAbstract("macro_pos", allocString(ctx, "macro_pos"));
 						case ["haxe.coro", "Coroutine"]:
 							switch pl {
 								case [TFun(s)]:
@@ -858,7 +902,7 @@ class Genhl {
 		var cached = ctx.cachedTypes.get(keyPath);
 		if (cached != null) return cached;
 		var ename = sTypePath(e.ePath);
-		var et = new EnumProto(ename, allocString(ctx, ename), null, vector());
+		var et = new EnumProto(ename, allocString(ctx, ename), null, vector(), vector());
 		var t = HEnum(et);
 		if (tref != null) tref.v = t;
 		ctx.cachedTypes.set(keyPath, t);
@@ -870,6 +914,14 @@ class Genhl {
 				case _: vector();
 			}
 			({name: f.efName, nid: allocString(ctx, f.efName), args: args} : EField);
+		});
+		if (ctx.hl2) et.eparams = e.eConstrs.keyArray().mapToVector(n -> {
+			var f = e.eConstrs.get(n);
+			if (f == null) throw NotFound.raise();
+			(switch f.efType {
+				case TFun(s): s.args.map(a -> allocString(ctx, a.name));
+				case _: vector();
+			} : Vector<Int>);
 		});
 		var ct = enumClass(ctx, e);
 		et.eglobal = allocGlobal(ctx, switch ct {
@@ -920,7 +972,7 @@ class Genhl {
 					op(ctx, OMakeEnum(retReg, ef.efIndex, argRegs));
 					op(ctx, ORet(retReg));
 					var hlf = new Fundecl({fst: "", snd: ""}, eid, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-						makeAssigns(ctx.m.massign), false);
+						makeAssigns(ctx.m.massign), false, -1);
 					ctx.m = old;
 					ctx.definedFuns.set(eid, true);
 					ctx.cfunctions.push(hlf);
@@ -1635,7 +1687,7 @@ class Genhl {
 							free(ctx, a);
 							var t = toType(ctx, t);
 							return AArray(a, t, t, i);
-						case TInst(_, _) if (abstractName != null && abstractName.name == "hl_carray"):
+						case TInst(_, _) if (abstractName == "hl_carray"):
 							var a = evalExpr(ctx, a);
 							hold(ctx, a);
 							var i = evalTo(ctx, i, HI32);
@@ -2683,7 +2735,18 @@ class Genhl {
 				}
 			case TFunction(f):
 				var fid = allocFunctionName(ctx, "function#" + ctx.cfids.arr.length);
-				var capt = makeFun(ctx, {fst: "", snd: ""}, fid, f, null, ctx.m.mcaptured);
+				var lname = {
+					var x = core.ds.ArrayTools.find(ctx.m.mlnames, x -> x.e == e);
+					x == null ? "" : x.n;
+				}
+				var lname = if (ctx.m.mlocal == "") lname else ctx.m.mlocal + "." + lname;
+				var rank = {
+					var r = ctx.m.mlcount.get(lname);
+					r == null ? 0 : r;
+				}
+				ctx.m.mlcount.set(lname, rank + 1);
+				var lname = if (rank == 0) lname else lname + "#" + rank;
+				var capt = makeFun(ctx, {fst: "", snd: ""}, fid, f, null, ctx.m.mcaptured, null, lname);
 				var r = allocTmp(ctx, toType(ctx, e.etype));
 				if (capt == ctx.m.mcaptured) op(ctx, OInstanceClosure(r, fid, ctx.m.mcaptreg)) else switch capt.cVars.length {
 					case 0:
@@ -3233,7 +3296,7 @@ class Genhl {
 				var ft = follow(e.etype);
 				var an = hlAbstractName(ft);
 				switch ft {
-					case TInst(_, _) if (an != null && an.name == "hl_carray"):
+					case TInst(_, _) if (an == "hl_carray"):
 						var arr = evalExpr(ctx, e);
 						op(ctx, ONullCheck(arr));
 						op(ctx, OArraySize(r, arr));
@@ -3413,7 +3476,7 @@ class Genhl {
 				return getEnumIndex(ctx, v);
 			case ["$__mk_pos__", [{eexpr: TConst(TString(file))}, min, max]]:
 				/* macros only - generated by reification */
-				var rt = HAbstract("macro_pos", allocString(ctx, "macro_pos"), macroPosIdent);
+				var rt = HAbstract("macro_pos", allocString(ctx, "macro_pos"));
 				var r = allocTmp(ctx, rt);
 				var rfile = allocTmp(ctx, HBytes);
 				op(ctx, OBytes(rfile, allocBytes(ctx, haxe.io.Bytes.ofString(file))));
@@ -3668,13 +3731,14 @@ class Genhl {
 		op(ctx, OCallClosure(rret, rfun, casts));
 		op(ctx, ORet(castTo(ctx, rret, tret, p)));
 		var f = new Fundecl({fst: "", snd: ""}, fid, HFun([rt].concat(targs), tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-			makeAssigns(ctx.m.massign), false);
+			makeAssigns(ctx.m.massign), false, -1);
 		ctx.m = old;
 		ctx.cfunctions.push(f);
 		return fid;
 	}
 
-	static function makeFun(ctx:HlContext, name:FPath, fidx:Int, f:TFunc, cthis:Null<TClass>, cparent:Null<MethodCapture>, ?genContent:Void->Void):MethodCapture {
+	static function makeFun(ctx:HlContext, name:FPath, fidx:Int, f:TFunc, cthis:Null<TClass>, cparent:Null<MethodCapture>, ?genContent:Void->Void,
+			?lname:String):MethodCapture {
 		var old = ctx.m;
 		var capt = buildCaptureVars(ctx, f);
 		var hasCapturedVars = capt.cVars.length > 0;
@@ -3685,6 +3749,14 @@ class Genhl {
 		}
 
 		ctx.m = methodContext(fidx, toType(ctx, f.tfType), capt, cthis != null);
+		switch lname {
+			case null:
+				if (ctx.hl2) ctx.m.mlnames = localFunctionNames(f.tfExpr);
+			case n:
+				ctx.m.mlocal = n;
+				ctx.m.mlnames = old.mlnames;
+				ctx.m.mlcount = old.mlcount;
+		}
 
 		setCurpos(ctx, f.tfExpr.epos);
 
@@ -3830,7 +3902,7 @@ class Genhl {
 
 		var fargs = (if (tthis == null) [] else [tthis]).concat(if (rcapt == null) [] else [rtype(ctx, rcapt)]).concat(args);
 		var hlf = new Fundecl(name, fidx, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-			makeAssigns(ctx.m.massign, true), genContent == null || !(name.fst == "" && name.snd == ""));
+			makeAssigns(ctx.m.massign, true), genContent == null || !(name.fst == "" && name.snd == ""), if (lname != null && ctx.hl2) allocString(ctx, lname) else -1);
 		ctx.m = old;
 		ctx.definedFuns.set(fidx, true);
 		ctx.cfunctions.push(hlf);
@@ -4035,7 +4107,7 @@ class Genhl {
 		}
 	}
 
-	static function generateStaticContent(ctx:HlContext, types:Array<ModuleType>, f:TFunc):Void {
+	static function generateStaticContent(ctx:HlContext, types:Array<ModuleType>, f:TFunc, items:Array<InitItem>):Void {
 		var isInit = allocTmp(ctx, HBool);
 		op(ctx, OCall0(isInit, allocFunPath(ctx, {pack: [], name: "Type"}, "init")));
 		hold(ctx, isInit);
@@ -4237,24 +4309,106 @@ class Genhl {
 			}
 		}
 
-		var j = jump(ctx, d -> OJTrue(isInit, d));
-		op(ctx, ORet(allocTmp(ctx, HVoid)));
-		j();
-		free(ctx, isInit);
-		evalExpr(ctx, f.tfExpr);
+		if (!ctx.hl2 || core.Path.fileExtension(ctx.com.file) == "c") {
+			var j = jump(ctx, d -> OJTrue(isInit, d));
+			op(ctx, ORet(allocTmp(ctx, HVoid)));
+			j();
+			free(ctx, isInit);
+			evalExpr(ctx, f.tfExpr);
+		} else {
+			var nid = lookup(ctx.cnatives, "$hot_sync_statics@?std\x00-1", () -> {
+				var fid = allocFunPath(ctx, {pack: [], name: "std"}, "hot_sync_statics");
+				ctx.definedFuns.set(fid, true);
+				// port: OCaml evaluates the tuple right to left
+				var n = allocString(ctx, "hot_sync_statics");
+				var l = allocString(ctx, "?std");
+				({lib: l, name: n, t: HFun([HType, HI32], HI32), findex: fid} : Native);
+			});
+			var native = ctx.cnatives.arr[nid].findex;
+			function loadBits(c:TClass, w:Int):Int {
+				var r = allocTmp(ctx, HI32);
+				hold(ctx, r);
+				var j = jump(ctx, d -> OJFalse(isInit, d));
+				op(ctx, OInt(r, allocI32(ctx, -1)));
+				var jend = jump(ctx, d -> OJAlways(d));
+				j();
+				var rt = allocTmp(ctx, HType);
+				op(ctx, OType(rt, classGlobal(ctx, c).t));
+				op(ctx, OCall2(r, native, rt, regInt(ctx, w)));
+				jend();
+				return r;
+			}
+			function guard(bits:Int, mask:Int, f:Void->Void) {
+				var m = allocTmp(ctx, HI32);
+				op(ctx, OInt(m, allocI32(ctx, mask)));
+				op(ctx, OAnd(m, bits, m));
+				hold(ctx, m);
+				var zero = regInt(ctx, 0);
+				free(ctx, m);
+				var j = jump(ctx, d -> OJEq(m, zero, d));
+				f();
+				j();
+			}
+			var curClass:Null<TClass> = null;
+			var words:Array<{w:Int, r:Int}> = []; // port: assoc list, head first
+			function flush() {
+				for (x in words) free(ctx, x.r);
+				words = [];
+				curClass = null;
+			}
+			function bits(c:TClass, w:Int):Int {
+				if (curClass != c) {
+					flush();
+					curClass = c;
+				}
+				for (x in words) if (x.w == w) return x.r;
+				var r = loadBits(c, w);
+				words.unshift({w: w, r: r});
+				return r;
+			}
+			function fieldIndex(c:TClass, cf:TClassField):Null<Int> {
+				return switch classGlobal(ctx, c).t {
+					case HObj(o):
+						var x = o.pindex.get(cf.cfName);
+						if (x == null) null else {
+							var start = if (o.psuper == null) 0 else o.psuper.pnfields;
+							if (x.fid < start) null else x.fid - start;
+						}
+					case _: null;
+				}
+			}
+			for (item in items) switch item {
+				case IClassInit(c, e):
+					guard(bits(c, -1), -1, () -> evalExpr(ctx, e));
+				case IStatic(_, cf, e) if (Meta.has(Meta.HotReload, cf.cfMeta)):
+					evalExpr(ctx, e);
+				case IStatic(c, cf, e):
+					switch fieldIndex(c, cf) {
+						case null: guard(bits(c, -1), -1, () -> evalExpr(ctx, e));
+						case i: guard(bits(c, i >>> 5), 1 << (i & 31), () -> evalExpr(ctx, e));
+					}
+				case IMain(e):
+					flush();
+					var j = jump(ctx, d -> OJFalse(isInit, d));
+					evalExpr(ctx, e);
+					j();
+			}
+			flush();
+			free(ctx, isInit);
+		}
 		op(ctx, ORet(allocTmp(ctx, HVoid)));
 	}
 
 	static function generateStaticInit(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Int {
-		var exprs:Array<TExpr> = []; // port: chronological (upstream builds the list reversed)
+		var exprs:Array<InitItem> = []; // port: chronological (upstream builds the list reversed)
 		var tVoid = ctx.com.basic.tvoid;
 
 		/* init class statics */
-		var initExprs:Array<TExpr> = [];
+		var initExprs:Array<InitItem> = [];
 		for (t in types) {
 			switch t {
 				case TClassDecl(c) if (c.clInit != null && c.clInit.cfExpr != null && !isExcluded(c)):
-					initExprs.push(c.clInit.cfExpr);
+					initExprs.push(IClassInit(c, c.clInit.cfExpr));
 				case _:
 			}
 			switch t {
@@ -4264,7 +4418,7 @@ class Genhl {
 							case [Var(_), e] if (e != null):
 								var p = e.epos;
 								var e = mk(TBinop(OpAssign, (mk(TField(mk(TTypeExpr(t), tDynamic, p), FStatic(c, f)), f.cfType, p)), e), f.cfType, p);
-								exprs.push(e);
+								exprs.push(IStatic(c, f, e));
 							case _:
 						}
 					}
@@ -4272,12 +4426,15 @@ class Genhl {
 			}
 		}
 		/* call main() */
-		if (main != null) exprs.push(main);
+		if (main != null) exprs.push(IMain(main));
 		var fid = lookupAlloc(ctx.cfids, true);
-		var exprs = initExprs.concat(exprs);
+		var items = initExprs.concat(exprs);
+		var exprs = items.map(i -> switch i {
+			case IClassInit(_, e) | IStatic(_, _, e) | IMain(e): e;
+		});
 		var initpos = fakePos("fun$init");
 		var f:TFunc = {tfExpr: mk(TBlock(Vector.fromArrayCopy(exprs)), tVoid, initpos), tfArgs: vector(), tfType: tVoid};
-		function genContent() generateStaticContent(ctx, types, f);
+		function genContent() generateStaticContent(ctx, types, f, items);
 		makeFun(ctx, {fst: "", snd: ""}, fid, f, null, null, genContent);
 		return fid;
 	}
@@ -4362,10 +4519,18 @@ class Genhl {
 		}
 	}
 
-	public static function writeCode(ch:haxe.io.BytesBuffer, code:Code, debug:Bool):Void {
+	/* Where the domain writing a part of the functions writes (see [write_code]). */
+	// port: Domain.DLS is sys.thread.Tls (null: None)
+	static final parallelByte = new sys.thread.Tls<Null<Int->Void>>();
+
+	public static function writeCode(ch:haxe.io.BytesBuffer, code:Code, debug:Bool, ?pool:core.ds.TaskPool):Void {
 		var gt = gatherTypes(code);
 		var allTypes = gt.all, htypes = gt.types;
-		function byte(v:Int) ch.addByte(v & 0xFF);
+		function byteCh(v:Int) ch.addByte(v & 0xFF);
+		function byte(v:Int) switch parallelByte.value {
+			case null: byteCh(v);
+			case f: f(v);
+		}
 		function writeIndex(i:Int) writeIndexGen(byte, i);
 
 		function writeType(t:Ttype):Void {
@@ -4550,7 +4715,7 @@ class Genhl {
 					}
 				case HDynObj:
 					byte(16);
-				case HAbstract(_, i, _):
+				case HAbstract(_, i):
 					byte(17);
 					writeIndex(i);
 				case HEnum(e):
@@ -4561,11 +4726,16 @@ class Genhl {
 						case g: writeIndex(g + 1);
 					}
 					writeIndex(e.efields.length);
-					for (f in e.efields) {
+					for (i in 0...e.efields.length) {
+						var f = e.efields[i];
 						writeIndex(f.nid);
 						if (f.args.length > 0xFF) die("", "genhl.ml");
 						byte(f.args.length);
 						for (t in f.args) writeType(t);
+						if (code.version >= 7) {
+							var names = if (i < e.eparams.length) e.eparams[i] else vector();
+							for (k in 0...f.args.length) writeIndex(if (k < names.length) names[k] + 1 else 0);
+						}
 					}
 				case HNull(t):
 					byte(19);
@@ -4626,13 +4796,14 @@ class Genhl {
 			writeType(n.t);
 			writeIndex(n.findex);
 		}
-		for (f in code.functions) {
+		function writeFunction(f:Fundecl):Void {
 			writeType(f.ftype);
 			writeIndex(f.findex);
 			writeIndex(f.regs.length);
 			writeIndex(f.code.length);
 			for (r in f.regs) writeType(r);
 			for (o in f.code) writeOp(o);
+			if (code.version >= 7) writeIndex(f.flocal + 1);
 			if (debug) {
 				writeDebugInfos(f.debug);
 				writeIndex(f.assigns.length);
@@ -4643,6 +4814,26 @@ class Genhl {
 				}
 			}
 		}
+		switch pool {
+			case pool if (pool != null && code.functions.length > 1024):
+				var n = code.functions.length, chunk = 256;
+				var parts = new Vector<haxe.io.Bytes>(Std.int((n + chunk - 1) / chunk));
+				pool.parallelFor(0, parts.length - 1, k -> {
+					var o = new haxe.io.BytesBuffer();
+					parallelByte.value = v -> o.addByte(v & 0xFF);
+					try {
+						for (i in k * chunk...(n < (k + 1) * chunk ? n : (k + 1) * chunk)) writeFunction(code.functions[i]);
+					} catch (e:haxe.Exception) {
+						parallelByte.value = null;
+						throw e;
+					}
+					parallelByte.value = null;
+					parts[k] = o.getBytes();
+				}, 1);
+				for (p in parts) ch.add(p);
+			case _:
+				for (f in code.functions) writeFunction(f);
+		}
 		for (c in code.constants) {
 			writeIndex(c.g);
 			writeIndex(c.fields.length);
@@ -4651,6 +4842,21 @@ class Genhl {
 	}
 
 	/* --------------------------------------------------------------------------------------------------------------------- */
+
+	static final headerSize = 4 + 16;
+
+	static function addHeader(code:Code, data:haxe.io.Bytes):haxe.io.Bytes {
+		if (code.version < 7) return data;
+		var len = data.length + headerSize;
+		var header = haxe.io.Bytes.alloc(headerSize);
+		header.setInt32(0, len);
+		header.blit(4, haxe.crypto.Md5.make(data), 0, 16);
+		var b = new haxe.io.BytesBuffer();
+		b.addBytes(data, 0, 4);
+		b.add(header);
+		b.addBytes(data, 4, data.length - 4);
+		return b.getBytes();
+	}
 
 	static function createContext(com:Gctx):HlContext {
 		function getType(name:String):ModuleType {
@@ -4678,6 +4884,7 @@ class Genhl {
 		var ctx = new HlContext();
 		ctx.com = com;
 		ctx.hlVer = hlVer;
+		ctx.hl2 = compareVersion(hlVer, "2.0.0") >= 0;
 		ctx.optimize = !Gctx.rawDefined(com, "hl_no_opt");
 		ctx.wNullCompare = Gctx.rawDefined(com, "hl_w_null_compare");
 		ctx.numDomains = core.ds.TaskPool.recommendedDomainCount();
@@ -4797,13 +5004,15 @@ class Genhl {
 				case _:
 			}
 		}
+		var t = core.Timer.startTimer(ctx.com.timerCtx, ["generate", "hl", "functions"]);
 		for (t in types) generateType(ctx, t);
+		t();
 	}
 
 	static function buildCode(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Code {
 		var ep = generateStaticInit(ctx, types, main);
 		var bytes = Vector.fromArrayCopy(ctx.cbytes.arr);
-		return new Code(if (compareVersion(ctx.hlVer, "2.0.0") >= 0) 6 else if (bytes.length == 0) 4 else 5, ep, Vector.fromArrayCopy(ctx.cstrings.arr),
+		return new Code(if (ctx.hl2) 7 else if (bytes.length == 0) 4 else 5, ep, Vector.fromArrayCopy(ctx.cstrings.arr),
 			Vector.fromArrayCopy(ctx.cints.arr), Vector.fromArrayCopy(ctx.cfloats.arr), bytes, Vector.fromArrayCopy(ctx.cglobals.arr),
 			Vector.fromArrayCopy(ctx.cnatives.arr), Vector.fromArrayCopy(ctx.cfunctions), Vector.fromArrayCopy(ctx.cdebugFiles.arr),
 			Vector.fromArrayCopy(ctx.cconstants.arr));
@@ -4846,32 +5055,34 @@ class Genhl {
 		var sign = makeContextSign(com);
 		if (sign == prevSign && !dump && !hlCheck) {
 			/* reuse previously generated data */
-			sys.io.File.saveBytes(com.file, prevData);
+			context.Common.writeFileIfChanged(com.file, prevData);
 			return;
 		}
 
 		var ctx = createContext(com);
 		addTypes(ctx, com.types);
 
+		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "init"]);
 		var code = buildCode(ctx, com.types, com.main.mainExpr);
+		t();
 		ocamlVectorSort((n1:Native, n2:Native) -> n1.lib - n2.lib, code.natives);
 
 		if (ctx.optimize) {
 			var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "opt"]);
 			var dumpOut = if (dump) new StringBuf() else null;
-			var mutex = new sys.thread.Mutex();
-			context.Parallel.runParallelFor(ctx.numDomains, ctx.cfunctions.length, idx -> {
+			function opt(idx:Int) {
 				var f = ctx.cfunctions[idx];
 				if (f.needOpt) {
-					var r = Hlopt.optimize(dump, i -> code.strings[i], f, "todosign");
-					if (dumpOut != null) {
-						mutex.acquire();
-						dumpOut.add(r.dump);
-						mutex.release();
-					}
+					var r = Hlopt.optimize(dump, i -> code.strings[i], f);
+					if (dumpOut != null) dumpOut.add(r.dump);
 					code.functions[idx] = r.f;
 				}
-			}, 16);
+			}
+			var n = ctx.cfunctions.length;
+			if (dumpOut != null) for (idx in 0...n) opt(idx) else context.Parallel.runWithPool(com.pool, pool -> {
+				if (pool == null) for (idx in 0...n) opt(idx) else pool.parallelFor(0, n - 1, opt, 16);
+				null;
+			});
 			if (dumpOut != null) sys.io.File.saveContent("dump/hlopt.txt", dumpOut.toString());
 			t();
 		}
@@ -4914,9 +5125,12 @@ class Genhl {
 			t();
 		} else {
 			var ch = new haxe.io.BytesBuffer();
-			writeCode(ch, code, !Gctx.rawDefined(com, "hl_no_debug"));
-			var str = ch.getBytes();
-			sys.io.File.saveBytes(com.file, str);
+			context.Parallel.runWithPool(com.pool, pool -> {
+				writeCode(ch, code, !Gctx.rawDefined(com, "hl_no_debug"), pool);
+				null;
+			});
+			var str = addHeader(code, ch.getBytes());
+			context.Common.writeFileIfChanged(com.file, str);
 			prevSign = sign;
 			prevData = str;
 		}

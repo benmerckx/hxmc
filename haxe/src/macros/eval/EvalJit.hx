@@ -95,7 +95,7 @@ class EvalJit {
 	public static function evalConst(c:TConstant):Value {
 		return switch c {
 			case TString(s): EvalString.createUnknown(s);
-			case TInt(i32): VInt32(i32);
+			case TInt(i32): VInt(i32);
 			case TFloat(f): VFloat(floatOfString(f));
 			case TBool(b): EvalValueTools.vbool(b);
 			case TNull: VNull;
@@ -259,7 +259,7 @@ class EvalJit {
 				return EvalEmitter.emitNeg(exec, p);
 			case NegBits:
 				var exec = jitExprRec(jit, false, e1);
-				return EvalEmitter.emitOpSub(p, _ -> VInt32(-1), exec);
+				return EvalEmitter.emitOpSub(p, _ -> VInt(-1), exec);
 			case Increment:
 				switch Texpr.skip(e1) {
 					case {eexpr: TLocal(v)} if (!hasVarFlag(v, VCaptured)):

@@ -44,10 +44,6 @@ stacks ([hxmc.md](../hxmc.md#debugging)). Next, in order:
   directory entry. Line tables and functions without types make
   breakpoints and backtraces work. References: llvm's `pdbutil` and
   `lld-link`.
-- **Mach-O `__unwind_info`**: libunwind and lldb search `__eh_frame`
-  linearly. Compact entries in DWARF mode give ld64's binary search table.
-  The frame-pointer encodings need callee-saved pairs right below the
-  record, which the arm64 layout does not keep.
 - **Variables**: `DW_TAG_formal_parameter` and `variable` with locations
   (register allocator intervals, frame slots, shadow-stack slots), types
   from the layouts, a language number; `DW_TAG_inlined_subroutine` for

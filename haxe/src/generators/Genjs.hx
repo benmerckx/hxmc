@@ -61,6 +61,8 @@ class JsBuffer {
 
 	public function contents():String return buf.toString();
 
+	public function length():Int return buf.length;
+
 	public function clear():Void {
 		buf = new StringBuf();
 		last = -1;
@@ -91,6 +93,12 @@ class JsCtx {
 	public var separator:Bool;
 	public var foundExpose:Bool;
 	public var catchVars:Array<TExpr>; // port: OCaml list, head at index 0
+	/* while types are generated in parallel: where the packages of the type
+		are created in [buf], decided once the types are put in order */
+	public var packageMarks:Null<Array<{offset:Int, pack:Array<String>}>>; // port: OCaml list ref, in the order added
+	/* the features read while generating a type in parallel: they do not
+		change then (those added are read once all types are generated) */
+	public var featureCache:Null<StringMap<Bool>>;
 
 	public function new() {}
 }
@@ -208,13 +216,45 @@ class Genjs {
 		}
 	}
 
-	static inline function hasFeature(ctx:JsCtx, f:String):Bool return Gctx.hasFeature(ctx.com, f);
+	/* the features are read and added from several domains while types are
+		generated in parallel */
+	static final featuresMutex = new sys.thread.Mutex();
 
-	static inline function addFeature(ctx:JsCtx, f:String):Void Gctx.addFeature(ctx.com, f);
+	// port: Mutex.protect
+	static function protectFeatures<A>(f:Void->A):A {
+		featuresMutex.acquire();
+		var r:A;
+		try r = f()
+		catch (e:haxe.Exception) {
+			featuresMutex.release();
+			throw e;
+		}
+		featuresMutex.release();
+		return r;
+	}
+
+	static function hasFeature(ctx:JsCtx, f:String):Bool {
+		return switch ctx.featureCache {
+			case null:
+				protectFeatures(() -> Gctx.hasFeature(ctx.com, f));
+			case h:
+				if (h.exists(f)) h.get(f) else {
+					var r = protectFeatures(() -> Gctx.hasFeature(ctx.com, f));
+					h.set(f, r);
+					r;
+				}
+		}
+	}
+
+	static function addFeature(ctx:JsCtx, f:String):Void protectFeatures(() -> {
+		Gctx.addFeature(ctx.com, f);
+		null;
+	});
 
 	static function unsupported(p:Pos):Dynamic return Error.abort("This expression cannot be compiled to Javascript", p);
 
 	public static function flush(ctx:JsCtx):Void {
+		if (ctx.packageMarks != null) return;
 		var chan = switch ctx.chan {
 			case null:
 				var chan = sys.io.File.write(ctx.com.file, true);
@@ -594,7 +634,7 @@ class Genjs {
 	}
 
 	public static function genExpr(ctx:JsCtx, e:TExpr):Void {
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		switch e.eexpr {
 			case TConst(c):
 				genConstant(ctx, e.epos, c);
@@ -894,7 +934,7 @@ class Genjs {
 			case TIdent(s):
 				spr(ctx, s);
 		}
-		clearMapping();
+		JsSourcemap.clearMapping(ctx.smap, mapping);
 	}
 
 	// port: `{ null_class with cl_path = ["js"],"Boot" }`.
@@ -984,7 +1024,7 @@ class Genjs {
 	}
 
 	public static function genValue(ctx:JsCtx, e:TExpr):Void {
-		var clearMapping = JsSourcemap.addMapping(ctx.smap, e);
+		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		function assign(e:TExpr):TExpr {
 			return mk(TBinop(OpAssign, mk(TLocal(switch ctx.inValue {
 				case null: die("", "genjs.ml");
@@ -1082,7 +1122,7 @@ class Genjs {
 				genExpr(ctx, mk(TTry(block(assign(b)), catchs.map(c -> {variable: c.variable, expr: block(assign(c.expr))})), e.etype, e.epos));
 				v();
 		}
-		clearMapping();
+		JsSourcemap.clearMapping(ctx.smap, mapping);
 	}
 
 	public static function genSyntax(ctx:JsCtx, meth:String, args:Vector<TExpr>, pos:Pos):Void {
@@ -1185,7 +1225,15 @@ class Genjs {
 	}
 
 	public static function generatePackageCreate(ctx:JsCtx, path:GlobalTypePath):Void {
-		var p = path.pack;
+		switch ctx.packageMarks {
+			case marks if (marks != null && path.pack.length > 0):
+				marks.push({offset: ctx.buf.length(), pack: path.pack});
+			case _:
+				generatePackageCreateNow(ctx, path.pack);
+		}
+	}
+
+	public static function generatePackageCreateNow(ctx:JsCtx, p:Array<String>):Void {
 		// port: `acc` is the reversed package prefix, as in upstream; the Hashtbl key is its join.
 		function loop(acc:Array<String>, l:Array<String>, i:Int):Void {
 			if (i >= l.length) return;
@@ -1211,6 +1259,101 @@ class Genjs {
 		switch p {
 			case []: print(ctx, "var ");
 			case _: loop([], p, 0);
+		}
+	}
+
+	/* Generates [types] with [generate_type] on several domains, each on its own
+		buffer and source map, then puts their code and source maps in order. */
+	public static function generateTypesParallel(ctx:JsCtx, generateType:(JsCtx, ModuleType) -> Void, types:Array<ModuleType>):Void {
+		var subs = [for (_ in types) {
+			var sub = new JsCtx();
+			sub.com = ctx.com;
+			sub.buf = new JsBuffer();
+			sub.chan = ctx.chan;
+			sub.packages = ctx.packages;
+			sub.smap = if (ctx.smap == null) null else JsSourcemap.createFragment();
+			sub.jsModern = ctx.jsModern;
+			sub.jsFlatten = ctx.jsFlatten;
+			sub.hasResolveClass = ctx.hasResolveClass;
+			sub.hasInterfaceCheck = ctx.hasInterfaceCheck;
+			sub.esVersion = ctx.esVersion;
+			sub.current = ctx.current;
+			sub.statics = [];
+			sub.inits = [];
+			sub.tabs = ctx.tabs;
+			sub.inValue = ctx.inValue;
+			sub.inLoop = ctx.inLoop;
+			sub.idCounter = ctx.idCounter;
+			sub.typeAccessor = ctx.typeAccessor;
+			sub.separator = false;
+			sub.foundExpose = false;
+			sub.catchVars = [];
+			sub.packageMarks = [];
+			sub.featureCache = new StringMap();
+			sub;
+		}];
+		var encoded:Array<Null<JsSourcemap.EncodedFragment>> = [for (_ in types) null];
+		context.Parallel.runWithPool(ctx.com.pool, pool -> {
+			context.Parallel.ParallelArray.iter(pool, i -> {
+				generateType(subs[i], types[i]);
+				encoded[i] = if (subs[i].smap == null) null else JsSourcemap.encodedFragment(subs[i].smap);
+			}, [for (i in 0...types.length) i]);
+			null;
+		});
+		/* the mappings transcoded in parallel for the global indices their sources
+			will get, then spliced in order */
+		switch ctx.smap {
+			case null:
+			case sm:
+				var globals = JsSourcemap.predictGlobals(sm, encoded);
+				context.Parallel.runWithPool(ctx.com.pool, pool -> {
+					context.Parallel.ParallelArray.iter(pool, i -> {
+						var ef = encoded[i], g = globals[i];
+						if (ef != null && g != null && !JsSourcemap.shifted(g)) JsSourcemap.splicedTail(ef, g);
+					}, [for (i in 0...types.length) i]);
+					null;
+				});
+		}
+		for (i in 0...types.length) {
+			var mt = types[i];
+			var sub = subs[i];
+			var marks = sub.packageMarks;
+			var code = sub.buf.contents();
+			function output():Void {
+				ctx.statics = sub.statics.concat(ctx.statics);
+				ctx.inits = sub.inits.concat(ctx.inits);
+				if (sub.foundExpose) ctx.foundExpose = true;
+			}
+			var sm = ctx.smap, ef = encoded[i];
+			if (sm != null && ef != null && Lambda.foreach(marks, mark -> mark.offset == 0)) {
+				/* the packages first, then the text and its mappings */
+				for (mark in marks) generatePackageCreateNow(ctx, mark.pack);
+				var col0 = sm.outputCurrentCol, lastCol0 = sm.outputLastCol, comma0 = sm.printComma;
+				if (JsSourcemap.spliceFragment(sm, ef, col0, lastCol0, comma0)) {
+					ctx.buf.addString(code);
+					if (code != "") ctx.separator = sub.separator;
+					output();
+				} else generateType(ctx, mt);
+			} else if (sm != null) {
+				/* a package created in the middle of the type */
+				generateType(ctx, mt);
+			} else {
+				var pos = 0;
+				function append(upto:Int):Bool {
+					if (upto > pos) {
+						ctx.buf.addString(code.substring(pos, upto));
+						pos = upto;
+						return true;
+					}
+					return false;
+				}
+				for (mark in marks) {
+					append(mark.offset);
+					generatePackageCreateNow(ctx, mark.pack);
+				}
+				if (append(code.length)) ctx.separator = sub.separator;
+				output();
+			}
 		}
 	}
 
@@ -1800,6 +1943,7 @@ class Genjs {
 			sourcesHash: new StringMap(),
 			mappings: new StringBuf(),
 			currentExpr: null,
+			lastFile: null,
 		} else null;
 		var ctx = new JsCtx();
 		ctx.com = com;
@@ -1823,6 +1967,8 @@ class Genjs {
 		ctx.separator = false;
 		ctx.foundExpose = false;
 		ctx.catchVars = [];
+		ctx.packageMarks = null;
+		ctx.featureCache = null;
 
 		ctx.typeAccessor = function(t:ModuleType):String {
 			return switch t {
@@ -2091,7 +2237,8 @@ class Genjs {
 						+ "}\n";
 					spr(ctx, extendCode);
 				}
-				for (t in com.types) generateType(ctx, t);
+				if (context.Parallel.isEnabled()) generateTypesParallel(ctx, generateType, com.types) else
+					for (t in com.types) generateType(ctx, t);
 				function chkFeatures(e:TExpr):Void {
 					if (isDynamicIterator(ctx, e)) addFeature(ctx, "use.$iterator");
 					switch e.eexpr {

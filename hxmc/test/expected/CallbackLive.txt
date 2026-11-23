@@ -1,0 +1,6 @@
+exit 0
+41
+42
+twice 20
+0
+false

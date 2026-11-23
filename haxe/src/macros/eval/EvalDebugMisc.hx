@@ -277,7 +277,7 @@ class EvalDebugMisc {
 				case EConst(cst):
 					return switch cst {
 						case String(s, _): EvalString.createUnknown(s);
-						case Int(s, _): VInt32(int32OfString(s));
+						case Int(s, _): VInt(int32OfString(s));
 						case Float(s, _): VFloat(core.Numeric.parseFloat(s));
 						case Ident("true"): VTrue;
 						case Ident("false"): VFalse;
@@ -291,7 +291,7 @@ class EvalDebugMisc {
 					var v1 = loop(e1);
 					var vidx = loop(eidx);
 					var idx = switch vidx {
-						case VInt32(i): i;
+						case VInt(i): i;
 						case _: throw new NoValueExpr();
 					}
 					return switch v1 {
@@ -360,7 +360,7 @@ class EvalDebugMisc {
 						case Neg:
 							return switch loop(e1) {
 								case VFloat(f): VFloat(-f);
-								case VInt32(i): EvalValueTools.vint32(-i);
+								case VInt(i): EvalValueTools.vint32(-i);
 								case _: throw new NoValueExpr();
 							}
 						case NegBits:
@@ -484,7 +484,7 @@ class EvalDebugMisc {
 				var v1 = exprToValue(ctx, env, e1);
 				var vidx = exprToValue(ctx, env, e2);
 				var idx = switch vidx {
-					case VInt32(i): i;
+					case VInt(i): i;
 					case _: throw new NoValueExpr();
 				}
 				switch v1 {

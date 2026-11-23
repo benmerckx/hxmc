@@ -29,8 +29,7 @@ using StringTools;
 // time and the peak RSS that of /usr/bin/time; CPU and wall are the best of
 // RUNS, the peak the largest. The outputs of the last runs are compared: files
 // and directories byte for byte, JARs and HXB archives member by member (their
-// order ignored); hl/c's digest names that depend on the reference's machine
-// code are renamed on both sides first (HlcNames). A parallel output that
+// order ignored). A parallel output that
 // differs from the reference's parallel output is `varies` when the
 // reference's own parallel output differs from its sequential one (the
 // generator's parallel order, e.g. genjvm's closures: not comparable byte for
@@ -320,11 +319,6 @@ class Targets {
 
 	static function compare(a:Null<Map<String, Bytes>>, b:Null<Map<String, Bytes>>):Null<String> {
 		if (a == null || b == null) return a == b ? null : "no output on one side";
-		if (HlcNames.isHlc([for (k in a.keys()) k])) {
-			var n = HlcNames.normalize(a, b);
-			a = n.a;
-			b = n.b;
-		}
 		var names = [for (k in a.keys()) k];
 		for (k in b.keys()) if (!a.exists(k)) names.push(k);
 		names.sort(Harness.compare);

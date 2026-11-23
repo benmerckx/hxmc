@@ -68,24 +68,33 @@ class LexerError {
 @:structInit class LexerFile {
 	public var lfile:String;
 	public var lline:Int;
-	public var lmaxline:Int;
 	public var llines:Array<{offset:Int, line:Int}>;
-	public var lalines:haxe.ds.Vector<{offset:Int, line:Int}>;
-	public var llast:Int;
+	/* the line table built from [llines], with the [lline] it was built for */
+	public final lcache:haxe.atomic.AtomicObject<LineCache>;
+	/* the index of the line of the last lookup, a hint */
 	public var llastindex:Int;
 
-	public inline function new(lfile:String, lline:Int, lmaxline:Int, llines:Array<{offset:Int, line:Int}>,
-			lalines:haxe.ds.Vector<{offset:Int, line:Int}>, llast:Int, llastindex:Int) {
+	public inline function new(lfile:String, lline:Int, llines:Array<{offset:Int, line:Int}>, lcache:haxe.atomic.AtomicObject<LineCache>,
+			llastindex:Int) {
 		this.lfile = lfile;
 		this.lline = lline;
-		this.lmaxline = lmaxline;
 		this.llines = llines;
-		this.lalines = lalines;
-		this.llast = llast;
+		this.lcache = lcache;
 		this.llastindex = llastindex;
 	}
 
-	public inline function clone():LexerFile return new LexerFile(lfile, lline, lmaxline, llines, lalines, llast, llastindex);
+	public inline function clone():LexerFile return new LexerFile(lfile, lline, llines, lcache, llastindex);
+}
+
+// port: the `int * (int * int) array` of LexerFile.lcache
+class LineCache {
+	public final maxline:Int;
+	public final lines:haxe.ds.Vector<{offset:Int, line:Int}>;
+
+	public function new(maxline:Int, lines:haxe.ds.Vector<{offset:Int, line:Int}>) {
+		this.maxline = maxline;
+		this.lines = lines;
+	}
 }
 
 @:structInit class LexerContext {
@@ -111,10 +120,8 @@ class Lexer {
 	public static function makeFile(file:String):LexerFile return {
 		lfile: file,
 		lline: 1,
-		lmaxline: 1,
 		llines: [{offset: 0, line: 1}],
-		lalines: Vector.fromArrayCopy([{offset: 0, line: 1}]),
-		llast: 0x7FFFFFFF,
+		lcache: new haxe.atomic.AtomicObject(new LineCache(1, Vector.fromArrayCopy([{offset: 0, line: 1}]))),
 		llastindex: 0
 	};
 
@@ -140,10 +147,8 @@ class Lexer {
 	public static function copyFile(source:LexerFile):LexerFile return {
 		lfile: source.lfile,
 		lline: source.lline,
-		lmaxline: source.lmaxline,
 		llines: source.llines,
-		lalines: source.lalines,
-		llast: source.llast,
+		lcache: new haxe.atomic.AtomicObject(source.lcache.load()),
 		llastindex: source.llastindex
 	};
 
@@ -152,9 +157,10 @@ class Lexer {
 		var l = file.llines.copy();
 		l.reverse();
 		var sllines = l.map(e -> "(" + e.offset + "," + e.line + ")").join(";");
-		var slalines = file.lalines.map(e -> "(" + e.offset + "," + e.line + ")").join(";");
-		return "lfile: " + file.lfile + "\nlline: " + file.lline + "\nlmaxline: " + file.lmaxline + "\nllines: [" + sllines + "]\nlalines: ["
-			+ slalines + "]\nllast: " + file.llast + "\nllastindex: " + file.llastindex;
+		var cache = file.lcache.load();
+		var slalines = cache.lines.map(e -> "(" + e.offset + "," + e.line + ")").join(";");
+		return "lfile: " + file.lfile + "\nlline: " + file.lline + "\nlmaxline: " + cache.maxline + "\nllines: [" + sllines + "]\nlalines: ["
+			+ slalines + "]\nllastindex: " + file.llastindex;
 	}
 
 	public static function error(ctx:LexerContext, e:LexerErrorMsg, pos:Int):Dynamic {
@@ -197,29 +203,32 @@ class Lexer {
 		return f;
 	}
 
+	/* The line of offset [p] in [f], and the column. */
 	public static function findLine(p:Int, f:LexerFile):{line:Int, column:Int} {
-		// rebuild cache if we have a new line
-		if (f.lmaxline != f.lline) {
-			f.lmaxline = f.lline;
-			f.lalines = Vector.fromArrayCopy(f.llines);
-			f.llast = 0x7FFFFFFF;
-			f.llastindex = 0;
-		}
+		var lines = {
+			var cache = f.lcache.load();
+			if (cache.maxline == f.lline) cache.lines else {
+				/* new lines since the table was built */
+				var lines = Vector.fromArrayCopy(f.llines);
+				f.lcache.store(new LineCache(f.lline, lines));
+				lines;
+			}
+		};
+		var n = lines.length;
 		function loop(min:Int, max:Int):{line:Int, column:Int} {
-			var med = (min + max) >>> 1, entry = f.lalines[med];
+			var med = (min + max) >>> 1, entry = lines[med];
 			if (med == min) {
-				f.llast = p;
 				f.llastindex = med;
 				return {line: entry.line, column: p - entry.offset};
 			}
 			return entry.offset > p ? loop(min, med) : loop(med, max);
 		}
-		if (p >= f.llast) {
-			var entry = f.lalines[f.llastindex],
-				next = f.llastindex == f.lalines.length - 1 ? 0x7FFFFFFF : f.lalines[f.llastindex + 1].offset;
+		var hint = f.llastindex;
+		if (hint < n) {
+			var entry = lines[hint], next = hint == n - 1 ? 0x7FFFFFFF : lines[hint + 1].offset;
 			if (p >= entry.offset && p < next) return {line: entry.line, column: p - entry.offset};
 		}
-		return loop(0, f.lalines.length);
+		return loop(0, n);
 	}
 
 	public static function findPos(p:Pos):{line:Int, column:Int}
@@ -685,8 +694,14 @@ class Lexer {
 		return i;
 	}
 
+	// port: where the positions start (Sedlexing.set_position's pos_cnum)
+	var offset = 0;
+
+	// port: Sedlexing.set_position; only pos_cnum is read
+	public function setPosition(cnum:Int):Void offset = cnum;
+
 	// port: the position (code point offset) of the UTF-16 index `i`.
-	inline function cp(i:Int):Int return pairs == null ? i : cpPairs(i);
+	inline function cp(i:Int):Int return offset + (pairs == null ? i : cpPairs(i));
 
 	function cpPairs(i:Int):Int {
 		var lo = 0, hi = pairs.length;

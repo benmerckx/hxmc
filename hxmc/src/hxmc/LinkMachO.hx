@@ -326,9 +326,19 @@ class LinkMachO extends LinkCore {
 		}
 		// the unwind tables (the system's unwinder and lldb find __eh_frame by name)
 		// (Unwind.NONE: an LLVM function without unwind information)
+		// (a compact unwind encoding where one describes the function, else
+		// an FDE: Unwind.compact)
 		var recs = [for (o in objs) for (r in o.funcs) if (r.sym.section != null && isLive(r.sym.section) && !Unwind.none(r.ops)) r];
-		var frame = recs.length > 0 ? Unwind.ehFrame(recs, arm, "__TEXT,__eh_frame", personality, landing) : null;
+		var encs = [for (r in recs) Unwind.compact(r.ops, arm)];
+		var cfi = [for (k in 0...recs.length) if (encs[k] == 0) recs[k]];
+		var frame = cfi.length > 0 ? Unwind.ehFrame(cfi, arm, "__TEXT,__eh_frame", personality, landing) : null;
 		var eh = frame?.sec;
+		// (the personality of compact entries: a pointer to it, a slot)
+		var compactP = false;
+		if (personality != null)
+			for (k in 0...recs.length)
+				if (encs[k] != 0 && !Unwind.passes(recs[k].ops)) compactP = true;
+		if (compactP) slot(personality);
 		addr.set(header, 0);
 		// (an iPhone's: __text from the first page after the header's, the
 		// pages LC_ENCRYPTION_INFO_64 names, as ld64 lays them out)
@@ -346,20 +356,37 @@ class LinkMachO extends LinkCore {
 		var oEh = group(eh != null ? [eh] : []);
 		// __unwind_info (Unwind.unwindInfo), as ld64 and lld write it beside
 		// __eh_frame: each function's entry (the code's symbols, the import
-		// stubs), naming its FDE, and the end of the code
+		// stubs: none), its compact encoding (with the personality and the
+		// language-specific data where it has them) or DWARF mode naming its
+		// FDE, and the end of the code
 		var unwind:Null<Buf> = null, oUnwind = {start: pos, end: pos};
-		if (frame != null) {
-			var fdeAt = new Map<Int, Int>();
-			for (k in 0...recs.length)
-				fdeAt.set(addr.get(recs[k].sym.section) + recs[k].sym.offset, frame.fdes[k]);
+		if (recs.length > 0) {
+			var dwarfMode = arm ? 0x03000000 : 0x04000000;
+			var lsda = landing != null ? addr.get(landing.section) + landing.offset : -1;
+			var encAt = new Map<Int, Int>();
+			var j = 0;
+			for (k in 0...recs.length) {
+				var e = encs[k];
+				if (e == 0) {
+					var fde = frame.fdes[j++];
+					if (fde >= 0x1000000) throw "hxmc: link: __eh_frame over 16 MB (an FDE beyond compact unwind's reach)";
+					e = dwarfMode | fde;
+				} else if (compactP && !Unwind.passes(recs[k].ops)) e |= Unwind.COMPACT_PERSONALITY | Unwind.COMPACT_LSDA;
+				encAt.set(addr.get(recs[k].sym.section) + recs[k].sym.offset, e);
+			}
 			var starts = new Map<Int, Bool>();
 			codeSymbols(s -> starts.set(addr.get(s.section) + s.offset, true));
-			for (a in fdeAt.keys())
+			for (a in encAt.keys())
 				starts.set(a, true);
 			if (stubs.size() > 0) starts.set(addr.get(stubs), true);
 			var list = [for (a in starts.keys()) a];
 			list.sort((a, b) -> a - b);
-			unwind = Unwind.unwindInfo([for (a in list) {start: a, fde: fdeAt.exists(a) ? fdeAt.get(a) : -1}], addr.get(stubs) + stubs.size(), arm);
+			unwind = Unwind.unwindInfo([
+				for (a in list) {
+					var e = encAt.exists(a) ? encAt.get(a) : 0;
+					{start: a, enc: e, lsda: e & Unwind.COMPACT_LSDA != 0 ? lsda : 0};
+				}
+			], addr.get(stubs) + stubs.size(), compactP ? 0 : -1);
 			pos = LinkCore.align(pos, 4);
 			oUnwind = {start: pos, end: pos + unwind.len};
 			pos = oUnwind.end;
@@ -387,6 +414,7 @@ class LinkMachO extends LinkCore {
 		if (dataEnd == dataStart) dataEnd += PAGE;
 		var stubAddr = addr.get(stubs);
 		var gotAddr = addr.get(got);
+		if (compactP) unwind.set32(unwind.get32(12), this.gotAddr(personality));
 		symAddr = function(s:Symbol):Int {
 			var t = target(s);
 			if (t == null) {
