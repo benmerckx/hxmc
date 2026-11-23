@@ -529,7 +529,9 @@ class Parser {
 
 	public static function handleXmlLiteral(ctx:ParserContext, p1:Pos):Expr {
 		Lexer.reset(ctx.lexerCtx);
-		var end = Lexer.lexXml(ctx.lexerCtx, p1.pmin, ctx.code);
+		// port: -D hxmc.markup-braces opts in to reading the braces as JSX does (#194)
+		var end = core.Define.rawDefined(ctx.config.defines, "hxmc.markup_braces") ? Lexer.lexXmlBraces(ctx.lexerCtx, p1.pmin, ctx.code)
+			: Lexer.lexXml(ctx.lexerCtx, p1.pmin, ctx.code);
 		var xml = Lexer.contents(ctx.lexerCtx);
 		return makeMeta(core.Meta.Markup, vector(),
 			{expr: EConst(String(xml, SDoubleQuotes)), // STRINGTODO: distinct kind?

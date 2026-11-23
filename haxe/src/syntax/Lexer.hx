@@ -401,6 +401,165 @@ class Lexer {
 		return 0;
 	}
 
+	// port: lexXml with -D hxmc.markup-braces, which reads the braces as JSX does (markupEnd)
+	public static function lexXmlBraces(ctx:LexerContext, p:Int, code:Lexer):Int {
+		code.file = ctx.file.lfile;
+		code.lines = ctx.file;
+		if (!code.eof() && StringTools.fastCodeAt(code.source, code.index) == "/".code) error(ctx, UnexpectedClosingMarkupTag, p);
+		if (p + 1 != code.cp(code.index)) code.fail(InvalidCharacter(code.codePointAt(code.index)), code.index);
+		var start = code.index;
+		var end = code.markupEnd(code.xmlName(), start);
+		if (end < 0) code.failPos(UnterminatedMarkup, p);
+		ctx.buf.add("<");
+		code.index = start;
+		while (code.index < end) {
+			var c = code.codeAt(code.index);
+			if (c == "\n".code || c == "\r".code) code.storeNewline(ctx.buf, c);
+			else {
+				ctx.buf.add(code.current());
+				code.index++;
+			}
+		}
+		return code.cp(end);
+	}
+
+	// port: diverges from upstream, whose not_xml reads tags anywhere: a `<` in an
+	// ... expression (`<x y={a < b} />`) leaves the opening tag, so its `/>` does not
+	// ... close the literal. Here, as in JSX, braces hold an expression, passed over
+	// ... with its strings, comments and markup; the tags outside them are read as
+	// ... upstream reads them. The literal's end (past the name at `from`), or -1.
+	function markupEnd(name:String, from:Int):Int {
+		var open = "<" + name, close = "</" + name + ">", depth = 0, inOpen = name != ""; // don't allow self-closing fragments
+		// port: whether i is in a tag, where a `{` opens an expression after `=` or a space
+		// ... only, not in a quoted value, and a `(` after a name (domkit's `<view(a, b)`
+		// ... and `if (c)`)
+		var i = from + name.length, inTag = true;
+		while (i < source.length) {
+			var c = StringTools.fastCodeAt(source, i);
+			if (c == "{".code && (!inTag || codeAt(i - 1) == "=".code || StringTools.isSpace(source, i - 1))) {
+				if ((i = expressionEnd(i)) < 0) return -1;
+				continue;
+			}
+			if (c == "(".code && inTag && (wordBefore(i - 2, i) != "" || wordBefore(from - 1, i) == "if")) {
+				if ((i = expressionEnd(i)) < 0) return -1;
+				continue;
+			}
+			// closing tag
+			if (startsAt(i, "</")) {
+				index = i + 2;
+				xmlName();
+				if (codeAt(index) == ">".code) {
+					var tag = source.substring(i, index + 1);
+					i = index + 1;
+					// If it matches our document close tag, finish or decrease depth.
+					if (tag == close) {
+						if (depth == 0) return i;
+						depth--;
+					}
+					inOpen = inTag = false;
+					continue;
+				}
+			}
+			// opening tag
+			if (c == "<".code) {
+				index = i + 1;
+				xmlName();
+				// If it matches our document open tag, increase depth and set in_open to true.
+				inTag = true;
+				var tag = source.substring(i, index);
+				i = index;
+				if (tag == open) {
+					depth++;
+					inOpen = true;
+				} else inOpen = false;
+			} else if (startsAt(i, "/>")) { // />
+				i += 2;
+				// We only care about this if we are still in the opening tag, i.e. if it wasn't closed yet.
+				// In that case, decrease depth and finish if it's 0.
+				if (inOpen) depth--;
+				if (depth < 0) return i;
+				inOpen = inTag = false;
+			} else {
+				if (c == ">".code) inTag = false;
+				i++;
+			}
+		}
+		return -1;
+	}
+
+	// port: the end of the expression in the braces or parentheses at `from`, or -1: its strings
+	// ... (with their `${}`), comments and braces passed over, and the markup where
+	// ... an expression starts
+	function expressionEnd(from:Int):Int {
+		var depth = 0, i = from;
+		// whether each open `(` is a condition's (after if, while or for), whether the last closed one was
+		var parens = [], cond = false;
+		while (i < source.length) {
+			var c = StringTools.fastCodeAt(source, i);
+			if (c == "{".code || c == "(".code) {
+				if (c == "(".code) parens.push(["if", "while", "for"].contains(wordBefore(from, i)));
+				depth++;
+			} else if (c == "}".code || c == ")".code) {
+				if (c == ")".code) cond = parens.length > 0 && parens.pop();
+				if (--depth == 0) return i + 1;
+			} else if (c == "\"".code || c == "'".code) {
+				i++;
+				while (i < source.length && codeAt(i) != c) {
+					if (codeAt(i) == "\\".code) i += 2;
+					else if (c == "'".code && startsAt(i, "${")) {
+						if ((i = expressionEnd(i + 1)) < 0) return -1;
+					} else i += c == "'".code && startsAt(i, "$$") ? 2 : 1;
+				}
+			} else if (startsAt(i, "//")) {
+				while (i < source.length && codeAt(i) != "\n".code && codeAt(i) != "\r".code) i++;
+				continue;
+			} else if (startsAt(i, "/*")) {
+				var e = source.indexOf("*/", i + 2);
+				if (e < 0) return -1;
+				i = e + 1;
+			} else if (c == "<".code && markupAt(from, i, cond)) {
+				index = i + 1;
+				var end = markupEnd(xmlName(), i + 1);
+				if (end >= 0) {
+					i = end;
+					continue;
+				}
+			}
+			i++;
+		}
+		return -1;
+	}
+
+	// port: whether the `<` at i starts markup: `<name` or `<>` where an expression
+	// ... starts, not after a value (a name, a number, a `)` but a condition's, a `]`,
+	// ... a string), after return, throw, else, do or untyped
+	function markupAt(from:Int, i:Int, cond:Bool):Bool {
+		var n = codeAt(i + 1);
+		if (!(n == ">".code || xmlNameStart(n)) || n == "$".code || n == ":".code) return false;
+		var word = wordBefore(from, i);
+		if (word != "") return ["return", "throw", "else", "do", "untyped"].contains(word);
+		var j = i - 1;
+		while (j > from && StringTools.isSpace(source, j)) j--;
+		return switch codeAt(j) {
+			case ")".code: cond;
+			case "]".code | "\"".code | "'".code: false;
+			case _: true;
+		}
+	}
+
+	// port: the name or number right before i (spaces between), or ""
+	function wordBefore(from:Int, i:Int):String {
+		var j = i;
+		while (j > from + 1 && StringTools.isSpace(source, j - 1)) j--;
+		var e = j;
+		while (j > from + 1) {
+			var c = codeAt(j - 1);
+			if (!(c == "_".code || (c >= "0".code && c <= "9".code) || (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code))) break;
+			j--;
+		}
+		return source.substring(j, e);
+	}
+
 	public static function errorMsg(error:LexerErrorMsg):String return switch error {
 		case InvalidCharacter(c) if (c > 32 && c < 128): "Invalid character '" + String.fromCharCode(c) + "'";
 		case InvalidCharacter(c): "Invalid character 0x" + StringTools.hex(c, 2);

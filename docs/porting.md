@@ -151,3 +151,15 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   `ServerCache.cleanup`, taint reason `MacroInterpreterReset`;
   server-verify's `a build macro's persistent state, after an error in a
   macro`, `make dev-check`).
+- With `-D hxmc.markup-braces`, a markup literal reads the code in its
+  braces as an expression, as JSX does: its strings (with `${}`), comments
+  and braces are passed over, and a `<` is markup only where an expression
+  starts. In a tag, a `(` right after a name is read the same way
+  (domkit's `<view(a, b)` and `if(c)`). Upstream's `not_xml` reads tags
+  everywhere, so a comparison or markup in an attribute (`<x y={a < b} />`,
+  `<x y={i -> <b/>} />`) leaves the root's opening tag: its `/>` no longer
+  closes the literal, which is then unterminated. Tags outside braces are read as upstream reads them.
+  Unlike upstream, an unbalanced `{` in a literal's text leaves it
+  unterminated (`&lbrace;` instead). Without the define, literals are read
+  as upstream reads them (`syntax.Lexer.lexXmlBraces`, `markupEnd`; the
+  unit test `MarkupTest`; #194).
