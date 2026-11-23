@@ -37,6 +37,7 @@ class TargetFlags {
 			if (com.platform.match(CustomTarget("hxmc"))) {
 				for (f in flags(core.Define.rawDefined(com.defines, "hxmc.target") ? core.Define.rawDefinedValue(com.defines, "hxmc.target") : null))
 					context.Common.rawDefine(com, f);
+				defineOs(com.defines);
 				// (-D hxmc.llvm-pgo=gen from its variable, Options: the runtime
 				// writes the profile on Linux, hxmc.rt.Pgo, so the typing needs it)
 				var pgo = Options.flag("hxmc.llvm-pgo");
@@ -63,6 +64,20 @@ class TargetFlags {
 	static function macroDefines(defines:core.Define.DefineContext) {
 		core.Define.rawUndefine(defines, "hxmc.target");
 		core.Define.rawUndefine(defines, "hxmc.libc");
+		core.Define.rawUndefine(defines, "hxmc.os");
+	}
+
+	// hxmc.os: linux (Android too), macos (iOS and Mac Catalyst too), windows
+	// or wasi, when the build names its target: the std's `#if` on it leaves
+	// another system's modules untyped, where a test of Platform.os() folds
+	// their uses away but still types them. Without a named target (a program
+	// typed once for every native target, an HXB archive) and in the macro
+	// context (macroDefines; Mir macros' too) the std types every system's
+	// branch, as before.
+	public static function defineOs(defines:core.Define.DefineContext) {
+		if (!core.Define.rawDefined(defines, "hxmc.target")) return;
+		var t = core.Define.rawDefinedValue(defines, "hxmc.target");
+		if (t != "1") core.Define.rawDefineValue(defines, "hxmc.os", Abi.get(t).os);
 	}
 
 	// hxmc's externs in the macro context on Eval: hxmc.unsafe's (Mem, LibC,

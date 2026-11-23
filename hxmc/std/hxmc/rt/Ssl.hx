@@ -457,7 +457,7 @@ class Ssl {
 	// the BIO: Unix.send / Unix.recv socket bytes 0 (Bytes.length bytes) []
 	// (called by mbedtls inside the handshake, read or write: in their safe region)
 	@:hxmc.unsafe static function bioFailed(s:Ptr, send:Bool):Int {
-		var e = os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : Mem.getI32(os() == 1 ? Posix.__error() : Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
+		var e = #if (!hxmc.os || hxmc.os == "windows") os() == 2 ? Winsock.rt_win_sock_errno(Winsock.WSAGetLastError()) : #end Mem.getI32(os() == 1 ? Posix.__error() : Platform.target() >= 9 ? Posix.__errno() : Posix.__errno_location(), 0);
 		Mem.setI32(s, SSL_BIO_ERRNO, e);
 		Mem.setI32(s, SSL_BIO_SEND, send ? 1 : 0);
 		return send ? ERR_NET_SEND_FAILED : ERR_NET_RECV_FAILED;
@@ -465,13 +465,13 @@ class Ssl {
 
 	@:hxmc.callback @:hxmc.unsafe static function bioWrite(s:Ptr, buf:Ptr, len:I64):Int {
 		var fd = Mem.getI32(s, SSL_FD);
-		var r:I64 = os() == 2 ? (Winsock.send((fd : I64), buf, len.toInt(), 0) : I64) : Posix.send(fd, buf, len, 0);
+		var r:I64 = #if (!hxmc.os || hxmc.os == "windows") os() == 2 ? (Winsock.send((fd : I64), buf, len.toInt(), 0) : I64) : #end Posix.send(fd, buf, len, 0);
 		return r < 0 ? bioFailed(s, true) : r.toInt();
 	}
 
 	@:hxmc.callback @:hxmc.unsafe static function bioRead(s:Ptr, buf:Ptr, len:I64):Int {
 		var fd = Mem.getI32(s, SSL_FD);
-		var r:I64 = os() == 2 ? (Winsock.recv((fd : I64), buf, len.toInt(), 0) : I64) : Posix.recv(fd, buf, len, 0);
+		var r:I64 = #if (!hxmc.os || hxmc.os == "windows") os() == 2 ? (Winsock.recv((fd : I64), buf, len.toInt(), 0) : I64) : #end Posix.recv(fd, buf, len, 0);
 		return r < 0 ? bioFailed(s, false) : r.toInt();
 	}
 

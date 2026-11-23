@@ -38,7 +38,11 @@ import hxmc.rt.Gc;
 import hxmc.rt.GcPaths;
 import hxmc.rt.Threads;
 import hxmc.rt.Start;
+// (Windows' modules for Windows only once the target is named, hxmc.os: an
+// import types a module even where Platform.os() folds every use away)
+#if (!hxmc.os || hxmc.os == "windows")
 import hxmc.rt.WinRt;
+#end
 // Objective-C exceptions reaching Haxe frames (Apple's systems: LinkMachO, DataGen.objcCaught)
 import hxmc.rt.ObjCExceptions;
 // foreign objects (reference-counted objects of other systems: Foreign), Objective-C's the first kind
@@ -46,10 +50,14 @@ import hxmc.rt.Foreign;
 import hxmc.rt.ObjCKind;
 // hxmc.Platform.supports' test at run time (Apple's systems)
 import hxmc.rt.OsVersion;
+#if (!hxmc.os || hxmc.os == "windows")
 // COM's kind (Windows only: hxmc.ir.Com's calls and thunks)
 import hxmc.rt.ComKind;
+#end
+#if (!hxmc.os || hxmc.os != "windows")
 // JNI's kinds (Linux, Android, macOS: hxmc.ir.Jni's calls and natives)
 import hxmc.rt.JniKind;
+#end
 #if hxmc.census
 import hxmc.rt.Census;
 #end

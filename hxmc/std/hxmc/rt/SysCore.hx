@@ -5,7 +5,9 @@ import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Posix;
 import hxmc.unsafe.Ptr;
+#if (!hxmc.os || hxmc.os == "windows")
 import hxmc.unsafe.Win32;
+#end
 #if (hxmc.target == "wasm32-wasi")
 import hxmc.rt.wasm.WasiApi;
 #end
@@ -16,19 +18,19 @@ import hxmc.rt.wasm.WasiApi;
 // is typed only for it), so each layer keeps only its own calls and
 // compiles to what its own copy did. POSIX retries a call EINTR
 // interrupted; Windows and WASI have no signals to interrupt one.
-@:access(hxmc.rt.PosixSys) @:access(hxmc.rt.WinSys) #if (hxmc.target == "wasm32-wasi") @:access(hxmc.rt.WasiSys) #end
+@:access(hxmc.rt.PosixSys) #if (!hxmc.os || hxmc.os == "windows") @:access(hxmc.rt.WinSys) #end #if (hxmc.target == "wasm32-wasi") @:access(hxmc.rt.WasiSys) #end
 extern class SysCore {
 	// s to a descriptor, as UTF-8
 	@:hxmc.unsafe(gc) public static inline function printTo(fd:Int, s:String) {
 		var u = Str.toUtf8(Str.orNull(s));
-		if (Platform.os() == 2) WinSys.writeAll(fd, u, LibC.strlen(u).toInt()) else PosixSys.writeAll(fd, u, LibC.strlen(u).toInt());
+		#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinSys.writeAll(fd, u, LibC.strlen(u).toInt()) else #end PosixSys.writeAll(fd, u, LibC.strlen(u).toInt());
 		LibC.free(u);
 	}
 
 	// n bytes at d written to fd, which is then closed: false when either failed
 	@:hxmc.unsafe(gc) public static inline function saveAll(fd:Int, d:Ptr, n:Int):Bool {
 		// (Windows: the pages faulted in first, WinSys.touch)
-		if (Platform.os() == 2) WinSys.touch(d, n);
+		#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinSys.touch(d, n); #end
 		var ok = true;
 		while (n > 0) {
 			var w = write(fd, d, n);
@@ -48,12 +50,12 @@ extern class SysCore {
 	// ---- the calls
 
 	@:hxmc.unsafe(gc) static inline function write(fd:Int, p:Ptr, n:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else Platform.os() == 2 ? Win32._write(fd, p, n) : Posix.write(fd, p, n).toInt() #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.rw(true, fd, p, n) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? Win32._write(fd, p, n) : #end Posix.write(fd, p, n).toInt() #end;
 
 	// (POSIX: a negative count; Windows and WASI: none written either)
 	static inline function writeFailed(w:Int):Bool
 		return #if (hxmc.target == "wasm32-wasi") w <= 0 #else Platform.os() == 2 ? w <= 0 : w < 0 #end;
 
 	static inline function close(fd:Int):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiApi.fd_close(fd) #else Platform.os() == 2 ? Win32._close(fd) : Posix.close(fd) #end;
+		return #if (hxmc.target == "wasm32-wasi") WasiApi.fd_close(fd) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? Win32._close(fd) : #end Posix.close(fd) #end;
 }

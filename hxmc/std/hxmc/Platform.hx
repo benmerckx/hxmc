@@ -4,7 +4,10 @@ package hxmc;
 // `if (Platform.os() == Platform.WINDOWS)` keeps one branch, so code for
 // another system is neither compiled nor linked (a comparison folds, and &&
 // or || of one first: `Platform.target() >= 9 && x` is false elsewhere, x not
-// even reached). Plain values, safe anywhere: GC code, kernels. hxmc.unsafe's
+// even reached). The typer still types both branches, and loads what they
+// name: code that must not be typed for another system goes behind #if on
+// hxmc.os, defined when the build names its target (docs/hxmc.md,
+// "Reachability"). Plain values, safe anywhere: GC code, kernels. hxmc.unsafe's
 // Mem.os, arm, target and platform are their former names (deprecated).
 // (a class of extern functions, not an extern class: Eval runs no macro
 // of an extern class, and Haxe makes a class with a macro no extern in the

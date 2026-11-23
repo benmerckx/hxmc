@@ -658,6 +658,18 @@ match; a closure capturing nothing is static data.
   only. A test of the target folds as the left side of `&&` and `||` too
   (`Mem.target() >= 9 && x`), so what the right side calls is not reached.
 
+  Typing meets more as well: a test of the target folds while lowering,
+  after the typer has typed both branches and loaded every module they
+  name. So hxmc's std puts Windows' system layer (`WinSys`, `WinNet`,
+  `WinRt`, `Win32`, `Winsock`, `ComKind`) behind
+  `#if (!hxmc.os || hxmc.os == "windows")`, each branch keeping its test of
+  `Platform.os()`: a build that names another target does not type them,
+  and the code is the same where `hxmc.os` is not defined. It is not when
+  no target is named, as a program typed once into an archive for every
+  native target is (the corpus), nor in the macro context: Eval's, and Mir
+  macros', whose bundles fold the host's tests while lowering. Objective-C's
+  kind (`ObjCKind`) is the native targets' and stays typed on each.
+
 Before it, DCE: hxmc's std is a user class path (`-cp bin/hxmc/std`, last so
 that its modules win), and Haxe's default DCE keeps the classes of user
 files whole, `__init__` included, which reachability takes as a root. So
@@ -1587,9 +1599,11 @@ which defines `static`, `sys`, `utf16`, `target.unicode` and their
 `target.threaded` on the native targets and `target.atomics` everywhere,
 once the target is initialized and before init macros run. They are
 defines only. wasm32-wasi is not `target.threaded`: creating a thread
-throws there (`rt/wasm/Threads.hx`).
+throws there (`rt/wasm/Threads.hx`). When the build names its target,
+`hxmc.os` is its system: `linux` (Android too), `macos` (iOS and Mac
+Catalyst too), `windows` or `wasi` ([Reachability](#reachability)).
 
-The macro context's defines leave out `hxmc.target` and `hxmc.libc`, as
+The macro context's defines leave out `hxmc.target`, `hxmc.libc` and `hxmc.os`, as
 Haxe leaves the platforms' names out (`Common.macroDefinesHook`): the
 macro context's target is Eval, or the compiler's own with
 `-D hxmc.macros=mir`. A module typed there for a macro sees what it would

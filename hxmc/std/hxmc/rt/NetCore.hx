@@ -8,20 +8,22 @@ import hxmc.unsafe.LibC;
 import hxmc.unsafe.Mem;
 import hxmc.unsafe.Posix;
 import hxmc.unsafe.Ptr;
+#if (!hxmc.os || hxmc.os == "windows")
 import hxmc.unsafe.Win32;
 import hxmc.unsafe.Winsock;
+#end
 
 // What the network layers (PosixNet, WinNet) do the same way, written once
 // over the calls that differ: inline, with the system chosen by Mem.os,
 // which folds while lowering, so each layer keeps only its own calls and
 // compiles to what its own copy did.
-@:access(hxmc.rt.PosixNet) @:access(hxmc.rt.WinNet) @:access(hxmc.rt.Threads)
+@:access(hxmc.rt.PosixNet) #if (!hxmc.os || hxmc.os == "windows") @:access(hxmc.rt.WinNet) #end @:access(hxmc.rt.Threads)
 extern class NetCore {
 	// a Boolean socket option (an int)
 	@:hxmc.unsafe(gc) public static inline function setBool(fd:Int, level:Int, opt:Int, b:Bool):Int {
 		var v = Mem.stack(8);
 		Mem.setI32(v, 0, b ? 1 : 0);
-		return Platform.os() == 2 ? WinNet.ret(Winsock.setsockopt(WinNet.sock(fd), level, opt, v, 4)) : PosixNet.ret(Posix.setsockopt(fd, level, opt, v, 4));
+		return #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinNet.ret(Winsock.setsockopt(WinNet.sock(fd), level, opt, v, 4)) : #end PosixNet.ret(Posix.setsockopt(fd, level, opt, v, 4));
 	}
 
 	// select with other threads: they run until a descriptor is ready or
@@ -37,18 +39,20 @@ extern class NetCore {
 			Mem.setI16(p, 8 * k + 6, 0);
 			k++;
 		}
+		#if (!hxmc.os || hxmc.os == "windows")
 		inline function addWin(fd:Int, events:Int) {
 			Mem.setI64(p, 16 * k, WinNet.sock(fd));
 			Mem.setI16(p, 16 * k + 8, events);
 			Mem.setI16(p, 16 * k + 10, 0);
 			k++;
 		}
+		#end
 		for (i in 0...nr)
-			if (Platform.os() == 2) addWin(r[i], 0x100) else add(r[i], 1); // POLLRDNORM, POLLIN
+			#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) addWin(r[i], 0x100) else #end add(r[i], 1); // POLLRDNORM, POLLIN
 		for (i in 0...nw)
-			if (Platform.os() == 2) addWin(w[i], 0x10) else add(w[i], 4); // POLLWRNORM, POLLOUT
+			#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) addWin(w[i], 0x10) else #end add(w[i], 4); // POLLWRNORM, POLLOUT
 		for (i in 0...no)
-			if (Platform.os() == 2) addWin(o[i], 0x200) else add(o[i], 2); // POLLRDBAND, POLLPRI
+			#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) addWin(o[i], 0x200) else #end add(o[i], 2); // POLLRDBAND, POLLPRI
 		Rt.rt_wait_fds(p, k, timeout);
 		LibC.free(p);
 	}
@@ -64,15 +68,18 @@ extern class NetCore {
 	// a per-thread malloc'ed buffer (pollBuffer), kept for the next call.
 	@:hxmc.unsafe(gc) public static inline function poll(fds:Array<Int>, events:Array<Int>, revents:Array<Int>, n:Int, timeout:Float):Int {
 		var size = Platform.os() == 2 ? 16 : 8, ev = Platform.os() == 2 ? 8 : 4;
-		var p = Platform.os() == 2 ? WinNet.pollBuffer((size + 4) * n) : PosixNet.pollBuffer((size + 4) * n);
+		var p = #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinNet.pollBuffer((size + 4) * n) : #end PosixNet.pollBuffer((size + 4) * n);
 		// (Windows: a negative entry, a closed socket's -1, is never ready, as
 		// POSIX poll ignores it)
 		for (i in 0...n) {
 			var e = events[i];
+			#if (!hxmc.os || hxmc.os == "windows")
 			if (Platform.os() == 2) {
 				Mem.setI64(p, size * i, WinNet.sock(fds[i]));
 				e = ((e & 1) != 0 ? 0x100 : 0) | ((e & 2) != 0 ? 0x200 : 0) | ((e & 4) != 0 ? 0x10 : 0);
-			} else Mem.setI32(p, size * i, fds[i]);
+			} else
+			#end
+			Mem.setI32(p, size * i, fds[i]);
 			Mem.setI16(p, size * i + ev, e);
 			Mem.setI16(p, size * i + ev + 2, 0);
 		}
@@ -91,7 +98,7 @@ extern class NetCore {
 				revents[i] = e;
 			}
 		if (r < 0) {
-			if (Platform.os() == 2) WinNet.setLast(err) else PosixNet.netErrno = err;
+			#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinNet.setLast(err) else #end PosixNet.netErrno = err;
 		}
 		return r;
 	}
@@ -102,7 +109,7 @@ extern class NetCore {
 	@:hxmc.unsafe(gc) public static inline function lockResolver() {
 		var l = Platform.os() == 2 ? Names.spin.add(16) : Names.spin;
 		while (Atomic.cas32(l, 0, 1) != 0)
-			if (Platform.os() == 2) Win32.Sleep(0) else Posix.sched_yield();
+			#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) Win32.Sleep(0) else #end Posix.sched_yield();
 	}
 
 	@:hxmc.unsafe(gc) public static inline function unlockResolver()
@@ -114,8 +121,8 @@ extern class NetCore {
 	@:hxmc.unsafe(gc) public static inline function lookup(n:Ptr):I64 {
 		var r:I64 = 0;
 		var region = Leaf.rt_blocking_enter();
-		if (Platform.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
-		var h = Platform.os() == 2 ? Winsock.gethostbyname(n) : Posix.gethostbyname(n);
+		#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinNet.lockResolver() else #end PosixNet.lockResolver();
+		var h = #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? Winsock.gethostbyname(n) : #end Posix.gethostbyname(n);
 		if (!h.isNull() && (Platform.os() == 2 ? Mem.getI16(h, 16) : Mem.getI32(h, 16)) == 2) {
 			var list = Mem.getPtr(h, 24);
 			var a = Mem.getPtr(list, 0);
@@ -124,7 +131,7 @@ extern class NetCore {
 				r = ((1 : I64) << 32) | ((ip : I64) & (((1 : I64) << 32) - 1));
 			}
 		}
-		if (Platform.os() == 2) WinNet.unlockResolver() else PosixNet.unlockResolver();
+		#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinNet.unlockResolver() else #end PosixNet.unlockResolver();
 		Regions.end(region);
 		return r;
 	}
@@ -138,10 +145,10 @@ extern class NetCore {
 		Mem.setI8(a, 3, ip);
 		var name = Ptr.nil();
 		var region = Leaf.rt_blocking_enter();
-		if (Platform.os() == 2) WinNet.lockResolver() else PosixNet.lockResolver();
-		var h = Platform.os() == 2 ? Winsock.gethostbyaddr(a, 4, 2) : Posix.gethostbyaddr(a, 4, 2);
-		if (!h.isNull() && !Mem.getPtr(h, 0).isNull()) name = Platform.os() == 2 ? Winsock._strdup(Mem.getPtr(h, 0)) : Posix.strdup(Mem.getPtr(h, 0));
-		if (Platform.os() == 2) WinNet.unlockResolver() else PosixNet.unlockResolver();
+		#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinNet.lockResolver() else #end PosixNet.lockResolver();
+		var h = #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? Winsock.gethostbyaddr(a, 4, 2) : #end Posix.gethostbyaddr(a, 4, 2);
+		if (!h.isNull() && !Mem.getPtr(h, 0).isNull()) name = #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? Winsock._strdup(Mem.getPtr(h, 0)) : #end Posix.strdup(Mem.getPtr(h, 0));
+		#if (!hxmc.os || hxmc.os == "windows") if (Platform.os() == 2) WinNet.unlockResolver() else #end PosixNet.unlockResolver();
 		Regions.end(region);
 		return name;
 	}

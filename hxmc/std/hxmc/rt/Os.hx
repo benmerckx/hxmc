@@ -123,13 +123,13 @@ class Os {
 	static var pageBytes:Int;
 
 	@:hxmc.unsafe public static function pageSize():Int {
-		if (pageBytes == 0) pageBytes = windows() ? WinRt.rtPageSize().toInt() : C.sysconf(L.SC_PAGESIZE).toInt();
+		if (pageBytes == 0) pageBytes = #if (!hxmc.os || hxmc.os == "windows") windows() ? WinRt.rtPageSize().toInt() : #end C.sysconf(L.SC_PAGESIZE).toInt();
 		return pageBytes;
 	}
 
 	// null on failure
 	@:hxmc.unsafe public static function reserve(bytes:I64):Ptr {
-		if (windows()) return WinRt.reserve(bytes);
+		#if (!hxmc.os || hxmc.os == "windows") if (windows()) return WinRt.reserve(bytes); #end
 		var p = C.mmap(Ptr.nil(), bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE, -1, 0);
 		return p.toI64() == -1 ? Ptr.nil() : p;
 	}
@@ -138,7 +138,7 @@ class Os {
 	// MAP_FIXED_NOREPLACE, a hint to kernels before 4.17, whose other address
 	// is given back; Windows: VirtualAlloc's address, a multiple of 64 KB)
 	@:hxmc.unsafe public static function reserveAt(at:Ptr, bytes:I64):Ptr {
-		if (windows()) return WinRt.reserveAt(at, bytes);
+		#if (!hxmc.os || hxmc.os == "windows") if (windows()) return WinRt.reserveAt(at, bytes); #end
 		var p = C.mmap(at, bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | L.MAP_ANONYMOUS | L.MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
 		if (p.toI64() == -1) return Ptr.nil();
 		if (p.toI64() != at.toI64()) {
@@ -160,21 +160,23 @@ class Os {
 	static inline var MAP_FIXED = 0x10; // (Linux's and macOS's)
 
 	@:hxmc.unsafe public static function release(p:Ptr, bytes:I64)
-		if (windows()) WinRt.release(p, bytes) else C.munmap(p, bytes);
+		#if (!hxmc.os || hxmc.os == "windows") if (windows()) WinRt.release(p, bytes) else #end C.munmap(p, bytes);
 
 	// never committed: an access faults
 	@:hxmc.unsafe public static function guard(p:Ptr, bytes:I64)
-		if (windows()) WinRt.guard(p, bytes) else C.mprotect(p, bytes, L.PROT_NONE);
+		#if (!hxmc.os || hxmc.os == "windows") if (windows()) WinRt.guard(p, bytes) else #end C.mprotect(p, bytes, L.PROT_NONE);
 
 	// the pages go back to the system (zeros when touched again); false: not done
 	// (Apple's: fresh pages mapped over them, as MADV_DONTNEED there leaves the
 	// pages as they were, dirty and counted in the task's footprint, which is
 	// what iOS ends an app for and what Activity Monitor shows)
 	@:hxmc.unsafe public static function decommit(p:Ptr, bytes:I64):Bool {
+		#if (!hxmc.os || hxmc.os == "windows")
 		if (windows()) {
 			WinRt.decommit(p, bytes);
 			return true;
 		}
+		#end
 		if (mac()) return !mapOver(p, bytes).isNull();
 		return C.madvise(p, bytes, L.MADV_DONTNEED) == 0;
 	}
@@ -357,11 +359,13 @@ class Os {
 	// ---- descriptors: poll (Windows: WSAPoll, sockets only)
 
 	@:hxmc.unsafe public static function poll(fds:Ptr, n:Int, ms:Int):Int {
+		#if (!hxmc.os || hxmc.os == "windows")
 		if (windows()) {
 			var r = W.WSAPoll(fds, n, ms);
 			if (r < 0) setErrno(WinRt.sockErrno(W.WSAGetLastError()));
 			return r;
 		}
+		#end
 		return C.poll(fds, (n : I64), ms);
 	}
 

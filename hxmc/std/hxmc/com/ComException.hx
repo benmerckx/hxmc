@@ -39,10 +39,11 @@ class ComException extends haxe.Exception {
 
 	// "0x80004002: No such interface supported": the code and the system's message
 	public static function describe(hr:Int):String {
-		var text = Platform.os() == 2 ? systemMessage(hr) : null;
+		var text = #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? systemMessage(hr) : #end null;
 		return text != null && text != "" ? hex(hr) + ": " + text : hex(hr);
 	}
 
+	#if (!hxmc.os || hxmc.os == "windows")
 	// FormatMessageW's text of hr (FROM_SYSTEM, IGNORE_INSERTS), its line end dropped
 	@:hxmc.unsafe(gc) static function systemMessage(hr:Int):Null<String> {
 		var buf = Mem.stack(8);
@@ -55,6 +56,7 @@ class ComException extends haxe.Exception {
 		K.LocalFree(p);
 		return StringTools.rtrim(s);
 	}
+	#end
 }
 
 @:hxmc.c @:hxmc.lib("kernel32") private extern class K {
