@@ -337,6 +337,67 @@ class Lexer {
 		code.lines = ctx.file;
 		if (!code.eof() && StringTools.fastCodeAt(code.source, code.index) == "/".code) error(ctx, UnexpectedClosingMarkupTag, p);
 		if (p + 1 != code.cp(code.index)) code.fail(InvalidCharacter(code.codePointAt(code.index)), code.index);
+		var name = code.xmlName();
+		ctx.buf.add("<" + name);
+		var open = "<" + name, close = "</" + name + ">", depth = 0, inOpen = name != ""; // don't allow self-closing fragments
+		while (!code.eof()) {
+			var offset = code.index;
+			// closing tag
+			if (code.starts("</")) {
+				code.index += 2;
+				code.xmlName();
+				if (code.current() == ">") {
+					code.index++;
+					var tag = code.source.substr(offset, code.index - offset);
+					ctx.buf.add(tag);
+					// If it matches our document close tag, finish or decrease depth.
+					if (tag == close) {
+						if (depth == 0) return code.cp(code.index);
+						depth--;
+					}
+					inOpen = false;
+					continue;
+				}
+				code.index = offset;
+			}
+			// opening tag
+			if (code.current() == "<") {
+				code.index++;
+				code.xmlName();
+				var tag = code.source.substr(offset, code.index - offset);
+				ctx.buf.add(tag);
+				// If it matches our document open tag, increase depth and set in_open to true.
+				if (tag == open) {
+					depth++;
+					inOpen = true;
+				} else inOpen = false;
+			} else if (code.starts("/>")) { // />
+				code.index += 2;
+				ctx.buf.add("/>");
+				// We only care about this if we are still in the opening tag, i.e. if it wasn't closed yet.
+				// In that case, decrease depth and finish if it's 0.
+				if (inOpen) depth--;
+				if (depth < 0) return code.cp(code.index);
+				inOpen = false;
+			} else {
+				var c = code.codeAt(code.index);
+				if (c == "\n".code || c == "\r".code) code.storeNewline(ctx.buf, c);
+				else {
+					ctx.buf.add(code.current());
+					code.index++;
+				}
+			}
+		}
+		code.failPos(UnterminatedMarkup, p);
+		return 0;
+	}
+
+	// port: lexXml with -D hxmc.markup-braces, which reads the braces as JSX does (markupEnd)
+	public static function lexXmlBraces(ctx:LexerContext, p:Int, code:Lexer):Int {
+		code.file = ctx.file.lfile;
+		code.lines = ctx.file;
+		if (!code.eof() && StringTools.fastCodeAt(code.source, code.index) == "/".code) error(ctx, UnexpectedClosingMarkupTag, p);
+		if (p + 1 != code.cp(code.index)) code.fail(InvalidCharacter(code.codePointAt(code.index)), code.index);
 		var start = code.index;
 		var end = code.markupEnd(code.xmlName(), start);
 		if (end < 0) code.failPos(UnterminatedMarkup, p);

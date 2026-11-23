@@ -2,7 +2,7 @@ package unit;
 
 import core.Ast;
 
-// port: markup literals, whose braces the port reads as JSX's (Lexer.markupEnd's divergence)
+// port: markup literals, whose braces -D hxmc.markup-braces reads as JSX's (Lexer.markupEnd's divergence)
 class MarkupTest {
 	public static function main():Void {
 		for (xml in [
@@ -41,11 +41,16 @@ class MarkupTest {
 		]) equal(markup(xml), xml);
 		for (xml in ["<x y={a} ", "<x>{</x>", "<x><x></x>", "<x y={'a} />", "<x y={/* a} />"])
 			equal(try markup(xml) catch (_:Dynamic) null, null);
+		// without the define, as upstream: the `<` in braces leaves the opening tag
+		equal(try markup("<x y={a < b} />", false) catch (_:Dynamic) null, null);
+		equal(markup("<x y={a < b} /></x>", false), "<x y={a < b} /></x>");
 	}
 
-	static function markup(xml:String):String {
+	static function markup(xml:String, braces = true):String {
 		var source = "class M { function f() return " + xml + "; }";
-		return switch GrammarTest.parse(source).declarations[0].definition {
+		var defines = core.Define.emptyDefines();
+		if (braces) core.Define.rawDefine(defines, "hxmc.markup_braces");
+		return switch GrammarTest.parse(source, defines).declarations[0].definition {
 			case EClass({data: [{cffKind: FFun({fExpr: e})}]}): find(e);
 			case _: throw "No function in: " + source;
 		}
