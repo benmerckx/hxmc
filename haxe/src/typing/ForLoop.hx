@@ -194,7 +194,8 @@ class IterationKind {
 		} catch (e:NotFound) {
 			max = 250;
 		}
-		return i * params.expressionWeight <= max ? params : null;
+		// port: 63-bit OCaml int multiplication; 32-bit Int overflows on large constant bounds (e.g. 1_000_000_000 * 7 < 0).
+		return (i : haxe.Int64) * params.expressionWeight <= max ? params : null;
 	}
 
 	public static function ofTexpr(ctx:Typer, e:TExpr, unroll:Null<UnrollParameters>, p:Pos, resume:Bool = false):IteratorData {

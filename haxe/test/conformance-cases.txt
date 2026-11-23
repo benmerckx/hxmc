@@ -7,6 +7,7 @@
 
 direct module-fields haxe/test unit.moduleload.ModuleFields
 direct try-catch haxe/test unit.moduleload.TryCatch
+direct large-loop-bound haxe/test unit.moduleload.LargeLoopBound
 direct issue-7237 haxe/upstream/tests/optimization/src issues.Issue7237
 direct issue-6015 haxe/upstream/tests/optimization/src issues.Issue6015
 direct issue-6093 haxe/upstream/tests/optimization/src issues.Issue6093
