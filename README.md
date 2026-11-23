@@ -23,14 +23,6 @@ playground: <https://haxe-in-haxe.ben.mk>.
 | WebAssembly | `wasm32-wasi` (node, wasmtime, browsers) |
 | Macros | Eval, as upstream |
 | Coroutines | upstream's `TestCoroutines` passes natively and on wasm32-wasi |
-| Rebuilds | the module cache on disk, the compilation server, `haxe --dev` |
-| **Experimental** | |
-| Android, iOS | the shared library and the executable a packager puts in an app ([docs](docs/using.md#native-output-for-a-packager)) |
-| Mir macros | `-D hxmc.macros=mir`: macros on hxmc's own interpreter |
-| **Not yet** | |
-| | WebAssembly threads, sockets and processes; call stacks on WebAssembly |
-| | debugger variables (lines and backtraces work), Windows PDB |
-| | iOS device signing |
 
 ## Install
 
@@ -49,10 +41,6 @@ for another of those machines, install its package too, with `--force`:
 ```sh
 npm i -D --force @hxmc/win32-x64   # windows-x86_64's runtime objects
 ```
-
-Android's runtime objects are not on npm: use the release archive of the
-runtime objects or build them from source. Packages, editors and lix:
-[docs/using.md](docs/using.md).
 
 ## Quick start
 
@@ -82,10 +70,6 @@ npx haxe --dev build.hxml          # rebuild and rerun on every save
 | [docs/hxmc.md](docs/hxmc.md) | how the target works: pipeline, runtime, collector, linkers |
 | [ROADMAP.md](ROADMAP.md) | direction and what comes next |
 | [docs/plans/](docs/plans/README.md) | open designs, by area |
-
-[universe](https://github.com/benmerckx/universe) is a separate,
-experimental app and GUI stack built on hxmc (windows, GPU, UI). hxmc does
-not depend on it.
 
 ## Building from source
 
