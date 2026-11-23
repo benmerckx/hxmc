@@ -21,6 +21,7 @@ class Start {
 	public static var environ:Ptr;
 
 	@:hxmc.export("rt_init") @:hxmc.unsafe static function init(ng:Int, ac:Int, av:Ptr):Void {
+		#if (!hxmc.os || hxmc.os == "windows")
 		if (Platform.os() == 2) {
 			WinRt.init();
 			// the arguments as UTF-8, from the UTF-16 command line (OCaml's
@@ -43,6 +44,7 @@ class Start {
 			for (fd in 0...3)
 				U._setmode(fd, 0x8000); // _O_BINARY
 		}
+		#end
 		argc = ac;
 		argv = av;
 		if (Platform.target() >= 9) environ = Mem.sym("environ");
