@@ -36,7 +36,7 @@ class EsmSuites {
 	}
 
 	static function defaultHaxe():String {
-		for (c in ["bin/haxe-js", "bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe"])
+		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
 			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
 		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
 	}

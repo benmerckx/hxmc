@@ -3,8 +3,12 @@
 Gate: **`make esm-unit`** or:
 
 ```sh
+bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run EsmGenesmCheck
 bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run EsmSuites --haxe bin/haxe-js
 ```
+
+`EsmGenesmCheck` covers Genesm-only layout (no `.mjs` for pure std externs,
+shared `$hx_exports`); `EsmSuites` runs the upstream JS unit suite on `-D esm`.
 
 Builds upstream `tests/unit` with `hxmc/test/upstream/unit-esm.hxml` (`-D esm`,
 `--js bin/unit/main.mjs`), runs under node. Machine-readable exclusions:

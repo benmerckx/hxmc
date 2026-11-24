@@ -500,7 +500,8 @@ SUITES ?=
 SUITES_TARGET ?=
 # upstream unit with -D esm (Genesm); needs HaxeMain (HOST_HAXE or bin/haxe-js)
 esm-unit: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmSuites
+	$(SCRIPT) EsmGenesmCheck --haxe $(HOST_HAXE)
+	$(SCRIPT) EsmSuites --haxe $(HOST_HAXE)
 
 upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
 	@failed=; \
