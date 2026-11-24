@@ -278,6 +278,7 @@ class Compiler {
 		// port: the Haxe host owns signal handling; there is no Sys.catch_break.
 		com.callbacks.run(com.errorExt, com.callbacks.getAfterGeneration());
 		if (!actx.noOutput) {
+			if (actx.cmds.length != 0) ServerCache.resolveClassPaths(sctx, com);
 			var commands = actx.cmds.copy();
 			commands.reverse();
 			for (cmd in commands) {
@@ -406,11 +407,16 @@ class Compiler {
 			com:CommonContext):Int return catchCompletionAndExit(com, sctx, function(com) {
 			ServerCache.beforeAnything(sctx, com);
 			Setup.setupCommonContext(com);
-			compileSafe(com, function() {
+			// port: Std.finally (fun () -> ServerCache.resolve_class_paths sctx com)
+			try compileSafe(com, function() {
 				var actx = Args.processArgs(com);
 				processActx(com, actx);
 				compile(com, actx, sctx);
-			});
+			}) catch (e:Dynamic) {
+				ServerCache.resolveClassPaths(sctx, com);
+				throw e;
+			}
+			ServerCache.resolveClassPaths(sctx, com);
 			ContextFlush.flushContext(com);
 			finalize(com);
 		});

@@ -141,6 +141,16 @@ class ServerCache {
 	}
 
 	/* Gets a list of changed directories for the current compilation. */
+	static function absoluteClassPaths(com:CommonContext):Array<String> {
+		return [for (cp in com.classPaths.asList()) cp.absolutePath];
+	}
+
+	/* The empty class path is the working directory, which usually holds much more
+		than modules: its directories are watched by package, see [package_directory_changed]. */
+	static function watchedClassPaths(com:CommonContext):Array<String> {
+		return [for (cp in com.classPaths.asList()) if (cp.path != "") cp.absolutePath];
+	}
+
 	static function getChangedDirectoriesImpl(sctx:ServerCompilationContext, com:CommonContext):Array<CachedDirectory> {
 		var cs = sctx.cs;
 		var sign = Define.getSignature(com.defines);
@@ -151,20 +161,30 @@ class ServerCache {
 			var dirs = try {
 				/* Next, get all directories from the cache and filter the ones that haven't changed. */
 				var allDirs = cs.findDirectories(sign);
+				function subDirs(dir:CachedDirectory):Array<String> {
+					return core.Path.findDirectories(Globals.platformName(com.platform), false, [dir.cPath]).map(core.Path.addTrailingSlash);
+				}
+				// port: `acc` a list, head first (unshift)
+				function addNew(acc:Array<CachedDirectory>, dir:String):Void {
+					if (!cs.hasDirectory(sign, dir)) {
+						var time = try stat(dir) catch (e:Dynamic) {
+							if (Std.isOfType(e, NotFound)) throw e;
+							return;
+						}
+						ServerMessage.addedDirectory(com, "", dir);
+						var cdir = CompilationCache.createDirectory(dir, time);
+						cs.addDirectory(sign, cdir);
+						acc.unshift(cdir);
+						for (d in subDirs(cdir)) addNew(acc, d);
+					}
+				}
 				var dirs:Array<CachedDirectory> = [];
 				for (dir in allDirs) {
 					try {
 						var time2 = stat(dir.cPath);
 						if (dir.cMtime < time2) {
 							dir.cMtime = time2;
-							var subDirs = core.Path.findDirectories(Globals.platformName(com.platform), false, [dir.cPath]);
-							for (dir in subDirs) {
-								if (!cs.hasDirectory(sign, dir)) {
-									var time = stat(dir);
-									ServerMessage.addedDirectory(com, "", dir);
-									cs.addDirectory(sign, CompilationCache.createDirectory(dir, time));
-								}
-							}
+							for (d in subDirs(dir)) addNew(dirs, d);
 							dirs.unshift(CompilationCache.createDirectory(dir.cPath, time2));
 						}
 					} catch (e:Dynamic) {
@@ -173,6 +193,8 @@ class ServerCache {
 						ServerMessage.removedDirectory(com, "", dir.cPath);
 					}
 				}
+				/* A class path directory created since is added like a new subdirectory. */
+				for (d in watchedClassPaths(com)) addNew(dirs, d);
 				ServerMessage.changedDirectories(com, "", dirs);
 				dirs;
 			} catch (_:NotFound) {
@@ -188,9 +210,9 @@ class ServerCache {
 							dirs.unshift(CompilationCache.createDirectory(path, time));
 						} catch (_:Dynamic) {}
 					}
-					var classPathStrings:Array<String> = com.classPaths.asStringList();
+					var classPathStrings:Array<String> = watchedClassPaths(com);
 					for (path in classPathStrings) addDir(path);
-					for (path in core.Path.findDirectories(Globals.platformName(com.platform), true, classPathStrings)) addDir(path);
+					for (path in core.Path.findDirectories(Globals.platformName(com.platform), true, classPathStrings).map(core.Path.addTrailingSlash)) addDir(path);
 					ServerMessage.foundDirectories(com, "", dirs);
 					cs.addDirectories(sign, dirs);
 				});
@@ -207,6 +229,31 @@ class ServerCache {
 	static function getChangedDirectories(sctx:ServerCompilationContext, com:CommonContext):Array<CachedDirectory> {
 		return Timer.time(com.timerCtx, ["server", "module cache", "changed dirs"],
 			function(com) return getChangedDirectoriesImpl(sctx, com), com);
+	}
+
+	/* A directory of the working directory is watched from the first time a module
+		of its package is checked, and counts as changed then. */
+	static function packageDirectoryChanged(sctx:ServerCompilationContext, com:CommonContext, dir:String):Bool {
+		var sign = Define.getSignature(com.defines);
+		var k = sign + "\x00" + dir;
+		var known = sctx.packageDirectories.get(k);
+		if (known != null) return known;
+		var cs = sctx.cs;
+		var changed = try {
+			var time = stat(dir);
+			var changed = try cs.findPackageDirectory(sign, dir) < time catch (_:NotFound) {
+				ServerMessage.addedDirectory(com, "", dir);
+				true;
+			}
+			cs.addPackageDirectory(sign, dir, time);
+			changed;
+		} catch (e:Dynamic) {
+			if (Std.isOfType(e, NotFound)) throw e;
+			cs.removePackageDirectory(sign, dir);
+			false;
+		}
+		sctx.packageDirectories.set(k, changed);
+		return changed;
 	}
 
 	public static function getTypingMode(com:CommonContext, mExtra:ModuleDefExtra):TypingMode {
@@ -291,10 +338,10 @@ class ServerCache {
 					false;
 			}
 		}
-		function checkModuleShadowing(paths:Array<CachedDirectory>, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
+		function checkModuleShadowing(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
 			var ownFile = core.Path.UniqueKey.lazyKey(mExtra.mFile);
-			for (dir in paths) {
-				var file = (dir.cPath + mPath.name) + ".hx";
+			function check(dir:String) {
+				var file = (dir + mPath.name) + ".hx";
 				if (sys.FileSystem.exists(file)) {
 					var time = Common.fileTime(file);
 					/* The file of the module does not shadow it, unless its content changed. */
@@ -304,6 +351,14 @@ class ServerCache {
 					}
 				}
 			}
+			for (cdir in getChangedDirectories(sctx, com)) check(cdir.cPath);
+			var packDir = [for (s in mPath.pack) s + "/"].join("");
+			com.classPaths.iter(cp -> {
+				if (cp.path == "") {
+					var dir = cp.absolutePath + packDir;
+					if (packageDirectoryChanged(sctx, com, dir)) check(dir);
+				}
+			});
 		}
 		function hasPolicyOf(mExtra:ModuleDefExtra, policy:ModuleCheckPolicy) {
 			return mExtra.mCheckPolicy.indexOf(policy) >= 0 || switch policy {
@@ -327,7 +382,7 @@ class ServerCache {
 		}
 		function checkModuleShadowingOf(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
 			if (core.Vfs.mode == Watched) checkModuleResolution(com, mPath, mExtra) else
-				checkModuleShadowing(getChangedDirectories(sctx, com), mPath, mExtra);
+				checkModuleShadowing(com, mPath, mExtra);
 		}
 		var startMark = sctx.compilationStep;
 		var unknownStateModules:Array<ModuleDefExtra> = [];
@@ -752,17 +807,34 @@ class ServerCache {
 		ServerMessage.defines(com, "");
 		ServerMessage.signature(com, "", sign);
 		ServerMessage.displayPosition(com, "", DisplayPosition.displayPosition.get());
-		var classPathStrings:Array<String> = com.classPaths.asStringList();
+		var classPathStrings:Array<String> = absoluteClassPaths(com);
 		try {
 			var previous = sctx.classPaths.find(sign);
 			if (core.ds.Key.compare(previous, classPathStrings) != 0) {
 				ServerMessage.classPathsChanged(com, "");
 				sctx.classPaths.replace(sign, classPathStrings);
 				cs.clearDirectories(sign);
+				cs.clearPackageDirectories(sign);
 				cs.getContext(sign).setInitialized(false);
 			}
 		} catch (_:NotFound) {
 			sctx.classPaths.add(sign, classPathStrings);
+		}
+		/* The watched view resolves the modules again instead. */
+		if (core.Vfs.mode != Watched) {
+			try cs.findDirectories(sign) catch (_:NotFound) getChangedDirectories(sctx, com);
+		}
+	}
+
+	/* The directories of the class paths are listed once the server is back in
+		its own working directory: the absolute paths of the class paths added after
+		[after_target_init], like the one of a standalone display file, are resolved
+		before, also before a --cmd "cd dir" changes the working directory. */
+	public static function resolveClassPaths(sctx:ServerCompilationContext, com:CommonContext):Void {
+		if (sctx.isServer) {
+			absoluteClassPaths(com);
+			var mcom = com.getMacros();
+			if (mcom != null) absoluteClassPaths(mcom);
 		}
 	}
 

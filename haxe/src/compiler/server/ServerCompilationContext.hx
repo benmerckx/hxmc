@@ -13,6 +13,9 @@ import compiler.CompilationCache;
 	public var verbose:Bool;
 	/* The list of changed directories per-signature */
 	public var changedDirectories:Hashtbl<String, Array<CachedDirectory>>;
+	/* Whether a package directory of the working directory changed, per signature and directory */
+	// port: keyed by "sign\x00dir"
+	public var packageDirectories:Map<String, Bool> = new Map();
 	/* A reference to the compilation server instance */
 	public var cs:Cache;
 	/* A list of class paths per-signature */
@@ -101,6 +104,7 @@ import compiler.CompilationCache;
 	/* Resets the state for a new compilation */
 	public static function reset(sctx:ServerCompilationContext):Void {
 		sctx.changedDirectories.clear();
+		sctx.packageDirectories.clear();
 		sctx.wasCompilation = false;
 		syntax.Parser.resetState();
 	}

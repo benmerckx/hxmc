@@ -3057,6 +3057,9 @@ class MacroApiImpl {
 					var cp = decodeString(cp);
 					var path = core.Path.addTrailingSlash(cp);
 					var cp = new core.ClassPath.DirectoryClassPath(path, User);
+					/* Files are looked up from the working directory of the compiler, which
+						is not the one of macros. */
+					cp.absolutePath;
 					com.classPaths.add(cp);
 					switch com.getMacros() {
 						case null:
