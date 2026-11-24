@@ -905,9 +905,14 @@ class Hl2c {
 			}
 		}
 
+		var trapPops = 0;
 		for (i in 0...f.code.length) {
 			var op = f.code[i];
 			flushOptions(i);
+			switch op {
+				case OEndTrap(_) | ONop(_):
+				case _: trapPops = 0;
+			}
 			function label(delta:Int):String {
 				var addr = delta + i + 1;
 				var l = labelName(addr);
@@ -1322,8 +1327,8 @@ class Hl2c {
 					expr('hl_trap(trap$$$trapDepth,${reg(r)},$l)');
 					trapDepth++;
 				case OEndTrap(b):
-					expr('hl_endtrap(trap$$${trapDepth - 1})');
-					if (b) trapDepth--;
+					expr('hl_endtrap(trap$$${trapDepth - 1 - trapPops})');
+					if (b) trapDepth-- else trapPops++;
 				case OAssert(_):
 					expr("hl_assert()");
 				case ORefData(r, d):
