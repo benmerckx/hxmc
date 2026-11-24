@@ -419,6 +419,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		native = new Map();
 		entries = new Map();
 		scanned = new Map();
+		hxmc.ir.Lower.spanSupport = null;
 		lastPrep = null;
 		stdRoots = [];
 		plainInits = [];
