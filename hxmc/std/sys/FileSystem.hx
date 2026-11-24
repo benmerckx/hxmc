@@ -13,11 +13,21 @@ import hxmc.NativeSys;
 	See `sys.io.File` for the complementary file API.
 **/
 class FileSystem {
+	// hxmc: in macro code (-D hxmc.macros=mir), a path relative to the macro's working
+	// directory, and a path written dropped from the compilation server's view of
+	// the files, as Eval's
+	static inline function at(path:String):String
+		return #if macro hxmc.MacroHost.resolve(path) #else path #end;
+
+	static inline function written(path:String):Void {
+		#if macro hxmc.MacroHost.invalidate(path); #end
+	}
+
 	/**
 		Returns `true` if the file or directory specified by `path` exists.
 	**/
 	public static function exists(path:String):Bool
-		return NativeSys.exists(path);
+		return NativeSys.exists(at(path));
 
 	/**
 		Renames/moves the file or directory specified by `path` to `newPath`.
@@ -25,19 +35,22 @@ class FileSystem {
 		If `path` is not a valid file system entry, or if it is not accessible,
 		or if `newPath` is not accessible, an exception is thrown.
 	**/
-	public static function rename(path:String, newPath:String):Void
-		if (!NativeSys.rename(path, newPath)) throw "Could not rename " + path + " to " + newPath;
+	public static function rename(path:String, newPath:String):Void {
+		if (!NativeSys.rename(at(path), at(newPath))) throw "Could not rename " + path + " to " + newPath;
+		written(at(path));
+		written(at(newPath));
+	}
 
 	/**
 		Returns `FileStat` information for the file or directory specified by
 		`path`.
 	**/
 	public static function stat(path:String):FileStat {
-		var a = NativeSys.stat(path);
+		var a = NativeSys.stat(at(path));
 		if (a == null) throw "Could not stat " + path;
 		// hxmc: the times to the millisecond and below where statTimes has them (as
 		// hl's, jvm's and Eval's: upstream's TestFileSystem.testStatSubSecond)
-		var t = NativeSys.statTimes(path);
+		var t = NativeSys.statTimes(at(path));
 		inline function time(i:Int):Date
 			return Date.fromTime(t == null ? a[2 + i] * 1000 : t[2 * i] * 1000 + t[2 * i + 1] / 1e6);
 		return {
@@ -61,7 +74,7 @@ class FileSystem {
 		followed and the path will be normalized.
 	**/
 	public static function fullPath(relPath:String):String {
-		var p = NativeSys.fullPath(relPath);
+		var p = NativeSys.fullPath(at(relPath));
 		if (p == null) throw "Could not resolve " + relPath;
 		return p;
 	}
@@ -83,7 +96,7 @@ class FileSystem {
 		accessible, an exception is thrown.
 	**/
 	public static function isDirectory(path:String):Bool
-		return NativeSys.isDirectory(path);
+		return NativeSys.isDirectory(at(path));
 
 	/**
 		Creates a directory specified by `path`.
@@ -94,10 +107,11 @@ class FileSystem {
 	**/
 	public static function createDirectory(path:String):Void {
 		var path = haxe.io.Path.removeTrailingSlashes(path);
-		if (path == "" || NativeSys.isDirectory(path)) return;
+		if (path == "" || NativeSys.isDirectory(at(path))) return;
 		var parent = haxe.io.Path.directory(path);
 		if (parent != "" && parent != path) createDirectory(parent);
-		if (!NativeSys.createDirectory(path) && !NativeSys.isDirectory(path)) throw "Could not create directory " + path;
+		if (!NativeSys.createDirectory(at(path)) && !NativeSys.isDirectory(at(path))) throw "Could not create directory " + path;
+		written(at(path));
 	}
 
 	/**
@@ -106,8 +120,10 @@ class FileSystem {
 		If `path` does not denote a valid file, or if that file cannot be
 		deleted, an exception is thrown.
 	**/
-	public static function deleteFile(path:String):Void
-		if (!NativeSys.deleteFile(path)) throw "Could not delete file " + path;
+	public static function deleteFile(path:String):Void {
+		if (!NativeSys.deleteFile(at(path))) throw "Could not delete file " + path;
+		written(at(path));
+	}
 
 	/**
 		Deletes the directory specified by `path`. Only empty directories can
@@ -116,8 +132,10 @@ class FileSystem {
 		If `path` does not denote a valid directory, or if that directory cannot
 		be deleted, an exception is thrown.
 	**/
-	public static function deleteDirectory(path:String):Void
-		if (!NativeSys.deleteDirectory(path)) throw "Could not delete directory " + path;
+	public static function deleteDirectory(path:String):Void {
+		if (!NativeSys.deleteDirectory(at(path))) throw "Could not delete directory " + path;
+		written(at(path));
+	}
 
 	/**
 		Returns the names of all files and directories in the directory specified
@@ -126,7 +144,7 @@ class FileSystem {
 		If `path` does not denote a valid directory, an exception is thrown.
 	**/
 	public static function readDirectory(path:String):Array<String> {
-		var r = NativeSys.readDirectory(path);
+		var r = NativeSys.readDirectory(at(path));
 		if (r == null) throw "Could not read directory " + path;
 		return r;
 	}
