@@ -328,12 +328,20 @@ class Path {
 		}
 	}
 
+	// port: Sys.is_directory, false where nothing is
+	static function isDirectory(path:String):Bool
+		return try FileSystem.isDirectory(path) catch (_:haxe.Exception) false;
+
 	public static function mkdirRecursive(base:String, parts:Array<String>):Void {
 		for (directory in parts) {
 			var path = base == "" ? directory : base == "/" ? "/" + directory : base + "/" + directory;
 			var length = path.length;
 			if (length > 0 && (path.charAt(length - 1) == "/" || path.charAt(length - 1) == "\\")) path = path.substr(0, length - 1);
-			if (!(path == "" || (length == 2 && path.charAt(1) == ":")) && !FileSystem.exists(path)) FileSystem.createDirectory(path);
+			if (!(path == "" || (length == 2 && path.charAt(1) == ":")) && !FileSystem.exists(path)) {
+				/* another thread or process may have created the directory since the check */
+				// port: Unix.EEXIST is a directory there after the failure
+				try FileSystem.createDirectory(path) catch (error:haxe.Exception) if (!isDirectory(path)) throw error;
+			}
 			base = path == "" ? "/" : path;
 		}
 	}
