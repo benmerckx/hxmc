@@ -39,6 +39,12 @@ import haxe.ds.Vector;
 using macros.eval.EvalValue.EvalValueTools;
 using core.ds.VectorTools;
 
+enum Operand {
+	OLocal(slot:Int);
+	OConst(v:Value);
+	OExec(exec:Emitter);
+}
+
 // port: deviations:
 // - Upstream shadows `jit_tfunction` and `jit_expr`: the recursive JIT functions
 //   over a `JitContext` are `jitTfunctionRec`/`jitExprRec`; the context-level
@@ -147,6 +153,15 @@ class EvalJit {
 		return out;
 	}
 
+	// The slot of [e] when it reads a local variable that is not captured.
+	static function localSlot(jit:JitContext, e:TExpr):Null<Int> {
+		return switch e.eexpr {
+			case TLocal(v) if (!hasVarFlag(v, VCaptured)): EvalJitContext.getSlot(jit, v.vId, e.epos);
+			case TConst(TThis): EvalJitContext.getSlot(jit, 0, e.epos);
+			case _: null;
+		}
+	}
+
 	public static function opAssign(ctx:Context, jit:JitContext, e1:TExpr, e2:TExpr):Emitter {
 		switch e1.eexpr {
 			case TLocal(v):
@@ -169,7 +184,10 @@ class EvalJit {
 					case FInstance(c, _, _) if (!hasClassFlag(c, CInterface)):
 						var proto = EvalContext.getInstancePrototype(jit.ctx, EvalHash.pathHash(c.clPath), ef.epos);
 						var i = EvalContext.getInstanceFieldIndex(proto, name, ef.epos);
-						return EvalEmitter.emitInstanceFieldWrite(exec1, ef.epos, i, exec2);
+						switch localSlot(jit, ef) {
+							case null: return EvalEmitter.emitInstanceFieldWrite(exec1, ef.epos, i, exec2);
+							case slot: return EvalEmitter.emitLocalInstanceFieldWrite(slot, ef.epos, i, exec2);
+						}
 					case FAnon(cf):
 						switch follow(ef.etype) {
 							case TAnon(an):
@@ -201,13 +219,24 @@ class EvalJit {
 		}
 	}
 
-	public static function opAssignOp(jit:JitContext, op:Value->Value->Value, e1:TExpr, e2:TExpr, prefix:Bool):Emitter {
+	public static function opAssignOp(jit:JitContext, op:Value->Value->Value, e1:TExpr, e2:TExpr, prefix:Bool, ?binop:Binop, ?binopPos:Pos):Emitter {
 		switch e1.eexpr {
 			case TLocal(v):
 				var exec = jitExprRec(jit, false, e2);
 				if (hasVarFlag(v,
 					VCaptured)) return EvalEmitter.emitCaptureReadWrite(EvalJitContext.getCaptureSlot(jit, v), exec, op, prefix);
-				else return EvalEmitter.emitLocalReadWrite(EvalJitContext.getSlot(jit, v.vId, e1.epos), exec, op, prefix);
+				else {
+					var slot = EvalJitContext.getSlot(jit, v.vId, e1.epos);
+					return switch binop {
+						case OpAdd if (prefix): EvalEmitter.emitLocalAssignAdd(binopPos, slot, exec);
+						case OpSub if (prefix): EvalEmitter.emitLocalAssignSub(binopPos, slot, exec);
+						case OpMult if (prefix): EvalEmitter.emitLocalAssignMult(binopPos, slot, exec);
+						case OpAnd if (prefix): EvalEmitter.emitLocalAssignAnd(binopPos, slot, exec);
+						case OpOr if (prefix): EvalEmitter.emitLocalAssignOr(binopPos, slot, exec);
+						case OpXor if (prefix): EvalEmitter.emitLocalAssignXor(binopPos, slot, exec);
+						case _: EvalEmitter.emitLocalReadWrite(slot, exec, op, prefix);
+					}
+				}
 			case TField(ef, fa):
 				var name = EvalHash.hash(fieldName(fa));
 				var exec1 = jitExprRec(jit, false, ef);
@@ -281,6 +310,116 @@ class EvalJit {
 		}
 	}
 
+	// A binary operation, read directly from a local or constant operand.
+	static inline function arith(jit:JitContext, ee:(Pos, Emitter, Emitter) -> Emitter, le:(Pos, Int, Emitter) -> Emitter,
+			lc:(Pos, Int, Value) -> Emitter, ll:(Pos, Int, Int) -> Emitter, ec:(Pos, Emitter, Value) -> Emitter, p:Pos, e1:TExpr, e2:TExpr):Emitter {
+		return switch jitOperand(jit, e1) {
+			case OLocal(slot1):
+				switch jitOperand(jit, e2) {
+					case OLocal(slot2): ll(p, slot1, slot2);
+					case OConst(v2): lc(p, slot1, v2);
+					case OExec(exec2): le(p, slot1, exec2);
+				}
+			case OConst(v1):
+				ee(p, EvalEmitter.emitConst(v1), jitExprRec(jit, false, e2));
+			case OExec(exec1):
+				switch jitOperand(jit, e2) {
+					case OConst(v2): ec(p, exec1, v2);
+					case OLocal(slot2): ee(p, exec1, EvalEmitter.emitLocalRead(slot2));
+					case OExec(exec2): ee(p, exec1, exec2);
+				}
+		}
+	}
+
+	// An operand: a local that is not captured, a constant or an expression.
+	static function jitOperand(jit:JitContext, e:TExpr):Operand {
+		return switch e.eexpr {
+			case TLocal(v) if (!hasVarFlag(v, VCaptured)): OLocal(EvalJitContext.getSlot(jit, v.vId, e.epos));
+			case TConst(TThis): OLocal(EvalJitContext.getSlot(jit, 0, e.epos));
+			case TConst(ct = TString(_) | TInt(_) | TFloat(_) | TBool(_) | TNull): OConst(evalConst(ct));
+			case _: OExec(jitExprRec(jit, false, e));
+		}
+	}
+
+	// [e] as a condition (see [EvalEmitter.emit_cond_value]).
+	static function jitCond(jit:JitContext, e:TExpr):Cond {
+		inline function generic() return EvalEmitter.emitCondValue(jitExprRec(jit, false, e));
+		inline function isNull(e:TExpr) return e.eexpr.match(TConst(TNull));
+		// the conditions always giving a Bool value
+		function isBoolCond(e:TExpr):Bool {
+			return switch e.eexpr {
+				case TParenthesis(e1) | TMeta(_, e1): isBoolCond(e1);
+				case TBinop(OpLt | OpLte | OpGt | OpGte | OpEq | OpNotEq, _, _): true;
+				case TUnop(Not, Prefix, _): true;
+				case _: false;
+			}
+		}
+		inline function compare(ee:(Emitter, Emitter) -> Cond, le:(Int, Emitter) -> Cond, lc:(Int, Value) -> Cond, ll:(Int, Int) -> Cond,
+				ec:(Emitter, Value) -> Cond, e1:TExpr, e2:TExpr):Cond {
+			return switch jitOperand(jit, e1) {
+				case OLocal(slot1):
+					switch jitOperand(jit, e2) {
+						case OLocal(slot2): ll(slot1, slot2);
+						case OConst(v2): lc(slot1, v2);
+						case OExec(exec2): le(slot1, exec2);
+					}
+				case OConst(v1):
+					ee(EvalEmitter.emitConst(v1), jitExprRec(jit, false, e2));
+				case OExec(exec1):
+					switch jitOperand(jit, e2) {
+						case OConst(v2): ec(exec1, v2);
+						case OLocal(slot2): ee(exec1, EvalEmitter.emitLocalRead(slot2));
+						case OExec(exec2): ee(exec1, exec2);
+					}
+			}
+		}
+		// the debugger steps through the expressions jit_expr gives
+		if (jit.ctx.debug.debugSocket != null) return generic();
+		return switch e.eexpr {
+			case TParenthesis(e1) | TMeta(_, e1):
+				jitCond(jit, e1);
+			case TBinop(OpEq, e1, e2) if (isNull(e2) || isNull(e1)):
+				var e1 = if (isNull(e2)) e1 else e2;
+				switch jitOperand(jit, e1) {
+					case OLocal(slot): EvalEmitter.emitCondLocalEqNull(slot);
+					case _: EvalEmitter.emitCondEqNull(jitExprRec(jit, false, e1));
+				}
+			case TBinop(OpNotEq, e1, e2) if (isNull(e2) || isNull(e1)):
+				var e1 = if (isNull(e2)) e1 else e2;
+				switch jitOperand(jit, e1) {
+					case OLocal(slot): EvalEmitter.emitCondLocalNotEqNull(slot);
+					case _: EvalEmitter.emitCondNotEqNull(jitExprRec(jit, false, e1));
+				}
+			case TBinop(OpLt, e1, e2):
+				compare(EvalEmitter.emitCondLt, EvalEmitter.emitCondLtLe, EvalEmitter.emitCondLtLc, EvalEmitter.emitCondLtLl, EvalEmitter.emitCondLtEc, e1, e2);
+			case TBinop(OpLte, e1, e2):
+				compare(EvalEmitter.emitCondLte, EvalEmitter.emitCondLteLe, EvalEmitter.emitCondLteLc, EvalEmitter.emitCondLteLl, EvalEmitter.emitCondLteEc, e1,
+					e2);
+			case TBinop(OpGt, e1, e2):
+				compare(EvalEmitter.emitCondGt, EvalEmitter.emitCondGtLe, EvalEmitter.emitCondGtLc, EvalEmitter.emitCondGtLl, EvalEmitter.emitCondGtEc, e1, e2);
+			case TBinop(OpGte, e1, e2):
+				compare(EvalEmitter.emitCondGte, EvalEmitter.emitCondGteLe, EvalEmitter.emitCondGteLc, EvalEmitter.emitCondGteLl, EvalEmitter.emitCondGteEc, e1,
+					e2);
+			case TBinop(OpEq, e1, e2):
+				compare(EvalEmitter.emitCondEq, EvalEmitter.emitCondEqLe, EvalEmitter.emitCondEqLc, EvalEmitter.emitCondEqLl, EvalEmitter.emitCondEqEc, e1, e2);
+			case TBinop(OpNotEq, e1, e2):
+				compare(EvalEmitter.emitCondNeq, EvalEmitter.emitCondNeqLe, EvalEmitter.emitCondNeqLc, EvalEmitter.emitCondNeqLl, EvalEmitter.emitCondNeqEc, e1,
+					e2);
+			case TBinop(OpBoolAnd, e1, e2):
+				var cond1 = jitCond(jit, e1);
+				var cond2 = jitCond(jit, e2);
+				EvalEmitter.emitCondAnd(cond1, cond2);
+			case TBinop(OpBoolOr, e1, e2):
+				var cond1 = jitCond(jit, e1);
+				var cond2 = jitCond(jit, e2);
+				EvalEmitter.emitCondOr(cond1, cond2);
+			case TUnop(Not, Prefix, e1):
+				if (isBoolCond(e1)) EvalEmitter.emitCondNotCond(jitCond(jit, e1)) else EvalEmitter.emitCondNot(jitExprRec(jit, false, e1));
+			case _:
+				generic();
+		}
+	}
+
 	public static function jitDefault(jit:JitContext, ret:Bool, def:Null<TExpr>):Emitter {
 		if (def == null) {
 			return EvalEmitter.emitNull;
@@ -289,14 +428,6 @@ class EvalJit {
 			var exec = jitExprRec(jit, ret, def);
 			EvalJitContext.popScope(jit);
 			return exec;
-		}
-	}
-
-	static function hasContinue(e:TExpr):Bool {
-		return switch e.eexpr {
-			case TContinue: true;
-			case TWhile(_) | TFunction(_): false;
-			case _: Texpr.checkExpr(hasContinue, e);
 		}
 	}
 
@@ -363,10 +494,10 @@ class EvalJit {
 					return EvalEmitter.emitClosure(ctx, Vector.fromArrayCopy(mappingI), Vector.fromArrayCopy(mappingSlot), eci, hasret, exec, fl);
 				// branching
 				case TIf(e1, e2, eo):
-					var execCond = jitExprRec(jit, false, e1);
+					var cond = jitCond(jit, e1);
 					var execThen = jitExprRec(jit, ret, e2);
 					var execElse = if (eo == null) EvalEmitter.emitNull else jitExprRec(jit, ret, eo);
-					return EvalEmitter.emitIf(execCond, execThen, execElse);
+					return EvalEmitter.emitIfCond(cond, execThen, execElse);
 				case TSwitch(sw) if (isInt(sw.switchSubject.etype) && sw.switchCases.foreach(isConstIntPattern)):
 					var exec = jitExprRec(jit, false, sw.switchSubject);
 					var h:GlobalsIntMap<Emitter> = GlobalsIntMap.empty();
@@ -441,14 +572,13 @@ class EvalJit {
 				case TWhile({eexpr: TParenthesis(e1)}, e2, flag):
 					return loop(mk(TWhile(e1, e2, flag), e.etype, e.epos));
 				case TWhile(e1, e2, flag):
-					var execCond = jitExprRec(jit, false, e1);
+					var cond = jitCond(jit, e1);
 					var execBody = jitExprRec(jit, false, e2);
 					switch flag {
 						case NormalWhile:
-							if (hasContinue(e2)) return EvalEmitter.emitWhileBreakContinue(execCond,
-								execBody); else return EvalEmitter.emitWhileBreak(execCond, execBody);
+							return EvalEmitter.emitWhileCond(cond, execBody);
 						case DoWhile:
-							return EvalEmitter.emitDoWhileBreakContinue(execCond, execBody);
+							return EvalEmitter.emitDoWhileCond(cond, execBody);
 					}
 				case TTry(e1, catches):
 					var exec = jitExprRec(jit, ret, e1);
@@ -533,7 +663,7 @@ class EvalJit {
 							case VFunction(f, _): f;
 							case v: (EvalEmitter.cannotCall(v, p) : Vfunc);
 						});
-						return EvalEmitter.emitConstructorCall(proto, v, execs, e.epos);
+						return EvalEmitter.emitConstructorCall(ctx.maxStackDepth, proto, v, execs, e.epos);
 					}
 				// read
 				case TLocal(v):
@@ -543,7 +673,10 @@ class EvalJit {
 					var name = EvalHash.hash(fieldName(fa));
 					switch fa {
 						case FInstance({clPath: {pack: [], name: "Array"}}, _, {cfName: "length"}):
-							return EvalEmitter.emitArrayLengthRead(jitExprRec(jit, false, e1), e1.epos);
+							switch localSlot(jit, e1) {
+								case null: return EvalEmitter.emitArrayLengthRead(jitExprRec(jit, false, e1), e1.epos);
+								case slot: return EvalEmitter.emitLocalArrayLengthRead(slot, e1.epos);
+							}
 						case FInstance({clPath: {pack: ["eval"], name: "Vector"}}, _, {cfName: "length"}):
 							return EvalEmitter.emitVectorLengthRead(jitExprRec(jit, false, e1), e1.epos);
 						case FInstance({clPath: {pack: ["haxe", "io"], name: "Bytes"}}, _, {cfName: "length"}):
@@ -565,7 +698,11 @@ class EvalJit {
 							var i = EvalContext.getInstanceFieldIndex(proto, name, e1.epos);
 							switch e1.eexpr {
 								case TConst(TThis): return EvalEmitter.emitThisFieldRead(EvalJitContext.getSlot(jit, 0, e.epos), i);
-								case _: return EvalEmitter.emitInstanceFieldRead(jitExprRec(jit, false, e1), e1.epos, i);
+								case _:
+									switch localSlot(jit, e1) {
+										case null: return EvalEmitter.emitInstanceFieldRead(jitExprRec(jit, false, e1), e1.epos, i);
+										case slot: return EvalEmitter.emitLocalInstanceFieldRead(slot, e1.epos, i);
+									}
 							}
 						case FAnon(_):
 							switch follow(e1.etype) {
@@ -573,7 +710,10 @@ class EvalJit {
 									var l = anonFieldKeys(an);
 									var proto = ctx.getObjectPrototype(ctx, l);
 									var i = EvalContext.getInstanceFieldIndex(proto, name, e1.epos);
-									return EvalEmitter.emitAnonFieldRead(jitExprRec(jit, false, e1), proto, i, name, e1.epos);
+									switch localSlot(jit, e1) {
+										case null: return EvalEmitter.emitAnonFieldRead(jitExprRec(jit, false, e1), proto, i, name, e1.epos);
+										case slot: return EvalEmitter.emitLocalAnonFieldRead(slot, proto, i, name, e1.epos);
+									}
 								case _:
 									return EvalEmitter.emitFieldRead(jitExprRec(jit, false, e1), name, e1.epos);
 							}
@@ -591,16 +731,28 @@ class EvalJit {
 							var exec2 = jitExprRec(jit, false, e2);
 							return EvalEmitter.emitVectorRead(exec1, e1.epos, exec2, e2.epos);
 						case _:
-							var exec1 = jitExprRec(jit, false, e1);
-							var exec2 = jitExprRec(jit, false, e2);
-							return EvalEmitter.emitArrayRead(exec1, e1.epos, exec2, e2.epos);
+							switch localSlot(jit, e1) {
+								case null:
+									var exec1 = jitExprRec(jit, false, e1);
+									var exec2 = jitExprRec(jit, false, e2);
+									return EvalEmitter.emitArrayRead(exec1, e1.epos, exec2, e2.epos);
+								case slot1:
+									switch localSlot(jit, e2) {
+										case null: return EvalEmitter.emitArrayReadLe(slot1, e1.epos, jitExprRec(jit, false, e2), e2.epos);
+										case slot2: return EvalEmitter.emitArrayReadLl(slot1, e1.epos, slot2, e2.epos);
+									}
+							}
 					}
 				case TEnumParameter(e1, _, i):
-					var exec = jitExprRec(jit, false, e1);
-					return EvalEmitter.emitEnumParameterRead(exec, i);
+					switch localSlot(jit, e1) {
+						case null: return EvalEmitter.emitEnumParameterRead(jitExprRec(jit, false, e1), i);
+						case slot: return EvalEmitter.emitLocalEnumParameterRead(slot, i);
+					}
 				case TEnumIndex(e1):
-					var exec = jitExprRec(jit, false, e1);
-					return EvalEmitter.emitEnumIndex(exec, e1.epos);
+					switch localSlot(jit, e1) {
+						case null: return EvalEmitter.emitEnumIndex(jitExprRec(jit, false, e1), e1.epos);
+						case slot: return EvalEmitter.emitLocalEnumIndex(slot, e1.epos);
+					}
 				// ops
 				case TBinop(OpEq, e1, {eexpr: TConst(TNull)}) | TBinop(OpEq, {eexpr: TConst(TNull)}, e1):
 					var exec = jitExprRec(jit, false, e1);
@@ -614,7 +766,7 @@ class EvalJit {
 							return opAssign(ctx, jit, e1, e2);
 						case OpAssignOp(op):
 							var f = EvalMisc.getBinopFun(op, e.epos);
-							return opAssignOp(jit, f, e1, e2, true);
+							return opAssignOp(jit, f, e1, e2, true, op, e.epos);
 						case OpBoolAnd:
 							var exec1 = jitExprRec(jit, false, e1);
 							var exec2 = jitExprRec(jit, false, e2);
@@ -623,27 +775,38 @@ class EvalJit {
 							var exec1 = jitExprRec(jit, false, e1);
 							var exec2 = jitExprRec(jit, false, e2);
 							return EvalEmitter.emitBoolOr(exec1, exec2);
+						case OpAdd:
+							return arith(jit, EvalEmitter.emitOpAdd, EvalEmitter.emitOpAddLe, EvalEmitter.emitOpAddLc, EvalEmitter.emitOpAddLl, EvalEmitter.emitOpAddEc, e.epos, e1, e2);
+						case OpSub:
+							return arith(jit, EvalEmitter.emitOpSub, EvalEmitter.emitOpSubLe, EvalEmitter.emitOpSubLc, EvalEmitter.emitOpSubLl, EvalEmitter.emitOpSubEc, e.epos, e1, e2);
+						case OpMult:
+							return arith(jit, EvalEmitter.emitOpMult, EvalEmitter.emitOpMultLe, EvalEmitter.emitOpMultLc, EvalEmitter.emitOpMultLl, EvalEmitter.emitOpMultEc, e.epos, e1, e2);
+						case OpDiv:
+							return arith(jit, EvalEmitter.emitOpDiv, EvalEmitter.emitOpDivLe, EvalEmitter.emitOpDivLc, EvalEmitter.emitOpDivLl, EvalEmitter.emitOpDivEc, e.epos, e1, e2);
+						case OpAnd:
+							return arith(jit, EvalEmitter.emitOpAnd, EvalEmitter.emitOpAndLe, EvalEmitter.emitOpAndLc, EvalEmitter.emitOpAndLl, EvalEmitter.emitOpAndEc, e.epos, e1, e2);
+						case OpOr:
+							return arith(jit, EvalEmitter.emitOpOr, EvalEmitter.emitOpOrLe, EvalEmitter.emitOpOrLc, EvalEmitter.emitOpOrLl, EvalEmitter.emitOpOrEc, e.epos, e1, e2);
+						case OpXor:
+							return arith(jit, EvalEmitter.emitOpXor, EvalEmitter.emitOpXorLe, EvalEmitter.emitOpXorLc, EvalEmitter.emitOpXorLl, EvalEmitter.emitOpXorEc, e.epos, e1, e2);
+						case OpShl:
+							return arith(jit, EvalEmitter.emitOpShl, EvalEmitter.emitOpShlLe, EvalEmitter.emitOpShlLc, EvalEmitter.emitOpShlLl, EvalEmitter.emitOpShlEc, e.epos, e1, e2);
+						case OpShr:
+							return arith(jit, EvalEmitter.emitOpShr, EvalEmitter.emitOpShrLe, EvalEmitter.emitOpShrLc, EvalEmitter.emitOpShrLl, EvalEmitter.emitOpShrEc, e.epos, e1, e2);
+						case OpUShr:
+							return arith(jit, EvalEmitter.emitOpUshr, EvalEmitter.emitOpUshrLe, EvalEmitter.emitOpUshrLc, EvalEmitter.emitOpUshrLl, EvalEmitter.emitOpUshrEc, e.epos, e1, e2);
+						case OpMod:
+							return arith(jit, EvalEmitter.emitOpMod, EvalEmitter.emitOpModLe, EvalEmitter.emitOpModLc, EvalEmitter.emitOpModLl, EvalEmitter.emitOpModEc, e.epos, e1, e2);
 						case _:
 							var exec1 = jitExprRec(jit, false, e1);
 							var exec2 = jitExprRec(jit, false, e2);
 							return switch op {
-								case OpAdd: EvalEmitter.emitOpAdd(e.epos, exec1, exec2);
-								case OpMult: EvalEmitter.emitOpMult(e.epos, exec1, exec2);
-								case OpDiv: EvalEmitter.emitOpDiv(e.epos, exec1, exec2);
-								case OpSub: EvalEmitter.emitOpSub(e.epos, exec1, exec2);
 								case OpEq: EvalEmitter.emitOpEq(exec1, exec2);
 								case OpNotEq: EvalEmitter.emitOpNotEq(exec1, exec2);
 								case OpGt: EvalEmitter.emitOpGt(exec1, exec2);
 								case OpGte: EvalEmitter.emitOpGte(exec1, exec2);
 								case OpLt: EvalEmitter.emitOpLt(exec1, exec2);
 								case OpLte: EvalEmitter.emitOpLte(exec1, exec2);
-								case OpAnd: EvalEmitter.emitOpAnd(e.epos, exec1, exec2);
-								case OpOr: EvalEmitter.emitOpOr(e.epos, exec1, exec2);
-								case OpXor: EvalEmitter.emitOpXor(e.epos, exec1, exec2);
-								case OpShl: EvalEmitter.emitOpShl(e.epos, exec1, exec2);
-								case OpShr: EvalEmitter.emitOpShr(e.epos, exec1, exec2);
-								case OpUShr: EvalEmitter.emitOpUshr(e.epos, exec1, exec2);
-								case OpMod: EvalEmitter.emitOpMod(e.epos, exec1, exec2);
 								case _: Globals.die("", "evalJit.ml:TBinop");
 							}
 					}
@@ -726,7 +889,7 @@ class EvalJit {
 				var i = EvalContext.getProtoFieldIndex(proto, name);
 				var slot = EvalJitContext.getSlot(jit, 0, pv);
 				var execs = [for (e in el) jitExprRec(jit, false, e)];
-				return EvalEmitter.emitSuperFieldCall(slot, proto, i, execs, e.epos);
+				return EvalEmitter.emitSuperFieldCall(ctx.maxStackDepth, slot, proto, i, execs, e.epos);
 			case TField(ef, fa):
 				var name = EvalHash.hash(fieldName(fa));
 				var execs = [for (e in el) jitExprRec(jit, false, e)];
@@ -754,18 +917,20 @@ class EvalJit {
 					});
 				}
 				inline function jitWithNullCheck(ef:TExpr):Emitter {
-					var exec = jitExprRec(jit, false, ef);
-					return EvalEmitter.emitNullCheck(exec, ef.epos);
+					return switch localSlot(jit, ef) {
+						case null: EvalEmitter.emitNullCheck(jitExprRec(jit, false, ef), ef.epos);
+						case slot: EvalEmitter.emitLocalNullCheck(slot, ef.epos);
+					}
 				}
 				inline function instanceCall(c:TClass):Emitter {
 					var exec = jitWithNullCheck(ef);
 					var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.clPath), ef.epos);
 					var v = lazyProtoField(proto);
-					return EvalEmitter.emitProtoFieldCall(v, [exec].concat(execs), e.epos);
+					return EvalEmitter.emitProtoFieldCall(ctx.maxStackDepth, v, [exec].concat(execs), e.epos);
 				}
 				inline function defaultCall():Emitter {
 					var exec = jitWithNullCheck(ef);
-					return EvalEmitter.emitMethodCall(exec, name, execs, e.epos);
+					return EvalEmitter.emitMethodCall(ctx.maxStackDepth, exec, name, execs, e.epos);
 				}
 				switch fa {
 					case FStatic({clPath: {pack: [], name: "StringTools"}}, {cfName: "fastCodeAt"}):
@@ -781,9 +946,9 @@ class EvalJit {
 					case FStatic(c = {clPath: path}, cf) if (isProperMethod(cf)):
 						var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(path), ef.epos);
 						var stub = missingExtern(proto, c, cf, name, e.epos);
-						if (stub != null) return EvalEmitter.emitProtoFieldCall(AtomicLazy.fromVal(stub), execs, e.epos);
+						if (stub != null) return EvalEmitter.emitProtoFieldCall(ctx.maxStackDepth, AtomicLazy.fromVal(stub), execs, e.epos);
 						var v = lazyProtoField(proto);
-						return EvalEmitter.emitProtoFieldCall(v, execs, e.epos);
+						return EvalEmitter.emitProtoFieldCall(ctx.maxStackDepth, v, execs, e.epos);
 					case FInstance(c, _, cf) if (isProperMethod(cf)):
 						if (!isFinal(c, cf)) return defaultCall(); else if (!hasClassFlag(c, CInterface)) return instanceCall(c);
 						// If we have exactly one implementer, use it instead of the super class/interface.
@@ -797,7 +962,7 @@ class EvalJit {
 						} else return defaultCall();
 					case _:
 						var exec = jitWithNullCheck(ef);
-						return EvalEmitter.emitFieldCall(exec, name, execs, e.epos);
+						return EvalEmitter.emitFieldCall(ctx.maxStackDepth, exec, name, execs, e.epos);
 				}
 			case TConst(TSuper):
 				switch follow(e1.etype) {
@@ -806,7 +971,7 @@ class EvalJit {
 						var execs = [for (e in el) jitExprRec(jit, false, e)];
 						try {
 							var f = EvalContext.getSpecialInstanceConstructorRaise(ctx, key);
-							return EvalEmitter.emitSpecialSuperCall(f, execs);
+							return EvalEmitter.emitSpecialSuperCall(ctx.maxStackDepth, f, execs);
 						} catch (_:NotFound) {
 							var fnew = EvalContext.getInstanceConstructor(jit.ctx, key, e1.epos);
 							var p = e.epos;
@@ -814,7 +979,7 @@ class EvalJit {
 								case VFunction(f, _): f;
 								case v: (EvalEmitter.cannotCall(v, p) : Vfunc);
 							});
-							return EvalEmitter.emitSuperCall(v, execs, e.epos);
+							return EvalEmitter.emitSuperCall(ctx.maxStackDepth, v, execs, e.epos);
 						}
 					case _:
 						return Globals.die("", "evalJit.ml:TSuper");
@@ -822,11 +987,11 @@ class EvalJit {
 			case _:
 				var exec = jitExprRec(jit, false, e1);
 				var execs = [for (e in el) jitExprRec(jit, false, e)];
-				return EvalEmitter.emitCall(exec, execs, e.epos);
+				return EvalEmitter.emitCall(ctx.maxStackDepth, exec, execs, e.epos);
 		}
 	}
 
-	public static function jitTfunctionRec(jit:JitContext, isStatic:Bool, pos:Pos, tf:TFunc):{fl:Array<ArgSetter>, exec:Emitter} {
+	public static function jitTfunctionRec(jit:JitContext, isStatic:Bool, pos:Pos, tf:TFunc):{fl:Vector<Int>, exec:Emitter} {
 		var ctx = jit.ctx;
 		EvalJitContext.pushScope(jit, pos);
 		// Declare `this` (if not static) and function arguments as local variables.
@@ -836,13 +1001,13 @@ class EvalJit {
 				var varacc = EvalJitContext.declareLocal(jit, a.variable);
 				switch varacc {
 					case Env(slot):
-						EvalEmitter.executeSetCapture(slot);
+						EvalEmitter.paramCapture(slot);
 					case Local(slot):
-						EvalEmitter.executeSetLocal(slot);
+						EvalEmitter.paramLocal(slot);
 				}
 			}
 		];
-		if (!isStatic) fl.unshift(EvalEmitter.executeSetLocal(0));
+		if (!isStatic) fl.unshift(EvalEmitter.paramLocal(0));
 		// port: List.fold_right over the arguments: the last argument's default is concatenated first.
 		var e = tf.tfExpr;
 		var k = tf.tfArgs.length - 1;
@@ -864,7 +1029,7 @@ class EvalJit {
 		// Jit the function expression.
 		var exec = jitExprRec(jit, true, e);
 		EvalJitContext.popScope(jit);
-		return {fl: fl, exec: exec};
+		return {fl: Vector.fromArrayCopy(fl), exec: exec};
 	}
 
 	public static function getEnvCreation(jit:JitContext, isStatic:Bool, file:String, info:EnvKind):EnvInfo {
