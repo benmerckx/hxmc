@@ -159,7 +159,7 @@ class FieldProto {
 }
 
 class VirtualProto {
-	static var virtualUid = 0;
+	static final virtualUid = new haxe.atomic.AtomicInt(0);
 
 	public final vid:Int; /* unique, so that comparing two distinct virtuals never recurses into their fields */
 	public var vfields:Vector<HField>;
@@ -167,7 +167,7 @@ class VirtualProto {
 
 	// port: `mk_virtual ()`
 	public function new() {
-		vid = virtualUid++;
+		vid = virtualUid.add(1);
 		vfields = vector();
 		vindex = new StrPMap();
 	}

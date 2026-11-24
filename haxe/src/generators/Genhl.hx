@@ -49,10 +49,61 @@ using core.ds.VectorTools;
 
 /* compiler */
 
+/* A table of the generation context, read and grown by the domains
+	generating classes in parallel: under its lock, with a cache of the keys
+	already seen on each domain. */
 class Lookup<V> {
 	public var arr:Array<V> = [];
 	// port: ('a, int) Hashtbl.t, with the key rendered as a string
 	public var map:StringMap<Int> = new StringMap();
+	public final lock = new sys.thread.Mutex();
+	/* its cache on the domains, for the context [stamp] */
+	public final slot:Int;
+	public final stamp:Int;
+
+	public function new(stamp:Int, slot:Int) {
+		this.stamp = stamp;
+		this.slot = slot;
+	}
+}
+
+// port: Saturn.Htbl, the types published for the domains reading without the
+// type lock: a table under a lock of its own, read through the cache of the
+// domain (a published entry is not changed again, see Genhl.publish)
+class Published<V> {
+	final lock = new sys.thread.Mutex();
+	final map = new StringMap<V>();
+	/* its cache on the domains, for the context [stamp] */
+	public final slot:Int;
+	public final stamp:Int;
+
+	public function new(stamp:Int, slot:Int) {
+		this.stamp = stamp;
+		this.slot = slot;
+	}
+
+	public function findOpt(k:String):Null<V> {
+		lock.acquire();
+		var v = map.get(k);
+		lock.release();
+		return v;
+	}
+
+	// port: `try_add`, else `try_set`
+	public function publish(k:String, v:V):Void {
+		lock.acquire();
+		map.set(k, v);
+		lock.release();
+	}
+}
+
+/* the caches of a domain: the keys of the tables of a context, and the files
+	of a generation */
+class DomainCaches {
+	public var dcStamp:Int = -1;
+	public var dcTables:Array<StringMap<Dynamic>> = [];
+	public var dcGen:Int = -1;
+	public var dcFiles:StringMap<syntax.Lexer.LexerFile> = new StringMap();
 
 	public function new() {}
 }
@@ -201,6 +252,16 @@ class HlObject {
 	}
 }
 
+// port: Generation_failed of exn * Printexc.raw_backtrace (the exception keeps its stack)
+class GenerationFailed extends haxe.Exception {
+	public final e:haxe.Exception;
+
+	public function new(e:haxe.Exception) {
+		super("Generation_failed");
+		this.e = e;
+	}
+}
+
 // port: the referrer of the linker's walk (`Object o | `Proto p)
 enum LinkReferrer {
 	RObject(o:HlObject);
@@ -213,20 +274,16 @@ enum LinkReferrer {
 	for the lifetime of the context. The HL types are built once per context
 	and hold symbols as well; the linker numbers the symbols in a canonical
 	order. */
-// port: the classes are generated one after the other on one thread, which upstream
-// keeps as -D hl-gen-sequential and whose output its parallel generation equals:
-// the type lock is only its section (with_type_lock), the tables have no locks and
-// the published copies of the types (ptypes, panons) are the tables themselves.
 class HlContext {
 	public var com:Gctx;
-	public var cglobals:Lookup<Ttype> = new Lookup();
-	public var cstrings:Lookup<String> = new Lookup();
-	public var cbytes:Lookup<haxe.io.Bytes> = new Lookup();
-	public var cfloats:Lookup<Float> = new Lookup();
-	public var cints:Lookup<Int> = new Lookup();
-	public var cnatives:Lookup<Native> = new Lookup();
-	public var cfids:Lookup<{name:String, path:GlobalTypePath}> = new Lookup();
-	public var cconstants:Lookup<{g:Int, fields:Vector<Int>}> = new Lookup();
+	public var cglobals:Lookup<Ttype>;
+	public var cstrings:Lookup<String>;
+	public var cbytes:Lookup<haxe.io.Bytes>;
+	public var cfloats:Lookup<Float>;
+	public var cints:Lookup<Int>;
+	public var cnatives:Lookup<Native>;
+	public var cfids:Lookup<{name:String, path:GlobalTypePath}>;
+	public var cconstants:Lookup<{g:Int, fields:Vector<Int>}>;
 	public var hlVer:String;
 	public var hl2:Bool;
 	public var optimize:Bool;
@@ -239,6 +296,14 @@ class HlContext {
 	public var recCache:Array<{t:T, tref:TRef}> = []; // port: list, head = last element
 	public var cachedTuples:TtypeMap<Ttype> = new TtypeMap(); // port: keyed by HFun (tl, HVoid)
 	public var tstring:Ttype = HVoid;
+	/* The HL types are built under [tlock] (one domain at a time, in
+		[cached_types], [anons_cache] and [virtuals]); a type is published, for
+		the domains reading without the lock, when the construction that created
+		it ends. */
+	public var tlock:sys.thread.Mutex = new sys.thread.Mutex();
+	public var tpending:{l:Array<Void->Void>} = {l: []}; // port: list ref, head = last element
+	public var ptypes:Published<Ttype>;
+	public var panons:Published<Array<{a:TAnon, t:Ttype}>>;
 	public var arrayImpl:ArrayImpl;
 	public var baseClass:TClass;
 	public var baseType:TClass;
@@ -246,7 +311,8 @@ class HlContext {
 	public var coreType:TClass;
 	public var coreEnum:TClass;
 	public var refAbstract:TAbstract;
-	public var cdebugFiles:Lookup<String> = new Lookup();
+	/* the files of the debug information, by name */
+	public var cdebugFiles:Lookup<String>;
 	public var ctDelayed:Array<Void->Void> = []; // port: list, head = last element
 	public var ctDepth:Int = 0;
 	// port: keyed by the hash of the names of their fields (a string here)
@@ -259,7 +325,66 @@ class HlContext {
 	/* the class being generated */
 	public var cur:GenObject = new GenObject({pack: [], name: ""});
 
-	public function new() {}
+	public function new(stamp:Int) {
+		cints = new Lookup(stamp, 0);
+		cstrings = new Lookup(stamp, 1);
+		cbytes = new Lookup(stamp, 2);
+		cfloats = new Lookup(stamp, 3);
+		cglobals = new Lookup(stamp, 4);
+		cnatives = new Lookup(stamp, 5);
+		cconstants = new Lookup(stamp, 6);
+		cfids = new Lookup(stamp, 7);
+		cdebugFiles = new Lookup(stamp, 8);
+		ptypes = new Published(stamp, 9);
+		panons = new Published(stamp, 10);
+	}
+
+	// port: `{ ctx with m; cur; rec_cache = []; ct_delayed = []; ct_depth = 0;
+	// ... virtuals_pending = []; virtuals_holders = []; virtuals_depth = 0 }`
+	public function forClass(m:MethodContext, cur:GenObject):HlContext {
+		var c:HlContext = Type.createEmptyInstance(HlContext);
+		c.com = com;
+		c.cglobals = cglobals;
+		c.cstrings = cstrings;
+		c.cbytes = cbytes;
+		c.cfloats = cfloats;
+		c.cints = cints;
+		c.cnatives = cnatives;
+		c.cfids = cfids;
+		c.cconstants = cconstants;
+		c.hlVer = hlVer;
+		c.hl2 = hl2;
+		c.optimize = optimize;
+		c.wNullCompare = wNullCompare;
+		c.overrides = overrides;
+		c.cachedTypes = cachedTypes;
+		c.m = m;
+		c.anonsCache = anonsCache;
+		c.recCache = [];
+		c.cachedTuples = cachedTuples;
+		c.tstring = tstring;
+		c.tlock = tlock;
+		c.tpending = tpending;
+		c.ptypes = ptypes;
+		c.panons = panons;
+		c.arrayImpl = arrayImpl;
+		c.baseClass = baseClass;
+		c.baseType = baseType;
+		c.baseEnum = baseEnum;
+		c.coreType = coreType;
+		c.coreEnum = coreEnum;
+		c.refAbstract = refAbstract;
+		c.cdebugFiles = cdebugFiles;
+		c.ctDelayed = [];
+		c.ctDepth = 0;
+		c.virtuals = virtuals;
+		c.virtualsPending = [];
+		c.virtualsDepth = 0;
+		c.virtualsHolders = [];
+		c.enumCtors = enumCtors;
+		c.cur = cur;
+		return c;
+	}
 }
 
 /* --- */
@@ -382,15 +507,63 @@ class Genhl {
 		outermost section ends. A type is built without the typedefs being
 		resolved around it, so that its content does not depend on where it is
 		first reached. */
-	// port: one thread: the section only sets the typedefs aside
 	static function withTypeLock<R>(ctx:HlContext, f:Void->R):R {
-		var recCache = ctx.recCache;
-		ctx.recCache = [];
-		var v = try f() catch (e:haxe.Exception) {
+		function f2():R {
+			var recCache = ctx.recCache;
+			ctx.recCache = [];
+			var v = try f() catch (e:haxe.Exception) {
+				ctx.recCache = recCache;
+				throw e;
+			}
 			ctx.recCache = recCache;
+			return v;
+		}
+		var d = typeLockDepth();
+		if (d.v > 0) return f2();
+		ctx.tlock.acquire();
+		d.v = 1;
+		var v = try f2() catch (e:haxe.Exception) {
+			ctx.tpending.l = [];
+			d.v = 0;
+			ctx.tlock.release();
 			throw e;
 		}
-		ctx.recCache = recCache;
+		var l = ctx.tpending.l;
+		ctx.tpending.l = [];
+		for (f in l) f();
+		d.v = 0;
+		ctx.tlock.release();
+		return v;
+	}
+
+	/* the depth of the type lock held by this domain */
+	// port: Domain.DLS is sys.thread.Tls (null: the initial value)
+	static final typeLockDepthKey = new sys.thread.Tls<{v:Int}>();
+
+	static function typeLockDepth():{v:Int} {
+		var d = typeLockDepthKey.value;
+		if (d == null) {
+			d = {v: 0};
+			typeLockDepthKey.value = d;
+		}
+		return d;
+	}
+
+	static function publish<V>(tbl:Published<V>, k:String, v:V):Void tbl.publish(k, v);
+
+	/* a class or enum type, created under the type lock */
+	static function cacheType(ctx:HlContext, key:String, t:Ttype):Void {
+		ctx.cachedTypes.set(key, t);
+		ctx.tpending.l.push(() -> publish(ctx.ptypes, key, ctx.cachedTypes.get(key)));
+	}
+
+	// port: Saturn.Htbl.find_opt, through the cache of the domain: a published entry is final
+	static function findPublished<V>(tbl:Published<V>, k:String):Null<V> {
+		var cache:StringMap<V> = cast localCache(tbl.stamp, tbl.slot);
+		var v = cache.get(k);
+		if (v != null) return v;
+		var v = tbl.findOpt(k);
+		if (v != null) cache.set(k, v);
 		return v;
 	}
 
@@ -407,24 +580,70 @@ class Genhl {
 
 	static final nullCapture:MethodCapture = new MethodCapture(new IntMap(), vector(), HVoid, false);
 
+	static final contextStamp = new haxe.atomic.AtomicInt(0);
+
+	// port: lookup_slots, with the two published tables (Published)
+	static inline final lookupSlots = 11;
+
+	// port: Domain.DLS is sys.thread.Tls (null: the initial value)
+	static final domainCachesKey = new sys.thread.Tls<DomainCaches>();
+
+	static function domainCaches():DomainCaches {
+		var dc = domainCachesKey.value;
+		if (dc == null) {
+			dc = new DomainCaches();
+			domainCachesKey.value = dc;
+		}
+		return dc;
+	}
+
+	static function localCache(stamp:Int, slot:Int):StringMap<Dynamic> {
+		var dc = domainCaches();
+		if (dc.dcStamp != stamp) {
+			dc.dcStamp = stamp;
+			dc.dcTables = [for (_ in 0...lookupSlots) new StringMap()];
+		}
+		return dc.dcTables[slot];
+	}
+
+	// port: Mutex.protect
+	static inline function protect<R>(m:sys.thread.Mutex, f:Void->R):R {
+		m.acquire();
+		var r = try f() catch (e:haxe.Exception) {
+			m.release();
+			throw e;
+		}
+		m.release();
+		return r;
+	}
+
 	static function lookup<V>(l:Lookup<V>, v:String, fb:Void->V):Int {
-		var id = l.map.get(v);
+		var cache:StringMap<Int> = cast localCache(l.stamp, l.slot);
+		var id = cache.get(v);
 		if (id != null) return id;
-		var id = l.arr.length;
-		l.arr.push(null);
-		l.map.set(v, id);
-		l.arr[id] = fb();
+		var id = protect(l.lock, () -> {
+			var id = l.map.get(v);
+			if (id != null) return id;
+			var id = l.arr.length;
+			l.arr.push(null);
+			l.map.set(v, id);
+			l.arr[id] = fb();
+			return id;
+		});
+		cache.set(v, id);
 		return id;
 	}
 
 	static function lookupAlloc<V>(l:Lookup<V>, v:V):Int {
-		var id = l.arr.length;
-		l.arr.push(v);
-		return id;
+		return protect(l.lock, () -> {
+			var id = l.arr.length;
+			l.arr.push(v);
+			return id;
+		});
 	}
 
 	/* the value of an index, while the table may grow */
-	static inline function lookupGet<V>(l:Lookup<V>, i:Int):V return l.arr[i];
+	static function lookupGet<V>(l:Lookup<V>, i:Int):V return protect(l.lock, () -> l.arr[i]);
 
 	static function methodContext(id:Int, t:Ttype, captured:MethodCapture, hasthis:Bool):MethodContext
 		return new MethodContext(id, t, captured, hasthis);
@@ -658,6 +877,26 @@ class Genhl {
 
 	static function setCurpos(ctx:HlContext, p:Pos):Void ctx.m.mcurpos = p;
 
+	/* the generation being done, for the caches of the domains */
+	static final generationStamp = new haxe.atomic.AtomicInt(0);
+
+	/* [Lexer.get_error_line], the files being found once by each domain (without
+		the lock of the table of the files) */
+	static function errorLine(p:Pos):Int {
+		var dc = domainCaches();
+		var gen = generationStamp.load();
+		if (dc.dcGen != gen) {
+			dc.dcGen = gen;
+			dc.dcFiles = new StringMap();
+		}
+		var file = dc.dcFiles.get(p.pfile);
+		if (file == null) {
+			file = syntax.Lexer.findFile(p.pfile);
+			dc.dcFiles.set(p.pfile, file);
+		}
+		return syntax.Lexer.findLine(p.pmin, file).line;
+	}
+
 	/* the debug information of the instructions of a function: their file (a
 		symbol, by name) and line, and the position starting the line */
 	static function makeDebug(ctx:HlContext, arr:Array<Pos>):Vector<DebugInfo> {
@@ -671,7 +910,7 @@ class Genhl {
 			var p = arr[i];
 			if (first || p != cur) {
 				var file = if (!first && p.pfile == cur.pfile) curFile else lookup(ctx.cdebugFiles, p.pfile, () -> p.pfile);
-				var line = syntax.Lexer.getErrorLine(p);
+				var line = errorLine(p);
 				if (line != curLine || file != curFile) {
 					curFile = file;
 					curLine = line;
@@ -694,14 +933,19 @@ class Genhl {
 
 	static var fakeTnullCache:Null<TAbstract> = null;
 
+	// port: upstream's is a value of the module; made once, by the first domain asking
+	static final fakeTnullLock = new sys.thread.Mutex();
+
 	static function fakeTnull():TAbstract {
-		if (fakeTnullCache == null) {
-			var a = nullAbstract.clone();
-			a.aPath = {pack: [], name: "Null"};
-			a.aParams = vector(mkTypeParam(nullClass, TPHType, null, null));
-			fakeTnullCache = a;
-		}
-		return fakeTnullCache;
+		return protect(fakeTnullLock, () -> {
+			if (fakeTnullCache == null) {
+				var a = nullAbstract.clone();
+				a.aPath = {pack: [], name: "Null"};
+				a.aParams = vector(mkTypeParam(nullClass, TPHType, null, null));
+				fakeTnullCache = a;
+			}
+			return fakeTnullCache;
+		});
 	}
 
 	static function isExcluded(c:TClass):Bool return hasClassFlag(c, CExcluded) && !hasClassFlag(c, CInterface);
@@ -855,6 +1099,17 @@ class Genhl {
 			case TAnon(a):
 				if (a.aFields.isEmpty()) return HDyn;
 				var key = anonKey(a);
+				var published = findPublished(ctx.panons, key);
+				var found = published == null ? null : findAnon(published, a);
+				// port: the cache of the domain holds the list it last read: an anon published since is read again
+				if (found == null && published != null) {
+					var l = ctx.panons.findOpt(key);
+					if (l != published) {
+						(cast localCache(ctx.panons.stamp, ctx.panons.slot) : StringMap<Array<{a:TAnon, t:Ttype}>>).set(key, l);
+						found = findAnon(l, a);
+					}
+				}
+				if (found != null) return found;
 				return withTypeLock(ctx, () -> {
 					var l = ctx.anonsCache.get(key);
 					if (l == null) l = [];
@@ -864,6 +1119,7 @@ class Genhl {
 					var t = HVirtual(vp);
 					if (tref != null) tref.v = t;
 					ctx.anonsCache.set(key, l.concat([{a: a, t: t}]));
+					ctx.tpending.l.push(() -> publish(ctx.panons, key, ctx.anonsCache.get(key)));
 					var fields = a.aFields.foldCons(cf -> cfieldType(ctx, cf));
 					var fields = listSort((f1:HField, f2:HField) -> strCompare(f1.name, f2.name), fields);
 					vp.vfields = Vector.fromArrayCopy(fields);
@@ -1035,7 +1291,7 @@ class Genhl {
 		var c = if (hasClassFlag(c, CExtern)) resolveClass(ctx, c, pl, statics) else c;
 		var keyName = if (statics) "$" + c.clPath.name else c.clPath.name;
 		var keyPath = [keyName].concat(c.clPath.pack).join("\x00");
-		var cached = ctx.cachedTypes.get(keyPath);
+		var cached = findPublished(ctx.ptypes, keyPath);
 		if (cached != null) return cached;
 		return withTypeLock(ctx, () -> classTypeLocked(tref, ctx, c, statics, keyName, keyPath));
 	}
@@ -1046,7 +1302,7 @@ class Genhl {
 		if (hasClassFlag(c, CInterface) && !statics) {
 			var vp = beginVirtual(ctx, t -> ctx.cachedTypes.set(keyPath, t));
 			var t = HVirtual(vp);
-			ctx.cachedTypes.set(keyPath, t);
+			cacheType(ctx, keyPath, t);
 			function loop(c:TClass):Array<HField> {
 				function concatUniq(fields:Array<HField>, pfields:Array<HField>):Array<HField> {
 					for (pf in pfields) if (!core.ds.ArrayTools.exists(fields, f -> f.name == pf.name)) fields = [pf].concat(fields);
@@ -1070,7 +1326,7 @@ class Genhl {
 		holdVirtuals(ctx, subst -> substProto(subst, p));
 		if (tref != null) tref.v = t;
 		ctx.ctDepth = ctx.ctDepth + 1;
-		ctx.cachedTypes.set(keyPath, t);
+		cacheType(ctx, keyPath, t);
 		if (isPath(c.clPath, [], "Array")) die("", "genhl.ml");
 		if (c == ctx.baseClass) {
 			if (statics) die("", "genhl.ml");
@@ -1196,7 +1452,7 @@ class Genhl {
 
 	static function enumType(ctx:HlContext, e:TEnum, ?tref:TRef):Ttype {
 		var keyPath = [e.ePath.name].concat(e.ePath.pack).join("\x00");
-		var cached = ctx.cachedTypes.get(keyPath);
+		var cached = findPublished(ctx.ptypes, keyPath);
 		if (cached != null) return cached;
 		return withTypeLock(ctx, () -> enumTypeLocked(tref, ctx, e, keyPath));
 	}
@@ -1209,7 +1465,7 @@ class Genhl {
 		var t = HEnum(et);
 		holdVirtuals(ctx, subst -> et.efields = et.efields.map(f -> ({name: f.name, nid: f.nid, args: f.args.map(subst)} : EField)));
 		if (tref != null) tref.v = t;
-		ctx.cachedTypes.set(keyPath, t);
+		cacheType(ctx, keyPath, t);
 		et.efields = e.eConstrs.keyArray().mapToVector(n -> {
 			var f = e.eConstrs.get(n);
 			if (f == null) throw NotFound.raise();
@@ -1238,7 +1494,7 @@ class Genhl {
 	static function enumClass(ctx:HlContext, e:TEnum):Ttype {
 		var keyName = "$" + e.ePath.name;
 		var keyPath = [keyName].concat(e.ePath.pack).join("\x00");
-		var cached = ctx.cachedTypes.get(keyPath);
+		var cached = findPublished(ctx.ptypes, keyPath);
 		if (cached != null) return cached;
 		return withTypeLock(ctx, () -> enumClassLocked(ctx, e, keyName, keyPath));
 	}
@@ -1251,7 +1507,7 @@ class Genhl {
 		p.pnfields = -1;
 		var t = HObj(p);
 		holdVirtuals(ctx, subst -> substProto(subst, p));
-		ctx.cachedTypes.set(keyPath, t);
+		cacheType(ctx, keyPath, t);
 		var psuper = switch classType(ctx, ctx.baseEnum, vector(), false) {
 			case HObj(o): o;
 			case _: die("", "genhl.ml");
@@ -2282,7 +2538,7 @@ class Genhl {
 			var g = lookupAlloc(ctx.cglobals, t);
 			{g: g, fields: fields};
 		});
-		return ctx.cconstants.arr[cidx].g;
+		return lookupGet(ctx.cconstants, cidx).g;
 	}
 
 	static function makeString(ctx:HlContext, s:String, p:Pos):Int {
@@ -4647,7 +4903,7 @@ class Genhl {
 				var l = allocString(ctx, "?std");
 				({lib: l, name: n, t: HFun([HType, HI32], HI32), findex: fid} : Native);
 			});
-			var native = ctx.cnatives.arr[nid].findex;
+			var native = lookupGet(ctx.cnatives, nid).findex;
 			function loadBits(c:TClass, w:Int):Int {
 				var r = allocTmp(ctx, HI32);
 				hold(ctx, r);
@@ -5175,7 +5431,10 @@ class Genhl {
 			}), f.assigns.map(a -> ({name: smap[a.name], pos: a.pos, scopeEnd: a.scopeEnd} : Assign)), f.needOpt, if (f.flocal < 0) -1 else smap[f.flocal]);
 		}
 		var out = new Vector<Fundecl>(nfuns);
-		for (i in 0...nfuns) out[i] = remap(funs[i]);
+		context.Parallel.runWithPool(com.pool, pool -> {
+			if (pool != null && nfuns > 256) pool.parallelFor(0, nfuns - 1, i -> out[i] = remap(funs[i]), 16) else for (i in 0...nfuns) out[i] = remap(funs[i]);
+			null;
+		});
 		inline function table<X, Y>(order:Array<Int>, get:Int->Y):Vector<Y> return Vector.fromArrayCopy([for (i in order) get(i)]);
 		var bytes = table(bn.order, i -> ctx.cbytes.arr[i]);
 		var gnames = new Vector<String>(gn.order.length, "");
@@ -5680,7 +5939,8 @@ class Genhl {
 			}
 		}
 		var hlVer = Gctx.definedValueSafe(com, Define.HlVer, "");
-		var ctx = new HlContext();
+		var stamp = contextStamp.add(1) + 1;
+		var ctx = new HlContext(stamp);
 		ctx.overrides = overrides;
 		ctx.com = com;
 		ctx.hlVer = hlVer;
@@ -5812,47 +6072,86 @@ class Genhl {
 
 	/* the generation of the code: the objects of the classes, of the entry point
 		and of the enum constructors, then their link */
-	// port: the classes are generated in the order of the types, on one thread
-	// (upstream's -D hl-gen-sequential, which its parallel generation equals);
-	// the warnings of a class are emitted as soon as it is generated, or fails
-	static function generateCode(com:Gctx):{code:Code, gnames:Vector<String>} {
+	static function generateCode(com:Gctx, sequential:Bool = false):{code:Code, gnames:Vector<String>} {
 		var overrides = prepareTypes(com.types);
 		var ctx = createContext(com, overrides);
 		var dump = Gctx.defined(com, Define.Dump);
-		function emitWarnings(l:Array<{msg:String, p:Pos}>) for (w in l) com.warning(core.Message.WarningCode.WGenerator, [], w.msg, w.p);
+		/* the classes, generated on the domains of the pool (each with a context
+			of its own sharing the tables), the largest first */
 		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "functions"]);
-		var classObjects:Array<HlObject> = [];
-		for (t in com.types) switch t {
-			case TClassDecl(c):
-				ctx.m = methodContext(0, HVoid, nullCapture, false);
-				ctx.cur = newGenObject({pack: [], name: ""});
-				ctx.recCache = [];
-				ctx.ctDelayed = [];
-				ctx.ctDepth = 0;
-				ctx.virtualsPending = [];
-				ctx.virtualsHolders = [];
-				ctx.virtualsDepth = 0;
-				var o = try generateObject(ctx, t, c) catch (e:haxe.Exception) {
-					emitWarnings(ctx.cur.gWarnings);
-					throw e;
-				}
-				emitWarnings(o.oWarnings);
-				classObjects.push(o);
-			case _:
+		var classes = [
+			for (t in com.types) switch t {
+				case TClassDecl(c): {t: t, c: c};
+				case _: continue;
+			}
+		];
+		var generated = new Vector<Null<HlObject>>(classes.length, null);
+		function emitWarnings(l:Array<{msg:String, p:Pos}>) for (w in l) com.warning(core.Message.WarningCode.WGenerator, [], w.msg, w.p);
+		/* on one domain, the warnings of a class are emitted as soon as it is
+			generated, or fails */
+		var emitted = false;
+		function generate(i:Int):Void {
+			var tc = classes[i];
+			var ctx = ctx.forClass(methodContext(0, HVoid, nullCapture, false), newGenObject({pack: [], name: ""}));
+			var o = try generateObject(ctx, tc.t, tc.c) catch (e:haxe.Exception) {
+				if (emitted) emitWarnings(ctx.cur.gWarnings);
+				throw e;
+			}
+			if (emitted) emitWarnings(o.oWarnings);
+			generated[i] = o;
 		}
+		function generateSequential():Void {
+			emitted = true;
+			for (i in 0...classes.length) generate(i);
+		}
+		generationStamp.add(1);
+		if (sequential || classes.length < 16)
+			generateSequential()
+		else {
+			/* a failure is reported by a sequential generation, in the order of the types */
+			// port: Atomic.make None, set once under its lock
+			var failed:Null<haxe.Exception> = null;
+			var isFailed = new haxe.atomic.AtomicBool(false);
+			var failedLock = new sys.thread.Mutex();
+			var weights = [for (tc in classes) tc.c.clFields.length + tc.c.clStatics.length];
+			var order = [for (k in 0...classes.length) k];
+			haxe.ds.ArraySort.sort(order, (a, b) -> weights[b] - weights[a]);
+			context.Parallel.runWithPool(com.pool, pool -> {
+				if (pool == null) generateSequential() else
+					pool.parallelFor(0, order.length - 1, k -> {
+						if (!isFailed.load()) try generate(order[k]) catch (e:haxe.Exception) {
+							failedLock.acquire();
+							if (failed == null) {
+								failed = e;
+								isFailed.store(true);
+							}
+							failedLock.release();
+						}
+					}, 1);
+				null;
+			});
+			if (failed != null) throw new GenerationFailed(failed);
+		}
+		var fresh:Array<HlObject> = [];
+		var classObjects = [
+			for (o in generated) {
+				if (o == null) die("", "genhl.ml");
+				if (!emitted) emitWarnings(o.oWarnings);
+				fresh.push(o);
+				o;
+			}
+		];
 		t();
 		/* the entry point and the enum constructors */
 		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "init"]);
 		ctx.cur = newGenObject({pack: [], name: ""});
-		// port: the context of the generation itself, as upstream's (the classes had copies)
-		ctx.m = methodContext(0, HVoid, nullCapture, false);
 		var entry = try generateStaticInit(ctx, com.types, com.main.mainExpr) catch (e:haxe.Exception) {
 			emitWarnings(ctx.cur.gWarnings);
 			throw e;
 		}
 		var entryObject = makeObject(ctx.cur);
 		emitWarnings(entryObject.oWarnings);
-		var fresh = classObjects.concat([entryObject]);
+		fresh.push(entryObject);
 		var enumObjects = generateEnumCtors(ctx);
 		t();
 		/* the optimization of the functions generated */
@@ -5884,10 +6183,20 @@ class Genhl {
 		}
 		/* the link */
 		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "link"]);
-		// port: Hashtbl.fold over the enum objects, then the others; each object's symbols alone
-		for (o in enumObjects) o.oSyms = objectSyms(o);
-		for (o in fresh) o.oSyms = objectSyms(o);
-		var r = link(ctx, fresh, enumObjects, entry);
+		var t2 = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "link", "scan"]);
+		// port: the enum objects (Hashtbl.fold), then the others; each object's symbols alone
+		var scan = [for (o in enumObjects) o].concat(fresh);
+		context.Parallel.runWithPool(com.pool, pool -> {
+			function body(i:Int) {
+				var o = scan[i];
+				o.oSyms = objectSyms(o);
+			}
+			if (pool != null && scan.length > 16) pool.parallelFor(0, scan.length - 1, body, 4) else for (i in 0...scan.length) body(i);
+			null;
+		});
+		t2();
+		var all = classObjects.concat([entryObject]);
+		var r = link(ctx, all, enumObjects, entry);
 		t();
 		return r;
 	}
@@ -5927,8 +6236,16 @@ class Genhl {
 		if (Gctx.rawDefined(com, "hl_legacy32") && hlVer != "" && compareVersion(hlVer, "2.0.0") >= 0)
 			com.warning(core.Message.WarningCode.WGenerator, [], "-D hl_legacy32 is for 32-bit compatibility, but 32-bit builds are no longer supported since HashLink 2.0 (hl_ver >= 2.0.0)", fakePos("-D hl_legacy32"));
 
-		// port: -D hl-gen-sequential is how the classes are always generated here
-		var r = generateCode(com);
+		/* -D hl-gen-sequential: the classes are generated on one domain */
+		var sequential = Gctx.rawDefined(com, "hl_gen_sequential");
+		var r = try generateCode(com, sequential) catch (f:GenerationFailed) {
+			// port: Out_of_memory, Stack_overflow and Sys.Break, raised again at once upstream,
+			// ... are not told apart from the other failures here
+			/* the error of the first class, in the order of the types */
+			generateCode(com, true);
+			/* the failure only happens in parallel: it is not hidden */
+			throw f.e;
+		}
 		var code = r.code;
 
 		if (dump) {
