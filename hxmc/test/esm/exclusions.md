@@ -11,7 +11,7 @@ Builds upstream `tests/unit` with `hxmc/test/upstream/unit-esm.hxml` (`-D esm`,
 **`hxmc/test/esm/exclusions.txt`** (one class or `class.method` per line).
 
 Populated from **runtime** utest failures on Genesm (2026-11-24). Harness runs end-to-end;
-**1575 passed / 45 failed / 0 skipped** with exclusions disabled.
+**1576 passed / 44 failed / 0 skipped** with exclusions disabled.
 
 | Bucket | Rationale |
 | --- | --- |
@@ -20,7 +20,6 @@ Populated from **runtime** utest failures on Genesm (2026-11-24). Harness runs e
 | `unit.TestSerialize.*`, `unit.TestIO.*`, `unit.TestBasetypes.*` | Serialization, bytes, string/map identity vs Genjs |
 | `unit.teststd.*` (7 tests) | Std parity (Array, Map, Reflect, Type, macro, runtime copy) |
 | `unit.TestCasts.testInterfaces`, `unit.TestInterface.test` | `js.Boot.__cast` / interface casting |
-| `unit.TestKeyValueIterator.testStaticExtension` | `$keyValueIterator` not in ESM runtime yet |
 | `unit.TestMatch.testBasic`, `unit.TestExceptions.testValueException` | Enum / exception wiring |
 
 Smoke:

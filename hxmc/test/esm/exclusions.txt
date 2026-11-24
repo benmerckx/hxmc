@@ -25,7 +25,6 @@ unit.TestExceptions.testValueException
 unit.TestInterface.test
 unit.TestIO.test
 unit.TestIO.testBytesBounds
-unit.TestKeyValueIterator.testStaticExtension
 unit.TestMatch.testBasic
 unit.TestReflect.testEnumConstructor
 unit.TestReflect.testIs

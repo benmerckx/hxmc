@@ -22,7 +22,9 @@ class Genesm {
 		Genjs.setupKwds(com);
 		var outDir = Path.directory(com.file);
 		var modDir = Path.join([outDir, "hx"]);
-		var groups = moduleGroups(com);
+		var packed = moduleGroups(com);
+		var groups = packed.groups;
+		var collapsedModules = packed.collapsed;
 		var stdModule = GenesmLinks.buildStdSet(com, groups);
 		var runtimeName = "__hx_esm_runtime.mjs";
 		var esm = core.Define.rawDefined(com.defines, "esm");
@@ -35,7 +37,7 @@ class Genesm {
 		var regCtx = allocCtx(com, esVersion);
 		for (g in groups) registerModuleSymbols(symOwner, regCtx, g.types, Globals.sTypePath(g.module));
 		for (g in groups) {
-			var links = new GenesmLinks(g.module, stdModule);
+			var links = new GenesmLinks(g.module, stdModule, collapsedModules);
 			var modCtx = allocCtx(com, esVersion);
 			modCtx.typeAccessor = t -> links.typeAccessor(modCtx, t);
 			modulePreamble(modCtx, com, g.types);
@@ -52,10 +54,10 @@ class Genesm {
 			modDeps.set(mid, moduleGlobalDeps(body, symOwner, mid));
 			writeModule(modDir, g.module, runtimeRel(g.module, runtimeName), g.types, body, modCtx, links);
 		}
-		writeEntry(com, groups, stdModule, moduleExports, "./" + runtimeName, modDeps);
+		writeEntry(com, groups, stdModule, moduleExports, "./" + runtimeName, modDeps, collapsedModules);
 	}
 
-	static function moduleGroups(com:Gctx):Array<{module:GlobalTypePath, types:Array<ModuleType>}> {
+	static function moduleGroups(com:Gctx):{groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, collapsed:Map<String, String>} {
 		var lut = new Map<String, {module:GlobalTypePath, types:Array<ModuleType>}>();
 		for (t in com.types) {
 			var m = typeModule(t);
@@ -72,6 +74,8 @@ class Genesm {
 		return coalesceSubmoduleGroups(out);
 	}
 
+	public static function submoduleParentModuleId(id:String):Null<String> return subModuleParentId(pathFromId(id));
+
 	static function subModuleParentId(child:GlobalTypePath):Null<String> {
 		var pack = child.pack;
 		if (pack.length == 0) return null;
@@ -83,21 +87,24 @@ class Genesm {
 	}
 
 	static function coalesceSubmoduleGroups(groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>)
-			:Array<{module:GlobalTypePath, types:Array<ModuleType>}> {
+			:{groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, collapsed:Map<String, String>} {
 		var lut = new Map<String, {module:GlobalTypePath, types:Array<ModuleType>}>();
 		for (g in groups) lut.set(Globals.sTypePath(g.module), g);
 		var drop = new Map<String, Bool>();
+		var collapsed = new Map<String, String>();
 		for (g in groups) {
+			var childId = Globals.sTypePath(g.module);
 			var parentId = subModuleParentId(g.module);
 			if (parentId == null || !lut.exists(parentId)) continue;
 			var pg = lut.get(parentId);
 			for (t in g.types) pg.types.unshift(t);
-			drop.set(Globals.sTypePath(g.module), true);
+			drop.set(childId, true);
+			collapsed.set(childId, parentId);
 		}
 		var out:Array<{module:GlobalTypePath, types:Array<ModuleType>}> = [];
 		for (id in lut.keys())
 			if (!drop.exists(id)) out.push(lut.get(id));
-		return out;
+		return {groups: out, collapsed: collapsed};
 	}
 
 	public static function typeModule(t:ModuleType):ModuleDef return switch t {
@@ -134,6 +141,10 @@ class Genesm {
 			add("const $iterator = $hx.$iterator;\n");
 		if (esm || generators.Gctx.hasFeature(com, "use.$getIterator"))
 			add("const $getIterator = $hx.$getIterator;\n");
+		if (esm || generators.Gctx.hasFeature(com, "use.$keyValueIterator"))
+			add("const $keyValueIterator = $hx.$keyValueIterator;\n");
+		if (esm || generators.Gctx.hasFeature(com, "use.$getKeyValueIterator"))
+			add("const $getKeyValueIterator = $hx.$getKeyValueIterator;\n");
 	}
 
 	static function moduleHasUserEnum(types:Array<ModuleType>):Bool {
@@ -233,6 +244,10 @@ class Genesm {
 			buf.add("export function $iterator(o) { if( o instanceof Array ) return function() { return new haxe_iterators_ArrayIterator(o); }; return typeof(o.iterator) == 'function' ? $bind(o,o.iterator) : o.iterator; }\n");
 		if (esm || generators.Gctx.hasFeature(com, "use.$getIterator"))
 			buf.add("export function $getIterator(o) { if( o instanceof Array ) return new haxe_iterators_ArrayIterator(o); else return o.iterator(); }\n");
+		if (esm || generators.Gctx.hasFeature(com, "use.$keyValueIterator"))
+			buf.add("export function $keyValueIterator(o) { if( o instanceof Array ) return function() { return HxOverrides.keyValueIter(o); }; return typeof(o.keyValueIterator) == 'function' ? $bind(o,o.keyValueIterator) : o.keyValueIterator; }\n");
+		if (esm || generators.Gctx.hasFeature(com, "use.$getKeyValueIterator"))
+			buf.add("export function $getKeyValueIterator(o) { if( o instanceof Array ) return HxOverrides.keyValueIter(o); else return o.keyValueIterator(); }\n");
 		if (generators.Gctx.hasFeature(com, "$global.$haxeUID"))
 			buf.add("$global.$haxeUID |= 0;\n");
 		sys.io.File.saveContent(path, buf.toString());
@@ -352,7 +367,8 @@ class Genesm {
 	}
 
 	static function writeEntry(com:Gctx, groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, stdModule:Map<String, Bool>,
-			moduleExports:Map<String, Array<String>>, runtimeRel:String, modDeps:Map<String, Array<String>>):Void {
+			moduleExports:Map<String, Array<String>>, runtimeRel:String, modDeps:Map<String, Array<String>>,
+			collapsedModules:Map<String, String>):Void {
 		var buf = new StringBuf();
 		buf.add("import * as $hx from \"" + runtimeRel + "\";\n");
 		if (com.includeFiles.length > 0) buf.add("import \"./__hx_includes.mjs\";\n");
@@ -363,7 +379,7 @@ class Genesm {
 			case null:
 			case e:
 				var mp:GlobalTypePath = com.main.mainPath != null ? com.main.mainPath : new GlobalTypePath([], "Main");
-				var links = new GenesmLinks(mp, stdModule);
+				var links = new GenesmLinks(mp, stdModule, collapsedModules);
 				var entryCtx = allocCtx(com, generators.Gctx.getEsVersion(com.defines));
 				entryCtx.typeAccessor = t -> {
 					var ref = GenesmLinks.jsRef(entryCtx, t);

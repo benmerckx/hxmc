@@ -12,12 +12,28 @@ import generators.Genjs.JsCtx;
 class GenesmLinks {
 	public final homeId:String;
 	public final stdModule:Map<String, Bool>;
+	final collapsed:Map<String, String>;
 	final seen = new Map<String, Bool>();
 	final importLines:Array<String> = [];
 
-	public function new(home:GlobalTypePath, stdModule:Map<String, Bool>) {
+	public function new(home:GlobalTypePath, stdModule:Map<String, Bool>, ?collapsedModules:Map<String, String>) {
 		homeId = Globals.sTypePath(home);
 		this.stdModule = stdModule;
+		collapsed = collapsedModules ?? new Map();
+	}
+
+	function resolveModuleId(id:String):String {
+		var cur = id;
+		while (true) {
+			if (collapsed.exists(cur)) {
+				cur = collapsed.get(cur);
+				continue;
+			}
+			var parent = Genesm.submoduleParentModuleId(cur);
+			if (parent == null || parent == cur) break;
+			cur = parent;
+		}
+		return cur;
 	}
 
 	public static function buildStdSet(com:Gctx, groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>):Map<String, Bool> {
@@ -77,7 +93,7 @@ class GenesmLinks {
 	public function typeAccessor(ctx:JsCtx, t:ModuleType):String {
 		var ref = jsRef(ctx, t);
 		if (isExternRef(t)) return "$global." + ref;
-		var owner = Globals.sTypePath(Genesm.typeModule(t).mPath);
+		var owner = resolveModuleId(Globals.sTypePath(Genesm.typeModule(t).mPath));
 		if (owner == homeId) return ref;
 		return "$global." + ref;
 	}
@@ -110,10 +126,11 @@ class GenesmLinks {
 	};
 
 	public function ensureImport(ownerId:String):Void {
-		if (ownerId == null || ownerId == "" || ownerId == homeId || seen.exists(ownerId)) return;
-		seen.set(ownerId, true);
-		var rel = Genesm.relativeModuleImport(homeId, ownerId);
-		importLines.push('import * as ' + modAlias(ownerId) + ' from "' + rel + '";\n');
+		var resolved = resolveModuleId(ownerId);
+		if (resolved == null || resolved == "" || resolved == homeId || seen.exists(resolved)) return;
+		seen.set(resolved, true);
+		var rel = Genesm.relativeModuleImport(homeId, resolved);
+		importLines.push('import * as ' + modAlias(resolved) + ' from "' + rel + '";\n');
 	}
 
 	public function importPreamble():String {
@@ -123,9 +140,11 @@ class GenesmLinks {
 	}
 
 	public function exportSuffix(ctx:JsCtx, types:Array<ModuleType>, body:String):String {
-		if (stdModule.exists(homeId)) return Genesm.globalPublishLines(ctx, types);
+		var publish = Genesm.globalPublishLines(ctx, types);
+		// Top-level std modules (Std, String, …): $global publish only; nested std gets exports too.
+		if (stdModule.exists(homeId) && homeId.indexOf(".") < 0) return publish;
 		var names = exportsFromBody(body);
-		if (names.length == 0) return "";
-		return "export { " + names.join(", ") + " };\n";
+		if (names.length == 0) return publish;
+		return publish + "export { " + names.join(", ") + " };\n";
 	}
 }

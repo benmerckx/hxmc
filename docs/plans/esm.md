@@ -238,12 +238,18 @@ module graph, `compareMethods` if any).
 compiler: `generators.EsmHook` dispatch in `Generate.hx`, `hxmc.genesm.Genesm`
 (multi-file under `<out>/hx/`, runtime `__hx_esm_runtime.mjs`, entry at
 `--js`), `hxmc/EsmInstall`, optional `-cp hxmc/std/esm`, smoke test
-`hxmc/test/esm/hello.hxml`, exclusions note `hxmc/test/esm/exclusions.md`. Still
-uses Genjs expression emission; package globals via `$global` until per-module
-`import`/`export` land. **Open:** HIR layer, JS unit compile on full upstream suite (js std typing),
-native `export` for nested packs, `esm.*` shadows.
+`hxmc/test/esm/hello.hxml`. Genesm emits per-module `import`/`export` with a
+`$global` bridge; cross-module refs add explicit imports; user modules and
+nested std modules export top-level bindings. Entry side-effect-imports only the
+**main module's `modDeps` closure** (DCE-kept graph), topo-sorted—not every
+emitted file. Exclusions: `hxmc/test/esm/exclusions.txt` + `exclusions.md`.
 
-**Harness:** `make esm-unit` / `EsmSuites.hx`; exclusions `hxmc/test/esm/exclusions.txt`.
+**Harness:** `make esm-unit` (`EsmSuites.hx`) runs the upstream JS unit suite
+with `-D esm`; baseline **1576 pass / 44 excluded** (`exclusions.txt`). On
+Darwin, skip wasm/crosshost quick lanes when verifying locally.
+
+**Open:** HIR layer, shrinking exclusions (runtime/metadata), `esm.*` std
+shadows as tests require.
 
 1. **Output mode and prod backend.** `-D esm`, minimal `Generate.hx` dispatch,
    `Genesm`, typed AST → HIR → ESM files, Int/null semantics, coroutines on Js
