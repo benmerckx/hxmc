@@ -3,7 +3,6 @@ package core;
 import sys.FileSystem;
 import sys.io.File;
 import sys.io.FileOutput;
-import sys.thread.Mutex;
 import core.ds.Failure;
 // port: the host natives of hxmc (hxmc/std)
 #if (target.name == "hxmc")
@@ -36,7 +35,6 @@ class Path {
 
 	public static final isWindows = Sys.systemName() == "Windows";
 	public static final pathSep = isWindows ? "\\" : "/";
-	static final mkdirMutex = new Mutex();
 
 	public static function getPathParts(file:String):Array<String> {
 		/*
@@ -302,6 +300,19 @@ class Path {
 		}
 	}
 
+	/**
+		Creates directory `path` unless it already exists.
+		Doesn't check for existence first, because another thread or process could create the directory in between.
+	**/
+	public static function mkdirIfMissing(path:String):Void {
+		try {
+			FileSystem.createDirectory(path);
+		} catch (error:haxe.Exception) {
+			/* The error for an existing directory depends on the OS, so check what is there instead. */
+			if (!(try FileSystem.isDirectory(removeTrailingSlash(path)) catch (_:haxe.Exception) false)) throw error;
+		}
+	}
+
 	// port: `acc` is in path order (upstream: reversed list); it is not mutated.
 	public static function createFile(bin:Bool, ext:String, acc:Array<String>, parts:Array<String>):FileOutput {
 		return switch parts {
@@ -316,32 +327,17 @@ class Path {
 			case _:
 				var d = parts[0];
 				var dir = acc.concat([d]).join("/");
-				mkdirMutex.acquire();
-				try {
-					if (!FileSystem.exists(removeTrailingSlash(dir))) FileSystem.createDirectory(dir);
-				} catch (error:haxe.Exception) {
-					mkdirMutex.release();
-					throw error;
-				}
-				mkdirMutex.release();
+				mkdirIfMissing(dir);
 				createFile(bin, ext, acc.concat([d]), parts.slice(1));
 		}
 	}
-
-	// port: Sys.is_directory, false where nothing is
-	static function isDirectory(path:String):Bool
-		return try FileSystem.isDirectory(path) catch (_:haxe.Exception) false;
 
 	public static function mkdirRecursive(base:String, parts:Array<String>):Void {
 		for (directory in parts) {
 			var path = base == "" ? directory : base == "/" ? "/" + directory : base + "/" + directory;
 			var length = path.length;
 			if (length > 0 && (path.charAt(length - 1) == "/" || path.charAt(length - 1) == "\\")) path = path.substr(0, length - 1);
-			if (!(path == "" || (length == 2 && path.charAt(1) == ":")) && !FileSystem.exists(path)) {
-				/* another thread or process may have created the directory since the check */
-				// port: Unix.EEXIST is a directory there after the failure
-				try FileSystem.createDirectory(path) catch (error:haxe.Exception) if (!isDirectory(path)) throw error;
-			}
+			if (!(path == "" || (length == 2 && path.charAt(1) == ":"))) mkdirIfMissing(path);
 			base = path == "" ? "/" : path;
 		}
 	}
