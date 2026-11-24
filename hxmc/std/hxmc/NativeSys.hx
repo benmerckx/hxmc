@@ -215,6 +215,12 @@ class NativeSys {
 	public static inline function processWaitStatus(pid:Int, block:Bool):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.processWait(pid, block) : #end PosixSys.processWaitStatus(pid, block) #end;
 
+	// SIGPIPE ignored: a write to a pipe or socket whose reader is gone fails
+	// instead of ending the process (nothing on Windows and WebAssembly)
+	public static inline function ignoreSigpipe():Void {
+		#if (hxmc.target != "wasm32-wasi") #if (!hxmc.os || hxmc.os == "windows") if (Platform.os() != 2) #end hxmc.rt.PosixNet.ignoreSigpipe(); #end
+	}
+
 	// SIGINT and SIGQUIT ignored while waiting for a child, as system() does,
 	// until as many calls with false (nothing on Windows and WebAssembly)
 	public static inline function interruptsIgnored(ignore:Bool):Void {

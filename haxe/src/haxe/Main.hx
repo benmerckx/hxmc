@@ -180,6 +180,12 @@ class Main {
 
 	public static function run(args:Array<String>):Int {
 		initHooks();
+		/* Ignore SIGPIPE to prevent process termination when stdin pipe is closed.
+			Sys.sigpipe may not map to the real signal number, so use 13 directly. */
+		// port: other hosts have no way to ignore it
+		#if (target.name == "hxmc")
+		hxmc.NativeSys.ignoreSigpipe();
+		#end
 		// port: the port is executed by a host compiler, so the std location of the
 		// executable is not meaningful; HAXE_IN_HAXE_STD_PATH overrides the
 		// HAXE_STD_PATH the host may have rewritten for --run.
