@@ -178,6 +178,7 @@ class Genesm {
 			case TClassDecl(c) if (!hasClassFlag(c, CExtern)):
 				var dotp = Genjs.dotPath(c.clPath);
 				if (StringTools.endsWith(dotp, "_Fields_")) "";
+				else if (hasClassFlag(c, CInterface) && !Genjs.needToGenerateInterface(ctx, c)) "";
 				else {
 					var p = Genjs.sPath(ctx, Genjs.getGeneratedClassPath(c));
 					if (p == "Std" && c.clStatics.length == 0) "" else "$global." + p + " = " + p + ";\n";
