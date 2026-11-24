@@ -243,6 +243,17 @@ class DisplayJson {
 		return new HxbReaderApiCom(typingMode, com, cc).findModule(path);
 	}
 
+	public static function cachedModules(cc:ContextCache):Array<{path:GlobalTypePath, extra:ModuleDefExtra}> {
+		var l = cc.getModules().fold(function(_, m:ModuleDef, acc:Array<{path:GlobalTypePath, extra:ModuleDefExtra}>) {
+			acc.unshift({path: m.mPath, extra: m.mExtra});
+			return acc;
+		}, []);
+		return cc.getHxb().fold(function(_, mc:compiler.hxb.HxbData.ModuleCache, acc:Array<{path:GlobalTypePath, extra:ModuleDefExtra}>) {
+			if (!cc.getModules().mem(mc.mcPath)) acc.unshift({path: mc.mcPath, extra: mc.mcExtra});
+			return acc;
+		}, l);
+	}
+
 	public static function apiError<R>(j:JsonValue):R throw new ApiError(j);
 
 	public static final handler:OcamlHashtbl<String, HandlerContext->ApiResponse> = makeHandler();
@@ -555,10 +566,9 @@ class DisplayJson {
 				f: function(hctx) {
 					var sign = hctx.jsonrpc.getStringParam("signature");
 					var cc = hctx.display.getCs().getContext(sign);
-					var l = cc.getHxb().fold(function(_, m:compiler.hxb.HxbData.ModuleCache, acc:Array<JsonValue>) {
-						if (m.mcExtra.mKind != MFake) acc.unshift(jstring(Globals.sTypePath(m.mcPath)));
-						return acc;
-					}, []);
+					var l = [
+						for (m in cachedModules(cc)) if (m.extra.mKind != MFake) jstring(Globals.sTypePath(m.path))
+					];
 					return Result(jarray(l));
 				}
 			},
@@ -572,7 +582,7 @@ class DisplayJson {
 					var typingMode:compiler.hxb.HxbData.TypingMode = if (core.Define.defined(hctx.com.defines, core.Define.DisableHxbOptimizations)) FullTyping else AllowPartialTyping;
 					try {
 						var m = findModule(typingMode, hctx.com, cc, path);
-						return Result(Genjson.generateModule(cc.getHxb(), findModule.bind(typingMode, hctx.com, cc), m));
+						return Result(Genjson.generateModule(cachedModules(cc), findModule.bind(typingMode, hctx.com, cc), m));
 					} catch (_:core.ds.NotFound) {
 						return Error(jstring("No such module"));
 					}
