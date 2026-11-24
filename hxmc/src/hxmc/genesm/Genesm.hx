@@ -3,6 +3,8 @@ package hxmc.genesm;
 import core.Define;
 import core.Globals;
 import core.Globals.*;
+import core.Meta;
+import core.TOther.TClassTools;
 import core.TType;
 import core.TFunctions.*;
 import haxe.io.Path;
@@ -34,6 +36,7 @@ class Genesm {
 		var moduleExports = new Map<String, Array<String>>();
 		var symOwner = new Map<String, String>();
 		var modDeps = new Map<String, Array<String>>();
+		var emittedGroups:Array<{module:GlobalTypePath, types:Array<ModuleType>}> = [];
 		var regCtx = allocCtx(com, esVersion);
 		for (g in groups) registerModuleSymbols(symOwner, regCtx, g.types, Globals.sTypePath(g.module));
 		for (g in groups) {
@@ -41,6 +44,7 @@ class Genesm {
 			var modCtx = allocCtx(com, esVersion);
 			modCtx.typeAccessor = t -> links.typeAccessor(modCtx, t);
 			modulePreamble(modCtx, com, g.types);
+			if (!moduleGeneratesCode(modCtx, g.types)) continue;
 			for (t in sortModuleTypes(g.types)) {
 				Genjs.generateType(modCtx, t);
 				modCtx.buf.addString(Genesm.publishType(modCtx, t));
@@ -52,9 +56,10 @@ class Genesm {
 			var mid = Globals.sTypePath(g.module);
 			moduleExports.set(mid, GenesmLinks.exportsFromBody(body));
 			modDeps.set(mid, moduleGlobalDeps(body, symOwner, mid));
+			emittedGroups.push(g);
 			writeModule(modDir, g.module, runtimeRel(g.module, runtimeName), g.types, body, modCtx, links);
 		}
-		writeEntry(com, groups, stdModule, moduleExports, "./" + runtimeName, modDeps, collapsedModules);
+		writeEntry(com, emittedGroups, stdModule, moduleExports, "./" + runtimeName, modDeps, collapsedModules);
 	}
 
 	static function moduleGroups(com:Gctx):{groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, collapsed:Map<String, String>} {
@@ -154,6 +159,39 @@ class Genesm {
 			case TEnumDecl(e) if (!hasEnumFlag(e, EnExtern)): return true;
 			case _:
 		}
+		return false;
+	}
+
+	// Match Genjs.generateType: no file for modules that only carry type-only externs / typedefs.
+	static function typeGeneratesCode(ctx:JsCtx, t:ModuleType):Bool return switch t {
+		case TClassDecl(c):
+			switch TClassTools.getClInit(c) {
+				case null:
+				case _: return true;
+			}
+			var p = Genjs.sPath(ctx, c.clPath);
+			if (p == "Math") return true;
+			if (p == "Std" && c.clStatics.length == 0) return false;
+			if (!hasClassFlag(c, CExtern)) {
+				if (hasClassFlag(c, CInterface) && !Genjs.needToGenerateInterface(ctx, c)) return false;
+				return true;
+			}
+			if (Meta.has(Meta.JsRequire, c.clMeta) && Gctx.isDirectlyUsed(ctx.com, c.clMeta)) return true;
+			if (!ctx.jsFlatten && Meta.has(Meta.InitPackage, c.clMeta)) return switch c.clPath {
+				case {pack: []}: false;
+				case _: true;
+			};
+			return false;
+		case TEnumDecl(e):
+			if (hasEnumFlag(e, EnExtern))
+				return Meta.has(Meta.JsRequire, e.eMeta) && Gctx.isDirectlyUsed(ctx.com, e.eMeta);
+			return true;
+		case TTypeDecl(_) | TAbstractDecl(_):
+			return false;
+	};
+
+	static function moduleGeneratesCode(ctx:JsCtx, types:Array<ModuleType>):Bool {
+		for (t in types) if (typeGeneratesCode(ctx, t)) return true;
 		return false;
 	}
 
