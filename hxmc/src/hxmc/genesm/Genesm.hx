@@ -47,7 +47,7 @@ class Genesm {
 			}
 			emitModuleInits(modCtx);
 			for (name in GenesmLinks.exportsFromBody(modCtx.buf.contents()))
-				if (name != "$global" && name != "$extend") modCtx.buf.addString("$global." + name + " = " + name + ";\n");
+				if (name != "$global" && name != "$extend") modCtx.buf.addString(publishGlobalBinding(name));
 			var body = modCtx.buf.contents();
 			var mid = Globals.sTypePath(g.module);
 			moduleExports.set(mid, GenesmLinks.exportsFromBody(body));
@@ -360,6 +360,15 @@ class Genesm {
 		return out;
 	}
 
+	// Genjs.sPath / Path.flatPath escapes underscores in a single-segment name; top-level
+	// vars keep the source spelling (e.g. @:native or js.Syntax.code) but field access uses flatPath.
+	static function publishGlobalBinding(localName:String):String {
+		var flat = core.Path.flatPath({pack: [], name: localName});
+		var g = "$global";
+		if (flat == localName) return g + '.' + localName + ' = ' + localName + ';\n';
+		return g + '.' + localName + ' = ' + localName + ';\n' + g + '.' + flat + ' = ' + localName + ';\n';
+	}
+
 	static function writeIncludes(path:String, com:Gctx, runtimeRel:String):Void {
 		var buf = new StringBuf();
 		buf.add("import * as $hx from \"" + runtimeRel + "\";\n");
@@ -370,7 +379,7 @@ class Genesm {
 				var content = sys.io.File.getContent(file.file);
 				buf.add(content);
 				if (!StringTools.endsWith(content, "\n")) buf.add("\n");
-				if (re.match(content)) buf.add("$global." + re.matched(1) + " = " + re.matched(1) + ";\n");
+				if (re.match(content)) buf.add(publishGlobalBinding(re.matched(1)));
 			case _:
 		}
 		sys.io.File.saveContent(path, buf.toString());
