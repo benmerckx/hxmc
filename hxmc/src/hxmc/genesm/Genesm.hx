@@ -51,7 +51,8 @@ class Genesm {
 			}
 			emitModuleInits(modCtx);
 			for (name in GenesmLinks.exportsFromBody(modCtx.buf.contents()))
-				if (name != "$global" && name != "$extend") modCtx.buf.addString(publishGlobalBinding(name));
+				if (name != "$global" && name != "$extend" && name != "$hx_exports")
+					modCtx.buf.addString(publishGlobalBinding(name));
 			var body = modCtx.buf.contents();
 			var mid = Globals.sTypePath(g.module);
 			moduleExports.set(mid, GenesmLinks.exportsFromBody(body));
@@ -131,7 +132,7 @@ class Genesm {
 		}
 		add("const $global = $hx.$global;\n");
 		add("const $extend = $hx.$extend;\n");
-		add("var $hx_exports = {};\n");
+		add("const $hx_exports = $hx.$hx_exports;\n");
 		if (ctx.hasResolveClass || generators.Gctx.hasFeature(com, "Type.resolveEnum"))
 			add("var $hxClasses = $hx.$hxClasses;\n");
 		if (generators.Gctx.hasFeature(com, "has_enum"))
@@ -266,6 +267,9 @@ class Genesm {
 	static function writeRuntime(path:String, com:Gctx, esVersion:Int, esm:Bool):Void {
 		var buf = new StringBuf();
 		buf.add("export const $global = typeof globalThis !== \"undefined\" ? globalThis : window;\n");
+		buf.add("if( $global.$hx_exports == null ) $global.$hx_exports = {};\n");
+		buf.add("export const $hx_exports = $global.$hx_exports;\n");
+		buf.add("$global.$hx_$exports = $hx_exports;\n");
 		buf.add("export function $extend(from, fields) {\n");
 		buf.add("	var proto = Object.create(from);\n");
 		buf.add("	for (var name in fields) proto[name] = fields[name];\n");
