@@ -10,12 +10,16 @@ Builds upstream `tests/unit` with `hxmc/test/upstream/unit-esm.hxml` (`-D esm`,
 `--js bin/unit/main.mjs`), runs under node. Machine-readable exclusions:
 **`hxmc/test/esm/exclusions.txt`** (one class or `class.method` per line).
 
-Populated from **runtime** utest failures on Genesm (2026-11-24). Harness runs end-to-end;
-**1619 passed / 1 failed / 0 skipped** with exclusions disabled (was 1587 / 33, 1576 / 44).
+Harness runs end-to-end; **1620 passed / 0 failed / 0 skipped** with an empty
+exclusions list (was 1576 / 44 excluded, then 1619 / 1 skipped).
+
+Cross-module types (e.g. `haxe.Exception` / `haxe.ValueException`) reference each
+other via **`$global`** publish lines, not per-module ESM imports, so mutual
+dependencies do not form import cycles.
 
 | Bucket | Rationale |
 | --- | --- |
-| `unit.TestExceptions.testValueException` | Exception/ValueException circular ESM import |
+| *(none)* | — |
 
 Smoke:
 

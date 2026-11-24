@@ -245,8 +245,8 @@ nested std modules export top-level bindings. Entry side-effect-imports only the
 emitted file. Exclusions: `hxmc/test/esm/exclusions.txt` + `exclusions.md`.
 
 **Harness:** `make esm-unit` (`EsmSuites.hx`) runs the upstream JS unit suite
-with `-D esm`; baseline **1576 pass / 44 excluded** (`exclusions.txt`). On
-Darwin, skip wasm/crosshost quick lanes when verifying locally.
+with `-D esm`; baseline **1620 pass / 0 excluded** (`exclusions.txt` empty).
+On Darwin, skip wasm/crosshost quick lanes when verifying locally.
 
 **Open:** HIR layer, shrinking exclusions (runtime/metadata), `esm.*` std
 shadows as tests require.
