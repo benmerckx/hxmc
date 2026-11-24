@@ -190,6 +190,7 @@ class Compiler {
 		com.main.mainFile = output.main.path;
 		com.types = output.types;
 		com.modules = output.modules;
+		RefCheck.check(com);
 	}
 
 	public static function finalizeTyping(com:CommonContext, tctx:Typer):Void Timer.time(com.timerCtx, ["finalize"], function(tctx) {

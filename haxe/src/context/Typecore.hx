@@ -189,6 +189,8 @@ enum FunctionMode {
 @:structInit class TyperGlobals {
 	public var delayed:haxe.ds.Vector<TyperPassTasks>;
 	public var delayedMinIndex:Int;
+	/* HAXE_TYPER_SHUFFLE=<seed> */
+	public var typerShuffle:Null<core.ds.TyperShuffle>;
 	public var debugDelayed:Array<Dynamic>;
 	public var retainMeta:Bool;
 	public var coreApi:Null<Typer>;
@@ -221,6 +223,7 @@ enum FunctionMode {
 	public function clone():TyperGlobals return {
 		delayed: delayed,
 		delayedMinIndex: delayedMinIndex,
+		typerShuffle: typerShuffle,
 		debugDelayed: debugDelayed,
 		retainMeta: retainMeta,
 		coreApi: coreApi,
@@ -820,7 +823,19 @@ class Typecore {
 		var index = g.delayedMinIndex;
 		while (index <= passIndex(p)) {
 			var tasks = g.delayed[index];
-			if (tasks.tasks.length != 0) {
+			if (tasks.tasks.length >= 2 && g.typerShuffle != null) {
+				// port: the list's n-th is the array's (length - 1 - n)-th
+				var n = g.typerShuffle.int(tasks.tasks.length);
+				var f = tasks.tasks.splice(tasks.tasks.length - 1 - n, 1)[0];
+				f();
+				index = g.delayedMinIndex;
+			} else if (tasks.tasks.length == 0 && g.typerShuffle != null && tasks.tasksLate.length != 0) {
+				/* the late tasks run one at a time, oldest first, so that the normal
+					tasks they delay still run before the next one */
+				var f = tasks.tasksLate.shift();
+				f();
+				index = g.delayedMinIndex;
+			} else if (tasks.tasks.length != 0) {
 				var f = tasks.tasks.pop();
 				f();
 				index = g.delayedMinIndex;

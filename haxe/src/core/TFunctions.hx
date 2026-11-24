@@ -487,6 +487,21 @@ class TFunctions {
 		return c.clSuper != null && extendsClass(c.clSuper.cls, csup);
 	}
 
+	/* The @:using classes of a type: its own, then those of its super class and
+		interfaces. */
+	public static function typeUsings(mt:ModuleType):Array<{var cls:TClass; var pos:Pos;}> {
+		var own = tInfos(mt).mtUsing;
+		return switch mt {
+			case TClassDecl(c):
+				inline function inherited(s:ClassAndParams) return typeUsings(TClassDecl(s.cls));
+				var l = own.concat(c.clSuper != null ? inherited(c.clSuper) : []);
+				for (i in c.clImplements) l = l.concat(inherited(i));
+				l;
+			case _:
+				own;
+		}
+	}
+
 	public static function addDescendant(c:TClass, descendant:TClass):Void c.clDescendants.unshift(descendant);
 
 	public static var lazyForceHook:(Void->T) -> T = function(f) return f();

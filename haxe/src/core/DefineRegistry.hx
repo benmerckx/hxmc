@@ -169,6 +169,11 @@ class DefineRegistry {
 			flags: [Platforms([Cpp])]
 		},
 		{key: "include_prefix", doc: "Prepend path to generated include files.", flags: [Platforms([Cpp])]},
+		{
+			key: "incremental_check_refs",
+			doc: "Check that no type or field reference of the compilation points to an older version of its module (compilation server).",
+			flags: []
+		},
 		{key: "interp", doc: "The code is compiled to be run with `--interp`.", flags: []},
 		{key: "js_classic", doc: "Don't use a function wrapper and strict mode in JS output.", flags: [Platforms([Js])]},
 		{
