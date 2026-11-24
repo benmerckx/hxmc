@@ -51,8 +51,7 @@ class Genesm {
 			}
 			emitModuleInits(modCtx);
 			for (name in GenesmLinks.exportsFromBody(modCtx.buf.contents()))
-				if (name != "$global" && name != "$extend" && name != "$hx_exports")
-					modCtx.buf.addString(publishGlobalBinding(name));
+				if (!skipModuleGlobalPublish(name)) modCtx.buf.addString(publishGlobalBinding(name));
 			var body = modCtx.buf.contents();
 			var mid = Globals.sTypePath(g.module);
 			moduleExports.set(mid, GenesmLinks.exportsFromBody(body));
@@ -276,6 +275,7 @@ class Genesm {
 		buf.add("	if( fields.toString !== Object.prototype.toString ) proto.toString = fields.toString;\n");
 		buf.add("	return proto;\n");
 		buf.add("}\n");
+		buf.add(publishGlobalBinding("$extend"));
 		if (generators.Gctx.hasFeature(com, "Type.resolveClass") || generators.Gctx.hasFeature(com, "Type.resolveEnum"))
 			buf.add("export var $hxClasses = {};\n");
 		if (generators.Gctx.hasFeature(com, "has_enum"))
@@ -285,18 +285,30 @@ class Genesm {
 		if (esm || generators.Gctx.hasFeature(com, "use.$bind")) {
 			buf.add("$global.$haxeUID |= 0;\n");
 			buf.add("export function $bind(o,m) { if( m == null ) return null; if( m.__id__ == null ) m.__id__ = $global.$haxeUID++; var f; if( o.hx__closures__ == null ) o.hx__closures__ = {}; else f = o.hx__closures__[m.__id__]; if( f == null ) { f = m.bind(o); o.hx__closures__[m.__id__] = f; } return f; }\n");
+			buf.add(publishGlobalBinding("$bind"));
 			buf.add("export var $_;\n");
+			buf.add(publishGlobalBinding("$_"));
 		}
-		if (esm || generators.Gctx.hasFeature(com, "use.$iterator"))
+		if (esm || generators.Gctx.hasFeature(com, "use.$iterator")) {
 			buf.add("export function $iterator(o) { if( o instanceof Array ) return function() { return new haxe_iterators_ArrayIterator(o); }; return typeof(o.iterator) == 'function' ? $bind(o,o.iterator) : o.iterator; }\n");
-		if (esm || generators.Gctx.hasFeature(com, "use.$getIterator"))
+			buf.add(publishGlobalBinding("$iterator"));
+		}
+		if (esm || generators.Gctx.hasFeature(com, "use.$getIterator")) {
 			buf.add("export function $getIterator(o) { if( o instanceof Array ) return new haxe_iterators_ArrayIterator(o); else return o.iterator(); }\n");
-		if (esm || generators.Gctx.hasFeature(com, "use.$keyValueIterator"))
+			buf.add(publishGlobalBinding("$getIterator"));
+		}
+		if (esm || generators.Gctx.hasFeature(com, "use.$keyValueIterator")) {
 			buf.add("export function $keyValueIterator(o) { if( o instanceof Array ) return function() { return HxOverrides.keyValueIter(o); }; return typeof(o.keyValueIterator) == 'function' ? $bind(o,o.keyValueIterator) : o.keyValueIterator; }\n");
-		if (esm || generators.Gctx.hasFeature(com, "use.$getKeyValueIterator"))
+			buf.add(publishGlobalBinding("$keyValueIterator"));
+		}
+		if (esm || generators.Gctx.hasFeature(com, "use.$getKeyValueIterator")) {
 			buf.add("export function $getKeyValueIterator(o) { if( o instanceof Array ) return HxOverrides.keyValueIter(o); else return o.keyValueIterator(); }\n");
-		if (esm || generators.Gctx.hasFeature(com, "use.$arrayPush"))
+			buf.add(publishGlobalBinding("$getKeyValueIterator"));
+		}
+		if (esm || generators.Gctx.hasFeature(com, "use.$arrayPush")) {
 			buf.add("export function $arrayPush(x) { return this.push(x); }\n");
+			buf.add(publishGlobalBinding("$arrayPush"));
+		}
 		if (generators.Gctx.hasFeature(com, "$global.$haxeUID"))
 			buf.add("$global.$haxeUID |= 0;\n");
 		sys.io.File.saveContent(path, buf.toString());
@@ -402,6 +414,16 @@ class Genesm {
 		}
 		return out;
 	}
+
+	static function skipModuleGlobalPublish(name:String):Bool {
+		if (name == "$global" || name == "$extend" || name == "$hx_exports") return true;
+		return runtimeHelperGlobalName(name);
+	}
+
+	static function runtimeHelperGlobalName(name:String):Bool return switch name {
+		case "$bind" | "$iterator" | "$getIterator" | "$keyValueIterator" | "$getKeyValueIterator" | "$arrayPush" | "$_": true;
+		case _: false;
+	};
 
 	// Genjs.sPath / Path.flatPath escapes underscores in a single-segment name; top-level
 	// vars keep the source spelling (e.g. @:native or js.Syntax.code) but field access uses flatPath.
