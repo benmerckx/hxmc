@@ -498,6 +498,10 @@ test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 # unit on wasm32-wasi; SUITES and SUITES_TARGET narrow it (CI: a job per target)
 SUITES ?=
 SUITES_TARGET ?=
+# upstream unit with -D esm (Genesm); needs HaxeMain (HOST_HAXE or bin/haxe-js)
+esm-unit: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmSuites
+
 upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
 	@failed=; \
 	$(if $(filter wasm32-wasi,$(SUITES_TARGET)),,$(SCRIPT) UpstreamSuites $(SUITES) || failed="$$failed native";) \

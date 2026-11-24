@@ -29,4 +29,17 @@ class Defines {
 			flags: [core.DefineRegistry.DefineParameter.HasParam("module prefixes")]
 		});
 	}
+
+	public static function addEsmDefine():Void {
+		core.DefineRegistry.all.push({
+			key: "esm",
+			doc: "Emit idiomatic ECMAScript modules with --js (hxmc Genesm). Defines js. Phase 2 hot reload uses -D esm.hot.",
+			flags: []
+		});
+		core.DefineRegistry.all.push({
+			key: "esm.hot",
+			doc: "Hot-reload dev flavor for -D esm (not implemented in phase 1).",
+			flags: []
+		});
+	}
 }

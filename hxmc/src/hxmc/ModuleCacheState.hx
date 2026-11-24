@@ -39,7 +39,7 @@ enum abstract Verdict(Int) {
 }
 
 class ModuleCacheState {
-	public var store:CacheStore;
+	public var store:Null<CacheStore>;
 	public var indexKey:CacheKey;
 	public var com:CommonContext;
 	public var index:StoreIndex;
@@ -121,7 +121,7 @@ class ModuleCacheState {
 	// store the macro's (ModuleCache.onDependency, keepMacroEdges)
 	public var macroEdges = new haxe.ds.ObjectMap<ModuleDef, Map<Int, ModuleDepOrigin>>();
 
-	public function new(store:CacheStore, indexKey:CacheKey, com:CommonContext) {
+	public function new(store:Null<CacheStore>, indexKey:CacheKey, com:CommonContext) {
 		this.store = store;
 		this.indexKey = indexKey;
 		this.com = com;

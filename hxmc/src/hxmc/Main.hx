@@ -51,6 +51,7 @@ class Main {
 	static var start = haxe.Timer.stamp();
 	static function main() {
 		Defines.install();
+		EsmInstall.install();
 		var args = Sys.args();
 		if (args[0] == "--mkrt-macho") {
 			args.shift();

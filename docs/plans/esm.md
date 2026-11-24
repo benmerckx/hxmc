@@ -234,6 +234,17 @@ module graph, `compareMethods` if any).
 
 ### Phase 1 — prod idiomatic ESM (now)
 
+**Landed (2025-11):** `-D esm` with `--js <entry.mjs>` on the npm/`HaxeMain`
+compiler: `generators.EsmHook` dispatch in `Generate.hx`, `hxmc.genesm.Genesm`
+(multi-file under `<out>/hx/`, runtime `__hx_esm_runtime.mjs`, entry at
+`--js`), `hxmc/EsmInstall`, optional `-cp hxmc/std/esm`, smoke test
+`hxmc/test/esm/hello.hxml`, exclusions note `hxmc/test/esm/exclusions.md`. Still
+uses Genjs expression emission; package globals via `$global` until per-module
+`import`/`export` land. **Open:** HIR layer, JS unit compile on full upstream suite (js std typing),
+native `export` for nested packs, `esm.*` shadows.
+
+**Harness:** `make esm-unit` / `EsmSuites.hx`; exclusions `hxmc/test/esm/exclusions.txt`.
+
 1. **Output mode and prod backend.** `-D esm`, minimal `Generate.hx` dispatch,
    `Genesm`, typed AST → HIR → ESM files, Int/null semantics, coroutines on Js
    path.

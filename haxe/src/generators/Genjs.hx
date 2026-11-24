@@ -99,6 +99,8 @@ class JsCtx {
 	/* the features read while generating a type in parallel: they do not
 		change then (those added are read once all types are generated) */
 	public var featureCache:Null<StringMap<Bool>>;
+	// port: hxmc Genesm (-D esm) keeps each module in ctx.buf; skip incremental flush to com.file
+	public var noFlush:Bool;
 
 	public function new() {}
 }
@@ -254,7 +256,7 @@ class Genjs {
 	static function unsupported(p:Pos):Dynamic return Error.abort("This expression cannot be compiled to Javascript", p);
 
 	public static function flush(ctx:JsCtx):Void {
-		if (ctx.packageMarks != null) return;
+		if (ctx.noFlush || ctx.packageMarks != null) return;
 		var chan = switch ctx.chan {
 			case null:
 				var chan = sys.io.File.write(ctx.com.file, true);
@@ -725,7 +727,9 @@ class Genjs {
 			case TField(x, FInstance(_, _, f) | FStatic(_, f) | FAnon(f)) if (Meta.has(Meta.SelfCall, f.cfMeta)):
 				genValue(ctx, x);
 			case TField(_, FStatic({clKind: KModuleFields(m)}, f)):
-				spr(ctx, moduleField(m, f));
+				var mf = moduleField(m, f);
+				if (core.Define.rawDefined(ctx.com.defines, "esm")) spr(ctx, "$global." + mf);
+				else spr(ctx, mf);
 			case TField(x, f):
 				function skip(e:TExpr):TExpr {
 					return switch e.eexpr {

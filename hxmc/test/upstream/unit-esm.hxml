@@ -1,0 +1,6 @@
+# upstream tests/unit on hxmc with Genesm (-D esm). Run via EsmSuites.hx.
+compile-each.hxml
+--main unit.TestMain
+-D esm
+-D UTEST_PRINT_TESTS
+-js bin/unit/main.mjs

@@ -416,7 +416,7 @@ class ModuleCache {
 			l.push(name);
 			Sys.putEnv(RETYPE, l.join(","));
 		}
-		if (stats || s.log)
+		if (persist && (stats || s.log))
 			Sys.println("hxmc: module cache: " + name + (why == null ? " keeps state of restored modules' macros (" + restored.join(", ") + "), which this build's macros use" : why)
 				+ ": the build again, those typed");
 		try Sys.stdout().flush() catch (_:Dynamic) {}
@@ -797,12 +797,14 @@ class ModuleCache {
 
 	static function hook(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
 		hookCalls++;
+		persist = true;
 		state = null;
 		ServerCache.checkModuleHook = null;
 		typing.Finalization.sortExprHook = null;
 		ServerCallbacks.uninstall();
 		var why = wanted(com) ? unusable(com, actx) : "off";
 		var s = why == null ? open(com) : null;
+		var persist = s != null;
 		early = [];
 		// (a server's earlier builds' typers: no longer used, and each keeps its build's modules)
 		typers = [];
@@ -816,14 +818,42 @@ class ModuleCache {
 		}
 		if (s == null) {
 			if (why == null) why = "no cache directory";
-			if (why != "off" && stats) Sys.println('hxmc: module cache not used ($why)');
-			return;
+			// (cache off or no store: same typing hooks, no restore or persist)
+			if (why == "off" || why == "no cache directory") {
+				s = ephemeral(com);
+				persist = false;
+			} else if (s == null) {
+				if (stats) Sys.println('hxmc: module cache not used ($why)');
+				return;
+			}
 		}
+		installPipeline(com, s, actx, persist);
+	}
+
+	// typing hooks only (no store, restore, capture or persist)
+	static function ephemeral(com:CommonContext):ModuleCacheState {
+		var key = CacheKey.of(ModuleIndex, [Sys.getCwd(), Sys.getEnv("HAXE_STD_PATH"), com.classPaths.asStringList().join("\n")].join("\x00"));
+		var s = new ModuleCacheState(null, key, com);
+		s.signs[0] = context.CommonCache.getCacheSign(com);
+		s.defs[0] = com.defines.values;
+		var mcom = com.getMacros();
+		for (e in early) {
+			var role = e.ctx == com.defines ? 0 : mcom != null && e.ctx == mcom.defines ? 1 : -1;
+			if (role >= 0)
+				for (k in e.keys.keys())
+					s.global.set(role + "\x00" + k, true);
+		}
+		s.index = new StoreIndex();
+		return s;
+	}
+
+	static function installPipeline(com:CommonContext, s:ModuleCacheState, actx:compiler.ParsedArg.ArgContext, persist:Bool) {
 		state = s;
+		ModuleCache.persist = persist;
 		// (the program: the order its typing runs macros in, which state a
 		// registry's readers see, ModuleCacheState.stateConsistent)
 		s.program = Fingerprint.hash([for (c in actx.classes) core.Globals.sTypePath(c)].join(","));
-		ServerCache.checkModuleHook = check;
+		if (persist) ServerCache.checkModuleHook = check;
 		typing.Finalization.sortExprHook = Skeletons.sortExpr;
 		// (what the sort of the types walks, of every class typed: before the
 		// filters change it)
@@ -882,9 +912,8 @@ class ModuleCache {
 				return r;
 			}
 		}
-		// (before the compiler's own: registrations from now until typing is
-		// done are the macros')
-		com.callbacks.addAfterSave(() -> capture(com));
+		com.callbacks.addAfterSave(() -> beforeSave(com));
+		if (persist) com.callbacks.addAfterSave(() -> capture(com));
 		// (registered by a macro run in the typing of a module: state that
 		// module's macros keep, typed every build; else the build is not kept)
 		com.callbacks = new WatchedCallbacks(com.callbacks, com, what -> {
@@ -892,11 +921,12 @@ class ModuleCache {
 				mutex.acquire();
 				s.liveState.push({maker: s.typingStack[s.typingStack.length - 1], path: "Context." + what});
 				mutex.release();
-			} else if (s.volatileReason == null) s.volatileReason = what;
+			} else if (persist && s.volatileReason == null) s.volatileReason = what;
 		});
 	}
 
 	static var stats = false; // (the build's, Options.apply)
+	static var persist = true; // (false: typing hooks only, no store I/O or stats)
 
 	static function ms(t:Float):Int
 		return Std.int((haxe.Timer.stamp() - t) * 1000);
@@ -969,7 +999,7 @@ class ModuleCache {
 			s.reselect();
 			s.loaded = s.install(0);
 			if (s.signs[1] != null) s.loaded += s.install(1);
-			if (stats)
+			if (stats && persist)
 				Sys.println('hxmc: module cache: ${s.loaded} modules of ${s.index.variants.length} variants read (${Std.int((s.openTime + haxe.Timer.stamp() - t0) * 1000)} ms)');
 			return;
 		}
@@ -977,7 +1007,7 @@ class ModuleCache {
 			var sign = context.CommonCache.getCacheSign(ctx.com);
 			if (sign != s.signs[1]) {
 				if (s.volatileReason == null) s.volatileReason = "the macros' context has other defines than predicted";
-				if (stats) Sys.println("hxmc: module cache: the macros' context's signature " + sign + " is not the predicted " + s.signs[1]);
+				if (stats && persist) Sys.println("hxmc: module cache: the macros' context's signature " + sign + " is not the predicted " + s.signs[1]);
 				if (s.log) {
 					var a = ctx.com.defines.values, p = s.defs[1];
 					for (k in a.keys())
@@ -1022,7 +1052,7 @@ class ModuleCache {
 	// restores nothing)
 	static function fresh(s:ModuleCacheState, why:String) {
 		if (Sys.getEnv(FRESH) == "1") return;
-		s.store.removeIndex(s.indexKey);
+		if (s.store != null) s.store.removeIndex(s.indexKey);
 		Sys.putEnv(FRESH, "1");
 		Sys.println("hxmc: module cache: " + why + ": the build again, from nothing");
 		try Sys.stdout().flush() catch (_:Dynamic) {}
@@ -1103,7 +1133,7 @@ class ModuleCache {
 		}
 		var stored = store.readIndex(key);
 		var ix = stored == null ? null : try ModuleStore.readIndex(stored.data) catch (e:Dynamic) {
-			if (stats) Sys.println('hxmc: module cache: ${store.indexPath(key)} unreadable ($e)');
+			if (stats && persist) Sys.println('hxmc: module cache: ${store.indexPath(key)} unreadable ($e)');
 			null;
 		}
 		if (ix != null) {
@@ -1253,13 +1283,20 @@ class ModuleCache {
 		}
 	}
 
-	// after the state is saved (before DCE and generation change the typed
-	// program): the modules of the build as the server would cache them
-	static function capture(com:CommonContext) {
+	// whether a module's mProcessed still matches the variant's stored sentinel
+	static function processedKept(mProcessed:Int, stored:Int):Bool
+		return switch stored {
+			case 0: mProcessed == 0;
+			case -1: mProcessed != 0;
+			case _: mProcessed == stored;
+		}
+
+	// after typing, before DCE and generation: macro edges and structural marks
+	// (part of the typing pipeline whether or not the build writes the store)
+	static function beforeSave(com:CommonContext) {
 		var s = state;
 		if (s == null) return;
 		s.captured = true;
-		var t0 = haxe.Timer.stamp();
 		keepMacroEdges(s);
 		// (restored modules whose macros keep state beside a module's that is
 		// not restored: typed with what that module's macros made, which this
@@ -1267,6 +1304,18 @@ class ModuleCache {
 		var m = s.stateMissing();
 		if (m != null)
 			again(s, m.name, m.restored, " keeps state of restored modules' macros (" + m.restored.join(", ") + "), typed beside modules' macros this build does not restore");
+		{
+			var mcom = com.getMacros();
+			fixMarks(s, mcom != null && context.CommonCache.getCacheSign(mcom) == s.signs[1] ? [com, mcom] : [com]);
+		}
+	}
+
+	// after the state is saved (before DCE and generation change the typed
+	// program): the modules of the build as the server would cache them
+	static function capture(com:CommonContext) {
+		var s = state;
+		if (s == null) return;
+		var t0 = haxe.Timer.stamp();
 		// (the files and environment the macros read, as they are now)
 		s.macroValues = new Map();
 		{
@@ -1275,10 +1324,6 @@ class ModuleCache {
 			for (c in cs)
 				for (m in c.modules)
 					if ((m.mExtra.mKind == MCode || m.mExtra.mKind == MMacro) && s.restored(m) == null) s.typedCount++;
-		}
-		{
-			var mcom = com.getMacros();
-			fixMarks(s, mcom != null && context.CommonCache.getCacheSign(mcom) == s.signs[1] ? [com, mcom] : [com]);
 		}
 		// (a mark the store could not give back to its maker)
 		if (s.unattributedMarks > 0 && s.volatileReason == null) s.volatileReason = s.unattributedMarks + " structural marks made outside the typing of a module";
@@ -1303,7 +1348,7 @@ class ModuleCache {
 		for (c in coms) {
 			for (m in c.modules) {
 				var old = m.mExtra.mKind == MExtern ? null : s.restored(m);
-				if (m.mExtra.mKind != MExtern && (old == null || m.mExtra.mProcessed != old.processed)) {
+				if (m.mExtra.mKind != MExtern && (old == null || !processedKept(m.mExtra.mProcessed, old.processed))) {
 					same = false;
 					break;
 				}
@@ -1504,7 +1549,7 @@ class ModuleCache {
 				all.push(v);
 				byKey[role].set(v.key, v);
 				// restored and not processed again: the stored blob
-				if (old != null && x.mProcessed == old.processed) {
+				if (old != null && processedKept(x.mProcessed, old.processed)) {
 					v.blob = old.blob;
 					v.blobOff = old.blobOff;
 					v.blobSize = old.blobSize;
@@ -1642,8 +1687,12 @@ class ModuleCache {
 		if (fresh.length > 0) {
 			var lock = new sys.thread.Lock();
 			s.packLock = lock;
-			var store = s.store;
-			sys.thread.Thread.create(function() {
+			final store = s.store;
+			if (store == null) {
+				s.packOk = false;
+				for (v in fresh) v.blobData = null;
+				s.packLock.release();
+			} else sys.thread.Thread.create(function() {
 				var ok = try ModuleStore.savePack(store, nonce, fresh) catch (_:Dynamic) false;
 				for (v in fresh)
 					v.blobData = null;
@@ -1791,10 +1840,15 @@ class ModuleCache {
 	// the end of a build (code: its exit code): the index written when it changed
 	public static function finish(code:Int) {
 		var s = state;
+		var p = persist;
 		state = null;
 		ServerCache.checkModuleHook = null;
 		typing.Finalization.sortExprHook = null;
 		if (s == null) {
+			CacheDir.settle();
+			return;
+		}
+		if (!p) {
 			CacheDir.settle();
 			return;
 		}
@@ -1844,11 +1898,11 @@ class ModuleCache {
 				ix.moduleHigh = @:privateAccess core.TFunctions.moduleUid.load();
 				ix.varHigh = @:privateAccess core.TFunctions.varUid.load();
 				ix.variants = list;
-				if (ok)
+				if (ok && s.store != null)
 					wrote = try s.store.writeIndex(s.indexKey, ModuleStore.packsOf(ix), ModuleStore.writeIndex(ix)) catch (_:Dynamic) false;
 			}
 		}
-		if (stats) {
+		if (stats && persist) {
 			var n = s.verdictCounts();
 			Sys.println('hxmc: module cache: ${s.checked} checked (${Std.int(s.checkTime * 1000)} ms), ${s.written} modules encoded (${Std.int(s.captureTime * 1000)} ms), '
 				+ '${s.typedUnder} typed again under restored ones, ${s.cycleTyped} with their cycle, interfaces ${Std.int(s.ifaceTime * 1000)} ms, $blobs blobs, index ${wrote ? "written" : "unchanged"} (${ms(t0)} ms), '
