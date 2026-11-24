@@ -135,7 +135,7 @@ class Finalization {
 	// ... when the module was typed (cf null: the class's init); always null in the compiler itself.
 	public static var sortExprHook:Null<(c:TClass, cf:Null<TClassField>, e:TExpr) -> TExpr> = null;
 
-	public static function sortTypes(com:CommonContext, modules:ModuleLut):{types:Array<ModuleType>, modules:Array<ModuleDef>} {
+	public static function sortTypes(com:CommonContext, modules:ModuleLut, warn:Bool = true):{types:Array<ModuleType>, modules:Array<ModuleDef>} {
 		inline function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr return sortExprHook == null ? e : sortExprHook(c, cf, e);
 		var types:Array<ModuleType> = [];
 		var states:Map<String, FinalizationState> = [];
@@ -211,7 +211,7 @@ class Finalization {
 			switch state {
 				case Done:
 				case Generating:
-					Common.moduleWarning(com, tModule(t), WStaticInitOrder, [],
+					if (warn) Common.moduleWarning(com, tModule(t), WStaticInitOrder, [],
 						"Warning : maybe loop in static generation of " + sTypePath(p), tInfos(t).mtPos);
 				case NotYet:
 					states.set(k, Generating);
