@@ -213,6 +213,8 @@ hxml eval-Issue11813-compile-without haxe/upstream/tests/misc/eval/projects/Issu
 hxml eval-Issue11813-compile haxe/upstream/tests/misc/eval/projects/Issue11813 compile.hxml
 hxml eval-Issue12305-compile haxe/upstream/tests/misc/eval/projects/Issue12305 compile.hxml
 hxml eval-Issue12957-compile haxe/upstream/tests/misc/eval/projects/Issue12957 compile.hxml
+hxml eval-Issue13203-compile haxe/upstream/tests/misc/eval/projects/Issue13203 compile.hxml
+hxml eval-Issue13219-compile haxe/upstream/tests/misc/eval/projects/Issue13219 compile.hxml
 hxml eval-Issue2508-compile haxe/upstream/tests/misc/eval/projects/Issue2508 compile.hxml
 hxml eval-Issue2938-compile haxe/upstream/tests/misc/eval/projects/Issue2938 compile.hxml
 hxml eval-Issue3361-compile haxe/upstream/tests/misc/eval/projects/Issue3361 compile.hxml
