@@ -62,6 +62,11 @@ class NativeSys {
 	public static inline function command(cmd:String):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.command(cmd) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.command(cmd) : #end PosixSys.command(cmd) #end;
 
+	// as command, but a command a signal ended gives 256 + the signal (Windows
+	// has no signals: as command)
+	public static inline function commandStatus(cmd:String):Int
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.command(cmd) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.command(cmd) : #end PosixSys.commandStatus(cmd) #end;
+
 	// Windows: without a shell; -2 elsewhere
 	public static inline function commandArgs(cmd:String, args:Array<String>):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.commandArgs(cmd, args) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.commandArgs(cmd, args) : #end PosixSys.commandArgs(cmd, args) #end;
@@ -204,6 +209,17 @@ class NativeSys {
 	// exit code, -1 while running
 	public static inline function processWait(pid:Int, block:Bool):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.processWait(pid, block) : #end PosixSys.processWait(pid, block) #end;
+
+	// as processWait, but a process a signal ended gives 256 + the signal
+	// (Windows has no signals: its exit code, as processWait)
+	public static inline function processWaitStatus(pid:Int, block:Bool):Int
+		return #if (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.processWait(pid, block) : #end PosixSys.processWaitStatus(pid, block) #end;
+
+	// SIGINT and SIGQUIT ignored while waiting for a child, as system() does,
+	// until as many calls with false (nothing on Windows and WebAssembly)
+	public static inline function interruptsIgnored(ignore:Bool):Void {
+		#if (hxmc.target != "wasm32-wasi") #if (!hxmc.os || hxmc.os == "windows") if (Platform.os() != 2) #end PosixSys.interruptsIgnored(ignore); #end
+	}
 
 	// SIGKILL (Windows: TerminateProcess with exit code 0, as upstream's Unix.kill)
 	public static inline function processKill(pid:Int):Void {

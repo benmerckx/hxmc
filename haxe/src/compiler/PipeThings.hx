@@ -23,11 +23,11 @@ import compiler.io.CompilerIo;
 // `Server`) and polls its queue; `poll` reads descriptor 0 through `RawStdin` and
 // joins the forwarding thread only when `RawStdin.interruptible`.
 class PipeThings {
-	/** Reads all available data from [channel] in 1024-byte chunks,
-		passing each chunk to [f]. Stops on EOF or Unix error. */
-	public static function readContent(channel:Input, buf:Bytes, f:String->Void):Void {
+	/** Reads all available data with [read] in 1024-byte chunks,
+		passing each chunk to [f]. Stops on EOF or error. */
+	public static function readContent(read:(Bytes, Int, Int) -> Int, buf:Bytes, f:String->Void):Void {
 		while (true) {
-			var i = try channel.readBytes(buf, 0, 1024) catch (_:Dynamic) 0;
+			var i = try read(buf, 0, 1024) catch (_:Dynamic) 0;
 			if (i > 0) f(buf.sub(0, i).toString())
 			else break;
 		}
@@ -39,16 +39,13 @@ class PipeThings {
 		Uses {!Process.run} to create the child process so we can connect
 		the child's stdin to the client's forwarded data and properly signal
 		EOF when the client closes its end. */
-	// port: sys.io.Process stands in for Process.run (EvalProcess.hostProcess).
 	public static function runCommand(io:CompilerIoData, cmd:String, ?cwd:String):Int {
 		var writeOut = function(s) CompilerIo.writeOut(io, s);
 		var writeErr = function(s) CompilerIo.writeErr(io, s);
-		var proc = macros.eval.EvalProcess.hostProcess(cmd, null, cwd);
-		var pout = proc.stdout;
-		var pin = proc.stdin;
-		var perr = proc.stderr;
+		var proc = macros.eval.EvalProcess.run(cmd, null, cwd);
 		var bout = Bytes.alloc(1024);
 		var berr = Bytes.alloc(1024);
+		function closeStdin() try proc.closeStdin() catch (_:core.ds.Failure) {}
 		/* Use a flag to signal the stdin-forwarding thread to stop.
 			The thread uses Unix.select with a timeout so it can check this flag
 			periodically, avoiding a hang when the child exits but the client
@@ -64,28 +61,27 @@ class PipeThings {
 							var chunk = stdinPipe.poll(0.05);
 							if (chunk != null) {
 								if (chunk.length == 0) throw new haxe.io.Eof();
-								pin.write(chunk);
-								pin.flush();
+								var pos = 0;
+								while (pos < chunk.length)
+									pos += proc.writeStdin(chunk, pos, chunk.length - pos);
 							}
 						}
 					} catch (_:Dynamic) {}
-					try pin.close()
-					catch (_:Dynamic) {}
+					closeStdin();
 					done.release();
 				});
 				done;
 			case _:
-				try pin.close()
-				catch (_:Dynamic) {}
+				closeStdin();
 				null;
 		}
 		var toutDone = new sys.thread.Lock(), terrDone = new sys.thread.Lock();
 		sys.thread.Thread.create(function() {
-			readContent(pout, bout, writeOut);
+			readContent(proc.readStdout, bout, writeOut);
 			toutDone.release();
 		});
 		sys.thread.Thread.create(function() {
-			readContent(perr, berr, writeErr);
+			readContent(proc.readStderr, berr, writeErr);
 			terrDone.release();
 		});
 		/* Join stdout/stderr threads first — they complete when the child closes
@@ -93,7 +89,7 @@ class PipeThings {
 			the stdin thread to stop, and join it. */
 		toutDone.wait();
 		terrDone.wait();
-		var code = proc.exitCode();
+		var code = proc.exit();
 		stopStdin = true;
 		if (tin != null) tin.wait();
 		proc.close();

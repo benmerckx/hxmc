@@ -150,14 +150,26 @@ class PosixSys {
 	}
 
 	@:hxmc.unsafe(gc) public static function command(cmd:String):Int {
+		var r = system(cmd);
+		if (r == -1) return -1;
+		return (r & 0x7f) == 0 ? (r >> 8) & 0xff : 128 + (r & 0x7f);
+	}
+
+	// as command, but a command a signal ended gives 256 + the signal
+	@:hxmc.unsafe(gc) public static function commandStatus(cmd:String):Int {
+		var r = system(cmd);
+		if (r == -1) return -1;
+		return (r & 0x7f) == 0 ? (r >> 8) & 0xff : 256 + (r & 0x7f);
+	}
+
+	@:hxmc.unsafe(gc) static function system(cmd:String):Int {
 		var c = cstr(cmd);
 		Posix.fflush(Ptr.nil());
 		var region = Leaf.rt_blocking_enter();
 		var r = Posix.system(c); // c is malloc'ed: no heap address
 		Regions.end(region);
 		LibC.free(c);
-		if (r == -1) return -1;
-		return (r & 0x7f) == 0 ? (r >> 8) & 0xff : 128 + (r & 0x7f);
+		return r;
 	}
 
 	// Windows runs cmd with args without a shell; here -2: Sys.command quotes
@@ -640,6 +652,20 @@ class PosixSys {
 
 	// OS threads: waits in a safe region; WNOHANG 1
 	@:hxmc.unsafe(gc) public static function processWait(pid:Int, block:Bool):Int {
+		var st = waitStatus(pid, block);
+		return st < 0 ? -1 : exitCode(st);
+	}
+
+	// as processWait, but a process a signal ended gives 256 + the signal
+	@:hxmc.unsafe(gc) public static function processWaitStatus(pid:Int, block:Bool):Int {
+		var st = waitStatus(pid, block);
+		if (st < 0) return -1;
+		var sig = st & 0x7f;
+		return sig == 0 ? (st >> 8) & 0xff : sig != 0x7f ? 256 + sig : -1;
+	}
+
+	// waitpid's status, -1 for none
+	@:hxmc.unsafe(gc) static function waitStatus(pid:Int, block:Bool):Int {
 		var st = Mem.stack(8);
 		while (true) {
 			var region = Leaf.rt_blocking_enter();
@@ -649,7 +675,28 @@ class PosixSys {
 			if (r <= 0) return -1;
 			break;
 		}
-		return exitCode(Mem.getI32(st, 0));
+		return Mem.getI32(st, 0);
+	}
+
+	// SIGINT and SIGQUIT ignored, as system() does while it waits, until as
+	// many calls with false give them back their handlers (the count under
+	// the descriptor lock, held only for this)
+	static var interruptsIgnoredCount:Int;
+	static var savedSigint:Ptr;
+	static var savedSigquit:Ptr;
+
+	@:hxmc.unsafe public static function interruptsIgnored(ignore:Bool):Void {
+		Threads.lockSafe(Gc.fdLock);
+		if (ignore) {
+			if (interruptsIgnoredCount++ == 0) {
+				savedSigint = Posix.signal(2, Ptr.ofI64(1)); // SIG_IGN
+				savedSigquit = Posix.signal(3, Ptr.ofI64(1));
+			}
+		} else if (--interruptsIgnoredCount == 0) {
+			Posix.signal(2, savedSigint);
+			Posix.signal(3, savedSigquit);
+		}
+		Os.unlock(Gc.fdLock);
 	}
 
 	@:hxmc.kernel public static function processKill(pid:Int):Void
