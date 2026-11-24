@@ -173,12 +173,18 @@ class HighLevel {
 			if (i >= parts.length) return 0;
 			var part = parts[i];
 			var hasRest = i + 1 < parts.length;
+			core.Vfs.resetCwd();
 			var com = createContextFromPart(sctx, requestScope, hasDisplay, hasRest, part);
 			var code = Compiler.compileCtx(sctx, com);
 			core.Path.restoreCwd(curdir);
 			return if (code == 0 && hasRest && !hasDisplay) loop(parts, i + 1) else code;
 		}
-		var code = loop(requestArgs.parts, 0);
+		// port: Fun.protect ~finally:Vfs.reset_cwd
+		var code = try loop(requestArgs.parts, 0) catch (e:haxe.Exception) {
+			core.Vfs.resetCwd();
+			throw e;
+		}
+		core.Vfs.resetCwd();
 		core.Path.restoreCwd(curdir);
 		return code;
 	}

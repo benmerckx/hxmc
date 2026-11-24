@@ -84,9 +84,7 @@ class DirectoryClassPath implements IClassPath {
 		var fullPath = classPath + file;
 		var directory = core.OcamlFilename.dirname(fullPath);
 		if (directoryCache.exists(directory)) return null;
-		var listing:Null<Array<String>>;
-		try listing = sys.FileSystem.readDirectory(directory)
-		catch (_:Dynamic) listing = null;
+		var listing = Vfs.readdir(directory);
 		directoryCache.set(directory, listing);
 		return listing == null ? null : {directory: directory, files: listing};
 	}

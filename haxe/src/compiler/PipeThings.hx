@@ -35,14 +35,15 @@ class PipeThings {
 
 	/** Runs a shell command in server mode, forwarding stdin from the client
 		and capturing stdout/stderr through the socket protocol.
+		The command runs in [cwd] if given, otherwise in the current directory.
 		Uses {!Process.run} to create the child process so we can connect
 		the child's stdin to the client's forwarded data and properly signal
 		EOF when the client closes its end. */
-	// port: sys.io.Process stands in for Process.run.
-	public static function runCommand(io:CompilerIoData, cmd:String):Int {
+	// port: sys.io.Process stands in for Process.run (EvalProcess.hostProcess).
+	public static function runCommand(io:CompilerIoData, cmd:String, ?cwd:String):Int {
 		var writeOut = function(s) CompilerIo.writeOut(io, s);
 		var writeErr = function(s) CompilerIo.writeErr(io, s);
-		var proc = new sys.io.Process(cmd);
+		var proc = macros.eval.EvalProcess.hostProcess(cmd, null, cwd);
 		var pout = proc.stdout;
 		var pin = proc.stdin;
 		var perr = proc.stderr;

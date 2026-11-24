@@ -3253,8 +3253,9 @@ class MacroApiImpl {
 				value: vfun2((file, position) -> {
 					var file = decodeString(file);
 					var position = decodeString(position);
-					var file = if (sys.FileSystem.exists(file)) {
-						file;
+					var resolved = core.Vfs.resolve(file);
+					var file = if (sys.FileSystem.exists(resolved)) {
+						resolved;
 					} else {
 						try Common.findFile(ccom(), file)
 						catch (e:Dynamic) if (isNotFound(e)) failwith("unable to find file for inclusion: " + file)

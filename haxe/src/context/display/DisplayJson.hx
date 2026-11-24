@@ -674,6 +674,35 @@ class DisplayJson {
 				name: "server/invalidate",
 				f: function(hctx) {
 					var file = hctx.jsonrpc.getStringParam("file");
+					core.Vfs.invalidate(file);
+					var fkey = hctx.com.partScope.fileKeys.get(file);
+					var cs = hctx.display.getCs();
+					cs.taintModules(fkey, ServerInvalidate);
+					cs.removeFiles(fkey);
+					return Result(jnull);
+				}
+			},
+			{
+				name: "server/vfs",
+				f: function(hctx) {
+					return Result(jobject([
+						kv("mode", jstring(switch core.Vfs.mode {
+							case Off: "off";
+							case Watched: "watch";
+						})),
+						kv("watching", jbool(core.Vfs.watching())),
+						kv("fileSystemCalls", jint(core.Vfs.lastCompilationSyscalls.load())),
+					]));
+				}
+			},
+			{
+				name: "server/overlay",
+				f: function(hctx) {
+					var file = hctx.jsonrpc.getStringParam("file");
+					switch hctx.jsonrpc.getOptParam(() -> hctx.jsonrpc.getStringParam("contents"), null) {
+						case null: core.Vfs.removeOverlay(file);
+						case contents: core.Vfs.setOverlay(file, haxe.io.Bytes.ofString(contents));
+					}
 					var fkey = hctx.com.partScope.fileKeys.get(file);
 					var cs = hctx.display.getCs();
 					cs.taintModules(fkey, ServerInvalidate);

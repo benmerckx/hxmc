@@ -30,18 +30,44 @@ class EvalProcess {
 		this.exitCode = exitCode;
 	}
 
-	public static function run(cmd:String, args:Null<Array<String>>):EvalProcess {
+	/** Runs [cmd] with [args], or the shell command [cmd] if [args] is [None], in
+		directory [cwd] if given, without changing the directory of this process.
+		Its standard descriptors are new pipes. */
+	public static function run(cmd:String, args:Null<Array<String>>, ?cwd:String):EvalProcess {
 		// port: with args = None upstream runs /bin/sh -c (cmd.exe on Windows), which always exists
-		if (args != null && Sys.systemName() != "Windows" && !commandExists(cmd)) {
+		if (args != null && Sys.systemName() != "Windows" && !commandExists(cwd != null && cmd.indexOf("/") > 0 ? cwd + "/" + cmd : cmd)) {
 			return failed(cmd);
 		}
 		// port: on Windows the host's process creation fails as Unix.create_process does
 		// ... (CreateProcess with the program SearchPath found); the error is taken to be
 		// ... ENOENT, the failure of a program that is not found
 		if (args != null && Sys.systemName() == "Windows") {
-			return try new EvalProcess(new sys.io.Process(cmd, args), null, null) catch (_:Dynamic) failed(cmd);
+			return try new EvalProcess(hostProcess(cmd, args, cwd), null, null) catch (_:Dynamic) failed(cmd);
 		}
-		return new EvalProcess(new sys.io.Process(cmd, args), null, null);
+		return new EvalProcess(hostProcess(cmd, args, cwd), null, null);
+	}
+
+	// port: the host's process of `run`; in another directory: hxmc's processes take
+	// ... one (upstream: libuv's spawn), other hosts go through /bin/sh (cd, then exec)
+	public static function hostProcess(cmd:String, args:Null<Array<String>>, cwd:Null<String>):sys.io.Process {
+		if (cwd == null) return new sys.io.Process(cmd, args);
+		#if (target.name == "hxmc")
+		return sys.io.Process.inDirectory(cwd, cmd, args);
+		#else
+		if (Sys.systemName() == "Windows") throw new Failure("port: a process in another directory needs hxmc's processes on Windows");
+		return if (args == null) new sys.io.Process("/bin/sh", ["-c", "cd \"$0\" && " + cmd, cwd]) else
+			new sys.io.Process("/bin/sh", ["-c", "cd \"$0\" && exec \"$@\"", cwd, cmd].concat(args));
+		#end
+	}
+
+	/** As Sys.command, the shell command [cmd] with the standard descriptors of
+		this process, in directory [cwd] if given. */
+	// port: in another directory, the shell changes to it first (upstream: libuv's
+	// ... spawn with the directory, the signals of the terminal ignored meanwhile)
+	public static function command(cmd:String, ?cwd:String):Int {
+		if (cwd == null) return Sys.command(cmd);
+		return if (Sys.systemName() == "Windows") Sys.command("cd /d \"" + cwd + "\" && " + cmd) else
+			Sys.command("cd " + haxe.SysTools.quoteUnixArg(cwd) + " && " + cmd);
 	}
 
 	static function failed(cmd:String):EvalProcess {

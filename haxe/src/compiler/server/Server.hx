@@ -288,15 +288,18 @@ class Server {
 		var curdir = Sys.getCwd();
 		ServerMessage.arguments(Args.stringOfRequestArgs(requestArgs));
 		ServerCompilationContext.reset(sctx);
-		if (sctx.persistentCwd != null) try Sys.setCwd(sctx.persistentCwd)
-		catch (_:Dynamic) {}
+		core.Vfs.beginCompilation();
 		try {
+			if (sctx.persistentCwd != null) try Sys.setCwd(sctx.persistentCwd)
+			catch (_:Dynamic) {}
 			HighLevel.entry(sctx, requestScope, requestArgs);
 		} catch (e:Dynamic) {
 			core.Path.restoreCwd(curdir);
+			core.Vfs.endCompilation();
 			throw e;
 		}
 		core.Path.restoreCwd(curdir);
+		core.Vfs.endCompilation();
 		ServerCompilationContext.runDelays(sctx);
 		ServerMessage.stats(requestScope.stats, Sys.time() - t0);
 	}
@@ -440,6 +443,7 @@ class Server {
 	/* The server main loop. Waits for the [accept] call to then process the sent compilation
 		parameters through [process_params]. */
 	public static function waitLoop(verbose:Bool, accept:ServerAccept):Int {
+		if (Sys.getEnv("HAXE_VFS") == "watch") core.Vfs.mode = Watched;
 		var sctx = setupServerContext(verbose, true);
 		var rq = RequestQueue.create();
 		var worker = createWorker(sctx, rq);

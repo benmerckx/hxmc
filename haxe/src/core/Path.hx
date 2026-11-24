@@ -300,6 +300,10 @@ class Path {
 		}
 	}
 
+	/* Called after the compiler creates a directory. */
+	// port: no initializer (Vfs's __init__ sets it before the statics are); null: nothing
+	public static var onDirectoryCreated:Null<String->Void>;
+
 	/**
 		Creates directory `path` unless it already exists.
 		Doesn't check for existence first, because another thread or process could create the directory in between.
@@ -307,6 +311,7 @@ class Path {
 	public static function mkdirIfMissing(path:String):Void {
 		try {
 			FileSystem.createDirectory(path);
+			if (onDirectoryCreated != null) onDirectoryCreated(path);
 		} catch (error:haxe.Exception) {
 			/* The error for an existing directory depends on the OS, so check what is there instead. */
 			if (!(try FileSystem.isDirectory(removeTrailingSlash(path)) catch (_:haxe.Exception) false)) throw error;

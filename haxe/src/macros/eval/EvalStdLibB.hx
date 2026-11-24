@@ -1688,7 +1688,7 @@ class StdSys {
 
 	public static final _command = EvalEncode.vfun1(cmd -> {
 		var cmd = EvalDecode.decodeString(cmd);
-		com().runCommand(cmd).vint();
+		com().runCommand(cmd, core.Vfs.macroCwd).vint();
 	});
 
 	public static final cpuTime = EvalEncode.vfun0(() -> VFloat(Sys.cpuTime()));
@@ -1713,7 +1713,7 @@ class StdSys {
 	});
 
 	public static final getCwd = EvalEncode.vfun0(() -> {
-		var dir = EvalStdLib.catchUnixError(_ -> Sys.getCwd(), null);
+		var dir = EvalStdLib.catchUnixError(_ -> core.Vfs.getcwd(), null);
 		var l = dir.length;
 		if (l == 0) EvalEncode.encodeString("./")
 		else switch dir.charAt(l - 1) {
@@ -1761,7 +1761,7 @@ class StdSys {
 	});
 
 	public static final setCwd = EvalEncode.vfun1(s -> {
-		EvalStdLib.catchUnixError(Sys.setCwd, EvalDecode.decodeString(s));
+		EvalStdLib.catchUnixError(core.Vfs.setcwd, EvalDecode.decodeString(s));
 		VNull;
 	});
 

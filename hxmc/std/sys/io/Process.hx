@@ -37,8 +37,20 @@ class Process {
 		`close()` should be called when the `Process` is no longer used.
 	**/
 	public function new(cmd:String, ?args:Array<String>, ?detached:Bool):Void {
+		start(cmd, args, null);
+	}
+
+	// hxmc, not upstream's API: a process started in directory `cwd` (the
+	// compiler's Eval starts a macro's processes in the macro's working directory)
+	@:noCompletion public static function inDirectory(cwd:String, cmd:String, ?args:Array<String>):Process {
+		var p = Type.createEmptyInstance(Process);
+		p.start(cmd, args, cwd);
+		return p;
+	}
+
+	function start(cmd:String, args:Null<Array<String>>, cwd:Null<String>):Void {
 		var fds = [0, 0, 0];
-		pid = NativeSys.processRun(cmd, args, fds);
+		pid = NativeSys.processRun(cmd, args, fds, cwd);
 		if (pid < 0) throw "Process creation failure : " + cmd;
 		stdin = @:privateAccess new FileOutput(fds[0]);
 		stdout = @:privateAccess new FileInput(fds[1]);

@@ -305,16 +305,39 @@ class ServerCache {
 				}
 			}
 		}
+		function hasPolicyOf(mExtra:ModuleDefExtra, policy:ModuleCheckPolicy) {
+			return mExtra.mCheckPolicy.indexOf(policy) >= 0 || switch policy {
+				case NoFileSystemCheck if (ServerConfig.doNotCheckModules && com.display.dmsKind != DMNone): true;
+				case _: false;
+			}}
+		/* With the watched file system view, the path of the module is resolved
+			again: it must still give the file of the module. */
+		function checkModuleResolution(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
+			if (mPath.name.length > 0 && mPath.name.charAt(0) == "_") return;
+			try {
+				var rfile = TypeloadParse.resolveModuleFile(com, mPath, {value: []}, p);
+				var file = rfile.file;
+				var time = Common.fileTime(file);
+				if (com.partScope.fileKeys.get(file) != core.Path.UniqueKey.lazyKey(mExtra.mFile)
+					|| (hasPolicyOf(mExtra, NoFileSystemCheck) && time > mExtra.mTime && !unchangedContent(mPath, mExtra, file, time))) {
+					ServerMessage.modulePathChanged(com, "", mPath, mExtra, time, file);
+					throw new Dirty(Shadowed(file));
+				}
+			} catch (_:NotFound) {}
+		}
+		function checkModuleShadowingOf(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
+			if (core.Vfs.mode == Watched) checkModuleResolution(com, mPath, mExtra) else
+				checkModuleShadowing(getChangedDirectories(sctx, com), mPath, mExtra);
+		}
 		var startMark = sctx.compilationStep;
 		var unknownStateModules:Array<ModuleDefExtra> = [];
 		function check(mPath:GlobalTypePath, mExtra:ModuleDefExtra):Null<ModuleSkipReason> {
 			function checkModulePath() {
-				var directories = getChangedDirectories(sctx, com);
 				switch mExtra.mKind {
 					case MFake | MImport: /* don't get classpath */
 					case MExtern:
 						/* if we have a file then this will override our extern type */
-						checkModuleShadowing(directories, mPath, mExtra);
+						checkModuleShadowingOf(com, mPath, mExtra);
 						function loop(l:Array<context.Common.ExternTypeLoader>, i:Int) {
 							if (i >= l.length) {
 								if (sctx.verbose) Sys.println("No library file was found for " + Globals.sTypePath(mPath)); /* TODO */
@@ -336,22 +359,18 @@ class ServerCache {
 						}
 						loop(com.loadExternType, 0);
 					case MCode:
-						checkModuleShadowing(directories, mPath, mExtra);
+						checkModuleShadowingOf(com, mPath, mExtra);
 					case MMacro if (com.isMacroContext):
-						checkModuleShadowing(directories, mPath, mExtra);
+						checkModuleShadowingOf(com, mPath, mExtra);
 					case MMacro:
 						switch com.getMacros() {
 							case null:
 							case mcom:
-								checkModuleShadowing(getChangedDirectories(sctx, mcom), mPath, mExtra);
+								checkModuleShadowingOf(mcom, mPath, mExtra);
 						}
 				}
 			}
-			function hasPolicy(policy:ModuleCheckPolicy) {
-				return mExtra.mCheckPolicy.indexOf(policy) >= 0 || switch policy {
-					case NoFileSystemCheck if (ServerConfig.doNotCheckModules && com.display.dmsKind != DMNone): true;
-					case _: false;
-				}}
+			function hasPolicy(policy:ModuleCheckPolicy) return hasPolicyOf(mExtra, policy);
 			function checkFile() {
 				var file = core.Path.UniqueKey.lazyPath(mExtra.mFile);
 				var time = Common.fileTime(file);
