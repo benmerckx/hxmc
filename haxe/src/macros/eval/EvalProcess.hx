@@ -157,6 +157,9 @@ class EvalProcess {
 	public static function command(cmd:String, ?cwd:String):Int {
 		if (cwd == null) return sysCommand(cmd);
 		#if (target.name == "hxmc")
+		// port: hxmc has libuv except on WebAssembly, where WASI has no processes:
+		// ... Sys.command's failure there
+		if (!Uv.available()) return sysCommand(cmd);
 		var sh = shell(cmd);
 		var loop = takeLoop();
 		var exitCode:Null<Int> = null;
