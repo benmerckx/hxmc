@@ -128,11 +128,11 @@ class Genesm {
 		add("const $extend = $hx.$extend;\n");
 		add("var $hx_exports = {};\n");
 		if (ctx.hasResolveClass || generators.Gctx.hasFeature(com, "Type.resolveEnum"))
-			add("var $hxClasses = {};\n");
+			add("var $hxClasses = $hx.$hxClasses;\n");
 		if (generators.Gctx.hasFeature(com, "has_enum"))
 			add("function $estr() { return js_Boot.__string_rec(this,\"\"); }\n");
 		if (!(generators.Gctx.defined(com, Define.JsEnumsAsArrays)) && (generators.Gctx.hasFeature(com, "has_enum") || generators.Gctx.hasFeature(com, "Type.resolveEnum")))
-			add("var $hxEnums = {};\n");
+			add("var $hxEnums = $hx.$hxEnums;\n");
 		var esm = core.Define.rawDefined(com.defines, "esm");
 		if (esm || generators.Gctx.hasFeature(com, "use.$bind") || moduleHasUserEnum(types)) add("var $_;\n");
 		if (esm || generators.Gctx.hasFeature(com, "use.$bind"))
@@ -145,6 +145,8 @@ class Genesm {
 			add("const $keyValueIterator = $hx.$keyValueIterator;\n");
 		if (esm || generators.Gctx.hasFeature(com, "use.$getKeyValueIterator"))
 			add("const $getKeyValueIterator = $hx.$getKeyValueIterator;\n");
+		if (esm || generators.Gctx.hasFeature(com, "use.$arrayPush"))
+			add("const $arrayPush = $hx.$arrayPush;\n");
 	}
 
 	static function moduleHasUserEnum(types:Array<ModuleType>):Bool {
@@ -235,6 +237,8 @@ class Genesm {
 			buf.add("export var $hxClasses = {};\n");
 		if (generators.Gctx.hasFeature(com, "has_enum"))
 			buf.add("export function $estr() { return js_Boot.__string_rec(this,\"\"); }\n");
+		if (!(generators.Gctx.defined(com, Define.JsEnumsAsArrays)) && (generators.Gctx.hasFeature(com, "has_enum") || generators.Gctx.hasFeature(com, "Type.resolveEnum")))
+			buf.add("export var $hxEnums = {};\n");
 		if (esm || generators.Gctx.hasFeature(com, "use.$bind")) {
 			buf.add("$global.$haxeUID |= 0;\n");
 			buf.add("export function $bind(o,m) { if( m == null ) return null; if( m.__id__ == null ) m.__id__ = $global.$haxeUID++; var f; if( o.hx__closures__ == null ) o.hx__closures__ = {}; else f = o.hx__closures__[m.__id__]; if( f == null ) { f = m.bind(o); o.hx__closures__[m.__id__] = f; } return f; }\n");
@@ -248,6 +252,8 @@ class Genesm {
 			buf.add("export function $keyValueIterator(o) { if( o instanceof Array ) return function() { return HxOverrides.keyValueIter(o); }; return typeof(o.keyValueIterator) == 'function' ? $bind(o,o.keyValueIterator) : o.keyValueIterator; }\n");
 		if (esm || generators.Gctx.hasFeature(com, "use.$getKeyValueIterator"))
 			buf.add("export function $getKeyValueIterator(o) { if( o instanceof Array ) return HxOverrides.keyValueIter(o); else return o.keyValueIterator(); }\n");
+		if (esm || generators.Gctx.hasFeature(com, "use.$arrayPush"))
+			buf.add("export function $arrayPush(x) { return this.push(x); }\n");
 		if (generators.Gctx.hasFeature(com, "$global.$haxeUID"))
 			buf.add("$global.$haxeUID |= 0;\n");
 		sys.io.File.saveContent(path, buf.toString());
@@ -274,6 +280,10 @@ class Genesm {
 			if (done.exists(id)) return;
 			if (pending.exists(id)) return;
 			pending.set(id, true);
+			for (impl in c.clImplements) {
+				var it = lut.get(Globals.sTypePath(impl.cls.clPath));
+				if (it != null) emitClass(it);
+			}
 			var sid = superId(c);
 			if (sid != null) {
 				var sup = lut.get(sid);

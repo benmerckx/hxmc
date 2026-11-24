@@ -20,17 +20,10 @@ unit.issues.Issue9046.test
 unit.issues.Issue9484.test
 unit.TestBasetypes.testMap
 unit.TestBasetypes.testString
-unit.TestCasts.testInterfaces
 unit.TestExceptions.testValueException
-unit.TestInterface.test
 unit.TestIO.test
 unit.TestIO.testBytesBounds
 unit.TestMatch.testBasic
-unit.TestReflect.testEnumConstructor
-unit.TestReflect.testIs
-unit.TestReflect.testTypeEq
-unit.TestReflect.testTypeof
-unit.TestReflect.testTypes
 unit.TestSerialize.test
 unit.TestSerialize.testEnumRef
 unit.teststd.haxe.ds.TestIntMap.test
@@ -38,8 +31,4 @@ unit.teststd.haxe.macro.TestExprTools.test
 unit.teststd.haxe.runtime.TestCopy.test
 unit.teststd.TestArray.test
 unit.teststd.TestMap.test
-unit.teststd.TestReflect.test
 unit.teststd.TestStd.test
-unit.teststd.TestType.test
-unit.TestType.testAllField
-unit.TestType.testType
