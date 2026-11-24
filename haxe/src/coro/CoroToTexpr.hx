@@ -212,7 +212,7 @@ class CoroToTexpr {
 		 * during suspension.
 		 * TODO : Instead of giving each variable a field have a set of "slots" which can be used by a field if no other variable is currently using it.
 		 */
-		// port: `Hashtbl.create 0`: the result lists the fields in OCaml's bucket order (Hashtbl.to_seq_values)
+		// port: `Hashtbl.create 0`; its order no longer reaches the output (the result is sorted by id)
 		var fields = new core.ds.OcamlHashtbl<Int, TClassField>(core.ds.OcamlHashtbl.hashInt, function(a, b) return a == b);
 		inline function setField(id:Int, field:TClassField):Void fields.replace(id, field);
 		inline function across(id:Int):Bool {
@@ -346,6 +346,7 @@ class CoroToTexpr {
 		}
 		var out = [];
 		fields.iter(function(id, f) out.push({id: id, cf: f}));
+		out.sort((a, b) -> a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 		return out;
 	}
 
