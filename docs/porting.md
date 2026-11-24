@@ -94,10 +94,6 @@ does; a harness case checks the port's behaviour and names the divergence;
 it gets a row in hxmc's issue of upstream bugs (#124). No issue is filed
 upstream. When the pin moves past upstream's fix, the divergence goes. The divergences:
 
-- The compilation server goes on after a client that connects and closes
-  without a request, or sends nothing: upstream's `wait_loop` (5.0) ends
-  there, 4.3's went on (`compiler.server.Server.waitLoop`; the Server
-  harness's `misc:empty-connection`).
 - An abstract's overloaded call operators (`@:op(a())`) read back from HXB
   are the impl class's statics of the other operator functions, as when
   typed. Upstream's reader makes them separate fields, while the writer
