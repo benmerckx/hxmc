@@ -151,36 +151,94 @@ class TRef {
 	public function new() {}
 }
 
+/* The class being generated: what its generation emits, and the symbols it
+	names after itself (local functions and method wrappers, numbered in the
+	class), so that the generation of a class depends neither on the other
+	classes nor on the order of the generation. */
+class GenObject {
+	public final gPath:GlobalTypePath;
+	public final gFuns:Array<Fundecl> = [];
+	/* the functions of the natives it declares */
+	public final gNatives:Array<Int> = [];
+	public var gWarnings:Array<{msg:String, p:Pos}> = []; // port: in emission order (upstream: reversed list)
+	public var gClosures:Int = 0;
+	public var gWrappers:TtypeMap<TtypeMap<Int>> = new TtypeMap();
+	public var gNwrappers:Int = 0;
+
+	public function new(path:GlobalTypePath) this.gPath = path;
+}
+
+/* The symbols an object uses, each table in the order of their first use in
+	its functions. */
+typedef ObjSyms = {
+	var sStrings:Array<Int>;
+	var sInts:Array<Int>;
+	var sFloats:Array<Int>;
+	var sBytes:Array<Int>;
+	var sFiles:Array<Int>;
+	var sGlobals:Array<Int>;
+	var sFuns:Array<Int>;
+	var sTypes:Array<Ttype>;
+}
+
+/* The generation of a class (or of the entry point, or of the function of an
+	enum constructor): its functions, whose operands are the symbols of the
+	context, the natives it declares and the warnings it emitted. It does not
+	depend on the other classes nor on the order of the generation; the linker
+	numbers the symbols of all the objects. */
+class HlObject {
+	public final oPath:GlobalTypePath;
+	public var oFuns:Array<Fundecl>;
+	public final oNatives:Array<Int>;
+	public final oWarnings:Array<{msg:String, p:Pos}>;
+	public var oSyms:Null<ObjSyms> = null;
+
+	public function new(oPath:GlobalTypePath, oFuns:Array<Fundecl>, oNatives:Array<Int>, oWarnings:Array<{msg:String, p:Pos}>) {
+		this.oPath = oPath;
+		this.oFuns = oFuns;
+		this.oNatives = oNatives;
+		this.oWarnings = oWarnings;
+	}
+}
+
+// port: the referrer of the linker's walk (`Object o | `Proto p)
+enum LinkReferrer {
+	RObject(o:HlObject);
+	RProto(p:ClassProto);
+}
+
+/* The symbols of the generation are the indexes of its tables (strings,
+	ints, floats, bytes, functions by key, globals by name or constant value,
+	debug files by name): a table only grows, and maps an index to the same key
+	for the lifetime of the context. The HL types are built once per context
+	and hold symbols as well; the linker numbers the symbols in a canonical
+	order. */
+// port: the classes are generated one after the other on one thread, which upstream
+// keeps as -D hl-gen-sequential and whose output its parallel generation equals:
+// the type lock is only its section (with_type_lock), the tables have no locks and
+// the published copies of the types (ptypes, panons) are the tables themselves.
 class HlContext {
 	public var com:Gctx;
-	public var numDomains:Int;
 	public var cglobals:Lookup<Ttype> = new Lookup();
 	public var cstrings:Lookup<String> = new Lookup();
 	public var cbytes:Lookup<haxe.io.Bytes> = new Lookup();
 	public var cfloats:Lookup<Float> = new Lookup();
 	public var cints:Lookup<Int> = new Lookup();
 	public var cnatives:Lookup<Native> = new Lookup();
-	public var cfids:Lookup<Bool> = new Lookup();
-	// port: the (string * path) keys of cfids.map, for `check`
-	public var cfidsKeys:Array<{name:String, path:GlobalTypePath, id:Int}> = [];
-	public var cfunctions:Array<Fundecl> = [];
+	public var cfids:Lookup<{name:String, path:GlobalTypePath}> = new Lookup();
 	public var cconstants:Lookup<{g:Int, fields:Vector<Int>}> = new Lookup();
 	public var hlVer:String;
 	public var hl2:Bool;
 	public var optimize:Bool;
 	public var wNullCompare:Bool;
 	public var overrides:StringMap<Bool> = new StringMap();
-	public var definedFuns:IntMap<Bool> = new IntMap();
 	public var cachedTypes:StringMap<Ttype> = new StringMap();
 	public var m:MethodContext;
-	// port: keyed by physical identity; upstream compares tanon structurally, which
-	// only merges anonymous types that convert to structurally equal ttypes.
-	public var anonsCache:ObjectMap<TAnon, Ttype> = new ObjectMap();
-	public var methodWrappers:TtypeMap<TtypeMap<Int>> = new TtypeMap();
+	/* structures, by [anon_key], in the order of their creation */
+	public var anonsCache:StringMap<Array<{a:TAnon, t:Ttype}>> = new StringMap();
 	public var recCache:Array<{t:T, tref:TRef}> = []; // port: list, head = last element
 	public var cachedTuples:TtypeMap<Ttype> = new TtypeMap(); // port: keyed by HFun (tl, HVoid)
 	public var tstring:Ttype = HVoid;
-	public var macroTypedefs:StringMap<Ttype> = new StringMap();
 	public var arrayImpl:ArrayImpl;
 	public var baseClass:TClass;
 	public var baseType:TClass;
@@ -191,6 +249,15 @@ class HlContext {
 	public var cdebugFiles:Lookup<String> = new Lookup();
 	public var ctDelayed:Array<Void->Void> = []; // port: list, head = last element
 	public var ctDepth:Int = 0;
+	// port: keyed by the hash of the names of their fields (a string here)
+	public var virtuals:StringMap<Array<VirtualProto>> = new StringMap(); // port: lists, head first
+	public var virtualsPending:Array<{vp:VirtualProto, onReplace:Ttype->Void}> = []; // port: in creation order (upstream: reversed list)
+	public var virtualsDepth:Int = 0;
+	public var virtualsHolders:Array<(Ttype->Ttype)->Void> = []; // port: list, head = last element
+	/* the functions of the enum constructors, generated by the linker */
+	public var enumCtors:IntMap<{e:TEnum, ef:TEnumField}> = new IntMap();
+	/* the class being generated */
+	public var cur:GenObject = new GenObject({pack: [], name: ""});
 
 	public function new() {}
 }
@@ -308,13 +375,34 @@ class Genhl {
 		return {str: str, len: ccount};
 	}
 
+	/* the warnings are emitted in the order of the types, after the generation */
+	static function warning(ctx:HlContext, msg:String, p:Pos):Void ctx.cur.gWarnings.push({msg: msg, p: p});
+
+	/* [f ()] under the type lock; the types it created are published when the
+		outermost section ends. A type is built without the typedefs being
+		resolved around it, so that its content does not depend on where it is
+		first reached. */
+	// port: one thread: the section only sets the typedefs aside
+	static function withTypeLock<R>(ctx:HlContext, f:Void->R):R {
+		var recCache = ctx.recCache;
+		ctx.recCache = [];
+		var v = try f() catch (e:haxe.Exception) {
+			ctx.recCache = recCache;
+			throw e;
+		}
+		ctx.recCache = recCache;
+		return v;
+	}
+
 	static function tupleType(ctx:HlContext, tl:Array<Ttype>):Ttype {
-		var key = HFun(tl, HVoid);
-		var ct = ctx.cachedTuples.get(key);
-		if (ct != null) return ct;
-		var ct = HEnum(new EnumProto("", 0, null, vector({name: "", nid: 0, args: Vector.fromArrayCopy(tl)}), vector()));
-		ctx.cachedTuples.set(key, ct);
-		return ct;
+		return withTypeLock(ctx, () -> {
+			var key = HFun(tl, HVoid);
+			var ct = ctx.cachedTuples.get(key);
+			if (ct != null) return ct;
+			var ct = HEnum(new EnumProto("", 0, null, vector({name: "", nid: 0, args: Vector.fromArrayCopy(tl)}), vector()));
+			ctx.cachedTuples.set(key, ct);
+			return ct;
+		});
 	}
 
 	static final nullCapture:MethodCapture = new MethodCapture(new IntMap(), vector(), HVoid, false);
@@ -334,6 +422,9 @@ class Genhl {
 		l.arr.push(v);
 		return id;
 	}
+
+	/* the value of an index, while the table may grow */
+	static inline function lookupGet<V>(l:Lookup<V>, i:Int):V return l.arr[i];
 
 	static function methodContext(id:Int, t:Ttype, captured:MethodCapture, hasthis:Bool):MethodContext
 		return new MethodContext(id, t, captured, hasthis);
@@ -378,7 +469,116 @@ class Genhl {
 
 	static function efieldName(e:TEnum, f:TEnumField):String return sTypePath(e.ePath) + ":" + f.efName;
 
-	static function globalType(ctx:HlContext, g:Int):Ttype return ctx.cglobals.arr[g];
+	static function globalType(ctx:HlContext, g:Int):Ttype return lookupGet(ctx.cglobals, g);
+
+	/* Whether two structures convert to the same HL type: equality on what
+		[to_type] reads (field names, kinds and types, declarations by path, type
+		parameters physically for their constraints), not on positions nor
+		metadata. A structure written at several places is one type. */
+	static function sameAnon(a:TAnon, b:TAnon):Bool {
+		var assumed:Array<TAnon> = []; // port: (a1, a2) pairs at 2k, 2k + 1
+		function norm(t:T):T {
+			return switch t {
+				case TMono({tmType: t}) if (t != null): norm(t);
+				case TLazy(f): norm(lazyType(f));
+				case _: t;
+			}
+		}
+		inline function pathEq(a:GlobalTypePath, b:GlobalTypePath) return a.hashKey() == b.hashKey();
+		var ty:(T, T) -> Bool = null;
+		var anon:(TAnon, TAnon) -> Bool = null;
+		// port: List.for_all2 raising Invalid_argument at the end of the shorter list
+		function forAll2<X>(f:(X, X) -> Bool, l1:haxe.ds.Vector<X>, l2:haxe.ds.Vector<X>):Bool {
+			var n = l1.length < l2.length ? l1.length : l2.length;
+			for (i in 0...n) if (!f(l1[i], l2[i])) return false;
+			return l1.length == l2.length;
+		}
+		function params(l1:TParams, l2:TParams):Bool return forAll2(ty, l1, l2);
+		ty = function(t1:T, t2:T):Bool {
+			if (t1 == t2) return true;
+			var t1 = norm(t1), t2 = norm(t2);
+			if (t1 == t2) return true;
+			return switch [t1, t2] {
+				case [TMono(_), TMono(_)] | [TDynamic(_), TDynamic(_)]: true;
+				case [TInst(c1, l1), TInst(c2, l2)]:
+					(switch [c1.clKind, c2.clKind] {
+						case [KTypeParameter(_) | KExpr(_), _] | [_, KTypeParameter(_) | KExpr(_)]: c1 == c2;
+						case _: pathEq(c1.clPath, c2.clPath);
+					}) && params(l1, l2);
+				case [TEnum(e1, l1), TEnum(e2, l2)]: pathEq(e1.ePath, e2.ePath) && params(l1, l2);
+				case [TType(d1, l1), TType(d2, l2)]: pathEq(d1.tPath, d2.tPath) && params(l1, l2);
+				case [TAbstract(a1, l1), TAbstract(a2, l2)]: pathEq(a1.aPath, a2.aPath) && params(l1, l2);
+				case [TFun(s1), TFun(s2)]:
+					forAll2((x, y) -> x.optional == y.optional && ty(x.type, y.type), s1.args, s2.args) && ty(s1.ret, s2.ret);
+				case [TAnon(a1), TAnon(a2)]: anon(a1, a2);
+				case _: false;
+			}
+		}
+		anon = function(a1:TAnon, a2:TAnon):Bool {
+			if (a1 == a2) return true;
+			var k = 0;
+			while (k < assumed.length) {
+				if (assumed[k] == a1 && assumed[k + 1] == a2) return true;
+				k += 2;
+			}
+			return switch [a1.aStatus, a2.aStatus] {
+				case [ClassStatics(c1), ClassStatics(c2)]: pathEq(c1.clPath, c2.clPath);
+				case [EnumStatics(e1), EnumStatics(e2)]: pathEq(e1.ePath, e2.ePath);
+				case [ClassStatics(_) | EnumStatics(_), _] | [_, ClassStatics(_) | EnumStatics(_)]: false;
+				case _:
+					inline function methodKind(cf:TClassField) return cf.cfKind.match(Method(MethNormal | MethInline));
+					assumed.push(a1);
+					assumed.push(a2);
+					var n1 = 0, n2 = 0;
+					for (_ in a1.aFields) n1++;
+					for (_ in a2.aFields) n2++;
+					if (n1 != n2) false else {
+						// port: PMap.foldi, `acc && ...`: the fields after a difference are not compared
+						var acc = true;
+						for (cf1 in a1.aFields) {
+							if (!acc) break;
+							var cf2 = a2.aFields.get(cf1.cfName);
+							acc = cf2 != null && methodKind(cf1) == methodKind(cf2) && ty(cf1.cfType, cf2.cfType);
+						}
+						acc;
+					}
+			}
+		}
+		return anon(a, b);
+	}
+
+	/* a hash of the fields of a structure (names and the head of their types),
+		compatible with [same_anon] */
+	// port: a string key (the table's order never reaches the output)
+	static function anonKey(a:TAnon):String {
+		function head(t:T):String {
+			return switch t {
+				case TMono({tmType: t}) if (t != null): head(t);
+				case TLazy(f): head(lazyType(f));
+				case TInst(c, _): "c" + c.clPath.hashKey();
+				case TEnum(e, _): "e" + e.ePath.hashKey();
+				case TType(d, _): "t" + d.tPath.hashKey();
+				case TAbstract(a, _): "a" + a.aPath.hashKey();
+				case TFun(s): "f" + (1 + s.args.length);
+				case TAnon(_): "0";
+				case TMono(_) | TDynamic(_): "-1";
+			}
+		}
+		var b = new StringBuf();
+		for (cf in a.aFields) {
+			b.add(cf.cfName);
+			b.add("\x00");
+			b.add(head(cf.cfType));
+			b.add("\x00");
+		}
+		return b.toString();
+	}
+
+	/* the type of the first structure of [l] that is the same as [a] */
+	static function findAnon(l:Array<{a:TAnon, t:Ttype}>, a:TAnon):Null<Ttype> {
+		for (e in l) if (sameAnon(a, e.a)) return e.t;
+		return null;
+	}
 
 	static function overrideKey(name:String, path:GlobalTypePath):String return name + "\x00" + sTypePath(path);
 
@@ -458,21 +658,19 @@ class Genhl {
 
 	static function setCurpos(ctx:HlContext, p:Pos):Void ctx.m.mcurpos = p;
 
+	/* the debug information of the instructions of a function: their file (a
+		symbol, by name) and line, and the position starting the line */
 	static function makeDebug(ctx:HlContext, arr:Array<Pos>):Vector<DebugInfo> {
-		function getRelativePath(p:Pos):String {
-			return if (Gctx.defined(ctx.com, Define.AbsolutePath)) {
-				if (core.OcamlFilename.isRelative(p.pfile)) core.OcamlFilename.concat(core.OcamlFilename.sysGetcwd(), p.pfile) else p.pfile;
-			} else ctx.com.classPaths.relativePath(p.pfile);
-		}
-		var pos:DebugInfo = {file: 0, line: 0, pos: Globals.nullPos};
-		var curFile = 0;
+		var pos:DebugInfo = nullDebug;
+		var first = true;
+		var curFile = -1;
 		var curLine = 0;
 		var cur = Globals.nullPos;
-		var out = new Vector<DebugInfo>(arr.length);
+		var out = new Vector<DebugInfo>(arr.length, nullDebug);
 		for (i in 0...arr.length) {
 			var p = arr[i];
-			if (p != cur) {
-				var file = if (p.pfile == cur.pfile) curFile else lookup(ctx.cdebugFiles, p.pfile, () -> getRelativePath(p));
+			if (first || p != cur) {
+				var file = if (!first && p.pfile == cur.pfile) curFile else lookup(ctx.cdebugFiles, p.pfile, () -> p.pfile);
 				var line = syntax.Lexer.getErrorLine(p);
 				if (line != curLine || file != curFile) {
 					curFile = file;
@@ -480,10 +678,18 @@ class Genhl {
 					pos = {file: file, line: line, pos: p};
 				}
 				cur = p;
+				first = false;
 			}
 			out[i] = pos;
 		}
 		return out;
+	}
+
+	/* the path of a debug file in the output */
+	static function debugFilePath(com:Gctx, file:String):String {
+		return if (Gctx.defined(com, Define.AbsolutePath)) {
+			if (core.OcamlFilename.isRelative(file)) core.OcamlFilename.concat(core.OcamlFilename.sysGetcwd(), file) else file;
+		} else com.classPaths.relativePath(file);
 	}
 
 	static var fakeTnullCache:Null<TAbstract> = null;
@@ -523,6 +729,92 @@ class Genhl {
 		return t;
 	}
 
+	static function beginVirtual(ctx:HlContext, onReplace:Ttype->Void):VirtualProto {
+		var vp = new VirtualProto();
+		ctx.virtualsPending.push({vp: vp, onReplace: onReplace});
+		ctx.virtualsDepth = ctx.virtualsDepth + 1;
+		return vp;
+	}
+
+	// port: `repl`: the (v, c) pairs, List.assq
+	static function assqVirtual(repl:Array<{v:VirtualProto, c:VirtualProto}>, v:VirtualProto):Null<VirtualProto> {
+		for (r in repl) if (r.v == v) return r.c;
+		return null;
+	}
+
+	static function substVirtuals(repl:Array<{v:VirtualProto, c:VirtualProto}>, t:Ttype):Ttype {
+		function sub(t:Ttype) return substVirtuals(repl, t);
+		return switch t {
+			case HVirtual(v):
+				var c = assqVirtual(repl, v);
+				c == null ? t : HVirtual(c);
+			case HFun(args, ret): HFun(args.map(sub), sub(ret));
+			case HMethod(args, ret): HMethod(args.map(sub), sub(ret));
+			case HNull(t): HNull(sub(t));
+			case HRef(t): HRef(sub(t));
+			case HArray(t): HArray(sub(t));
+			case HPacked(t): HPacked(sub(t));
+			case _: t;
+		}
+	}
+
+	/* [f] updates a type created while virtuals are pending, when some of them are merged */
+	static function holdVirtuals(ctx:HlContext, f:(Ttype->Ttype)->Void):Void {
+		if (ctx.virtualsDepth > 0) ctx.virtualsHolders.push(f);
+	}
+
+	static function substProto(subst:Ttype->Ttype, p:ClassProto):Void {
+		p.pfields = p.pfields.map(f -> ({name: f.name, nid: f.nid, t: subst(f.t)} : HField));
+		p.pindex = p.pindex.map(x -> {fid: x.fid, t: subst(x.t)});
+		// port: PMap.foldi (key order) adding each substituted key
+		var interfaces = new TtypeMap<Int>();
+		for (e in p.pinterfaces.sortedEntries()) interfaces.set(subst(e.k), e.v);
+		p.pinterfaces = interfaces;
+	}
+
+	/*
+		Structurally equal virtuals are merged into a single one, so they can be compared physically.
+		This is done once the outermost virtual is complete, since recursive ones are only known then.
+		The virtuals that are merged are replaced in the types created meanwhile.
+	*/
+	static function endVirtual(ctx:HlContext, vp:VirtualProto):Ttype {
+		ctx.virtualsDepth = ctx.virtualsDepth - 1;
+		if (ctx.virtualsDepth > 0) return HVirtual(vp);
+		var pending = ctx.virtualsPending;
+		var holders = ctx.virtualsHolders;
+		ctx.virtualsPending = [];
+		ctx.virtualsHolders = [];
+		var repl:Array<{v:VirtualProto, c:VirtualProto}> = [];
+		for (e in pending) {
+			var v = e.vp;
+			// port: the hash of the names, as a string
+			var key = [for (f in v.vfields) f.name].join("\x00");
+			var bucket = ctx.virtuals.get(key);
+			if (bucket == null) bucket = [];
+			var found:Null<VirtualProto> = null;
+			for (c in bucket) if (tsame(HVirtual(v), HVirtual(c))) {
+				found = c;
+				break;
+			}
+			if (found != null) {
+				e.onReplace(HVirtual(found));
+				repl.unshift({v: v, c: found});
+			} else
+				ctx.virtuals.set(key, [v].concat(bucket));
+		}
+		if (repl.length == 0) return HVirtual(vp);
+		var subst = substVirtuals.bind(repl);
+		for (e in pending) {
+			var v = e.vp;
+			if (assqVirtual(repl, v) == null) v.vfields = v.vfields.map(f -> ({name: f.name, nid: f.nid, t: subst(f.t)} : HField));
+		}
+		// port: List.iter over the list, the last held first
+		var i = holders.length;
+		while (i-- > 0) holders[i](subst);
+		var c = assqVirtual(repl, vp);
+		return HVirtual(c == null ? vp : c);
+	}
+
 	// port: the name of `TInst ({ cl_path = ["hl"],"Abstract" },[TInst({ cl_kind = KExpr (EConst (String(name,_)),_) },_)])`
 	static function hlAbstractName(t:T):Null<String> {
 		return switch t {
@@ -540,12 +832,7 @@ class Genhl {
 			case TMono(r):
 				return if (r.tmType == null) HDyn else toType(ctx, r.tmType, tref);
 			case TType(td, tl):
-				var t = getRecCache(ctx, t, () -> HDyn, tref -> toType(ctx, applyTypedef(td, tl), tref));
-				if (td.tPath.pack.length == 2 && td.tPath.pack[0] == "haxe" && td.tPath.pack[1] == "macro") {
-					ctx.macroTypedefs.set(td.tPath.name, t);
-					return t;
-				}
-				return t;
+				return getRecCache(ctx, t, () -> HDyn, tref -> toType(ctx, applyTypedef(td, tl), tref));
 			case TLazy(f):
 				return toType(ctx, lazyType(f), tref);
 			case TFun(s):
@@ -567,19 +854,22 @@ class Genhl {
 				}
 			case TAnon(a):
 				if (a.aFields.isEmpty()) return HDyn;
-				/* can't use physical comparison in PMap since addresses might change in GC compact,
-					maybe add an uid to tanon if too slow ? */
-				var cached = ctx.anonsCache.get(a);
-				if (cached != null) return cached;
-				var vp = new VirtualProto();
-				var t = HVirtual(vp);
-				if (tref != null) tref.v = t;
-				ctx.anonsCache.set(a, t);
-				var fields = a.aFields.foldCons(cf -> cfieldType(ctx, cf));
-				var fields = listSort((f1:HField, f2:HField) -> strCompare(f1.name, f2.name), fields);
-				vp.vfields = Vector.fromArrayCopy(fields);
-				for (i in 0...vp.vfields.length) vp.vindex.set(vp.vfields[i].name, i);
-				return t;
+				var key = anonKey(a);
+				return withTypeLock(ctx, () -> {
+					var l = ctx.anonsCache.get(key);
+					if (l == null) l = [];
+					var found = findAnon(l, a);
+					if (found != null) return found;
+					var vp = beginVirtual(ctx, t -> ctx.anonsCache.set(key, ctx.anonsCache.get(key).map(e -> e.a == a ? {a: e.a, t: t} : e)));
+					var t = HVirtual(vp);
+					if (tref != null) tref.v = t;
+					ctx.anonsCache.set(key, l.concat([{a: a, t: t}]));
+					var fields = a.aFields.foldCons(cf -> cfieldType(ctx, cf));
+					var fields = listSort((f1:HField, f2:HField) -> strCompare(f1.name, f2.name), fields);
+					vp.vfields = Vector.fromArrayCopy(fields);
+					for (i in 0...vp.vfields.length) vp.vindex.set(vp.vfields[i].name, i);
+					return endVirtual(ctx, vp);
+				});
 			case TDynamic(_):
 				return HDyn;
 			case TEnum(e, _):
@@ -747,8 +1037,14 @@ class Genhl {
 		var keyPath = [keyName].concat(c.clPath.pack).join("\x00");
 		var cached = ctx.cachedTypes.get(keyPath);
 		if (cached != null) return cached;
+		return withTypeLock(ctx, () -> classTypeLocked(tref, ctx, c, statics, keyName, keyPath));
+	}
+
+	static function classTypeLocked(tref:Null<TRef>, ctx:HlContext, c:TClass, statics:Bool, keyName:String, keyPath:String):Ttype {
+		var cached = ctx.cachedTypes.get(keyPath);
+		if (cached != null) return cached;
 		if (hasClassFlag(c, CInterface) && !statics) {
-			var vp = new VirtualProto();
+			var vp = beginVirtual(ctx, t -> ctx.cachedTypes.set(keyPath, t));
 			var t = HVirtual(vp);
 			ctx.cachedTypes.set(keyPath, t);
 			function loop(c:TClass):Array<HField> {
@@ -765,12 +1061,13 @@ class Genhl {
 			var fields = listSort((f1:HField, f2:HField) -> strCompare(f1.name, f2.name), fields);
 			vp.vfields = Vector.fromArrayCopy(fields);
 			for (i in 0...vp.vfields.length) vp.vindex.set(vp.vfields[i].name, i);
-			return t;
+			return endVirtual(ctx, vp);
 		}
 		var pname = sTypePath({pack: c.clPath.pack, name: keyName});
 		var p = new ClassProto(pname, allocString(ctx, pname));
 		p.pnfields = -1;
 		var t = if (Meta.has(Meta.Struct, c.clMeta) && !statics) HStruct(p) else HObj(p);
+		holdVirtuals(ctx, subst -> substProto(subst, p));
 		if (tref != null) tref.v = t;
 		ctx.ctDepth = ctx.ctDepth + 1;
 		ctx.cachedTypes.set(keyPath, t);
@@ -901,9 +1198,16 @@ class Genhl {
 		var keyPath = [e.ePath.name].concat(e.ePath.pack).join("\x00");
 		var cached = ctx.cachedTypes.get(keyPath);
 		if (cached != null) return cached;
+		return withTypeLock(ctx, () -> enumTypeLocked(tref, ctx, e, keyPath));
+	}
+
+	static function enumTypeLocked(tref:Null<TRef>, ctx:HlContext, e:TEnum, keyPath:String):Ttype {
+		var cached = ctx.cachedTypes.get(keyPath);
+		if (cached != null) return cached;
 		var ename = sTypePath(e.ePath);
 		var et = new EnumProto(ename, allocString(ctx, ename), null, vector(), vector());
 		var t = HEnum(et);
+		holdVirtuals(ctx, subst -> et.efields = et.efields.map(f -> ({name: f.name, nid: f.nid, args: f.args.map(subst)} : EField)));
 		if (tref != null) tref.v = t;
 		ctx.cachedTypes.set(keyPath, t);
 		et.efields = e.eConstrs.keyArray().mapToVector(n -> {
@@ -936,10 +1240,17 @@ class Genhl {
 		var keyPath = [keyName].concat(e.ePath.pack).join("\x00");
 		var cached = ctx.cachedTypes.get(keyPath);
 		if (cached != null) return cached;
+		return withTypeLock(ctx, () -> enumClassLocked(ctx, e, keyName, keyPath));
+	}
+
+	static function enumClassLocked(ctx:HlContext, e:TEnum, keyName:String, keyPath:String):Ttype {
+		var cached = ctx.cachedTypes.get(keyPath);
+		if (cached != null) return cached;
 		var pname = sTypePath({pack: e.ePath.pack, name: keyName});
 		var p = new ClassProto(pname, allocString(ctx, pname));
 		p.pnfields = -1;
 		var t = HObj(p);
+		holdVirtuals(ctx, subst -> substProto(subst, p));
 		ctx.cachedTypes.set(keyPath, t);
 		var psuper = switch classType(ctx, ctx.baseEnum, vector(), false) {
 			case HObj(o): o;
@@ -961,21 +1272,11 @@ class Genhl {
 				case TFun(s):
 					var fid = addField(ef.efName, toType(ctx, ef.efType));
 					var eid = allocEid(ctx, e, ef);
-					var fargs = [for (a in s.args) toType(ctx, a.type)];
-					var tret = toType(ctx, s.ret);
-					var old = ctx.m;
-					var ft = toType(ctx, ef.efType);
-					ctx.m = methodContext(eid, ft, nullCapture, false);
-					setCurpos(ctx, ef.efPos);
-					var argRegs = [for (t in fargs) allocFresh(ctx, t)];
-					var retReg = allocFresh(ctx, tret);
-					op(ctx, OMakeEnum(retReg, ef.efIndex, argRegs));
-					op(ctx, ORet(retReg));
-					var hlf = new Fundecl({fst: "", snd: ""}, eid, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-						makeAssigns(ctx.m.massign), false, -1);
-					ctx.m = old;
-					ctx.definedFuns.set(eid, true);
-					ctx.cfunctions.push(hlf);
+					for (a in s.args) toType(ctx, a.type);
+					toType(ctx, s.ret);
+					/* its function is generated by the linker, at the position
+						of the constructor in the current compilation */
+					ctx.enumCtors.set(eid, {e: e, ef: ef});
 					p.pbindings.unshift({fid: fid, fidx: eid});
 				case t:
 					die("", "genhl.ml");
@@ -988,10 +1289,7 @@ class Genhl {
 	}
 
 	static function allocFunPath(ctx:HlContext, path:GlobalTypePath, name:String):Int {
-		var n = ctx.cfids.arr.length;
-		var id = lookup(ctx.cfids, name + "\x00" + path.pack.join(".") + "\x00" + path.name, () -> true);
-		if (id == n) ctx.cfidsKeys.push({name: name, path: path, id: id});
-		return id;
+		return lookup(ctx.cfids, name + "\x00" + path.pack.join(".") + "\x00" + path.name, () -> {name: name, path: path});
 	}
 
 	static function allocFid(ctx:HlContext, c:TClass, f:TClassField):Int {
@@ -1003,7 +1301,6 @@ class Genhl {
 
 	static function allocEid(ctx:HlContext, e:TEnum, f:TEnumField):Int return allocFunPath(ctx, e.ePath, f.efName);
 
-	static function allocFunctionName(ctx:HlContext, f:String):Int return allocFunPath(ctx, {pack: [], name: ""}, f);
 
 	static function allocGlobal(ctx:HlContext, name:String, t:Ttype):Int return lookup(ctx.cglobals, name, () -> t);
 
@@ -1028,12 +1325,11 @@ class Genhl {
 		/* different from :hlNative to prevent mismatch */
 		var nid = lookup(ctx.cnatives, "$" + name + "@" + lib + "\x00-1", () -> {
 			var fid = allocFunPath(ctx, {pack: [], name: "std"}, name);
-			ctx.definedFuns.set(fid, true);
 			var n = allocString(ctx, name);
 			var l = allocString(ctx, lib);
 			({lib: l, name: n, t: HFun(args, ret), findex: fid} : Native);
 		});
-		return ctx.cnatives.arr[nid].findex;
+		return lookupGet(ctx.cnatives, nid).findex;
 	}
 
 	static function allocFresh(ctx:HlContext, t:Ttype):Int {
@@ -1294,6 +1590,28 @@ class Genhl {
 		}
 	}
 
+	/* the global of the value of a core type, of the same type wherever it is used */
+	static function coreTypeGlobal(ctx:HlContext, name:String):Int {
+		var c = if (name == "Bool") ctx.coreEnum else ctx.coreType;
+		var t = classType(ctx, c, vector(), false);
+		return allocGlobal(ctx, "$" + name, t);
+	}
+
+	/* the global of the table of the types */
+	static function typesGlobal(ctx:HlContext):Int {
+		var s = allocString(ctx, "hl_bytes_map");
+		return allocGlobal(ctx, "__types__", HAbstract("hl_bytes_map", s));
+	}
+
+	/* The globals that the VM can only identify by their index: they are always
+		present, and numbered first in this order. */
+	static final unnamedGlobals = ["$Int", "$Float", "$Bool", "$Dynamic", "__types__"];
+
+	static function allocUnnamedGlobals(ctx:HlContext):Void {
+		for (name in ["Int", "Float", "Bool", "Dynamic"]) coreTypeGlobal(ctx, name);
+		typesGlobal(ctx);
+	}
+
 	static function typeGlobal(ctx:HlContext, t:ModuleType, p:Pos):{g:Int, t:Ttype} {
 		switch t {
 			case TClassDecl(c):
@@ -1301,12 +1619,9 @@ class Genhl {
 			case TAbstractDecl(a):
 				var rt = classType(ctx, ctx.baseType, vector(), false);
 				var g = switch [a.aPath.pack.join("."), a.aPath.name] {
-					case ["", "Int"]: allocGlobal(ctx, "$Int", rt);
-					case ["", "Float"]: allocGlobal(ctx, "$Float", rt);
-					case ["", "Bool"]: allocGlobal(ctx, "$Bool", rt);
+					case ["", name = "Int" | "Float" | "Bool" | "Dynamic"]: coreTypeGlobal(ctx, name);
 					case ["", "Class"]: classGlobal(ctx, ctx.baseClass).g;
 					case ["", "Enum"]: classGlobal(ctx, ctx.baseEnum).g;
-					case ["", "Dynamic"]: allocGlobal(ctx, "$Dynamic", rt);
 					case _: Error.abort("Unsupported type value " + sTypePath(tPath(t)), p);
 				}
 				return {g: g, t: rt};
@@ -1406,8 +1721,14 @@ class Genhl {
 				return tmp;
 			case [_, _, HObj(o), HVirtual(_)]:
 				var out = allocTmp(ctx, t);
+				/* the keys were added while their virtual types could still be
+					built: compared one by one, not by the order of the map */
+				function findIntf(o:ClassProto):Null<Int> {
+					for (e in o.pinterfaces.sortedEntries()) if (tCompare(e.k, t) == 0) return e.v;
+					return null;
+				}
 				function lookupIntf(o:ClassProto):Null<Int> {
-					var v = o.pinterfaces.get(t);
+					var v = findIntf(o);
 					if (v != null) return v;
 					return if (o.psuper == null) null else lookupIntf(o.psuper);
 				}
@@ -1850,7 +2171,7 @@ class Genhl {
 						var ti1 = getInnerType(t1);
 						var ti2 = getInnerType(t2);
 						if (ctx.wNullCompare && (isNullt(t1) || isNullt(t2)))
-							ctx.com.warning(core.Message.WarningCode.WGenerator, [], "Null compare: " + tstr(t1) + " " + Ast.sBinop(jop) + " " + tstr(t2), e.epos);
+							warning(ctx, "Null compare: " + tstr(t1) + " " + Ast.sBinop(jop) + " " + tstr(t2), e.epos);
 						var r1 = evalExpr(ctx, e1);
 						hold(ctx, r1);
 						var jnull1 = if (isNullt(t1)) jump(ctx, i -> OJNull(r1, i)) else () -> {};
@@ -2260,35 +2581,7 @@ class Genhl {
 						var robj = evalNullCheck(ctx, ethis);
 						op(ctx, ODynGet(r, robj, f));
 					case AEnum(en, index):
-						var curFid = ctx.cfids.arr.length;
-						var name = en.eConstrs.keyAt(index);
-						var fid = allocFunPath(ctx, en.ePath, name);
-						if (fid == curFid) {
-							var ef = en.eConstrs.get(name);
-							if (ef == null) throw NotFound.raise();
-							var eargs, et;
-							switch follow(ef.efType) {
-								case TFun(s):
-									eargs = s.args;
-									et = s.ret;
-								case _:
-									eargs = die("", "genhl.ml");
-									et = null;
-							}
-							var ct = ctx.com.basic;
-							var p = ef.efPos;
-							var eargs = eargs.map(a -> ({
-								variable: TFunctions.allocVar(VGenerated, a.name, a.type, en.ePos),
-								defaultValue: if (a.optional) mk(TConst(TNull), tDynamic, nullPos) else null
-							} : {variable:TVar, defaultValue:Null<TExpr>}));
-							var ecall = mk(TCall(e, eargs.map(a -> mk(TLocal(a.variable), a.variable.vType, p))), et, p);
-							var f:TFunc = {
-								tfArgs: eargs,
-								tfType: et,
-								tfExpr: mk(TReturn(ecall), ct.tvoid, p)
-							};
-							makeFun(ctx, {fst: "", snd: ""}, fid, f, null, null);
-						}
+						var fid = enumClosure(ctx, en, index);
 						op(ctx, OStaticClosure(r, fid));
 					case ANone | ALocal(_) | AArray(_) | ACaptured(_) | ACArray(_):
 						Error.abort("Invalid access", e.epos);
@@ -2734,7 +3027,7 @@ class Genhl {
 						return ret;
 				}
 			case TFunction(f):
-				var fid = allocFunctionName(ctx, "function#" + ctx.cfids.arr.length);
+				var fid = closureFid(ctx);
 				var lname = {
 					var x = core.ds.ArrayTools.find(ctx.m.mlnames, x -> x.e == e);
 					x == null ? "" : x.n;
@@ -3053,7 +3346,7 @@ class Genhl {
 							case TMeta(m, {eexpr: TCall(_, [_, {eexpr: TTypeExpr(mt)}])}) if (Meta.metaEq(Meta.ExceptionTypeCheck, m.meta)):
 								catchedTypes.unshift(typeGlobal(ctx, mt, e.epos).g);
 							case TMeta(m, {eexpr: TConst(TBool(true))}) if (Meta.metaEq(Meta.ExceptionTypeCheck, m.meta)):
-								catchedTypes.unshift(allocGlobal(ctx, "$Dynamic", HDyn));
+								catchedTypes.unshift(coreTypeGlobal(ctx, "Dynamic"));
 							case _:
 								core.Texpr.iter(findMeta, e);
 						}
@@ -3416,6 +3709,16 @@ class Genhl {
 					acc.unshift({k: k, v: v});
 					acc;
 				}, []);
+				// port: List.sort compare on the (name, data) pairs: OCaml's string order
+				function bytesCompare(a:haxe.io.Bytes, b:haxe.io.Bytes):Int {
+					var n = a.length < b.length ? a.length : b.length;
+					for (i in 0...n) if (a.get(i) != b.get(i)) return a.get(i) < b.get(i) ? -1 : 1;
+					return a.length < b.length ? -1 : (a.length > b.length ? 1 : 0);
+				}
+				res = listSort((a:{k:String, v:haxe.io.Bytes}, b:{k:String, v:haxe.io.Bytes}) -> {
+					var c = strCompare(a.k, b.k);
+					c != 0 ? c : bytesCompare(a.v, b.v);
+				}, res);
 				var size = regInt(ctx, res.length);
 				var arr = allocArray(ctx, size, HBytes);
 				var ro = allocTmp(ctx, t);
@@ -3457,11 +3760,11 @@ class Genhl {
 				return r;
 			case ["$allTypes", []]:
 				var r = allocTmp(ctx, toType(ctx, e.etype));
-				op(ctx, OGetGlobal(r, allocGlobal(ctx, "__types__", rtype(ctx, r))));
+				op(ctx, OGetGlobal(r, typesGlobal(ctx)));
 				return r;
 			case ["$allTypes", [v]]:
 				var v = evalExpr(ctx, v);
-				op(ctx, OSetGlobal(allocGlobal(ctx, "__types__", rtype(ctx, v)), v));
+				op(ctx, OSetGlobal(typesGlobal(ctx), v));
 				return v;
 			case ["$hash", [v]]:
 				switch v.eexpr {
@@ -3675,16 +3978,38 @@ class Genhl {
 		return new MethodCapture(indexes, cvars, ct, group);
 	}
 
+	/* the function of an enum constructor used as a value: the function of the
+		constructor (the linker generates it) */
+	static function enumClosure(ctx:HlContext, en:TEnum, index:Int):Int {
+		enumClass(ctx, en);
+		return allocFunPath(ctx, en.ePath, en.eConstrs.keyAt(index));
+	}
+
+	/* the function of a local function, named after its owner and its number in it */
+	static function closureFid(ctx:HlContext):Int {
+		var k = ctx.cur.gClosures;
+		ctx.cur.gClosures = k + 1;
+		return allocFunPath(ctx, ctx.cur.gPath, "#" + k);
+	}
+
+	/* the wrappers are generated by each class for itself, named after it; the
+		VM identifies one by this name and its type, a class having at most one
+		wrapper of a type */
+	static function wrapperName(path:GlobalTypePath):String
+		return if (path.pack.length == 0 && path.name == "") "$wrap" else "$wrap." + sTypePath(path);
+
 	static function genMethodWrapper(ctx:HlContext, rt:Ttype, t:Ttype, p:Pos):Int {
-		var inner = ctx.methodWrappers.get(rt);
+		var inner = ctx.cur.gWrappers.get(rt);
 		if (inner != null) {
 			var fid = inner.get(t);
 			if (fid != null) return fid;
 		}
-		var fid = lookupAlloc(ctx.cfids, true);
+		var k = ctx.cur.gNwrappers;
+		ctx.cur.gNwrappers = k + 1;
+		var fid = allocFunPath(ctx, ctx.cur.gPath, "#w" + k);
 		if (inner == null) {
 			inner = new TtypeMap();
-			ctx.methodWrappers.set(rt, inner);
+			ctx.cur.gWrappers.set(rt, inner);
 		}
 		inner.set(t, fid);
 		var old = ctx.m;
@@ -3731,9 +4056,9 @@ class Genhl {
 		op(ctx, OCallClosure(rret, rfun, casts));
 		op(ctx, ORet(castTo(ctx, rret, tret, p)));
 		var f = new Fundecl({fst: "", snd: ""}, fid, HFun([rt].concat(targs), tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
-			makeAssigns(ctx.m.massign), false, -1);
+			makeAssigns(ctx.m.massign), false, if (ctx.hl2) allocString(ctx, wrapperName(ctx.cur.gPath)) else -1);
 		ctx.m = old;
-		ctx.cfunctions.push(f);
+		ctx.cur.gFuns.push(f);
 		return fid;
 	}
 
@@ -3904,8 +4229,7 @@ class Genhl {
 		var hlf = new Fundecl(name, fidx, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops), makeDebug(ctx, ctx.m.mdebug),
 			makeAssigns(ctx.m.massign, true), genContent == null || !(name.fst == "" && name.snd == ""), if (lname != null && ctx.hl2) allocString(ctx, lname) else -1);
 		ctx.m = old;
-		ctx.definedFuns.set(fidx, true);
-		ctx.cfunctions.push(hlf);
+		ctx.cur.gFuns.push(hlf);
 		return capt;
 	}
 
@@ -3923,12 +4247,12 @@ class Genhl {
 				function addNative(lib:String, name:String):Void {
 					var fid = allocFid(ctx, c, f);
 					lookup(ctx.cnatives, name + "@" + lib + "\x00" + fid, () -> {
-						ctx.definedFuns.set(fid, true);
 						var t = toType(ctx, f.cfType);
 						var n = allocString(ctx, name);
 						var l = allocString(ctx, lib);
 						({lib: l, name: n, t: t, findex: fid} : Native);
 					});
+					ctx.cur.gNatives.push(fid);
 				}
 				for (m in f.cfMeta) {
 					if (Meta.metaEq(Meta.HlNative, m.meta)) {
@@ -4283,7 +4607,7 @@ class Genhl {
 								}
 							}
 
-							var g = allocGlobal(ctx, "$" + name, t);
+							var g = coreTypeGlobal(ctx, name);
 							var r = allocTmp(ctx, t);
 							var rt = allocTmp(ctx, HType);
 							op(ctx, ONew(r));
@@ -4318,7 +4642,6 @@ class Genhl {
 		} else {
 			var nid = lookup(ctx.cnatives, "$hot_sync_statics@?std\x00-1", () -> {
 				var fid = allocFunPath(ctx, {pack: [], name: "std"}, "hot_sync_statics");
-				ctx.definedFuns.set(fid, true);
 				// port: OCaml evaluates the tuple right to left
 				var n = allocString(ctx, "hot_sync_statics");
 				var l = allocString(ctx, "?std");
@@ -4399,6 +4722,484 @@ class Genhl {
 		op(ctx, ORet(allocTmp(ctx, HVoid)));
 	}
 
+	/* ---------------------------------------------------------------------- */
+	/* OBJECTS AND LINKER */
+
+	static function newGenObject(path:GlobalTypePath):GenObject return new GenObject(path);
+
+	/* the function of an enum constructor */
+	static function genEnumCtor(ctx:HlContext, e:TEnum, ef:TEnumField, eid:Int):Fundecl {
+		var args, ret;
+		switch follow(ef.efType) {
+			case TFun(s):
+				args = s.args;
+				ret = s.ret;
+			case _:
+				args = die("", "genhl.ml");
+				ret = null;
+		}
+		var fargs = [for (a in args) toType(ctx, a.type)];
+		var tret = toType(ctx, ret);
+		var old = ctx.m;
+		var ft = toType(ctx, ef.efType);
+		ctx.m = methodContext(eid, ft, nullCapture, false);
+		setCurpos(ctx, ef.efPos);
+		var argRegs = [for (t in fargs) allocFresh(ctx, t)];
+		var retReg = allocFresh(ctx, tret);
+		op(ctx, OMakeEnum(retReg, ef.efIndex, argRegs));
+		op(ctx, ORet(retReg));
+		var hlf = new Fundecl({fst: "", snd: ""}, eid, HFun(fargs, tret), Vector.fromArrayCopy(ctx.m.mregs), Vector.fromArrayCopy(ctx.m.mops),
+			makeDebug(ctx, ctx.m.mdebug), makeAssigns(ctx.m.massign), false,
+			if (ctx.hl2) allocString(ctx, "$enum." + sTypePath(e.ePath) + "." + ef.efName) else -1);
+		ctx.m = old;
+		return hlf;
+	}
+
+	static function makeObject(g:GenObject):HlObject {
+		return new HlObject(g.gPath, g.gFuns.copy(), g.gNatives.copy(), g.gWarnings.copy());
+	}
+
+	/* the generation of the class [c] */
+	static function generateObject(ctx:HlContext, t:ModuleType, c:TClass):HlObject {
+		ctx.cur = newGenObject(c.clPath);
+		generateType(ctx, t);
+		var o = makeObject(ctx.cur);
+		ctx.cur = newGenObject({pack: [], name: ""});
+		return o;
+	}
+
+	/* the functions of the enum constructors used by the generation */
+	static function generateEnumCtors(ctx:HlContext):IntMap<HlObject> {
+		var objects = new IntMap<HlObject>();
+		while (true) {
+			var todo = [for (eid in ctx.enumCtors.keys()) if (!objects.exists(eid)) eid];
+			if (todo.length == 0) break;
+			todo.sort((a, b) -> a - b);
+			for (eid in todo) {
+				var v = ctx.enumCtors.get(eid);
+				var g = newGenObject(v.e.ePath);
+				g.gFuns.push(genEnumCtor(ctx, v.e, v.ef, eid));
+				objects.set(eid, makeObject(g));
+			}
+		}
+		return objects;
+	}
+
+	static function objectSyms(o:HlObject):ObjSyms {
+		// port: the symbols seen by the object, marked as upstream's stamps do
+		function table():{add:Int->Void, out:Array<Int>} {
+			var seen = new IntMap<Bool>();
+			var out = [];
+			return {
+				add: i -> if (!seen.exists(i)) {
+					seen.set(i, true);
+					out.push(i);
+				},
+				out: out
+			};
+		}
+		var str = table(), int = table(), flt = table(), byt = table(), file = table(), glob = table(), fn = table();
+		var types = new ShapeMap<Bool>(), tl:Array<Ttype> = [];
+		function typ(t:Ttype) if (constIndex(t) < 0 && !types.exists(t)) {
+			types.add(t, true);
+			tl.push(t);
+		}
+		for (n in o.oNatives) fn.add(n);
+		for (f in o.oFuns) {
+			typ(f.ftype);
+			for (t in f.regs) typ(t);
+			for (op in f.code) switch op {
+				case OInt(_, i): int.add(i);
+				case OFloat(_, i): flt.add(i);
+				case OBytes(_, i): byt.add(i);
+				case OString(_, i) | ODynGet(_, _, i) | ODynSet(_, i, _): str.add(i);
+				case OCall0(_, f) | OCall1(_, f, _) | OCall2(_, f, _, _) | OCall3(_, f, _, _, _) | OCall4(_, f, _, _, _, _) | OCallN(_, f, _)
+					| OStaticClosure(_, f) | OInstanceClosure(_, f, _): fn.add(f);
+				case OGetGlobal(_, g) | OSetGlobal(g, _) | OCatch(g): glob.add(g);
+				case OType(_, t): typ(t);
+				case _:
+			}
+			var cur = nullDebug;
+			for (d in f.debug) if (d != cur) {
+				cur = d;
+				file.add(d.file);
+			}
+			for (a in f.assigns) str.add(a.name);
+			if (f.flocal >= 0) str.add(f.flocal);
+		}
+		return {
+			sStrings: str.out,
+			sInts: int.out,
+			sFloats: flt.out,
+			sBytes: byt.out,
+			sFiles: file.out,
+			sGlobals: glob.out,
+			sFuns: fn.out,
+			sTypes: tl
+		};
+	}
+
+	/* Links the objects (in the order of the types, the entry point last) and the
+		functions of the enum constructors they use: every table is numbered in the
+		order of the first use of its symbols, walking the objects in order (then
+		what their symbols use: the HL types, the globals and their types, the
+		natives), the functions in the order of the objects, then the natives, by
+		library; the unnamed globals come first. The result only depends on the objects, not on the order of the
+		generation nor on the symbols. */
+	static function link(ctx:HlContext, objects:Array<HlObject>, enumObjects:IntMap<HlObject>, entry:Int):{code:Code, gnames:Vector<String>} {
+		var com = ctx.com;
+		function numbering(n:Int):{map:Vector<Int>, order:Array<Int>, add:Int->Void} {
+			var map = new Vector<Int>(n, -1), order = [];
+			return {
+				map: map,
+				order: order,
+				add: i -> if (map[i] < 0) {
+					map[i] = order.length;
+					order.push(i);
+				}
+			};
+		}
+		var sn = numbering(ctx.cstrings.arr.length), smap = sn.map, str = sn.add;
+		var inum = numbering(ctx.cints.arr.length), imap = inum.map, int = inum.add;
+		var fln = numbering(ctx.cfloats.arr.length), flmap = fln.map, flt = fln.add;
+		var bn = numbering(ctx.cbytes.arr.length), bmap = bn.map, byt = bn.add;
+		var dn = numbering(ctx.cdebugFiles.arr.length), dmap = dn.map, file = dn.add;
+		var gn = numbering(ctx.cglobals.arr.length), gmap = gn.map, gnum = gn.add;
+		var nfids = ctx.cfids.arr.length;
+		var consts = new IntMap<Vector<Int>>();
+		for (c in ctx.cconstants.arr) consts.set(c.g, c.fields);
+		var nativesByFid = new IntMap<Int>();
+		for (i in 0...ctx.cnatives.arr.length) nativesByFid.set(ctx.cnatives.arr[i].findex, i);
+		var defined = new Vector<Bool>(nfids, false);
+		for (o in objects) for (f in o.oFuns) defined[f.findex] = true;
+		var fseen = new Vector<Bool>(nfids, false);
+		var extra:Array<HlObject> = [], natives:Array<Int> = [];
+		var tseen = new ShapeMap<Bool>(), pseen = new ObjectMap<ClassProto, Bool>(), vseen = new ObjectMap<VirtualProto, Bool>(),
+			eseen = new ObjectMap<EnumProto, Bool>();
+		var plist:Array<ClassProto> = [], elist:Array<EnumProto> = [];
+		var tlist:Array<Ttype> = [];
+		var referrer:Null<LinkReferrer> = null;
+		function within<X>(r:LinkReferrer, f:X->Void, x:X) {
+			var old = referrer;
+			referrer = r;
+			f(x);
+			referrer = old;
+		}
+		function unresolved(fid:Int):Void {
+			var k = ctx.cfids.arr[fid];
+			var name = k.name, path = k.path;
+			function findClass(f:TClass->Bool):Null<TClass> {
+				for (t in com.types) switch t {
+					case TClassDecl(c) if (f(c)): return c;
+					case _:
+				}
+				return null;
+			}
+			function classPos(c:Null<TClass>):Pos return c == null ? nullPos : c.clNamePos;
+			function fieldPos(c:TClass, name:String):Pos {
+				var cf = c.clStatics.get(name);
+				if (cf != null) return cf.cfPos;
+				var cf = c.clFields.get(name);
+				if (cf != null) return cf.cfPos;
+				return switch c.clConstructor {
+					case cf if (cf != null && name == "new"): cf.cfPos;
+					case _: c.clNamePos;
+				}
+			}
+			function refers(f:Fundecl):Bool {
+				for (op in f.code) switch op {
+					case OCall0(_, g) | OCall1(_, g, _) | OCall2(_, g, _, _) | OCall3(_, g, _, _, _) | OCall4(_, g, _, _, _, _) | OCallN(_, g, _)
+						| OStaticClosure(_, g) | OInstanceClosure(_, g, _) if (g == fid): return true;
+					case _:
+				}
+				return false;
+			}
+			var by:String, p:Pos;
+			switch referrer {
+				case RObject(o):
+					var c = findClass(c -> c.clPath.hashKey() == o.oPath.hashKey());
+					var f = core.ds.ArrayTools.find(o.oFuns, refers);
+					if (f != null && c != null) {
+						by = fundeclName(f);
+						p = fieldPos(c, f.fpath.snd);
+					} else if (f != null) {
+						by = fundeclName(f);
+						p = nullPos;
+					} else {
+						by = sTypePath(o.oPath);
+						p = classPos(c);
+					}
+				case RProto(pr):
+					by = "the prototype of " + pr.pname;
+					p = classPos(findClass(c -> {
+						var name = sTypePath(c.clPath);
+						name == pr.pname || "$" + name == pr.pname;
+					}));
+				case null:
+					by = "the program";
+					p = nullPos;
+			}
+			Error.abort('Unresolved method ${sTypePath(path)}:$name(@$fid), referenced by $by', p);
+		}
+		var typ:Ttype->Void = null;
+		var proto:ClassProto->Void = null;
+		var obj:HlObject->Void = null;
+		function glob(g:Int) {
+			if (gmap[g] < 0) {
+				gnum(g);
+				typ(ctx.cglobals.arr[g]);
+				var fields = consts.get(g);
+				if (fields != null) {
+					str(fields[0]);
+					int(fields[1]);
+				}
+			}
+		}
+		function fn(fid:Int) {
+			if (!fseen[fid]) {
+				fseen[fid] = true;
+				if (!defined[fid]) {
+					var o = enumObjects.get(fid);
+					if (o != null) {
+						extra.push(o);
+						obj(o);
+					} else {
+						var n = nativesByFid.get(fid);
+						if (n != null) {
+							natives.push(n);
+							var nat = ctx.cnatives.arr[n];
+							str(nat.lib);
+							str(nat.name);
+							typ(nat.t);
+						} else
+							unresolved(fid);
+					}
+				}
+			}
+		}
+		typ = function(t:Ttype) {
+			if (constIndex(t) < 0 && !tseen.exists(t)) {
+				tseen.add(t, true);
+				tlist.push(t);
+				switch t {
+					case HFun(args, ret) | HMethod(args, ret):
+						for (a in args) typ(a);
+						typ(ret);
+					case HObj(p) | HStruct(p): proto(p);
+					case HArray(t) | HRef(t) | HNull(t) | HPacked(t): typ(t);
+					case HVirtual(v):
+						if (!vseen.exists(v)) {
+							vseen.set(v, true);
+							for (f in v.vfields) {
+								str(f.nid);
+								typ(f.t);
+							}
+						}
+					case HAbstract(_, s): str(s);
+					case HEnum(e):
+						if (!eseen.exists(e)) {
+							eseen.set(e, true);
+							elist.push(e);
+							str(e.eid);
+							if (e.eglobal != null) glob(e.eglobal);
+							for (f in e.efields) {
+								str(f.nid);
+								for (t in f.args) typ(t);
+							}
+							for (a in e.eparams) for (s in a) str(s);
+						}
+					case _:
+				}
+			}
+		}
+		function protoSymbols(p:ClassProto) {
+			str(p.pid);
+			if (p.psuper != null) proto(p.psuper);
+			if (p.pclassglobal != null) glob(p.pclassglobal);
+			for (f in p.pfields) {
+				str(f.nid);
+				typ(f.t);
+			}
+			for (f in p.pproto) {
+				str(f.fid);
+				fn(f.fmethod);
+			}
+			for (f in p.pvirtuals) fn(f);
+			for (b in p.pbindings) fn(b.fidx);
+			// port: PMap.iter, in key order
+			for (k in p.pfunctions.sortedKeys()) fn(p.pfunctions.get(k));
+			for (k in p.pindex.sortedKeys()) typ(p.pindex.get(k).t);
+			for (e in p.pinterfaces.sortedEntries()) typ(e.k);
+		}
+		proto = function(p:ClassProto) {
+			if (!pseen.exists(p)) {
+				pseen.set(p, true);
+				plist.push(p);
+				within(RProto(p), protoSymbols, p);
+			}
+		}
+		function objSymbols(o:HlObject) {
+			var s = o.oSyms;
+			for (i in s.sStrings) str(i);
+			for (i in s.sInts) int(i);
+			for (i in s.sFloats) flt(i);
+			for (i in s.sBytes) byt(i);
+			for (i in s.sFiles) file(i);
+			for (i in s.sGlobals) glob(i);
+			for (i in s.sFuns) fn(i);
+			for (t in s.sTypes) typ(t);
+		}
+		obj = o -> within(RObject(o), objSymbols, o);
+		/* the first string is the empty one: the types without a name refer to it */
+		str(0);
+		var unnamed = [for (name in unnamedGlobals) ctx.cglobals.map.get(name)];
+		for (g in unnamed) gnum(g);
+		for (g in unnamed) typ(ctx.cglobals.arr[g]);
+		for (o in objects) obj(o);
+		/* the functions */
+		var funs:Array<Fundecl> = [];
+		for (o in objects) for (f in o.oFuns) funs.push(f);
+		for (o in extra) for (f in o.oFuns) funs.push(f);
+		var nfuns = funs.length;
+		var fidmap = new Vector<Int>(nfids, -1);
+		for (i in 0...funs.length) {
+			var f = funs[i];
+			if (fidmap[f.findex] >= 0) {
+				var k = ctx.cfids.arr[f.findex];
+				throw new Failure("Duplicate method " + sTypePath(k.path) + ":" + k.name);
+			}
+			fidmap[f.findex] = i;
+		}
+		// port: Array.stable_sort by the index of the library's name
+		haxe.ds.ArraySort.sort(natives, (n1, n2) -> smap[ctx.cnatives.arr[n1].lib] - smap[ctx.cnatives.arr[n2].lib]);
+		for (k in 0...natives.length) fidmap[ctx.cnatives.arr[natives[k]].findex] = nfuns + k;
+		/* the types, with the indexes of the output */
+		var pfinal = new ObjectMap<ClassProto, ClassProto>(), vfinal = new ObjectMap<VirtualProto, VirtualProto>(),
+			efinal = new ObjectMap<EnumProto, EnumProto>();
+		for (p in plist) {
+			var p2 = new ClassProto(p.pname, smap[p.pid]);
+			p2.pnfields = p.pnfields;
+			pfinal.set(p, p2);
+		}
+		var vlist:Array<VirtualProto> = [];
+		for (t in tlist) switch t {
+			case HVirtual(v):
+				var v2 = new VirtualProto();
+				v2.vindex = v.vindex;
+				vfinal.set(v, v2);
+				vlist.push(v);
+			case _:
+		}
+		for (e in elist) efinal.set(e, new EnumProto(e.ename, smap[e.eid], null, vector(), vector()));
+		var tfinal = new ShapeMap<Ttype>();
+		var ft:Ttype->Ttype = null;
+		ft = function(t:Ttype):Ttype {
+			if (constIndex(t) >= 0) return t;
+			var t2 = tfinal.get(t);
+			if (t2 != null) return t2;
+			var t2 = switch t {
+				case HFun(args, ret): HFun(args.map(ft), ft(ret));
+				case HMethod(args, ret): HMethod(args.map(ft), ft(ret));
+				case HObj(p): HObj(pfinal.get(p));
+				case HStruct(p): HStruct(pfinal.get(p));
+				case HArray(t): HArray(ft(t));
+				case HRef(t): HRef(ft(t));
+				case HNull(t): HNull(ft(t));
+				case HPacked(t): HPacked(ft(t));
+				case HVirtual(v): HVirtual(vfinal.get(v));
+				case HAbstract(name, s): HAbstract(name, smap[s]);
+				case HEnum(e): HEnum(efinal.get(e));
+				case _: t;
+			}
+			tfinal.add(t, t2);
+			return t2;
+		}
+		for (p in plist) {
+			var p2 = pfinal.get(p);
+			p2.pclassglobal = p.pclassglobal == null ? null : gmap[p.pclassglobal];
+			p2.psuper = p.psuper == null ? null : pfinal.get(p.psuper);
+			p2.pvirtuals = p.pvirtuals.map(f -> fidmap[f]);
+			p2.pproto = p.pproto.map(f -> new FieldProto(f.fname, smap[f.fid], fidmap[f.fmethod], f.fvirtual));
+			p2.pfields = p.pfields.map(f -> ({name: f.name, nid: smap[f.nid], t: ft(f.t)} : HField));
+			p2.pindex = p.pindex.map(x -> {fid: x.fid, t: ft(x.t)});
+			p2.pfunctions = p.pfunctions.map(f -> fidmap[f]);
+			p2.pbindings = p.pbindings.map(b -> {fid: b.fid, fidx: fidmap[b.fidx]});
+		}
+		for (v in vlist) vfinal.get(v).vfields = v.vfields.map(f -> ({name: f.name, nid: smap[f.nid], t: ft(f.t)} : HField));
+		for (e in elist) {
+			var e2 = efinal.get(e);
+			e2.eglobal = e.eglobal == null ? null : gmap[e.eglobal];
+			e2.efields = e.efields.map(f -> ({name: f.name, nid: smap[f.nid], args: f.args.map(ft)} : EField));
+			e2.eparams = e.eparams.map(a -> a.map(s -> smap[s]));
+		}
+		/* keyed by the types, compared when complete */
+		for (p in plist) {
+			var m = new TtypeMap<Int>();
+			for (e in p.pinterfaces.sortedEntries()) m.set(ft(e.k), e.v);
+			pfinal.get(p).pinterfaces = m;
+		}
+		for (t in tlist) ft(t);
+		/* the functions, remapped */
+		function ftr(t:Ttype):Ttype return constIndex(t) >= 0 ? t : tfinal.get(t);
+		function remapOp(op:Opcode):Opcode {
+			return switch op {
+				case OInt(r, i): OInt(r, imap[i]);
+				case OFloat(r, i): OFloat(r, flmap[i]);
+				case OBytes(r, i): OBytes(r, bmap[i]);
+				case OString(r, i): OString(r, smap[i]);
+				case OCall0(r, f): OCall0(r, fidmap[f]);
+				case OCall1(r, f, a): OCall1(r, fidmap[f], a);
+				case OCall2(r, f, a, b): OCall2(r, fidmap[f], a, b);
+				case OCall3(r, f, a, b, c): OCall3(r, fidmap[f], a, b, c);
+				case OCall4(r, f, a, b, c, d): OCall4(r, fidmap[f], a, b, c, d);
+				case OCallN(r, f, rl): OCallN(r, fidmap[f], rl);
+				case OStaticClosure(r, f): OStaticClosure(r, fidmap[f]);
+				case OInstanceClosure(r, f, o): OInstanceClosure(r, fidmap[f], o);
+				case OGetGlobal(r, g): OGetGlobal(r, gmap[g]);
+				case OSetGlobal(g, r): OSetGlobal(gmap[g], r);
+				case OCatch(g): OCatch(gmap[g]);
+				case ODynGet(r, o, s): ODynGet(r, o, smap[s]);
+				case ODynSet(o, s, v): ODynSet(o, smap[s], v);
+				case OType(r, t): OType(r, ftr(t));
+				case _: op;
+			}
+		}
+		function remap(f:Fundecl):Fundecl {
+			var cur = nullDebug, cur2 = nullDebug;
+			return new Fundecl(f.fpath, fidmap[f.findex], ftr(f.ftype), f.regs.map(ftr), f.code.map(remapOp), f.debug.map(d -> {
+				if (d != cur) {
+					cur = d;
+					cur2 = {file: dmap[d.file], line: d.line, pos: d.pos};
+				}
+				cur2;
+			}), f.assigns.map(a -> ({name: smap[a.name], pos: a.pos, scopeEnd: a.scopeEnd} : Assign)), f.needOpt, if (f.flocal < 0) -1 else smap[f.flocal]);
+		}
+		var out = new Vector<Fundecl>(nfuns);
+		for (i in 0...nfuns) out[i] = remap(funs[i]);
+		inline function table<X, Y>(order:Array<Int>, get:Int->Y):Vector<Y> return Vector.fromArrayCopy([for (i in order) get(i)]);
+		var bytes = table(bn.order, i -> ctx.cbytes.arr[i]);
+		var gnames = new Vector<String>(gn.order.length, "");
+		for (name in ctx.cglobals.map.keys()) {
+			var g = ctx.cglobals.map.get(name);
+			if (gmap[g] >= 0) gnames[gmap[g]] = name;
+		}
+		var constants = [];
+		for (g in gn.order) {
+			var fields = consts.get(g);
+			if (fields != null) constants.push({g: gmap[g], fields: vector(smap[fields[0]], imap[fields[1]])});
+		}
+		var code = new Code(if (ctx.hl2) 7 else if (bytes.length == 0) 4 else 5, fidmap[entry], table(sn.order, i -> ctx.cstrings.arr[i]),
+			table(inum.order, i -> ctx.cints.arr[i]), table(fln.order, i -> ctx.cfloats.arr[i]), bytes, table(gn.order, g -> ft(ctx.cglobals.arr[g])),
+			Vector.fromArrayCopy([
+				for (n in natives) {
+					var nat = ctx.cnatives.arr[n];
+					({lib: smap[nat.lib], name: smap[nat.name], t: ft(nat.t), findex: fidmap[nat.findex]} : Native);
+				}
+			]), out,
+			table(dn.order, f -> debugFilePath(com, ctx.cdebugFiles.arr[f])), Vector.fromArrayCopy(constants));
+		return {code: code, gnames: gnames};
+	}
+
 	static function generateStaticInit(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Int {
 		var exprs:Array<InitItem> = []; // port: chronological (upstream builds the list reversed)
 		var tVoid = ctx.com.basic.tvoid;
@@ -4427,7 +5228,7 @@ class Genhl {
 		}
 		/* call main() */
 		if (main != null) exprs.push(IMain(main));
-		var fid = lookupAlloc(ctx.cfids, true);
+		var fid = allocFunPath(ctx, {pack: [], name: ""}, "#init");
 		var items = initExprs.concat(exprs);
 		var exprs = items.map(i -> switch i {
 			case IClassInit(_, e) | IStatic(_, _, e) | IMain(e): e;
@@ -4858,7 +5659,7 @@ class Genhl {
 		return b.getBytes();
 	}
 
-	static function createContext(com:Gctx):HlContext {
+	static function createContext(com:Gctx, overrides:StringMap<Bool>):HlContext {
 		function getType(name:String):ModuleType {
 			var t = core.ds.ArrayTools.find(com.types, t -> isPath(tInfos(t).mtPath, ["hl"], name));
 			if (t != null) return t;
@@ -4879,15 +5680,13 @@ class Genhl {
 			}
 		}
 		var hlVer = Gctx.definedValueSafe(com, Define.HlVer, "");
-		if (Gctx.rawDefined(com, "hl_legacy32") && hlVer != "" && compareVersion(hlVer, "2.0.0") >= 0)
-			com.warning(core.Message.WarningCode.WGenerator, [], "-D hl_legacy32 is for 32-bit compatibility, but 32-bit builds are no longer supported since HashLink 2.0 (hl_ver >= 2.0.0)", fakePos("-D hl_legacy32"));
 		var ctx = new HlContext();
+		ctx.overrides = overrides;
 		ctx.com = com;
 		ctx.hlVer = hlVer;
 		ctx.hl2 = compareVersion(hlVer, "2.0.0") >= 0;
 		ctx.optimize = !Gctx.rawDefined(com, "hl_no_opt");
 		ctx.wNullCompare = Gctx.rawDefined(com, "hl_w_null_compare");
-		ctx.numDomains = core.ds.TaskPool.recommendedDomainCount();
 		ctx.m = methodContext(0, HVoid, nullCapture, false);
 		ctx.arrayImpl = {
 			aall: getClass("ArrayAccess"),
@@ -4908,9 +5707,10 @@ class Genhl {
 		ctx.coreType = getClass("CoreType");
 		ctx.coreEnum = getClass("CoreEnum");
 		ctx.refAbstract = getAbstract("Ref");
-		ctx.tstring = toType(ctx, ctx.com.basic.tstring);
 		allocString(ctx, "");
+		ctx.tstring = toType(ctx, ctx.com.basic.tstring);
 		classType(ctx, ctx.baseClass, vector(), false);
+		allocUnnamedGlobals(ctx);
 		return ctx;
 	}
 
@@ -4928,7 +5728,10 @@ class Genhl {
 		return buf.toString();
 	}
 
-	static function addTypes(ctx:HlContext, types:Array<ModuleType>):Void {
+	/* what the generation reads of all the types: the overridden methods, and
+		the natives of the classes declaring a library */
+	static function prepareTypes(types:Array<ModuleType>):StringMap<Bool> {
+		var overrides = new StringMap<Bool>();
 		for (t in types) {
 			switch t {
 				case TClassDecl(c) if (c.clPath.pack.join(".") == "hl.types" && (c.clPath.name == "BytesIterator" || c.clPath.name == "BytesKeyValueIterator"
@@ -4937,7 +5740,7 @@ class Genhl {
 				case TClassDecl(c):
 					function loop(p:Null<ClassAndParams>, f:TClassField):Bool {
 						if (p != null && (p.cls.clFields.exists(f.cfName) || loop(p.cls.clSuper, f))) {
-							ctx.overrides.set(overrideKey(f.cfName, p.cls.clPath), true);
+							overrides.set(overrideKey(f.cfName, p.cls.clPath), true);
 							return true;
 						}
 						return false;
@@ -5004,28 +5807,89 @@ class Genhl {
 				case _:
 			}
 		}
-		var t = core.Timer.startTimer(ctx.com.timerCtx, ["generate", "hl", "functions"]);
-		for (t in types) generateType(ctx, t);
+		return overrides;
+	}
+
+	/* the generation of the code: the objects of the classes, of the entry point
+		and of the enum constructors, then their link */
+	// port: the classes are generated in the order of the types, on one thread
+	// (upstream's -D hl-gen-sequential, which its parallel generation equals);
+	// the warnings of a class are emitted as soon as it is generated, or fails
+	static function generateCode(com:Gctx):{code:Code, gnames:Vector<String>} {
+		var overrides = prepareTypes(com.types);
+		var ctx = createContext(com, overrides);
+		var dump = Gctx.defined(com, Define.Dump);
+		function emitWarnings(l:Array<{msg:String, p:Pos}>) for (w in l) com.warning(core.Message.WarningCode.WGenerator, [], w.msg, w.p);
+		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "functions"]);
+		var classObjects:Array<HlObject> = [];
+		for (t in com.types) switch t {
+			case TClassDecl(c):
+				ctx.m = methodContext(0, HVoid, nullCapture, false);
+				ctx.cur = newGenObject({pack: [], name: ""});
+				ctx.recCache = [];
+				ctx.ctDelayed = [];
+				ctx.ctDepth = 0;
+				ctx.virtualsPending = [];
+				ctx.virtualsHolders = [];
+				ctx.virtualsDepth = 0;
+				var o = try generateObject(ctx, t, c) catch (e:haxe.Exception) {
+					emitWarnings(ctx.cur.gWarnings);
+					throw e;
+				}
+				emitWarnings(o.oWarnings);
+				classObjects.push(o);
+			case _:
+		}
 		t();
-	}
-
-	static function buildCode(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Code {
-		var ep = generateStaticInit(ctx, types, main);
-		var bytes = Vector.fromArrayCopy(ctx.cbytes.arr);
-		return new Code(if (ctx.hl2) 7 else if (bytes.length == 0) 4 else 5, ep, Vector.fromArrayCopy(ctx.cstrings.arr),
-			Vector.fromArrayCopy(ctx.cints.arr), Vector.fromArrayCopy(ctx.cfloats.arr), bytes, Vector.fromArrayCopy(ctx.cglobals.arr),
-			Vector.fromArrayCopy(ctx.cnatives.arr), Vector.fromArrayCopy(ctx.cfunctions), Vector.fromArrayCopy(ctx.cdebugFiles.arr),
-			Vector.fromArrayCopy(ctx.cconstants.arr));
-	}
-
-	static function check(ctx:HlContext):Void {
-		// port: Hashtbl.iter order of the (string * path) keys of cfids.map, replayed
-		// from their insertion order.
-		var tbl = new core.ds.OcamlHashtbl<{name:String, path:GlobalTypePath, id:Int}, Bool>(k -> core.ds.OcamlHash.hash(core.ds.OcamlHash.OcamlValue.OBlock(0, [core.ds.OcamlHash.OcamlValue.OString(k.name), core.ds.OcamlHash.ofPath(k.path.pack, k.path.name)])), (a, b) -> a == b);
-		for (k in ctx.cfidsKeys) tbl.add(k, true);
-		tbl.iter((k, _) -> {
-			if (!ctx.definedFuns.exists(k.id)) throw new Failure("Unresolved method " + sTypePath(k.path) + ":" + k.name + "(@" + k.id + ")");
-		});
+		/* the entry point and the enum constructors */
+		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "init"]);
+		ctx.cur = newGenObject({pack: [], name: ""});
+		// port: the context of the generation itself, as upstream's (the classes had copies)
+		ctx.m = methodContext(0, HVoid, nullCapture, false);
+		var entry = try generateStaticInit(ctx, com.types, com.main.mainExpr) catch (e:haxe.Exception) {
+			emitWarnings(ctx.cur.gWarnings);
+			throw e;
+		}
+		var entryObject = makeObject(ctx.cur);
+		emitWarnings(entryObject.oWarnings);
+		var fresh = classObjects.concat([entryObject]);
+		var enumObjects = generateEnumCtors(ctx);
+		t();
+		/* the optimization of the functions generated */
+		if (ctx.optimize) {
+			var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "opt"]);
+			var todo:Array<{o:HlObject, i:Int}> = [];
+			for (o in fresh) for (i in 0...o.oFuns.length) if (o.oFuns[i].needOpt) todo.push({o: o, i: i});
+			function getStr(i:Int):String return ctx.cstrings.arr[i];
+			if (dump) {
+				var buf = new StringBuf();
+				for (x in todo) {
+					var r = Hlopt.optimize(true, getStr, x.o.oFuns[x.i]);
+					buf.add(r.dump);
+					x.o.oFuns[x.i] = r.f;
+				}
+				sys.io.File.saveContent("dump/hlopt.txt", buf.toString());
+			} else {
+				var n = todo.length;
+				function opt(k:Int) {
+					var x = todo[k];
+					x.o.oFuns[x.i] = Hlopt.optimize(false, getStr, x.o.oFuns[x.i]).f;
+				}
+				context.Parallel.runWithPool(com.pool, pool -> {
+					if (pool == null) for (k in 0...n) opt(k) else pool.parallelFor(0, n - 1, opt, 16);
+					null;
+				});
+			}
+			t();
+		}
+		/* the link */
+		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "link"]);
+		// port: Hashtbl.fold over the enum objects, then the others; each object's symbols alone
+		for (o in enumObjects) o.oSyms = objectSyms(o);
+		for (o in fresh) o.oSyms = objectSyms(o);
+		var r = link(ctx, fresh, enumObjects, entry);
+		t();
+		return r;
 	}
 
 	// port: upstream digests the Marshal image of a (module id, true) Hashtbl; the
@@ -5059,66 +5923,31 @@ class Genhl {
 			return;
 		}
 
-		var ctx = createContext(com);
-		addTypes(ctx, com.types);
+		var hlVer = Gctx.definedValueSafe(com, Define.HlVer, "");
+		if (Gctx.rawDefined(com, "hl_legacy32") && hlVer != "" && compareVersion(hlVer, "2.0.0") >= 0)
+			com.warning(core.Message.WarningCode.WGenerator, [], "-D hl_legacy32 is for 32-bit compatibility, but 32-bit builds are no longer supported since HashLink 2.0 (hl_ver >= 2.0.0)", fakePos("-D hl_legacy32"));
 
-		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "init"]);
-		var code = buildCode(ctx, com.types, com.main.mainExpr);
-		t();
-		ocamlVectorSort((n1:Native, n2:Native) -> n1.lib - n2.lib, code.natives);
-
-		if (ctx.optimize) {
-			var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "opt"]);
-			var dumpOut = if (dump) new StringBuf() else null;
-			function opt(idx:Int) {
-				var f = ctx.cfunctions[idx];
-				if (f.needOpt) {
-					var r = Hlopt.optimize(dump, i -> code.strings[i], f);
-					if (dumpOut != null) dumpOut.add(r.dump);
-					code.functions[idx] = r.f;
-				}
-			}
-			var n = ctx.cfunctions.length;
-			if (dumpOut != null) for (idx in 0...n) opt(idx) else context.Parallel.runWithPool(com.pool, pool -> {
-				if (pool == null) for (idx in 0...n) opt(idx) else pool.parallelFor(0, n - 1, opt, 16);
-				null;
-			});
-			if (dumpOut != null) sys.io.File.saveContent("dump/hlopt.txt", dumpOut.toString());
-			t();
-		}
+		// port: -D hl-gen-sequential is how the classes are always generated here
+		var r = generateCode(com);
+		var code = r.code;
 
 		if (dump) {
 			var buf = new StringBuf();
 			Hlcode.dump(s -> buf.add(s + "\n"), code);
 			sys.io.File.saveContent("dump/hlcode.txt", buf.toString());
 		}
-		/*if Gctx.raw_defined com "hl_dump_spec" then begin
-			let ch = open_out_bin "dump/hlspec.txt" in
-			let write s = output_string ch (s ^ "\n") in
-			Array.iter (fun f ->
-				write (fundecl_name f);
-				let spec = Hlinterp.make_spec code f in
-				List.iter (fun s -> write ("\t" ^ Hlinterp.spec_string s)) spec;
-				write "";
-			) code.functions;
-			close_out ch;
-		end; */
-		if (hlCheck) {
-			check(ctx);
-			Hlinterp.check(com.error, code);
-		}
+		if (hlCheck) Hlinterp.check(com.error, code);
 		var t = core.Timer.startTimer(com.timerCtx, ["generate", "hl", "write"]);
 
 		if (core.Path.fileExtension(com.file) == "c") {
-			var gnames = new Vector(code.globals.length, "");
-			for (n in ctx.cglobals.map.keys()) gnames[ctx.cglobals.map.get(n)] = n;
+			var gnames = r.gnames;
 			if (!Gctx.defined(com, Define.SourceHeader)) {
 				var versionMajor = com.version.major;
 				var versionMinor = com.version.minor;
 				var versionRevision = com.version.revision;
 				Gctx.defineValue(com, Define.SourceHeader, 'Generated by HLC $versionMajor.$versionMinor.$versionRevision (HL v${code.version})');
 			}
-			Hl2c.writeC(com, com.file, code, gnames, ctx.numDomains);
+			Hl2c.writeC(com, com.file, code, gnames, core.ds.TaskPool.recommendedDomainCount());
 			var t = core.Timer.startTimer(com.timerCtx, ["nativecompile", "hl"]);
 			if (!Gctx.defined(com, Define.NoCompilation) && com.runCommandArgs("haxelib", ["run", "hashlink", "build", escapeCommand(com.file)]) != 0)
 				throw new Failure("Build failed");
