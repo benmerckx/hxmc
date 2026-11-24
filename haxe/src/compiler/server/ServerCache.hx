@@ -338,25 +338,22 @@ class ServerCache {
 					false;
 			}
 		}
+		/* Only the directory of the package of the module in a class path can hold a file shadowing it. */
 		function checkModuleShadowing(com:CommonContext, mPath:GlobalTypePath, mExtra:ModuleDefExtra) {
 			var ownFile = core.Path.UniqueKey.lazyKey(mExtra.mFile);
-			function check(dir:String) {
-				var file = (dir + mPath.name) + ".hx";
-				if (sys.FileSystem.exists(file)) {
+			var changed = getChangedDirectories(sctx, com);
+			var packDir = [for (s in mPath.pack) s + "/"].join("");
+			com.classPaths.iter(cp -> {
+				var dir = cp.absolutePath + packDir;
+				var changed = if (cp.path == "") packageDirectoryChanged(sctx, com, dir) else Lambda.exists(changed, cdir -> cdir.cPath == dir);
+				var file = dir + mPath.name + ".hx";
+				if (changed && sys.FileSystem.exists(file)) {
 					var time = Common.fileTime(file);
 					/* The file of the module does not shadow it, unless its content changed. */
 					if (time > mExtra.mTime && !(com.partScope.fileKeys.get(file) == ownFile && unchangedContent(mPath, mExtra, file, time))) {
 						ServerMessage.modulePathChanged(com, "", mPath, mExtra, time, file);
 						throw new Dirty(Shadowed(file));
 					}
-				}
-			}
-			for (cdir in getChangedDirectories(sctx, com)) check(cdir.cPath);
-			var packDir = [for (s in mPath.pack) s + "/"].join("");
-			com.classPaths.iter(cp -> {
-				if (cp.path == "") {
-					var dir = cp.absolutePath + packDir;
-					if (packageDirectoryChanged(sctx, com, dir)) check(dir);
 				}
 			});
 		}
@@ -767,6 +764,7 @@ class ServerCache {
 		if (!sctx.macroContextSetup) {
 			sctx.macroContextSetup = true;
 			typing.MacroContext.setup();
+			typing.MacroContext.onMacroContextCreated = mcom -> if (sctx.isServer) watchDirectories(sctx, mcom);
 		}
 	}
 
@@ -801,12 +799,12 @@ class ServerCache {
 		ensureMacroSetup(sctx);
 	}
 
-	public static function afterTargetInit(sctx:ServerCompilationContext, com:CommonContext):Void {
+	/* The directories of a context are listed from its first compilation, and
+		again when its class paths change. The watched view resolves the modules
+		again instead. */
+	static function watchDirectories(sctx:ServerCompilationContext, com:CommonContext):Void {
 		var cs = sctx.cs;
 		var sign = Define.getSignature(com.defines);
-		ServerMessage.defines(com, "");
-		ServerMessage.signature(com, "", sign);
-		ServerMessage.displayPosition(com, "", DisplayPosition.displayPosition.get());
 		var classPathStrings:Array<String> = absoluteClassPaths(com);
 		try {
 			var previous = sctx.classPaths.find(sign);
@@ -820,10 +818,17 @@ class ServerCache {
 		} catch (_:NotFound) {
 			sctx.classPaths.add(sign, classPathStrings);
 		}
-		/* The watched view resolves the modules again instead. */
 		if (core.Vfs.mode != Watched) {
 			try cs.findDirectories(sign) catch (_:NotFound) getChangedDirectories(sctx, com);
 		}
+	}
+
+	public static function afterTargetInit(sctx:ServerCompilationContext, com:CommonContext):Void {
+		var sign = Define.getSignature(com.defines);
+		ServerMessage.defines(com, "");
+		ServerMessage.signature(com, "", sign);
+		ServerMessage.displayPosition(com, "", DisplayPosition.displayPosition.get());
+		watchDirectories(sctx, com);
 	}
 
 	/* The directories of the class paths are listed once the server is back in
