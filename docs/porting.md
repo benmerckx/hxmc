@@ -162,39 +162,21 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
 
 ## Host differences
 
-Where the platform the port runs on cannot do what the reference does, the
-port fails explicitly or does what upstream does on a platform without it.
-These are not divergences (no bug of the reference is fixed), and each has
-a `// port:` note at its place. The port runs as hxmc's native builds and
-its WebAssembly build; it is compiled for other targets too (`Targets
---strict`: the self-compile to hl and neko), never run there.
+Some of what the reference compiler does depends on the operating system.
+Where the system the port runs on cannot do it, the port fails with a clear
+error, or does what upstream itself does on a system without that feature.
+These are not divergences: no bug of the reference is fixed.
 
-- WebAssembly (wasm32-wasi): WASI has no processes and no file system
-  events. A macro's `sys.io.Process` and `Sys.command`, `--cmd` and the
-  generators' commands fail ("... is not supported on WASI"). The server's
-  watched view (`HAXE_VFS=watch`) checks every directory again on each
-  compilation, as upstream does on macOS, which it does not watch either;
-  links need no watches then, their directories being checked again too
-  (`core.Vfs`: `Watcher.loop`, `VfsHost`).
-- Starting a process: upstream's is libuv's spawn, hxmc's is a fork and
-  an exec whose child can only exit with 127 when they fail, so the errors
-  libuv reports from its child are found from the file system before
-  (`macros.eval.EvalProcess.spawnError`): a program counts as executable
-  with any execute bit (execvp asks `access` for this process's user), and
-  a directory that exists but cannot be entered (no search permission)
-  ends the process with 127 and no message (upstream: "<program>:
-  permission denied").
-- Windows (not checked there yet): hxmc's processes run a shell command
-  as `%COMSPEC% /c cmd`, and fail as a program not found ("cmd.exe: no
-  such file or directory") when `COMSPEC` is unset; upstream's run the
-  quoted `COMSPEC` (`Filename.quote`), `cmd.exe` when unset, with the
-  command line as is. `Process.kill` ends a process with exit code 0
-  (hxmc's `TerminateProcess`, as the reference's `Unix.kill` did), libuv's
-  with 1.
-- Mir macros (`-D hxmc.macros=mir`): a write to a process that has exited
-  throws `haxe.io.Eof`, which the macro can catch; on Eval it fails the
-  compilation ("broken pipe": an OCaml exception, which a Haxe `catch`
-  does not see) (`hxmc/std/sys/io/Process.hx`).
-- The other targets, compiled only: a process in another directory goes
-  through `/bin/sh` (`cd`, then `exec`), on Windows it fails; no watches and
-  no links (`EvalProcess.start`, `core.Vfs`).
+The port runs as hxmc's native builds and as its WebAssembly build. It is
+also compiled for hl and neko, to check that it compiles, but never run there.
+
+- **WebAssembly.** WASI has no processes and no file change notifications.
+  A macro's `sys.io.Process` and `Sys.command`, `--cmd`, and the commands
+  that generators run all fail with "... is not supported on WASI". With
+  `HAXE_VFS=watch`, the server checks every directory again on each
+  compilation instead of watching it, which is also what upstream does on
+  macOS. (`core.Vfs`)
+- **hl and neko.** These have no libuv, so a macro cannot start a process,
+  and the server never watches directories or sees symbolic links. Since
+  the port is never run there, this only has to compile.
+  (`macros.eval.EvalProcess`)

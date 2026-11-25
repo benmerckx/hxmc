@@ -1414,14 +1414,12 @@ neko) fails one test, the static `Int` below. The differences from Eval:
   server).
 - Not available: `Context.getMacroStack`, macro arguments that are
   functions, Eval's packages (`eval.*`, `mbedtls`). `Sys` in macros is
-  hxmc's but for what Eval's takes from the compilation
-  (`hxmc.MacroHost`): its streams, arguments, commands and end, and the
-  macro's own working directory (`Sys.getCwd`, `Sys.setCwd`, the paths of
-  `sys.FileSystem` and `sys.io.File`, `Sys.command`; the compiler's stays,
-  as Eval's: [porting.md](porting.md#host-differences)). `sys.io.Process`
-  is Eval's, over the compiler's process, but a write to a process that
-  has exited throws `haxe.io.Eof` the macro can catch (Eval: the
-  compilation fails with "broken pipe").
+  hxmc's, except where it has to behave like Eval's and goes through the
+  compiler instead (`hxmc.MacroHost`): the output streams, arguments,
+  `Sys.command` and `Sys.exit`. A macro also gets its own working directory,
+  as on Eval: `Sys.setCwd` changes it for `Sys.getCwd`, file paths and
+  processes, and leaves the compiler's alone. `sys.io.Process` uses the
+  compiler's process code, so it behaves exactly as on Eval.
 - A generation takes again the spare type entries (`MirHost.SPARE_TYPES`,
   2048), signatures and global slots of the earlier ones' whose facts are
   the same (`macro.Loader`: enums with their constructors, structures,
