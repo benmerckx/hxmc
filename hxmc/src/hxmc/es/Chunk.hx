@@ -134,8 +134,10 @@ private enum Use {
 	// (Properties) what the code does with accessors, the names it reads dynamically, its string constants
 	UAccessorCall(a:TClassField, args:Int, discarded:Bool);
 	UAccessorTaken(a:TClassField);
-	UDynamicName(n:String);
+	UDynamicName(n:String, structural:Bool);
 	UString(s:String);
+	UStorage(p:TClassField, by:Null<TClass>);
+	UReflected(t:T);
 }
 
 // A lowering of a part of the program (a type's code, the main code, ...): it changes nothing it shares with others,
@@ -243,9 +245,13 @@ private class Lowering implements Lower.Resolve {
 
 	public function accessorTaken(a:TClassField) if (chunk.propsOn) uses.push(UAccessorTaken(a));
 
-	public function dynamicName(n:String) if (chunk.propsOn) uses.push(UDynamicName(n));
+	public function dynamicName(n:String, structural:Bool) if (chunk.propsOn) uses.push(UDynamicName(n, structural));
 
 	public function stringConst(s:String) if (chunk.propsOn) uses.push(UString(s));
+
+	public function storage(p:TClassField, by:Null<TClass>) if (chunk.propsOn) uses.push(UStorage(p, by));
+
+	public function reflected(t:T) if (chunk.propsOn) uses.push(UReflected(t));
 }
 
 // The bundled output (-D hxmc.js=es): the program in one file, and a file per split (js.Bundle.split).
@@ -660,10 +666,14 @@ class Chunk {
 				props.called(a, args, discarded);
 			case UAccessorTaken(a):
 				props.taken(a);
-			case UDynamicName(n):
-				props.named(n);
+			case UDynamicName(n, structural):
+				props.named(n, structural);
 			case UString(s):
 				props.string(s);
+			case UStorage(p, by):
+				props.stored(p, by);
+			case UReflected(t):
+				props.reflected(t);
 			case URefer(path):
 				refs.set(path, true);
 			case USplitDone(split, caller):
@@ -730,11 +740,12 @@ class Chunk {
 	function printer(f:OutFile, ?smap:SourceMap, ?names:TypeNames):Printer {
 		var p = new Printer(tight);
 		if (names == null) names = f.names;
-		if (tsOut) p.types = new Ts(t -> typeRef(f, names, t), () -> enumValueRef(names));
+		if (tsOut) p.types = new Ts(t -> typeRef(f, names, t), () -> enumValueRef(names), props);
 		if (modules) p.splitImport = id -> splitImport(f.id, id);
 		if (fieldNames != null && (tight || fieldsDebug)) p.fieldName = fieldName;
 		p.ref = refEx;
 		p.accessor = accessorEx;
+		p.backed = backedEx;
 		p.smap = smap != null ? smap : f.smap;
 		return p;
 	}
@@ -998,7 +1009,7 @@ class Chunk {
 	// each used, in that order (replay).
 	function lowerAll() {
 		// (properties as JavaScript's, but with -D hxmc.js.properties=off; not TypeScript's)
-		propsOn = !tsOut && Gctx.definedValueSafe(com, "hxmc.js.properties") != "off";
+		propsOn = Gctx.definedValueSafe(com, "hxmc.js.properties") != "off";
 		// (-D hxmc.js.minify.fields: what the lowering tells of the fields, FieldNames)
 		if (fieldNames == null && Gctx.rawDefined(com, "hxmc.js.minify.fields")) fieldNames = new FieldNames(com);
 		var units:Array<Lowering> = [];
@@ -1115,7 +1126,7 @@ class Chunk {
 		// (TypeScript: its variables declared, its abstract methods)
 		if (tsOut) for (f in c.clFields) switch f.cfKind {
 			case Var(_) if (isPhysicalField(f)):
-				member(prot(f, MDeclare(fieldKey(f.cfName, ins(c)), f.cfType, false)));
+				member(prot(f, MDeclare(fieldKey(f.cfName, ins(c)), f.cfType, false)), f);
 			case Method(_) if (f.cfExpr == null && hasClassFlag(c, CAbstract)):
 				member(prot(f, MAbstract(fieldKey(f.cfName, ins(c)), f.cfType, f.cfParams)));
 			case _:
@@ -1144,10 +1155,10 @@ class Chunk {
 				item.values.set(f, ex(ENull));
 			// (TypeScript: declared, as Haxe has it)
 			case [Var(_), null] if (tsOut && isPhysicalField(f)):
-				member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
+				member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)), f);
 			case [_, null]:
 			case [_, {eexpr: TConst(TNull)}] if (!u.feature("Type.getClassFields")):
-				if (tsOut && isPhysicalField(f)) member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
+				if (tsOut && isPhysicalField(f)) member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)), f);
 			case [_, e]:
 				lower.prepare(e);
 				item.statics.push(f);
@@ -1173,33 +1184,65 @@ class Chunk {
 
 	// ------------------------------------------------------------------ properties as JavaScript's (Properties)
 
-	// (null: none, TypeScript's output, -D hxmc.js.properties=off; propsOn: as the lowerings run, which make it)
+	// (null: none, -D hxmc.js.properties=off; propsOn: as the lowerings run, which make it)
 	var props:Null<Properties> = null;
 	var propsOn = false;
 
+	// the families decided: what all the code told, and the statics with storage set after their classes (`#x` is the
+	// class body's), which cannot change
+	function decideProperties() {
+		for (item in items) for (f in item.statics) if (props.mayBack(f) && !item.inBody.get(f)) props.exclude(f, "a static set after its class");
+		props.decide();
+		if (Gctx.rawDefined(com, "hxmc.js.properties_report")) Sys.println(props.report());
+	}
+
 	// an accessor's call as its family is: the property (`o.x`; `o.x = v`, its value used for nothing), else the call
-	// (and through `super`, where the family keeps its methods)
+	// (and through `super`, where the family keeps its methods); TypeScript's `o["get_x"]()` (protected) `o["x"]`
 	function accessorEx(a:TClassField, call:Ex, discarded:Bool):Ex {
 		var f = props == null ? null : props.familyOf(a);
 		if (f == null) return call;
 		var getter = f.isGetter(a);
 		return switch call.def {
-			case ECall({def: EField(o, _, ns), pos: p}, args) if ((getter ? args.length == 0 : discarded && args.length == 1)
+			case ECall(m = {def: EField(o, _, _) | EFriend(o, _)}, args) if ((getter ? args.length == 0 : discarded && args.length == 1)
 				&& !(o.def.match(ESuper) && f.keeps(getter))):
-				var prop = Lower.field(o, f.property.cfName, ns, p);
+				var prop = switch m.def {
+					case EField(_, _, ns): Lower.field(o, f.property.cfName, ns, m.pos);
+					case _: ex(EFriend(o, f.property.cfName), m.pos);
+				}
 				getter ? prop : ex(EAssign("=", prop, args[0]), call.pos);
 			case _: call;
 		}
 	}
 
+	// a property's storage as its family is: the class's #private field (`o.#x`), else the field
+	function backedEx(p:TClassField, field:Ex):Ex {
+		if (props == null || !props.backed(p)) return field;
+		return switch field.def {
+			case EField(o, _, _) | EFriend(o, _): ex(EPrivate(o, p.cfName), field.pos);
+			case _: field;
+		}
+	}
+
+	// whether a property's storage is a #private field
+	inline function isBacked(f:TClassField):Bool return props != null && props.backed(f);
+
+	// a static's member (its value in the class's body): of a property with storage, the #private field
+	function staticMember(c:TClass, f:TClassField, v:Null<Ex>):Member
+		return isBacked(f) ? MField(KPrivate(f.cfName), v, true, f.cfType) : prot(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType));
+
 	// a class's members, its accessors of properties that change as JS accessors: the accessor itself, or (its family keeps
 	// them as methods) the method and, after the class's first accessor of the family, the JS accessors that call it, or
-	// the ancestor's through `super` where the class has only one of the pair (a JS accessor hides its ancestors' pair)
+	// the ancestor's through `super` where the class has only one of the pair (a JS accessor hides its ancestors' pair);
+	// the storage of its properties with storage, #private fields, first (`statics`: those with values in the body)
 	function accessorMembers(item:Item, c:TClass, members:Array<Member>):Array<Member> {
 		if (props == null) return members;
 		var out:Array<Member> = [];
+		for (st in [false, true]) for (f in (st ? c.clStatics : c.clFields))
+			if (isBacked(f) && !(st && item.statics.contains(f))) out.push(MField(KPrivate(f.cfName), null, st, f.cfType));
 		for (i in 0...members.length) {
 			var cf = item.memberFields[i];
+			// (TypeScript: the storage's declaration, above)
+			if (cf != null && isBacked(cf)) continue;
 			var fam = cf == null ? null : props.familyOf(cf);
 			if (fam == null) {
 				out.push(members[i]);
@@ -1208,11 +1251,53 @@ class Chunk {
 			var getter = fam.isGetter(cf);
 			switch members[i] {
 				case MMethod(_, fn, isStatic, MkMethod) if (!fam.keeps(getter)):
-					out.push(MMethod(fieldKey(fam.property.cfName, isStatic ? sns(c) : ins(c)), fn, isStatic, getter ? MkGet : MkSet));
+					// (TypeScript: a setter returns nothing)
+					var f = getter || !tsOut ? fn : withBody(fn, voidReturns(fn.body));
+					out.push(prot(fam.property, MMethod(fieldKey(fam.property.cfName, isStatic ? sns(c) : ins(c)), f, isStatic, getter ? MkGet : MkSet)));
 				case m:
 					out.push(m);
 			}
-			if (firstAccessor(item, cf, fam)) for (m in jsAccessors(c, fam)) out.push(m);
+			if (firstAccessor(item, cf, fam)) for (m in jsAccessors(c, fam)) out.push(prot(fam.property, m));
+		}
+		return out;
+	}
+
+	// a function's copy, of other statements
+	static function withBody(f:Fn, body:Array<St>):Fn return {
+		params: f.params,
+		rest: f.rest,
+		body: body,
+		arrow: f.arrow,
+		name: f.name,
+		ret: f.ret,
+		tparams: f.tparams,
+		optFrom: f.optFrom,
+		thisAny: f.thisAny,
+		ctor: f.ctor,
+		pos: f.pos,
+		contextual: f.contextual
+	};
+
+	// statements whose `return v` (not a nested function's) are `v; return`
+	static function voidReturns(body:Array<St>):Array<St> {
+		var out = [];
+		for (s in body) switch s.def {
+			case SReturn(v) if (v != null):
+				out.push(st(SExpr(v), s.pos));
+				out.push(st(SReturn(null), s.pos));
+			case _:
+				out.push(st(switch s.def {
+					case SIf(c, a, b): SIf(c, voidReturns(a), b == null ? null : voidReturns(b));
+					case SBlock(b): SBlock(voidReturns(b));
+					case SWhile(c, b): SWhile(c, voidReturns(b));
+					case SDoWhile(b, c): SDoWhile(voidReturns(b), c);
+					case SFor(i, t, u, b): SFor(i, t, u, voidReturns(b));
+					case SForOf(k, v, o, b): SForOf(k, v, o, voidReturns(b));
+					case STry(b, p, h): STry(voidReturns(b), p, voidReturns(h));
+					case SSwitch(on, cases): SSwitch(on, [for (c in cases) ({tests: c.tests, body: voidReturns(c.body), comments: c.comments} : Case)]);
+					case SLabel(l, b): SLabel(l, voidReturns([b])[0]);
+					case d: d;
+				}, s.pos));
 		}
 		return out;
 	}
@@ -1258,11 +1343,13 @@ class Chunk {
 			if (h.own == null && !h.inherited) continue;
 			var on = ex(h.own != null ? EThis : ESuper);
 			var v = new Sym(SLocal, "v");
+			// (TypeScript: of the property's type)
+			v.type = fam.property.cfType;
 			var body = if (h.getter)
 				[st(SReturn(h.own != null ? ex(ECall(Lower.field(on, h.own.cfName, ns), [])) : Lower.field(on, name, ns)))]
 			else
 				[st(SExpr(h.own != null ? ex(ECall(Lower.field(on, h.own.cfName, ns), [ex(EId(v))])) : ex(EAssign("=", Lower.field(on, name, ns), ex(EId(v))))))];
-			out.push(MMethod(fieldKey(name, ns), {params: h.getter ? [] : [v], rest: false, arrow: false, body: body}, isStatic, h.getter ? MkGet : MkSet));
+			out.push(MMethod(fieldKey(name, ns), {params: h.getter ? [] : [v], rest: false, arrow: false, body: body, ret: h.getter ? fam.property.cfType : null}, isStatic, h.getter ? MkGet : MkSet));
 		}
 		return out;
 	}
@@ -1998,10 +2085,7 @@ class Chunk {
 
 	function write() {
 		flags();
-		if (props != null) {
-			props.decide();
-			if (Gctx.rawDefined(com, "hxmc.js.properties_report")) Sys.println(props.report());
-		}
+		if (props != null) decideProperties();
 		if (modules) {
 			writeModules();
 			return;
@@ -2322,8 +2406,8 @@ class Chunk {
 							// (TypeScript: assigned from outside the class, past `protected`)
 							var self = ex(EId(item.sym));
 							deferredStatics.push(st(SExpr(ex(EAssign("=", tsOut && !hasClassFieldFlag(f, CfPublic) ? ex(EFriend(self, f.cfName)) : Lower.field(self, f.cfName, sns(c)), v)))));
-						} else if (f.cfExpr == null || f.cfExpr.eexpr.match(TFunction(_))) head.push(prot(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType)));
-						else later.push(prot(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType)));
+						} else if (f.cfExpr == null || f.cfExpr.eexpr.match(TFunction(_))) head.push(staticMember(c, f, v));
+						else later.push(staticMember(c, f, v));
 					}
 					var init = item.init;
 					if (init != null && item.initInBody) head.push(MStaticBlock(init));
@@ -2345,7 +2429,7 @@ class Chunk {
 					if (instanceFields) {
 						var vars:Array<Prop> = [
 							for (f in c.clFields)
-								if (isPhysicalVarField(f) && !hasClassFieldFlag(f, CfExtern)) ({key: fieldKey(f.cfName, ins(c)), value: ex(ENull)} : Prop)
+								if (isPhysicalVarField(f) && !hasClassFieldFlag(f, CfExtern) && !isBacked(f)) ({key: fieldKey(f.cfName, ins(c)), value: ex(ENull)} : Prop)
 						];
 						if (vars.length > 0)
 							body.statement(st(SExpr(ex(ECall(ex(EMember(ex(EId(global("Object"))), "assign")), [ex(EMember(ex(EId(item.sym)), "prototype")), ex(EObject(vars))])))));

@@ -9,6 +9,10 @@
 // output has: super.size = v;
 // output has: static get mode() {
 // output has: Settings.mode = "abc";
+// output has: #total;
+// output has: return this.#total;
+// output has: static #hits = 0;
+// output lacks: get level()
 interface Named {
 	var name(get, never):String;
 }
@@ -74,6 +78,41 @@ class Settings {
 	}
 }
 
+// (@:isVar: the storage a #private field, which only the class's code reads)
+class Tally {
+	@:isVar public var total(get, set):Int = 0;
+
+	@:isVar public static var hits(get, set):Int = 0;
+
+	public function new() {}
+
+	function get_total() {
+		hits++;
+		return total;
+	}
+
+	function set_total(v:Int) return total = v < 0 ? 0 : v;
+
+	static function get_hits() return hits;
+
+	static function set_hits(v:Int) return hits = v;
+}
+
+// (its storage read by a subclass: the property stays as it is)
+class Gauge {
+	@:isVar public var level(get, set):Int = 1;
+
+	public function new() {}
+
+	function get_level() return level;
+
+	function set_level(v:Int) return level = v;
+}
+
+class DoubleGauge extends Gauge {
+	override function get_level() return level * 2;
+}
+
 class Properties {
 	static function names(l:Array<Named>) return [for (n in l) n.name].join(",");
 
@@ -108,5 +147,16 @@ class Properties {
 		trace(Reflect.getProperty(box, "size"));
 		Reflect.setProperty(box, "size", 42);
 		trace(box.size);
+
+		var t = new Tally();
+		t.total = 5;
+		t.total -= 9;
+		trace(t.total, Tally.hits);
+		Tally.hits = 10;
+		trace(t.total, Tally.hits);
+
+		var g:Gauge = new DoubleGauge();
+		g.level = 4;
+		trace(g.level);
 	}
 }

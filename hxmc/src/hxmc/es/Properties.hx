@@ -7,8 +7,9 @@ import core.TFunctions.*;
 import core.Meta;
 
 // Properties that JavaScript sees as properties (docs/js.md): a Haxe property whose reads and writes are each `get`,
-// `set` or `never`, without @:isVar (no storage), is a JS accessor of its name (`get x() {...}`, `set x(v) {...}`), and
-// its accessors' calls `o.x` and `o.x = v`.
+// `set` or `never` is a JS accessor of its name (`get x() {...}`, `set x(v) {...}`), and its accessors' calls `o.x` and
+// `o.x = v`; its storage (@:isVar) the class's #private field (`#x`), where only the class's code uses it and reflection
+// does not (stored, reflected, storageNamed).
 //
 // A property and its accessors form a family with the ones that override or implement them: subclasses' accessors, the
 // interfaces' declarations. The code that reads `o.x` reads whichever class's accessor is behind `o`, so a family takes
@@ -26,12 +27,18 @@ import core.Meta;
 class Properties {
 	public final families:Array<Family> = [];
 
-	// accessor field to its family (the families that change)
+	// accessor field to its family (the families that change: those that may, until `decide`)
 	final byAccessor = new ObjectMap<TClassField, Family>();
-	// the properties that change
+	// the properties that change (decide)
 	final changed = new ObjectMap<TClassField, Bool>();
-	// what the code names dynamically (`'` + a string constant's), untyped code's words
+	// the properties with storage (@:isVar), their classes, their families: the storage a #private field of the class,
+	// which only its code reads (`#x` is the class body's)
+	final owners = new ObjectMap<TClassField, TClass>();
+	final storage = new ObjectMap<TClassField, Family>();
+	// what the code names dynamically (`'` + a string constant's), of that what it reads but through a structure, untyped
+	// code's words
 	final names = new StringMap<Bool>();
+	final unstructured = new StringMap<Bool>();
 	final words = new StringMap<Bool>();
 
 	// (the program's classes)
@@ -142,7 +149,6 @@ class Properties {
 			var p0 = f.decls[0].p;
 			for (d in f.decls) {
 				if (hasClassFlag(d.c, CExtern)) f.excluded = 'extern ${dotPath(d.c)}';
-				else if (!isProperty(d.p)) f.excluded = '${dotPath(d.c)}.${d.p.cfName} has storage';
 				else if (d.p.cfName != p0.cfName) f.excluded = 'named ${p0.cfName} and ${d.p.cfName} in the output';
 				else {
 					// (an ancestor's field of its name, outside the family; or a native ancestor, whose members the extern
@@ -174,8 +180,13 @@ class Properties {
 		var roots = [for (f in families) if (f.merged == null) f];
 		families.resize(0);
 		for (f in roots) families.push(f);
-		for (f in families) if (f.excluded == null) for (a in f.getters.concat(f.setters)) byAccessor.set(a, f);
-		for (f in families) if (f.excluded == null && f.getters.length + f.setters.length > 0) for (d in f.decls) changed.set(d.p, true);
+		for (f in families) if (f.excluded == null) {
+			for (a in f.getters.concat(f.setters)) byAccessor.set(a, f);
+			for (d in f.decls) if (isPhysicalField(d.p)) {
+				owners.set(d.p, d.c);
+				storage.set(d.p, f);
+			}
+		}
 	}
 
 	// ---- what the code does (the lowerings' notes, in the program's order)
@@ -195,8 +206,11 @@ class Properties {
 		if (f != null) f.keep(a, "taken as a value");
 	}
 
-	// a field's name read dynamically (a structure's, Dynamic's, js.Syntax.field's)
-	public function named(n:String) names.set(n, true);
+	// a field's name read dynamically (structural: a structure's; Dynamic's, js.Syntax.field's)
+	public function named(n:String, structural:Bool) {
+		names.set(n, true);
+		if (!structural) unstructured.set(n, true);
+	}
 
 	// a string constant (reflection may name an accessor by it: `"get_x"`, never a name @:native gives it)
 	public function string(s:String) names.set("'" + s, true);
@@ -212,12 +226,67 @@ class Properties {
 		}
 	}
 
+	// a property's storage read or written by the code of class `by` (null: code outside any class's body: an `__init__`, a
+	// split's initializer)
+	public function stored(p:TClassField, by:Null<TClass>) {
+		var c = owners.get(p);
+		if (c != null && c != by) exclude(p, by == null ? "storage used outside a class" : 'storage used by ${dotPath(by)}');
+	}
+
+	// the classes whose instances reflection reads the fields of (Reflect.fields, JSON.stringify), of a value of their type
+	final reflectedClasses = new ObjectMap<TClass, Bool>();
+
+	public function reflected(t:T) switch follow(t) {
+		case TAbstract({aPath: {pack: [], name: "Null"}}, [p]): reflected(p);
+		case TInst(c, _) if (!c.clKind.match(KTypeParameter(_))): reflectedClasses.set(c, true);
+		case _:
+	}
+
+	// whether reflection reads the fields of c's instances: as c's, an ancestor's, an interface's
+	function readByReflection(c:TClass):Bool {
+		if (reflectedClasses.exists(c)) return true;
+		for (i in c.clImplements) if (readByReflection(i.cls)) return true;
+		return c.clSuper != null && readByReflection(c.clSuper.cls);
+	}
+
+	// a property's family that cannot change (its storage where the class cannot have it: a static's value set after the class)
+	public function exclude(p:TClassField, why:String) {
+		var f = storage.get(p);
+		if (f != null && f.excluded == null) f.excluded = why;
+	}
+
+	// whether a property has storage its family may give a #private field (Chunk asks before `decide`)
+	public inline function mayBack(p:TClassField):Bool return storage.exists(p);
+
 	// what the families are, once all the code has told
 	public function decide() {
-		for (f in families) for (a in f.getters.concat(f.setters)) switch namedHow(a) {
-			case null:
-			case why: f.keep(a, why);
+		for (f in families) {
+			for (a in f.getters.concat(f.setters)) switch namedHow(a) {
+				case null:
+				case why: f.keep(a, why);
+			}
+			// (storage that reflection may read by the property's name, as Haxe has it: a field, not a #private one)
+			if (f.excluded == null) for (d in f.decls) if (owners.exists(d.p)) switch storageNamed(d.p) {
+				case null:
+				case why: f.excluded = "storage " + why;
+			}
+			if (f.excluded != null) for (a in f.getters.concat(f.setters)) byAccessor.remove(a);
+			if (f.excluded == null && f.getters.length + f.setters.length > 0) for (d in f.decls) changed.set(d.p, true);
 		}
+	}
+
+	// whether a property's storage is a #private field (of its class)
+	public inline function backed(p:TClassField):Bool return changed.exists(p) && owners.exists(p);
+
+	// (a structure reads a class's property where its field unified with the structure's, as the typer marks it: not by name)
+	function storageNamed(p:TClassField):Null<String> {
+		var c = owners.get(p);
+		if (c != null && readByReflection(c)) return "read by reflection";
+		if (hasClassFieldFlag(p, CfStructurallyUsed)) return "unified with a structure";
+		if (unstructured.exists(p.cfName) || unstructured.exists(realName(p))) return "named dynamically";
+		if (names.exists("'" + realName(p))) return "named in a string";
+		if (words.exists(p.cfName) || words.exists(realName(p))) return "named in untyped code";
+		return null;
 	}
 
 	function namedHow(a:TClassField):Null<String> {
@@ -295,10 +364,10 @@ class Properties {
 		if (getter) f.getters.push(a) else f.setters.push(a);
 	}
 
-	// `(get|never, set|never)`, at least one of them a call, without @:isVar
+	// `(get|never, set|never)`, at least one of them a call (@:isVar: with storage, which the output has as a #private field)
 	public static function isProperty(p:TClassField):Bool return switch p.cfKind {
 		case Var({vRead: r, vWrite: w}):
-			(r.match(AccCall | AccNever) && w.match(AccCall | AccNever) && (r == AccCall || w == AccCall)) && !Meta.has(Meta.IsVar, p.cfMeta);
+			(r.match(AccCall | AccNever) && w.match(AccCall | AccNever) && (r == AccCall || w == AccCall));
 		case _: false;
 	}
 

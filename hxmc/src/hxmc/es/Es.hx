@@ -124,6 +124,9 @@ enum ExDef {
 	// a call of a method of an accessor's name (Properties): as the call, or as the property (`o.x`, `o.x = v` where nothing
 	// uses its value), as its family is (Chunk.accessorEx)
 	EAccessor(a:TClassField, call:Ex, discarded:Bool);
+	// a property's storage (@:isVar): the field (`o.x`), or the class's #private field (`o.#x`) where its family is JavaScript's
+	// (Chunk.backedEx)
+	EBacked(p:TClassField, field:Ex);
 }
 
 enum RawPart {

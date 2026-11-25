@@ -24,12 +24,15 @@ class Ts implements Types {
 	final ref:ModuleType->Null<String>;
 	// Haxe's `EnumValue`'s name (the runtime's, imported)
 	final enumValue:Void->String;
+	// (the properties JavaScript has as accessors: an interface declares them, not their accessor methods)
+	final props:Null<Properties>;
 
 	public var scope:Array<String> = [];
 
-	public function new(ref, enumValue) {
+	public function new(ref, enumValue, ?props) {
 		this.ref = ref;
 		this.enumValue = enumValue;
+		this.props = props;
 	}
 
 	// (a structure's property: its accessor methods, as the code reads it)
@@ -70,8 +73,8 @@ class Ts implements Types {
 			var opt = core.Meta.has(core.Meta.Optional, f.cfMeta) ? "?" : "";
 			switch [f.cfKind, follow(f.cfType)] {
 				case [Var(_), _]:
-					if (isPhysicalField(f)) b.add(indent + "\t" + n + opt + ": " + type(f.cfType) + ";\n");
-				case [Method(_), TFun(_)]:
+					if (isPhysicalField(f) || (props != null && !props.unchanged(f))) b.add(indent + "\t" + n + opt + ": " + type(f.cfType) + ";\n");
+				case [Method(_), TFun(_)] if (!jsAccessor(f)):
 					var inner = scope;
 					scope = inner.concat([for (p in f.cfParams) p.ttpName]);
 					b.add(indent + "\t" + n + opt + params(f.cfParams) + signature(f.cfType) + ";\n");
@@ -82,6 +85,12 @@ class Ts implements Types {
 		b.add(indent + "}");
 		scope = outer;
 		return b.toString();
+	}
+
+	// an accessor method the output has as a JS accessor, which its property declares
+	function jsAccessor(f:TClassField):Bool {
+		var fam = props == null ? null : props.familyOf(f);
+		return fam != null && !fam.keeps(fam.isGetter(f));
 	}
 
 	// (docs/plans/esgen-enums.md) A constructor's interface has the enum's type parameters and those of its own the

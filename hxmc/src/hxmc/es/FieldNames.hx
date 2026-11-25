@@ -38,7 +38,7 @@ class FieldNames implements FieldSink {
 
 	// reflection by name, std's (haxe.Json, an extern on JavaScript) and JavaScript's: the arguments whose types it
 	// reads the fields of (a class's: of its instances), its own keys (but DEEP's)
-	static final READS:Map<String, Array<Int>> = [
+	public static final READS:Map<String, Array<Int>> = [
 		"haxe.Json.stringify" => [0], "haxe.format.JsonPrinter.print" => [0], "Reflect.fields" => [0], "Reflect.field" => [0],
 		"Reflect.setField" => [0, 2], "Reflect.getProperty" => [0], "Reflect.setProperty" => [0, 2], "Reflect.hasField" => [0],
 		"Reflect.deleteField" => [0], "Reflect.copy" => [0], "Type.getInstanceFields" => [0], "Type.getClassFields" => [0],

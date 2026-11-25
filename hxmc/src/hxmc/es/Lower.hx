@@ -53,11 +53,15 @@ interface Resolve {
 	// whether the output is TypeScript (casts where Haxe accepted what TypeScript would not)
 	function ts():Bool;
 	// (Properties) a call of a method of an accessor's name (args: its arguments; discarded: its value used for nothing), one
-	// taken as a value; a field's name read dynamically; a string constant
+	// taken as a value; a field's name read dynamically (structural: a structure's); a string constant
 	function accessorCall(a:TClassField, args:Int, discarded:Bool):Void;
 	function accessorTaken(a:TClassField):Void;
-	function dynamicName(n:String):Void;
+	function dynamicName(n:String, structural:Bool):Void;
 	function stringConst(s:String):Void;
+	// (Properties) a property's storage read or written by the code of class `by` (null: code outside any class's body)
+	function storage(p:TClassField, by:Null<TClass>):Void;
+	// (Properties) a value reflection reads the fields of (Reflect.fields, JSON.stringify: FieldNames.READS), of its type
+	function reflected(t:T):Void;
 }
 
 // A typed expression (post-filter) as JavaScript. Decides what depends on the code alone: arrows (a function
@@ -685,6 +689,13 @@ class Lower {
 	public static function field(o:Ex, name:String, ns:Ns, ?p:Pos):Ex return validIdent(name) ? ex(EField(o, name, ns), p) : ex(EIndex(o, ex(EStr(name))), p);
 
 
+	// (Properties) a property's storage (@:isVar), read or written: noted, with the class whose code this is
+	function stored(f:TClassField, e:Ex):Ex {
+		if (!f.cfKind.match(Var(_)) || !Properties.isProperty(f) || !isPhysicalField(f)) return e;
+		r.storage(f, cls);
+		return ex(EBacked(f, e), e.pos);
+	}
+
 	// (Properties) the method a call calls, of an accessor's name, the program's (not an extern's)
 	static function accessorOf(callee:TExpr):Null<TClassField> return switch callee.eexpr {
 		case TField(_, FInstance(c, _, cf) | FStatic(c, cf)) if (!hasClassFlag(c, CExtern) && !hasClassFieldFlag(cf, CfExtern) && Properties.accessorNamed(cf)): cf;
@@ -775,7 +786,7 @@ class Lower {
 			case TField(x, FInstance(_, _, f) | FStatic(_, f) | FAnon(f)) if (Meta.has(Meta.SelfCall, f.cfMeta)):
 				expr(x);
 			case TField(x, fa = FClosure(c, f)):
-				if (c == null) r.dynamicName(f.cfName) else if (Properties.accessorNamed(f)) r.accessorTaken(f);
+				if (c == null) r.dynamicName(f.cfName, true) else if (Properties.accessorNamed(f)) r.accessorTaken(f);
 				if (Meta.has(Meta.SelfCall, f.cfMeta)) expr(x) else mkx(ECall(r.rt("bind"), [expr(x), mkx(EFieldName(f.cfName, nsOf(fa)))]));
 			// (a class without a name: its statics at the top level, Genjs's)
 			case TField(_, FStatic(c = {clPath: {pack: [], name: ""}}, f)):
@@ -792,7 +803,7 @@ class Lower {
 				var o = r.type(TClassDecl(c), p);
 				// (TypeScript: std's extern of a global by another name (`@:native("Error") V8Error`) has what its type does not)
 				if (ts && r.stdExtern(c) && renamed(c)) o = any(o);
-				ts && !hasClassFieldFlag(f, CfPublic) && !visible(c, f, null) && !o.def.match(EAs(_)) ? ex(EFriend(o, f.cfName), p) : field(o, f.cfName, NStatic(c), p);
+				stored(f, ts && !hasClassFieldFlag(f, CfPublic) && !visible(c, f, null) && !o.def.match(EAs(_)) ? ex(EFriend(o, f.cfName), p) : field(o, f.cfName, NStatic(c), p));
 			case TField(_, FEnum(en, ef)):
 				enumValue(en, ef, e.etype, p);
 			// (Genjs's field of an enum value's index, which the std reads untyped: haxe.Serializer)
@@ -800,8 +811,9 @@ class Lower {
 				mkx(EIndex(expr(x), r.index()));
 			case TField(x, f):
 				switch f {
-					case FAnon(cf): r.dynamicName(cf.cfName);
-					case FDynamic(n): r.dynamicName(n);
+					// (a structure's, but the one the typer infers of a monomorph, `Json.parse`'s value: not one a class unifies with)
+					case FAnon(cf): r.dynamicName(cf.cfName, follow(x.etype).match(TAnon(_)));
+					case FDynamic(n): r.dynamicName(n, false);
 					case _:
 				}
 				var o = fieldObject(x, f);
@@ -812,7 +824,8 @@ class Lower {
 							case TInst(r, _): r;
 							case _: null;
 						})):
-						ex(EFriend(o, cf.cfName), p);
+						stored(cf, ex(EFriend(o, cf.cfName), p));
+					case FInstance(_, _, cf): stored(cf, field(o, fieldName(f), nsOf(f), p));
 					case _: field(o, fieldName(f), nsOf(f), p);
 				}
 			case TTypeExpr(t): r.type(t, p);
@@ -966,6 +979,12 @@ class Lower {
 				if (ts) f = typeArgs(f, callee);
 				// (TypeScript: a spread argument where a function of fixed arguments is called)
 				if (ts && Lambda.exists(args.toArray(), a -> a.eexpr.match(TUnop(Spread, _, _))) && !f.def.match(ESuper)) f = any(f);
+				switch callee.eexpr {
+					case TField(_, FStatic(cl, cf) | FInstance(cl, _, cf)):
+						var l = FieldNames.READS.get(Genjs.dotPath(cl.clPath) + "." + cf.cfName);
+						if (l != null) for (i in l) if (i < args.length) r.reflected(Texpr.skip(args[i]).etype);
+					case _:
+				}
 				var c = mkx(ECall(f, callArgs(callee, args)));
 				var a = accessorOf(callee);
 				if (a == null) c else {
@@ -1063,7 +1082,7 @@ class Lower {
 				switch Texpr.skip(f) {
 					// (TypeScript: of an object as `any`, a field it may not have)
 					case {eexpr: TConst(TString(s))}:
-						r.dynamicName(s);
+						r.dynamicName(s, false);
 						member(any(expr(o)), s, p);
 					case _: mkx(EIndex(any(expr(o)), expr(f)));
 				}
@@ -1209,6 +1228,7 @@ class Lower {
 			case EAs(_): true;
 			case EMember(o, _) | EField(o, _, _) | EIndex(o, _) | ECall(o, _) | ETypeArgs(o, _) | EFriend(o, _): anyOn(o);
 			case EAccessor(_, c, _): anyOn(c);
+			case EBacked(_, x): anyOn(x);
 			case _: false;
 		}
 		if (anyOn(f)) return f;

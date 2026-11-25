@@ -105,11 +105,13 @@ class JsGenCheck {
 				// (es-modules: a split imports the modules it needs, no file of its own)
 				var want = v.tag.startsWith("es-modules") ? 0 : splitsIn(src + caseModules(name));
 				check('$name: ${v.tag} has ${want} split files', files.length == want, files.join(" "));
-				// (what the case says its output has: `// output has: <text>`, in the plain es output's main.js)
+				// (what the case says its output has, or lacks: `// output has: <text>`, `// output lacks: <text>`, in the plain es
+				// output's main.js)
 				if (v.tag == "es") {
-					var re = ~/^\/\/ output has: (.*)$/gm, pos = 0, code = File.getContent(dir + "/main.js");
+					var re = ~/^\/\/ output (has|lacks): (.*)$/gm, pos = 0, code = File.getContent(dir + "/main.js");
 					while (re.matchSub(src, pos)) {
-						check('$name: ${v.tag} has `' + re.matched(1) + "`", code.indexOf(re.matched(1)) >= 0);
+						var has = re.matched(1) == "has";
+						check('$name: ${v.tag} ' + re.matched(1) + " `" + re.matched(2) + "`", (code.indexOf(re.matched(2)) >= 0) == has);
 						var m = re.matchedPos();
 						pos = m.pos + m.len;
 					}

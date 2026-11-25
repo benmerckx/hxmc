@@ -151,19 +151,31 @@ in a `Map` under a symbol (`$hx.closures`), which `JSON`, `Object.keys` and
 
 ## Properties
 
-A property whose read and write are each `get`, `set` or `never`, without
-`@:isVar`, is a JavaScript accessor of its name: `get x() {...}` and
-`set x(v) {...}` hold the accessors' code, and `o.get_x()` and `o.set_x(v)`
-are `o.x` and `o.x = v`, so JavaScript code reads and writes the property as
-Haxe code does. A static one is a static accessor (`Settings.mode`).
+A property whose read and write are each `get`, `set` or `never` is a
+JavaScript accessor of its name: `get x() {...}` and `set x(v) {...}` hold the
+accessors' code, and `o.get_x()` and `o.set_x(v)` are `o.x` and `o.x = v`, so
+JavaScript code reads and writes the property as Haxe code does. A static one
+is a static accessor (`Settings.mode`). With `@:isVar`, its storage is the
+class's #private field (`#x`, `this.#x` in the accessors' code; a static's
+`static #x = <value>`).
 
 A property, the ones that override it and the interfaces' declarations it
 implements change together, or not at all: not when one of them is an
-extern's, has storage (`@:isVar`), is redeclared or shadowed, or is
-implemented by a field of another kind, nor when the class extends an extern
-(whose members of the name the extern may not declare: `haxe.Exception`'s
-`message`). A subclass that overrides one accessor gets the other through
-`super` (`set x(v) { super.x = v; }`).
+extern's, is redeclared or shadowed, or is implemented by a field of another
+kind, nor when the class extends an extern (whose members of the name the
+extern may not declare: `haxe.Exception`'s `message`). A subclass that
+overrides one accessor gets the other through `super` (`set x(v) { super.x =
+v; }`).
+
+`#x` is its class body's: a property with storage changes only where nothing
+else reads the storage as Haxe has it, a field of the instance. Not where code
+outside the class uses it (a subclass's accessor, an `__init__`, a split's
+code), where a static's value is set after its class (`hxmc.js.order_report`),
+where reflection reads the fields of the class's instances (a value of the
+class's type, an ancestor's or an interface's, given to `Reflect.fields`,
+`Reflect.field`, `JSON.stringify`, `Type.getInstanceFields`, ...), nor where
+its name is read off `Dynamic`, untyped code names it or a string constant is
+it (`"x"`, which reflection may be given).
 
 The accessors stay methods too (`get_x()`, which the JS accessor calls) when
 something needs them as such: a setter call whose value is used (`a = o.x = v`:
@@ -174,8 +186,10 @@ as a value, one named through a structure, `Dynamic`, untyped code or a string
 
 Which properties change is decided from the whole program once its code is
 lowered: what each lowering finds (the calls of accessors, whether their values
-are used, the names read dynamically) it notes with the rest of what it uses,
-and the printer writes a call as the property or as the call as its family is.
+are used, the storage's uses and by which class's code, the names read
+dynamically, what reflection is given) it notes with the rest of what it uses,
+and the printer writes a call as the property or as the call, the storage as
+`#x` or `x`, as its family is.
 
 Where the program reflects on properties (`Reflect.getProperty`,
 `setProperty`), each class lists the accessor methods of the properties that
@@ -183,8 +197,10 @@ stay methods under `$hx.properties` (its instances') and
 `$hx.staticProperties` (its own); those find a JS accessor by the property's
 name. Elsewhere a class lists nothing.
 
-Not in TypeScript's output (`es-modules` to `.ts`), whose properties stay
-methods. `-D hxmc.js.properties=off` keeps every property as it is;
+In TypeScript's output the accessors have their types (`get x(): number`,
+`set x(v: number)`, a setter returning nothing), and an interface declares a
+property that is a JS accessor (`x: number`), not its accessor methods.
+`-D hxmc.js.properties=off` keeps every property as it is;
 `-D hxmc.js.properties_report` prints what became of each.
 
 ## Reflection

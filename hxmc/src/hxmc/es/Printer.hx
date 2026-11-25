@@ -102,6 +102,8 @@ class Printer {
 	public var ref:Null<(Ref, Null<core.Globals.Pos>)->Ex> = null;
 	// an accessor's call as its property's family has it (Chunk.accessorEx)
 	public var accessor:Null<(TClassField, Ex, Bool)->Ex> = null;
+	// a property's storage as its family has it (Chunk.backedEx)
+	public var backed:Null<(TClassField, Ex)->Ex> = null;
 	// (-D js-source-map) the map the printed text is marked for (SourceMap)
 	public var smap:Null<SourceMap> = null;
 
@@ -124,6 +126,7 @@ class Printer {
 		p.fieldName = fieldName;
 		p.ref = ref;
 		p.accessor = accessor;
+		p.backed = backed;
 		p.smap = smap;
 		return p;
 	}
@@ -216,6 +219,7 @@ class Printer {
 				case EObject(props): for (p in props) walk(p.value);
 				case EFriend(o, _): walk(o);
 				case EAccessor(_, c, _): walk(c);
+				case EBacked(_, x): walk(x);
 				case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | EUnary(_, o) | EUpdate(_, _, o) | ESpread(o) | EImport(o) | EAs(o) | ETypeArgs(o, _): walk(o);
 				case EIndex(a, b) | EBinary(_, a, b) | EAssign(_, a, b): walk(a); walk(b);
 				case ECall(f, args) | ENew(f, args): walk(f); for (x in args) walk(x);
@@ -403,6 +407,7 @@ class Printer {
 			case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | EIndex(o, _) | ECall(o, _) | EAs(o) | ETypeArgs(o, _): startsAmbiguous(o);
 			case EFriend(o, _): startsAmbiguous(o);
 			case EAccessor(_, c, _): startsAmbiguous(c);
+			case EBacked(_, x): startsAmbiguous(x);
 			case EBinary(_, a, _) | EAssign(_, a, _) | ECond(a, _, _): startsAmbiguous(a);
 			case EUpdate(_, false, x): startsAmbiguous(x);
 			case ESeq(items) if (items.length > 0): startsAmbiguous(items[0]);
@@ -457,6 +462,7 @@ class Printer {
 	function deref(e:Ex):Ex return switch e.def {
 		case ERef(r): ref(r, e.pos);
 		case EAccessor(a, c, d): deref(accessor == null ? c : accessor(a, c, d));
+		case EBacked(p, x): deref(backed == null ? x : backed(p, x));
 		case _: e;
 	}
 
@@ -490,7 +496,7 @@ class Printer {
 	function exprRaw(e:Ex):String {
 		return switch e.def {
 			case EId(s): s.name;
-			case ERef(_) | EAccessor(_): exprRaw(deref(e));
+			case ERef(_) | EAccessor(_) | EBacked(_): exprRaw(deref(e));
 			case EThis: "this";
 			case ESuper: "super";
 			case ENull: "null";
