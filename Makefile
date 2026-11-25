@@ -503,6 +503,50 @@ esm-unit: $(TOOL) $(STD) $(HOST_HAXE)
 	$(SCRIPT) EsmGenesmCheck --haxe $(HOST_HAXE)
 	$(SCRIPT) EsmSuites --haxe $(HOST_HAXE)
 
+# Phase 2 hot: tier-1 in-process body swap (-D esm.hot)
+esm-hot-m0: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotTier1Check --haxe $(HOST_HAXE)
+
+# Phase 2 hot M1: WebSocket manifest + patch chunk after file edit
+esm-hot-m1: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotM1Check --haxe $(HOST_HAXE)
+
+# Phase 2 hot M2: cells, closures, keyed ordinal reset
+esm-hot-m2: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotM2Check --haxe $(HOST_HAXE)
+
+# Phase 2 hot M3: tier-2 class/enum layout + migration / reload fallback
+esm-hot-m3: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotM3Check --haxe $(HOST_HAXE)
+
+# Phase 2 hot M4: heap serializer + transactional apply / rollback
+esm-hot-m4: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotM4Check --haxe $(HOST_HAXE)
+
+# Phase 2 hot M5: -D esm + -D esm.hot dual-flavor smoke (not fixpoint)
+esm-hot-m5: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotDualCheck --haxe $(HOST_HAXE)
+
+# Phase 2 hot M6: std cross-module static inits (StringTools → SysTools under $h)
+esm-hot-m6: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotStdGlobalsCheck --haxe $(HOST_HAXE)
+
+esm-hot-m7: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotStaticFnCheck --haxe $(HOST_HAXE)
+
+# Phase 2 hot M8: class static vars before publishClass (wrapped static self-ref)
+esm-hot-m8: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotClassStaticVarCheck --haxe $(HOST_HAXE)
+
+esm-hot-m9: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotShallowCapCheck --haxe $(HOST_HAXE)
+
+esm-hot-m10: $(TOOL) $(STD) $(HOST_HAXE)
+	$(SCRIPT) EsmHotModuleImportCheck --haxe $(HOST_HAXE)
+
+# All phase-2 hot milestone gates (M0–M10)
+esm-hot: esm-hot-m0 esm-hot-m1 esm-hot-m2 esm-hot-m3 esm-hot-m4 esm-hot-m5 esm-hot-m6 esm-hot-m7 esm-hot-m8 esm-hot-m9 esm-hot-m10
+
 upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
 	@failed=; \
 	$(if $(filter wasm32-wasi,$(SUITES_TARGET)),,$(SCRIPT) UpstreamSuites $(SUITES) || failed="$$failed native";) \

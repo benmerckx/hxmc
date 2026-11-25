@@ -1,0 +1,1 @@
+# Hot-only suite exclusions (-D esm + -D esm.hot); see exclusions.md

@@ -1,0 +1,4 @@
+enum HotEnum {
+	Alpha;
+	Beta;
+}
