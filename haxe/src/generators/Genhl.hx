@@ -5447,16 +5447,46 @@ class Genhl {
 			var fields = consts.get(g);
 			if (fields != null) constants.push({g: gmap[g], fields: vector(smap[fields[0]], imap[fields[1]])});
 		}
-		var code = new Code(if (ctx.hl2) 7 else if (bytes.length == 0) 4 else 5, fidmap[entry], table(sn.order, i -> ctx.cstrings.arr[i]),
-			table(inum.order, i -> ctx.cints.arr[i]), table(fln.order, i -> ctx.cfloats.arr[i]), bytes, table(gn.order, g -> ft(ctx.cglobals.arr[g])),
-			Vector.fromArrayCopy([
+		// port: the fields go through an object literal (newCode) instead of the constructor's
+		// ... 11 arguments, because of a bug in neko's bytecode compiler. Compiled to neko, `link`
+		// ... has over 110 values on the stack here, and a call with 10 or more arguments (or a
+		// ... closure capturing 10 or more variables) then makes the compiler loop until it runs
+		// ... out of memory: ncompile.ml splits the argument array into parts that are no smaller.
+		var code = newCode({
+			version: if (ctx.hl2) 7 else if (bytes.length == 0) 4 else 5,
+			entrypoint: fidmap[entry],
+			strings: table(sn.order, i -> ctx.cstrings.arr[i]),
+			ints: table(inum.order, i -> ctx.cints.arr[i]),
+			floats: table(fln.order, i -> ctx.cfloats.arr[i]),
+			bytes: bytes,
+			globals: table(gn.order, g -> ft(ctx.cglobals.arr[g])),
+			natives: Vector.fromArrayCopy([
 				for (n in natives) {
 					var nat = ctx.cnatives.arr[n];
 					({lib: smap[nat.lib], name: smap[nat.name], t: ft(nat.t), findex: fidmap[nat.findex]} : Native);
 				}
-			]), out,
-			table(dn.order, f -> debugFilePath(com, ctx.cdebugFiles.arr[f])), Vector.fromArrayCopy(constants));
+			]),
+			functions: out,
+			debugfiles: table(dn.order, f -> debugFilePath(com, ctx.cdebugFiles.arr[f])),
+			constants: Vector.fromArrayCopy(constants)
+		});
 		return {code: code, gnames: gnames};
+	}
+
+	static function newCode(c:{
+		version:Int,
+		entrypoint:Int,
+		strings:Vector<String>,
+		ints:Vector<Int>,
+		floats:Vector<Float>,
+		bytes:Vector<haxe.io.Bytes>,
+		globals:Vector<Ttype>,
+		natives:Vector<Native>,
+		functions:Vector<Fundecl>,
+		debugfiles:Vector<String>,
+		constants:Vector<{g:Int, fields:Vector<Int>}>
+	}):Code {
+		return new Code(c.version, c.entrypoint, c.strings, c.ints, c.floats, c.bytes, c.globals, c.natives, c.functions, c.debugfiles, c.constants);
 	}
 
 	static function generateStaticInit(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):Int {
