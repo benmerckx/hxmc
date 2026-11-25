@@ -30,6 +30,10 @@ class Download {
   static public function tar(url:String, peel:Int, into:String, logger:Logger):Directory
     return extract(url, untar(download(url, logger).body), into, peel, logger);
 
+  // a tarball already downloaded (src: where from, for the log)
+  static public function untarBytes(src:String, bytes:Bytes, peel:Int, into:String, ?logger:Logger):Directory
+    return extract(src, untar(bytes), into, peel, logger);
+
   static public function zip(url:String, peel:Int, into:String, logger:Logger):Directory
     return extract(url, Archive.unzip(download(url, logger).body), into, peel, logger);
 

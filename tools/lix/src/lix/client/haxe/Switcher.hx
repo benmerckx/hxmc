@@ -89,7 +89,7 @@ class Switcher {
       attempt(
         'Get installed Haxe versions',
         () -> sortedOfficial(kind, [for (v in scope.versionDir.readDirectory())
-          if (!v.isHash() && versionDir(v).isDirectory()) v
+          if (!v.isHash() && !Hxmc.isHxmc(v) && versionDir(v).isDirectory()) v
         ])
       );
 
@@ -99,6 +99,18 @@ class Switcher {
         l()
       catch (e:Dynamic)
         throw new Error('Failed to $what because $e');
+
+  // the installed hxmc builds, by their versions (`hxmc-<version>`)
+  public function hxmcInstalled():Array<String>
+    return
+      attempt(
+        'get installed hxmc builds',
+        () -> {
+          final l = [for (v in scope.versionDir.readDirectory()) if (v.startsWith(Hxmc.PREFIX)) v];
+          l.sort(Reflect.compare);
+          l;
+        }
+      );
 
   public function nightliesInstalled()
     return
@@ -120,10 +132,19 @@ class Switcher {
   }
 
   public function resolveInstalled(version:UserVersion):ResolvedVersion
-    return resolve(version, officialInstalled, nightliesInstalled);
+    return resolve(version, officialInstalled, nightliesInstalled, hxmcResolveInstalled);
 
   public function resolveOnline(version:UserVersion):ResolvedVersion
-    return resolve(version, officialOnline, nightliesOnline);
+    return resolve(version, officialOnline, nightliesOnline, hxmcOnline);
+
+  // (an hxmc build: installed by its exact version, online by any spec, Hxmc)
+  function hxmcResolveInstalled(spec:String):ResolvedVersion
+    return
+      if (versionDir(Hxmc.PREFIX + spec).exists()) RHxmc(spec)
+      else throw new Error(NotFound, 'Unable to resolve hxmc build $spec locally, install it first with `lix install haxe ${Hxmc.PREFIX}$spec`');
+
+  static function hxmcOnline(spec:String):ResolvedVersion
+    return RHxmc(Hxmc.resolve(spec));
 
   static function pickFirst<A>(kind:String, make:A->ResolvedVersion, ?filter:A->Bool):Iterable<A>->ResolvedVersion
     return switch filter {
@@ -137,7 +158,7 @@ class Switcher {
         }
     }
 
-  function resolve(version:UserVersion, getOfficial:PickOfficial->Iterable<Official>, getNightlies:Void->Iterable<Nightly>):ResolvedVersion
+  function resolve(version:UserVersion, getOfficial:PickOfficial->Iterable<Official>, getNightlies:Void->Iterable<Nightly>, getHxmc:String->ResolvedVersion):ResolvedVersion
     return switch version {
       case UEdge:
 
@@ -165,6 +186,8 @@ class Switcher {
         else throw new Error(NotFound, 'Unable to resolve version $version locally, install it first with `lix install haxe $version`');
 
       case UCustom(path): RCustom(path);
+
+      case UHxmc(spec): getHxmc(spec);
     }
 
   function versionDir(name:String)
@@ -215,7 +238,7 @@ class Switcher {
   public function resolveAndDownload(version:String, options:{ force: Bool }) {
     var r =
       try switch ((version : UserVersion) : UserVersionData) {
-        case UOfficial(_):
+        case UOfficial(_) | UHxmc(_):
           resolveInstalled(version);
         default:
           throw new Error('$version needs to be resolved online');
@@ -272,6 +295,12 @@ class Switcher {
 
         var dir = download(linkToOfficial(version), getDownloadDir(version));
         replace(versionDir(version), dir, version);
+        true;
+
+      case RHxmc(v):
+
+        logger.info('Downloading hxmc: $v');
+        Hxmc.install(v, scope.haxeshimRoot, versionDir(version.id), logger);
         true;
     }
   }
