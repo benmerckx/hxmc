@@ -16,8 +16,11 @@ import generators.Genjs.JsCtx;
 // shared runtime module and an entry at --js. Reuses Genjs for expressions and
 // type layout; package globals link modules (entry imports every module).
 class Genesm {
+	public static var hotRegistry = false;
+
+	public static inline function reg():String return hotRegistry ? "$h" : "$global";
+
 	public static function generate(com:Gctx):Void {
-		if (core.Define.rawDefined(com.defines, "esm.hot")) throw "hxmc: -D esm.hot is not implemented (phase 2)";
 		core.Path.mkdirFromPath(com.file);
 		var esVersion = generators.Gctx.getEsVersion(com.defines);
 		if (esVersion >= 6) filters.ES6Ctors.rewriteCtors(com);
@@ -45,11 +48,18 @@ class Genesm {
 			modCtx.typeAccessor = t -> links.typeAccessor(modCtx, t);
 			modulePreamble(modCtx, com, g.types);
 			if (!moduleGeneratesCode(modCtx, g.types)) continue;
+			var hotTypes:Array<ModuleType> = [];
 			for (t in sortModuleTypes(g.types)) {
 				Genjs.generateType(modCtx, t);
-				modCtx.buf.addString(Genesm.publishType(modCtx, t));
+				if (hotRegistry) hotTypes.push(t);
+				else modCtx.buf.addString(Genesm.publishType(modCtx, t));
 			}
 			emitModuleInits(modCtx);
+			if (hotRegistry)
+				for (t in hotTypes) {
+					GenesmHot.registerType(modCtx, t);
+					modCtx.buf.addString(Genesm.publishType(modCtx, t));
+				}
 			for (name in GenesmLinks.exportsFromBody(modCtx.buf.contents()))
 				if (!skipModuleGlobalPublish(name)) modCtx.buf.addString(publishGlobalBinding(name));
 			var body = modCtx.buf.contents();
@@ -129,7 +139,8 @@ class Genesm {
 		function add(s:String) {
 			ctx.buf.addString(s);
 		}
-		add("const $global = $hx.$global;\n");
+		add("const " + reg() + " = $hx." + reg() + ";\n");
+		if (hotRegistry) add("const $global = $hx.$global;\n");
 		add("const $extend = $hx.$extend;\n");
 		add("const $hx_exports = $hx.$hx_exports;\n");
 		if (ctx.hasResolveClass || generators.Gctx.hasFeature(com, "Type.resolveEnum"))
@@ -201,7 +212,21 @@ class Genesm {
 		for (e in inits) Genjs.genBlockElement(true, ctx.esVersion >= 6, ctx, e);
 		var sts = ctx.statics.copy();
 		sts.reverse();
-		for (s in sts) Genjs.generateStatic(ctx, s);
+		for (s in sts) {
+			var clPath = Genjs.getGeneratedClassPath(s.c);
+			if (hotRegistry && generators.EsmHotEmit.tryEmitClassStatic != null
+				&& generators.EsmHotEmit.tryEmitClassStatic(ctx, s.c, clPath, s.f))
+				continue;
+			if (hotRegistry && hxmc.esm.EsmHotMeta.isSwappable(s.f))
+				GenesmHot.emitSwappableStatic(ctx, s);
+			else {
+				if (hotRegistry) {
+					hxmc.esm.HotLowering.prepareFieldCells(ctx.com, s.c, s.f);
+					s = {c: s.c, f: s.f, e: s.f.cfExpr};
+				}
+				Genjs.generateStatic(ctx, s);
+			}
+		}
 	}
 
 	static function writeModule(outDir:String, module:GlobalTypePath, runtimeRel:String, types:Array<ModuleType>, body:String, ctx:JsCtx, links:GenesmLinks):Void {
@@ -209,6 +234,8 @@ class Genesm {
 		core.Path.mkdirFromPath(path);
 		var text = "import * as $hx from \"" + runtimeRel + "\";\n" + links.importPreamble() + body + links.exportSuffix(ctx, types, body);
 		sys.io.File.saveContent(path, text);
+		if (hotRegistry)
+			hxmc.esm.HotManifest.recordModule(Globals.sTypePath(module), "./hx/" + moduleFilePath(module), text);
 	}
 
 	public static function publishType(ctx:JsCtx, t:ModuleType):String {
@@ -219,11 +246,11 @@ class Genesm {
 				else if (hasClassFlag(c, CInterface) && !Genjs.needToGenerateInterface(ctx, c)) "";
 				else {
 					var p = Genjs.sPath(ctx, Genjs.getGeneratedClassPath(c));
-					if (p == "Std" && c.clStatics.length == 0) "" else "$global." + p + " = " + p + ";\n";
+					if (p == "Std" && c.clStatics.length == 0) "" else reg() + "." + p + " = " + p + ";\n";
 				}
 			case TEnumDecl(e) if (!hasEnumFlag(e, EnExtern)):
 				var p = Genjs.sPath(ctx, e.ePath);
-				"$global." + p + " = " + p + ";\n";
+				reg() + "." + p + " = " + p + ";\n";
 			default:
 				"";
 		}
@@ -311,7 +338,164 @@ class Genesm {
 		}
 		if (generators.Gctx.hasFeature(com, "$global.$haxeUID"))
 			buf.add("$global.$haxeUID |= 0;\n");
+		if (hotRegistry) appendHotRuntime(buf);
 		sys.io.File.saveContent(path, buf.toString());
+	}
+
+	static function appendHotRuntime(buf:StringBuf):Void {
+		buf.add("export const $h = typeof globalThis !== \"undefined\" ? (globalThis.$h = globalThis.$h || {units: {}, cells: {}, scopes: [], instances: {}}) : {units: {}, cells: {}, scopes: [], instances: {}};\n");
+		buf.add("$h.units = $h.units || {};\n");
+		buf.add("$h.cells = $h.cells || {};\n");
+		buf.add("$h.scopes = $h.scopes || [];\n");
+		buf.add("$h.instances = $h.instances || {};\n");
+		buf.add("$h.registerFunction = function(id, hash, fn) { $h.units[id] = {kind: \"function\", hash: hash, fn: fn}; };\n");
+		buf.add("$h.registerClass = function(id, layoutHash, superId, policy, C) {\n");
+		buf.add("	var u = $h.units[id];\n");
+		buf.add("	var insts = u != null ? u.instances : null;\n");
+		buf.add("	$h.units[id] = {kind: \"class\", layoutHash: layoutHash, superId: superId, policy: policy || \"reset\", C: C, instances: insts || []};\n");
+		buf.add("	if( insts == null ) $h.instances[id] = $h.units[id].instances;\n");
+		buf.add("};\n");
+		buf.add("$h.registerEnum = function(id, tableHash, policy, E) {\n");
+		buf.add("	var enumNames = [];\n");
+		buf.add("	var cs = E.__constructs__;\n");
+		buf.add("	if( cs != null ) for( var i = 0; i < cs.length; i++ ) {\n");
+		buf.add("		var c = cs[i];\n");
+		buf.add("		enumNames.push(typeof c === \"string\" ? c : c._hx_name);\n");
+		buf.add("	}\n");
+		buf.add("	$h.units[id] = {kind: \"enum\", tableHash: tableHash, policy: policy || \"reset\", E: E, names: enumNames};\n");
+		buf.add("};\n");
+		buf.add("$h.trackInstance = function(id, o) {\n");
+		buf.add("	var u = $h.units[id];\n");
+		buf.add("	if( u == null || u.kind !== \"class\" ) return;\n");
+		buf.add("	if( u.instances.indexOf(o) < 0 ) u.instances.push(o);\n");
+		buf.add("	if( o != null && o.__hotClassId == null ) o.__hotClassId = id;\n");
+		buf.add("};\n");
+		buf.add("$h.publishClass = function(id, layoutHash, superId, policy, C) {\n");
+		buf.add("	$h.registerClass(id, layoutHash, superId, policy, C);\n");
+		buf.add("	var u = $h.units[id];\n");
+		buf.add("	if( u == null || !u.__wrapped ) {\n");
+		buf.add("		var Orig = C;\n");
+		buf.add("		var W = function() {\n");
+		buf.add("			var o = (typeof Reflect !== \"undefined\" && Reflect.construct)\n");
+		buf.add("				? Reflect.construct(Orig, arguments, new.target || W)\n");
+		buf.add("				: (new.target ? (Orig.apply(this, arguments), this) : Object.assign(Object.create(Orig.prototype), new Orig(...arguments)));\n");
+		buf.add("			$h.trackInstance(id, o);\n");
+		buf.add("			return o;\n");
+		buf.add("		};\n");
+		buf.add("		W.prototype = Orig.prototype;\n");
+		buf.add("		W.__name__ = Orig.__name__;\n");
+		buf.add("		W.__super__ = Orig.__super__;\n");
+		buf.add("		W.__wrapped = true;\n");
+		buf.add("		u.C = W; u.Wrapped = W;\n");
+		buf.add("		var _names = Object.getOwnPropertyNames(Orig);\n");
+		buf.add("		for( var _i = 0; _i < _names.length; _i++ ) {\n");
+		buf.add("			var _k = _names[_i];\n");
+		buf.add("			if( _k === \"prototype\" || _k === \"length\" || _k === \"name\" ) continue;\n");
+		buf.add("			var _d = Object.getOwnPropertyDescriptor(Orig, _k);\n");
+		buf.add("			if( _d != null ) Object.defineProperty(W, _k, _d);\n");
+		buf.add("		}\n");
+		buf.add("		return W;\n");
+		buf.add("	}\n");
+		buf.add("	u.C = C;\n");
+		buf.add("	return u.Wrapped || C;\n");
+		buf.add("};\n");
+		buf.add("$h.publishEnum = function(id, tableHash, policy, E) { $h.registerEnum(id, tableHash, policy, E); return E; };\n");
+		buf.add("$h.classLayoutAppendOnly = function(prev, next) {\n");
+		buf.add("	return prev != null && next != null && next.length >= prev.length && next.slice(0, prev.length) === prev;\n");
+		buf.add("};\n");
+		buf.add("$h.migrateClassInstances = function(id, prevLayout, nextLayout, nextC) {\n");
+		buf.add("	var u = $h.units[id];\n");
+		buf.add("	if( u == null ) return {ok: false, reload: true};\n");
+		buf.add("	if( !$h.classLayoutAppendOnly(prevLayout, nextLayout) && prevLayout !== nextLayout ) return {ok: false, reload: true};\n");
+		buf.add("	var added = prevLayout === nextLayout ? \"\" : nextLayout.slice(prevLayout.length);\n");
+		buf.add("	u.layoutHash = nextLayout;\n");
+		buf.add("	u.C = nextC;\n");
+		buf.add("	var proto = nextC.prototype;\n");
+		buf.add("	for( var i = 0; i < u.instances.length; i++ ) {\n");
+		buf.add("		var o = u.instances[i];\n");
+		buf.add("		if( o == null ) continue;\n");
+		buf.add("		o.__proto__ = proto;\n");
+		buf.add("		$h.initAppendedFields(o, added);\n");
+		buf.add("	}\n");
+		buf.add("	return {ok: true, reload: false};\n");
+		buf.add("};\n");
+		buf.add("$h.initAppendedFields = function(o, addedSpec) {\n");
+		buf.add("	if( addedSpec == null || addedSpec === \"\" ) return;\n");
+		buf.add("	var parts = addedSpec.split(\";\");\n");
+		buf.add("	for( var i = 0; i < parts.length; i++ ) {\n");
+		buf.add("		var p = parts[i];\n");
+		buf.add("		if( p === \"\" ) continue;\n");
+		buf.add("		var q = p.indexOf(\":\");\n");
+		buf.add("		if( q < 0 ) continue;\n");
+		buf.add("		var name = p.slice(0, q);\n");
+		buf.add("		var ty = p.slice(q + 1);\n");
+		buf.add("		var opt = ty.charAt(ty.length - 1) === \"?\";\n");
+		buf.add("		if( !opt ) continue;\n");
+		buf.add("		if( o[name] != null ) continue;\n");
+		buf.add("		if( ty.indexOf(\"Int\") >= 0 ) o[name] = 0;\n");
+		buf.add("		else if( ty.indexOf(\"Float\") >= 0 ) o[name] = 0.0;\n");
+		buf.add("		else if( ty.indexOf(\"Bool\") >= 0 ) o[name] = false;\n");
+		buf.add("		else o[name] = null;\n");
+		buf.add("	}\n");
+		buf.add("};\n");
+		buf.add("$h.enumTableStable = function(prevHash, names) {\n");
+		buf.add("	if( prevHash == null || names == null ) return false;\n");
+		buf.add("	return prevHash === $h.hashEnumNames(names);\n");
+		buf.add("};\n");
+		buf.add("$h.hashEnumNames = function(names) {\n");
+		buf.add("	var s = \"\";\n");
+		buf.add("	for( var i = 0; i < names.length; i++ ) s += names[i] + \",\";\n");
+		buf.add("	return $h.md5(s);\n");
+		buf.add("};\n");
+		buf.add("$h.md5 = function(s) {\n");
+		buf.add("	var h = 0;\n");
+		buf.add("	for( var i = 0; i < s.length; i++ ) h = ((h << 5) - h + s.charCodeAt(i)) | 0;\n");
+		buf.add("	return String(h);\n");
+		buf.add("};\n");
+		buf.add("$h.invoke = function(id, args) { var u = $h.units[id]; if( u == null || u.stale ) return null; return u.fn.apply(null, args || []); };\n");
+		buf.add("$h.registerClosure = function(id, capHash, hash, fn) {\n");
+		buf.add("	var u = $h.units[id];\n");
+		buf.add("	if( u != null && u.capHash != null && u.capHash !== capHash ) { u.stale = true; }\n");
+		buf.add("	$h.units[id] = {kind: \"closure\", hash: hash, capHash: capHash, fn: fn, stale: false};\n");
+		buf.add("};\n");
+		buf.add("$h.makeClosure = function(id, env) {\n");
+		buf.add("	var f = function() { return $h.invokeClosure(id, env, arguments); };\n");
+		buf.add("	f.__hotClosureId = id;\n");
+		buf.add("	f.__hotClosureEnv = env;\n");
+		buf.add("	return f;\n");
+		buf.add("};\n");
+		buf.add("$h.invokeClosure = function(id, env, args) {\n");
+		buf.add("	var u = $h.units[id];\n");
+		buf.add("	if( u == null || u.stale ) return null;\n");
+		buf.add("	if( u.capHash == null || u.capHash === \"\" ) return u.fn.apply(null, args || []);\n");
+		buf.add("	var a = [env];\n");
+		buf.add("	for( var i = 0; i < (args ? args.length : 0); i++ ) a.push(args[i]);\n");
+		buf.add("	return u.fn.apply(null, a);\n");
+		buf.add("};\n");
+		buf.add("export function $new(id, initHash, initFn) { return $h.cell(id, initHash, initFn); }\n");
+		buf.add("$h.cell = function(id, initHash, initFn) {\n");
+		buf.add("	var c = $h.cells[id];\n");
+		buf.add("	if( c == null ) { c = {v: initFn(), initHash: initHash}; $h.cells[id] = c; return c.v; }\n");
+		buf.add("	if( initHash != null && initHash !== \"same\" && c.initHash !== initHash ) { c.v = initFn(); c.initHash = initHash; }\n");
+		buf.add("	return c.v;\n");
+		buf.add("};\n");
+		buf.add("export function cell(id, initHash, initFn) {\n");
+		buf.add("	return $h.cell(id, initHash != null ? initHash : \"\", initFn);\n");
+		buf.add("}\n");
+		buf.add("$h.scopeEnter = function(id, key) {\n");
+		buf.add("	$h.scopes.push({id: id, key: key != null ? key : null});\n");
+		buf.add("};\n");
+		buf.add("$h.scopeExit = function() { $h.scopes.pop(); };\n");
+		buf.add("export function scopeEnter(id, key) { $h.scopeEnter(id, key); }\n");
+		buf.add("export function scopeExit() { $h.scopeExit(); }\n");
+		buf.add("export function trackInstance(typeId, inst) { $h.trackInstance(typeId, inst); }\n");
+		hxmc.esm.HotRuntimeSerializer.append(buf);
+		buf.add("$h.enumNamesPrefix = function(oldNames, newNames) {\n");
+		buf.add("	if( oldNames == null || newNames == null ) return false;\n");
+		buf.add("	if( newNames.length < oldNames.length ) return false;\n");
+		buf.add("	for( var i = 0; i < oldNames.length; i++ ) if( oldNames[i] !== newNames[i] ) return false;\n");
+		buf.add("	return true;\n");
+		buf.add("};\n");
 	}
 
 	static function sortModuleTypes(types:Array<ModuleType>):Array<ModuleType> {
@@ -364,7 +548,7 @@ class Genesm {
 
 	static function moduleGlobalDeps(body:String, symOwner:Map<String, String>, homeId:String):Array<String> {
 		var dep = new Map<String, Bool>();
-		var re = ~/\$global\.([A-Za-z_$][\w$]*)/;
+		var re = hotRegistry ? ~/\$h\.([A-Za-z_$][\w$]*)/ : ~/\$global\.([A-Za-z_$][\w$]*)/;
 		for (line in body.split("\n")) {
 			var t = line;
 			var pos = 0;
@@ -416,7 +600,7 @@ class Genesm {
 	}
 
 	static function skipModuleGlobalPublish(name:String):Bool {
-		if (name == "$global" || name == "$extend" || name == "$hx_exports") return true;
+		if (name == "$global" || name == "$h" || name == "$extend" || name == "$hx_exports") return true;
 		return runtimeHelperGlobalName(name);
 	}
 
@@ -429,6 +613,7 @@ class Genesm {
 	// vars keep the source spelling (e.g. @:native or js.Syntax.code) but field access uses flatPath.
 	static function publishGlobalBinding(localName:String):String {
 		var flat = core.Path.flatPath({pack: [], name: localName});
+		// Runtime helpers always live on $global even in esm.hot (user types use reg()).
 		var g = "$global";
 		if (flat == localName) return g + '.' + localName + ' = ' + localName + ';\n';
 		return g + '.' + localName + ' = ' + localName + ';\n' + g + '.' + flat + ' = ' + localName + ';\n';
@@ -437,7 +622,8 @@ class Genesm {
 	static function writeIncludes(path:String, com:Gctx, runtimeRel:String):Void {
 		var buf = new StringBuf();
 		buf.add("import * as $hx from \"" + runtimeRel + "\";\n");
-		buf.add("const $global = $hx.$global;\n");
+		buf.add("const " + reg() + " = $hx." + reg() + ";\n");
+		if (hotRegistry) buf.add("const $global = $hx.$global;\n");
 		var re = ~/var ([A-Za-z_$][\w$]*)\s*=/;
 		for (file in com.includeFiles) switch file.position {
 			case "top" | "closure":
@@ -456,7 +642,8 @@ class Genesm {
 		var buf = new StringBuf();
 		buf.add("import * as $hx from \"" + runtimeRel + "\";\n");
 		if (com.includeFiles.length > 0) buf.add("import \"./__hx_includes.mjs\";\n");
-		buf.add("const $global = $hx.$global;\n");
+		buf.add("const " + reg() + " = $hx." + reg() + ";\n");
+		if (hotRegistry) buf.add("const $global = $hx.$global;\n");
 		for (g in topoModuleImports(groups, modDeps))
 			buf.add('import "./hx/' + moduleFilePath(g.module) + '";\n');
 		switch com.main.mainExpr {
@@ -467,10 +654,15 @@ class Genesm {
 				var entryCtx = allocCtx(com, generators.Gctx.getEsVersion(com.defines));
 				entryCtx.typeAccessor = t -> {
 					var ref = GenesmLinks.jsRef(entryCtx, t);
-					return "$global." + ref;
+					return reg() + "." + ref;
 				};
 				buf.add(Genjs.genSingleExpr(entryCtx, e, false));
 				buf.add("\n");
+				if (hotRegistry) {
+					buf.add("$hx.$h.__esmHotRemount = function() {\n");
+					buf.add(Genjs.genSingleExpr(entryCtx, e, false));
+					buf.add("\n};\n");
+				}
 		}
 		sys.io.File.saveContent(com.file, buf.toString());
 	}

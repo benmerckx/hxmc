@@ -7,14 +7,21 @@ class EsmInstall {
 	public static function install():Void {
 		if (installed) return;
 		installed = true;
-		generators.EsmHook.generate = hxmc.genesm.Genesm.generate;
+		generators.EsmHook.generate = function(com) {
+			if (core.Define.rawDefined(com.defines, "esm.hot")) hxmc.genesm.GenesmHot.generate(com);
+			else hxmc.genesm.Genesm.generate(com);
+		};
 		Defines.addEsmDefine();
+		hxmc.esm.EsmHotInstall.install();
 	}
 
 	public static function selectsEsm(args:Array<String>, depth:Int):Bool {
 		for (i in 0...args.length) {
 			var a = args[i];
-			if ((a == "-D" || a == "--define") && i + 1 < args.length && hxmc.HaxeMain.defineName(args[i + 1]).split("=")[0] == "esm") return true;
+			if ((a == "-D" || a == "--define") && i + 1 < args.length) {
+				var n = hxmc.HaxeMain.defineName(args[i + 1]).split("=")[0];
+				if (n == "esm" || n == "esm.hot" || n == "esm.prod") return true;
+			}
 			if (StringTools.endsWith(a, ".hxml") && depth < 8 && sys.FileSystem.exists(a)) {
 				var words = [];
 				for (line in sys.io.File.getContent(a).split("\n")) {

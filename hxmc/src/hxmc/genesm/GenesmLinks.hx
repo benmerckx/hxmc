@@ -95,7 +95,7 @@ class GenesmLinks {
 		if (isExternRef(t)) return "$global." + ref;
 		var owner = resolveModuleId(Globals.sTypePath(Genesm.typeModule(t).mPath));
 		if (owner == homeId) return ref;
-		return "$global." + ref;
+		return Genesm.reg() + "." + ref;
 	}
 
 	public static function modAlias(ownerId:String):String {

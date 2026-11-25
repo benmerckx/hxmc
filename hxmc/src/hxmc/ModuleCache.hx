@@ -147,7 +147,11 @@ class ModuleCache {
 		return state;
 
 	public static function install() {
-		compiler.Compiler.beforeTypingHook = hook;
+		var prev = compiler.Compiler.beforeTypingHook;
+		compiler.Compiler.beforeTypingHook = function(com, actx) {
+			if (prev != null) prev(com, actx);
+			hook(com, actx);
+		};
 		if (Sys.systemName() == "Wasi") return;
 		mainThread = sys.thread.Thread.current();
 		core.Define.readHook = onRead;

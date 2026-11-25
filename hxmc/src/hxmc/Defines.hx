@@ -38,7 +38,12 @@ class Defines {
 		});
 		core.DefineRegistry.all.push({
 			key: "esm.hot",
-			doc: "Hot-reload dev flavor for -D esm (not implemented in phase 1).",
+			doc: "Hot-reload dev flavor for -D esm: $h registry, tier-1 body swaps, -dce no.",
+			flags: []
+		});
+		core.DefineRegistry.all.push({
+			key: "esm.prod",
+			doc: "Prod idiomatic ESM (phase 3); not supported with esm.hot.",
 			flags: []
 		});
 	}
