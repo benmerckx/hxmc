@@ -86,7 +86,10 @@ class Properties {
 			f.statics = true;
 			f.decls.push({c: c, p: p});
 			families.push(f);
-			for (a in c.clStatics) if (realName(a) == "get_" + realName(p)) add(f, a, true) else if (realName(a) == "set_" + realName(p)) add(f, a, false);
+			var statics = ownStatics(c);
+			var g = statics.get("get_" + realName(p)), s = statics.get("set_" + realName(p));
+			if (g != null) add(f, g, true);
+			if (s != null) add(f, s, false);
 		}
 
 		// a class's declarations joined to its interfaces'
@@ -147,8 +150,11 @@ class Properties {
 					var s = d.c.clSuper;
 					while (s != null && f.excluded == null) {
 						if (hasClassFlag(s.cls, CExtern)) f.excluded = 'extends extern ${dotPath(s.cls)}';
-						else for (x in s.cls.clFields) if (x.cfName == p0.cfName && !Lambda.exists(f.decls, o -> o.p == x))
-							f.excluded = 'shadows ${dotPath(s.cls)}.${x.cfName}';
+						else switch byName(s.cls).get(p0.cfName) {
+							case null:
+							case x if (!Lambda.exists(f.decls, o -> o.p == x)): f.excluded = 'shadows ${dotPath(s.cls)}.${x.cfName}';
+							case _:
+						}
 						s = s.cls.clSuper;
 					}
 				}
@@ -256,6 +262,31 @@ class Properties {
 			owns.set(c, m);
 		}
 		return m.get(name);
+	}
+
+	final statics = new ObjectMap<TClass, StringMap<TClassField>>();
+	final fieldsByName = new ObjectMap<TClass, StringMap<TClassField>>();
+
+	// c's statics by their real names
+	function ownStatics(c:TClass):StringMap<TClassField> {
+		var m = statics.get(c);
+		if (m == null) {
+			m = new StringMap();
+			for (cf in c.clStatics) m.set(realName(cf), cf);
+			statics.set(c, m);
+		}
+		return m;
+	}
+
+	// c's own instance fields by their names in the output
+	function byName(c:TClass):StringMap<TClassField> {
+		var m = fieldsByName.get(c);
+		if (m == null) {
+			m = new StringMap();
+			for (cf in c.clFields) m.set(cf.cfName, cf);
+			fieldsByName.set(c, m);
+		}
+		return m;
 	}
 
 	function add(f:Family, a:TClassField, getter:Bool) {

@@ -239,13 +239,13 @@ private class Lowering implements Lower.Resolve {
 
 	public function ts():Bool return chunk.tsOut;
 
-	public function accessorCall(a:TClassField, args:Int, discarded:Bool) if (chunk.props != null) uses.push(UAccessorCall(a, args, discarded));
+	public function accessorCall(a:TClassField, args:Int, discarded:Bool) if (chunk.propsOn) uses.push(UAccessorCall(a, args, discarded));
 
-	public function accessorTaken(a:TClassField) if (chunk.props != null) uses.push(UAccessorTaken(a));
+	public function accessorTaken(a:TClassField) if (chunk.propsOn) uses.push(UAccessorTaken(a));
 
-	public function dynamicName(n:String) if (chunk.props != null) uses.push(UDynamicName(n));
+	public function dynamicName(n:String) if (chunk.propsOn) uses.push(UDynamicName(n));
 
-	public function stringConst(s:String) if (chunk.props != null) uses.push(UString(s));
+	public function stringConst(s:String) if (chunk.propsOn) uses.push(UString(s));
 }
 
 // The bundled output (-D hxmc.js=es): the program in one file, and a file per split (js.Bundle.split).
@@ -998,11 +998,13 @@ class Chunk {
 	// each used, in that order (replay).
 	function lowerAll() {
 		// (properties as JavaScript's, but with -D hxmc.js.properties=off; not TypeScript's)
-		if (!tsOut && Gctx.definedValueSafe(com, "hxmc.js.properties") != "off") props = new Properties(com);
+		propsOn = !tsOut && Gctx.definedValueSafe(com, "hxmc.js.properties") != "off";
 		// (-D hxmc.js.minify.fields: what the lowering tells of the fields, FieldNames)
 		if (fieldNames == null && Gctx.rawDefined(com, "hxmc.js.minify.fields")) fieldNames = new FieldNames(com);
 		var units:Array<Lowering> = [];
 		inline function unit(file:Int, run:Lowering->Void) units.push(new Lowering(this, file, run));
+		// (the properties' families: from the types, beside the lowerings)
+		if (propsOn) unit(0, _ -> props = new Properties(com));
 		for (item in items) unit(item.file, u -> lowerItem(u, item));
 		var externCode:Array<Array<St>> = [for (_ in externInits) null];
 		for (i in 0...externInits.length) unit(0, u -> {
@@ -1171,8 +1173,9 @@ class Chunk {
 
 	// ------------------------------------------------------------------ properties as JavaScript's (Properties)
 
-	// (null: none, TypeScript's output, -D hxmc.js.properties=off)
+	// (null: none, TypeScript's output, -D hxmc.js.properties=off; propsOn: as the lowerings run, which make it)
 	var props:Null<Properties> = null;
+	var propsOn = false;
 
 	// an accessor's call as its family is: the property (`o.x`; `o.x = v`, its value used for nothing), else the call
 	// (and through `super`, where the family keeps its methods)
