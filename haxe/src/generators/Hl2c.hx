@@ -2195,9 +2195,9 @@ class Hl2c {
 				/* add cfiles in deterministic order */
 				if (m.mFunctions.length != 0) saveCfile(gctx, m.mName + ".c");
 			}
-			// port: upstream generates the modules in parallel, on the compilation's pool;
-			// the hash cache they share then makes the hashes of colliding strings depend
-			// on scheduling. Sequential, as with -D disable-parallelism.
+			// port: diverges from upstream, which writes the modules in parallel. They share
+			// ... the string hash cache, so with a hash collision upstream's output depends on
+			// ... which module gets there first. One at a time, as upstream without parallelism.
 			for (idx in 0...modules.length) {
 				var m = modules[idx];
 				var definedTypes = new TtypeMap<Bool>();

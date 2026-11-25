@@ -159,6 +159,12 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   unterminated (`&lbrace;` instead). Without the define, literals are read
   as upstream reads them (`syntax.Lexer.lexXmlBraces`, `markupEnd`; the
   unit test `MarkupTest`; #194).
+- HL/C output is written one module at a time. Upstream writes the modules
+  in parallel, and they share a cache of string hashes: when two strings
+  hash to the same value, whichever module asks first keeps it and the
+  other gets the next free value. So upstream's output can change from run
+  to run when there is a collision. The port's output is always what
+  upstream produces without parallelism. (`generators.Hl2c.writeC`)
 
 ## Host differences
 
