@@ -108,6 +108,8 @@ class NoUv {
 	public static function disableStdioInheritance():Void { noUv(); }
 	public static function killPid(pid:Int, signum:Int):Int { noUv(); return 0; }
 	public static function processPid(handle:Int):Int { noUv(); return 0; }
+	public static function processKill(handle:Int, sig:Int):Int { noUv(); return 0; }
+	public static function pipe(readFlags:Int, writeFlags:Int, out:Array<Int>):Int { noUv(); return 0; }
 	public static function getAddrInfo(loop:Int, req:Int, node:Null<String>, service:Null<String>, family:Int, socktype:Int, protocol:Int, flags:Int, hasHints:Bool):Int { noUv(); return 0; }
 	public static function addrInfoResult(req:Int):Array<Dynamic> { noUv(); return null; }
 	public static function getNameInfo(loop:Int, req:Int, sa:Bytes, flags:Int):Int { noUv(); return 0; }

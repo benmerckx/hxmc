@@ -149,7 +149,7 @@ class ClassPaths {
 		if (fileLookupCache.exists(file)) return fileLookupCache.get(file);
 		var result:Null<FileLookup> = null;
 		if (core.Path.isAbsolutePath(file)) {
-			if (sys.FileSystem.exists(file)) result = {
+			if (Vfs.exists(file)) result = {
 				resolvedFile: {file: file, classPath: absoluteClassPath},
 				specificity: SpecificityNormal
 			};

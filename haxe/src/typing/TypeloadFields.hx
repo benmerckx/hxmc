@@ -588,16 +588,6 @@ class TypeloadFields {
 					case _: throw NotFound.raise();
 				};
 				function() fbuild(buildEnumAbstract(ctx, c, a, fvars(), a.aNamePos));
-			case TClassDecl(c):
-				// Go for @:using in parents and interfaces
-				// port: tInfos is a projection object in Haxe, so assigning mtUsing on it would
-				// only replace the projected field. Mutate the shared array instead.
-				inline function inheritUsing(s:ClassAndParams):Void for (entry in tInfos(TClassDecl(s.cls)).mtUsing) ti.mtUsing.push(entry);
-				delayLate(ctx.g, PConnectField, function() {
-					if (c.clSuper != null) inheritUsing(c.clSuper);
-					for (s in c.clImplements) inheritUsing(s);
-				});
-				null;
 			case _: null;
 		};
 		// let errors go through to prevent resume if build fails
@@ -1382,8 +1372,31 @@ class TypeloadFields {
 					return cf;
 				}
 				if (hasClassFlag(c, CInterface)) {
-					var cf = generate();
-					c.clFields = c.clFields.cons(cf.cfName, cf);
+					var cfAccessor = generate();
+					/* right after the property, the getter before the setter */
+					var l = c.clFields.toArray();
+					var order = [];
+					var i = 0;
+					while (i < l.length) {
+						var f1 = l[i];
+						if (f1 == cf && !isGetter && i + 1 < l.length && l[i + 1].cfName == "get_" + cf.cfName) {
+							order.push(f1);
+							order.push(l[i + 1]);
+							order.push(cfAccessor);
+							i += 2;
+							break;
+						} else if (f1 == cf) {
+							order.push(f1);
+							order.push(cfAccessor);
+							i++;
+							break;
+						}
+						order.push(f1);
+						i++;
+					}
+					if (i >= l.length && !order.contains(cfAccessor)) order.push(cfAccessor);
+					while (i < l.length) order.push(l[i++]);
+					c.clFields = c.clFields.addOrdered(cfAccessor.cfName, cfAccessor, order, f -> f.cfName);
 				} else if (context.display.Diagnostics.errorInDiagnosticsRun(ctx.com, f.cffPos)) {
 					var cfAccessor = generate();
 					removeClassFieldFlag(cfAccessor, CfPublic);

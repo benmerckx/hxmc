@@ -543,7 +543,7 @@ class Fields {
 					if (!Std.isOfType(err, Exit)) throw err;
 					throw NotFound.raise();
 				}
-				return lookup(tInfos(mt).mtUsing);
+				return lookup(typeUsings(mt));
 			}, t, e);
 			return switch t {
 				case TType(td, tl): try extension() catch (err:Dynamic) {

@@ -39,6 +39,7 @@ interface IClassPath {
 	public function clone():IClassPath;
 	public function clearCache():Void;
 	public function getDirectoryPath():Null<String>;
+	public var absolutePath(get, never):String;
 	public function getUncachedDirListing(file:String):Null<DirectoryListing>;
 	public function dump():Void;
 	public function isStdPath():Bool;
@@ -51,10 +52,21 @@ class DirectoryClassPath implements IClassPath {
 	// port: readdir_cache, a Lookup.hashtbl_lookup (only looked up)
 	var directoryCache:Map<String, Null<Array<String>>> = new Map();
 
-	public function new(path:String, scope:ClassPathScope) {
+	/* Resolved when first needed, once the working directory of the compilation is known. */
+	final absolutePathLazy:core.ds.AtomicLazy<String>;
+
+	public function new(path:String, scope:ClassPathScope, ?absolutePath:core.ds.AtomicLazy<String>) {
 		classPath = path;
 		classPathScope = scope;
+		absolutePathLazy = if (absolutePath != null) absolutePath else core.ds.AtomicLazy.fromFun(() -> {
+			var path = if (path == "") "." else path;
+			Path.addTrailingSlash(try Path.getFullPath(path) catch (_:Dynamic) path);
+		});
 	}
+
+	public var absolutePath(get, never):String;
+
+	function get_absolutePath():String return absolutePathLazy.force();
 
 	public var path(get, never):String;
 
@@ -69,7 +81,7 @@ class DirectoryClassPath implements IClassPath {
 	function get_fileKind():FileKind return FFile;
 
 	public function clone():IClassPath {
-		return new DirectoryClassPath(classPath, classPathScope);
+		return new DirectoryClassPath(classPath, classPathScope, absolutePathLazy);
 	}
 
 	public function clearCache():Void {
@@ -84,9 +96,7 @@ class DirectoryClassPath implements IClassPath {
 		var fullPath = classPath + file;
 		var directory = core.OcamlFilename.dirname(fullPath);
 		if (directoryCache.exists(directory)) return null;
-		var listing:Null<Array<String>>;
-		try listing = sys.FileSystem.readDirectory(directory)
-		catch (_:Dynamic) listing = null;
+		var listing = Vfs.readdir(directory);
 		directoryCache.set(directory, listing);
 		return listing == null ? null : {directory: directory, files: listing};
 	}

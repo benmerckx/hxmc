@@ -41,6 +41,11 @@ enum IpAddr {
 	public var conn:ServerConnection;
 }
 
+/* Raised when a client connection ends or stalls before sending a complete request.
+	The server drops that connection and keeps waiting. */
+// port: SocketRequest.Connection_aborted
+class ConnectionAborted extends haxe.Exception {}
+
 class RequestQueue {
 	public final mutex = new sys.thread.Mutex();
 	public final semaphore = new sys.thread.Semaphore(0);
@@ -221,7 +226,7 @@ class Server {
 			} catch (e:haxe.io.Error) {
 				switch e {
 					case Blocked:
-						if (count == 100) throw new Failure("Aborting inactive connection"); else {
+						if (count == 100) throw new ConnectionAborted("Aborting inactive connection"); else {
 							ServerMessage.socketMessage("Waiting for data...");
 							Sys.sleep(0.05);
 							return readLoop(count + 1);
@@ -231,7 +236,7 @@ class Server {
 				}
 			}
 			if (r == 0)
-				throw new Failure("Incomplete request");
+				throw new ConnectionAborted("Incomplete request");
 			else {
 				ServerMessage.socketMessage("Reading " + r + " bytes\n");
 				var nullPos = -1;
@@ -288,15 +293,18 @@ class Server {
 		var curdir = Sys.getCwd();
 		ServerMessage.arguments(Args.stringOfRequestArgs(requestArgs));
 		ServerCompilationContext.reset(sctx);
-		if (sctx.persistentCwd != null) try Sys.setCwd(sctx.persistentCwd)
-		catch (_:Dynamic) {}
+		core.Vfs.beginCompilation();
 		try {
+			if (sctx.persistentCwd != null) try Sys.setCwd(sctx.persistentCwd)
+			catch (_:Dynamic) {}
 			HighLevel.entry(sctx, requestScope, requestArgs);
 		} catch (e:Dynamic) {
 			core.Path.restoreCwd(curdir);
+			core.Vfs.endCompilation();
 			throw e;
 		}
 		core.Path.restoreCwd(curdir);
+		core.Vfs.endCompilation();
 		ServerCompilationContext.runDelays(sctx);
 		ServerMessage.stats(requestScope.stats, Sys.time() - t0);
 	}
@@ -440,6 +448,7 @@ class Server {
 	/* The server main loop. Waits for the [accept] call to then process the sent compilation
 		parameters through [process_params]. */
 	public static function waitLoop(verbose:Bool, accept:ServerAccept):Int {
+		if (Sys.getEnv("HAXE_VFS") == "watch") core.Vfs.mode = Watched;
 		var sctx = setupServerContext(verbose, true);
 		var rq = RequestQueue.create();
 		var worker = createWorker(sctx, rq);
@@ -449,15 +458,7 @@ class Server {
 			while (true) {
 				var conn = accept();
 				try {
-					// port: diverges from upstream, where the read's Failure (a client
-					// that closes without a request, "Incomplete request", or sends
-					// nothing, "Aborting inactive connection") leaves this loop and
-					// ends the server (4.3's went on): here it drops the connection.
-					var s = try conn.read() catch (e:Failure) {
-						ServerMessage.socketMessage("Connection Aborted: " + e.message);
-						conn.close();
-						continue;
-					}
+					var s = conn.read();
 					var idx = s.indexOf("\x01");
 					var stdin:Null<String>, hxml:String;
 					if (idx >= 0) {
@@ -470,6 +471,9 @@ class Server {
 					var data = Helper.parseHxmlData(hxml);
 					var parsedArgs = Args.parseArgs(data);
 					RequestQueue.add(rq, parsedArgs, stdin, conn);
+				} catch (e:ConnectionAborted) {
+					ServerMessage.socketMessage("Connection Aborted: " + e.message);
+					conn.close();
 				} catch (e:Dynamic) {
 					if (!isUnixError(e)) throw e;
 					ServerMessage.socketMessage("Connection Aborted");

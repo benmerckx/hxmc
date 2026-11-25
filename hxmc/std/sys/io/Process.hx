@@ -20,6 +20,12 @@ class Process {
 
 	var pid:Int;
 	var code:Null<Int>;
+	#if macro
+	// hxmc: in macro code (-D hxmc.macros=mir), Eval's Process
+	// (haxe/upstream/std/eval/_std/sys/io/Process.hx) over the compiler's
+	// process, which starts in the macro's working directory
+	var proc:Dynamic;
+	#end
 
 	/**
 		Construct a `Process` object, which run the given command immediately.
@@ -37,6 +43,16 @@ class Process {
 		`close()` should be called when the `Process` is no longer used.
 	**/
 	public function new(cmd:String, ?args:Array<String>, ?detached:Bool):Void {
+		#if macro
+		if (detached) {
+			throw "Detached process is not supported on this platform";
+		}
+		proc = hxmc.MacroHost.process(cmd, args);
+		stdout = new MacroStdout(proc, true);
+		stderr = new MacroStdout(proc, false);
+		stdin = new MacroStdin(proc);
+		return;
+		#end
 		var fds = [0, 0, 0];
 		pid = NativeSys.processRun(cmd, args, fds);
 		if (pid < 0) throw "Process creation failure : " + cmd;
@@ -49,7 +65,7 @@ class Process {
 		Return the process ID.
 	**/
 	public function getPid():Int
-		return pid;
+		return #if macro hxmc.MacroHost.processPid(proc) #else pid #end;
 
 	/**
 		Query the exit code of the process.
@@ -58,6 +74,11 @@ class Process {
 		If the process has already exited, return the exit code immediately.
 	**/
 	public function exitCode(block:Bool = true):Null<Int> {
+		#if macro
+		if (block == false)
+			throw "Non blocking exitCode() not supported on this platform";
+		return hxmc.MacroHost.processExit(proc);
+		#end
 		if (code == null) {
 			var c = NativeSys.processWait(pid, block);
 			// Windows: a blocking wait returns the exit code, which may be negative (32 bits)
@@ -71,6 +92,10 @@ class Process {
 		All `Process` fields should not be used after `close()` is called.
 	**/
 	public function close():Void {
+		#if macro
+		hxmc.MacroHost.processClose(proc);
+		return;
+		#end
 		stdin.close();
 		stdout.close();
 		stderr.close();
@@ -80,5 +105,61 @@ class Process {
 		Kill the process.
 	**/
 	public function kill():Void
-		NativeSys.processKill(pid);
+		#if macro hxmc.MacroHost.processKill(proc) #else NativeSys.processKill(pid) #end;
 }
+
+#if macro
+private class MacroStdin extends haxe.io.Output {
+	var proc:Dynamic;
+	var buf:haxe.io.Bytes;
+
+	public function new(proc:Dynamic) {
+		this.proc = proc;
+		buf = haxe.io.Bytes.alloc(1);
+	}
+
+	public override function close() {
+		super.close();
+		hxmc.MacroHost.processCloseStdin(proc);
+	}
+
+	public override function writeByte(c:Int) {
+		buf.set(0, c);
+		writeBytes(buf, 0, 1);
+	}
+
+	public override function writeBytes(buf:haxe.io.Bytes, pos:Int, len:Int) {
+		try {
+			return hxmc.MacroHost.processWrite(proc, buf, pos, len);
+		} catch (e:Dynamic) {
+			throw new haxe.io.Eof();
+		}
+	}
+}
+
+private class MacroStdout extends haxe.io.Input {
+	var proc:Dynamic;
+	var out:Bool;
+	var buf:haxe.io.Bytes;
+
+	public function new(proc:Dynamic, out:Bool) {
+		this.proc = proc;
+		this.out = out;
+		buf = haxe.io.Bytes.alloc(1);
+	}
+
+	public override function readByte() {
+		if (readBytes(buf, 0, 1) == 0)
+			throw haxe.io.Error.Blocked;
+		return buf.get(0);
+	}
+
+	public override function readBytes(bytes:haxe.io.Bytes, pos:Int, len:Int):Int {
+		try {
+			return hxmc.MacroHost.processRead(proc, out, bytes, pos, len);
+		} catch (e:Dynamic) {
+			throw new haxe.io.Eof();
+		}
+	}
+}
+#end

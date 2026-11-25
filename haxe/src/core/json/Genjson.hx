@@ -652,7 +652,7 @@ class Genjson {
 
 	// module
 
-	public static function generateModule(modules:core.ds.OcamlHashtbl<GlobalTypePath, compiler.hxb.HxbData.ModuleCache>,
+	public static function generateModule(cachedModules:Array<{path:GlobalTypePath, extra:ModuleDefExtra}>,
 			findModule:GlobalTypePath->ModuleDef, m:ModuleDef):JsonValue {
 		// port: PMap.fold visits m_deps in increasing key order and conses: decreasing key order
 		var depIds = [for (k in m.mExtra.mDeps.keys()) k];
@@ -677,10 +677,9 @@ class Genjson {
 					]);
 				}
 			])),
-			kv("dependents", jarray(modules.fold(function(_, m_:compiler.hxb.HxbData.ModuleCache, acc:Array<{path:GlobalTypePath, sign:String}>) {
-				if (m_.mcExtra.mDeps.exists(m.mId)) acc.unshift({path: m_.mcPath, sign: m_.mcExtra.mSign});
-				return acc;
-			}, []).map(function(ps) return jobject([kv("path", jstring(Globals.sTypePath(ps.path))), kv("sign", jstring(ps.sign))]))))
+			kv("dependents", jarray([
+				for (m_ in cachedModules) if (m_.extra.mDeps.exists(m.mId)) {path: m_.path, sign: m_.extra.mSign}
+			].map(function(ps) return jobject([kv("path", jstring(Globals.sTypePath(ps.path))), kv("sign", jstring(ps.sign))]))))
 		]);
 	}
 

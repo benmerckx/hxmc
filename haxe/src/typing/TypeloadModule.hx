@@ -747,7 +747,7 @@ class TypeloadModule {
 				imported = vector();
 				var warnings:Array<syntax.Parser.ParseWarning> = [];
 				var digest:Null<String> = null;
-				var exists = sys.FileSystem.exists(file);
+				var exists = core.Vfs.exists(file);
 				if (exists) {
 					var parsed = TypeloadParse.parseModuleFile(com, {file: file, classPath: com.emptyClassPath}, p);
 					imported = parsed.data.declarations;

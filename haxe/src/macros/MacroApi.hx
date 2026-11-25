@@ -3057,6 +3057,9 @@ class MacroApiImpl {
 					var cp = decodeString(cp);
 					var path = core.Path.addTrailingSlash(cp);
 					var cp = new core.ClassPath.DirectoryClassPath(path, User);
+					/* Files are looked up from the working directory of the compiler, which
+						is not the one of macros. */
+					cp.absolutePath;
 					com.classPaths.add(cp);
 					switch com.getMacros() {
 						case null:
@@ -3253,8 +3256,9 @@ class MacroApiImpl {
 				value: vfun2((file, position) -> {
 					var file = decodeString(file);
 					var position = decodeString(position);
-					var file = if (sys.FileSystem.exists(file)) {
-						file;
+					var resolved = core.Vfs.resolve(file);
+					var file = if (sys.FileSystem.exists(resolved)) {
+						resolved;
 					} else {
 						try Common.findFile(ccom(), file)
 						catch (e:Dynamic) if (isNotFound(e)) failwith("unable to find file for inclusion: " + file)

@@ -151,7 +151,7 @@ class TypeloadParse {
 		}
 		if (contents == null) {
 			var bytes:haxe.io.Bytes;
-			try bytes = sys.io.File.getBytes(rfile.file)
+			try bytes = core.Vfs.readFile(rfile.file)
 			catch (_:Dynamic) return raiseTypingError("Could not open " + rfile.file, p);
 			// port: bytes that are not UTF-8 decode to lone surrogates, which the
 			// lexer rejects as upstream's does (syntax.Lexer.MalFormed)

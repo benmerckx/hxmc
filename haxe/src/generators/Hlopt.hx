@@ -897,6 +897,12 @@ class Hlopt {
 		return {f: f.with(code, regs, debug, assigns), dump: dumpStr};
 	}
 
+	// port: `List.for_all2 (fun t a -> t = HDyn || tsame t f.regs.(a)) targs args` (same lengths)
+	static function argsSame(targs:Array<Ttype>, args:Array<Int>, regs:Vector<Ttype>):Bool {
+		for (k in 0...targs.length) if (!(tEq(targs[k], HDyn) || tsame(targs[k], regs[args[k]]))) return false;
+		return true;
+	}
+
 	static function _optimize(f:Fundecl):Rctx {
 		var nregs = f.regs.length;
 		function op(index:Int) return f.code[index];
@@ -1092,8 +1098,11 @@ class Hlopt {
 				/* print_state i state; (* debug *) */
 				switch op {
 					case OIncr(r) | ODecr(r) | ORef(_, r): unalias(state[r]);
-					case OCallClosure(_, r, _) if (tEq(f.regs[r], HDyn) && (switch f.regs[state[r].ralias.rindex] {
-							case HFun(_, rt): !isDynamic(rt);
+					case OCallClosure(_, r, args) if (tEq(f.regs[r], HDyn) && (switch f.regs[state[r].ralias.rindex] {
+							case HFun(targs, rt):
+								!isDynamic(rt)
+								|| targs.length != args.length
+								|| !argsSame(targs, args, f.regs);
 							case HDyn: false;
 							case _: true;
 						})): unalias(state[r]); /* Issue3218.hx */

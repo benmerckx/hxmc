@@ -94,10 +94,6 @@ does; a harness case checks the port's behaviour and names the divergence;
 it gets a row in hxmc's issue of upstream bugs (#124). No issue is filed
 upstream. When the pin moves past upstream's fix, the divergence goes. The divergences:
 
-- The compilation server goes on after a client that connects and closes
-  without a request, or sends nothing: upstream's `wait_loop` (5.0) ends
-  there, 4.3's went on (`compiler.server.Server.waitLoop`; the Server
-  harness's `misc:empty-connection`).
 - An abstract's overloaded call operators (`@:op(a())`) read back from HXB
   are the impl class's statics of the other operator functions, as when
   typed. Upstream's reader makes them separate fields, while the writer
@@ -163,3 +159,30 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   unterminated (`&lbrace;` instead). Without the define, literals are read
   as upstream reads them (`syntax.Lexer.lexXmlBraces`, `markupEnd`; the
   unit test `MarkupTest`; #194).
+- HL/C output is written one module at a time. Upstream writes the modules
+  in parallel, and they share a cache of string hashes: when two strings
+  hash to the same value, whichever module asks first keeps it and the
+  other gets the next free value. So upstream's output can change from run
+  to run when there is a collision. The port's output is always what
+  upstream produces without parallelism. (`generators.Hl2c.writeC`)
+
+## Host differences
+
+Some of what the reference compiler does depends on the operating system.
+Where the system the port runs on cannot do it, the port fails with a clear
+error, or does what upstream itself does on a system without that feature.
+These are not divergences: no bug of the reference is fixed.
+
+The port runs as hxmc's native builds and as its WebAssembly build. It is
+also compiled for hl and neko, to check that it compiles, but never run there.
+
+- **WebAssembly.** WASI has no processes and no file change notifications.
+  A macro's `sys.io.Process` and `Sys.command`, `--cmd`, and the commands
+  that generators run all fail with "... is not supported on WASI". With
+  `HAXE_VFS=watch`, the server checks every directory again on each
+  compilation instead of watching it, which is also what upstream does on
+  macOS. (`core.Vfs`)
+- **hl and neko.** These have no libuv, so a macro cannot start a process,
+  and the server never watches directories or sees symbolic links. Since
+  the port is never run there, this only has to compile.
+  (`macros.eval.EvalProcess`)

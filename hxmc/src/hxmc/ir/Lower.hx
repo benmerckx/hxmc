@@ -74,6 +74,7 @@ class Lower {
 					l.prog.entryRun = l.staticFunc(c, c.clStatics.get("run"));
 				case _:
 			}
+		spanSupport = null;
 		l.findHosts(types);
 		for (t in types)
 			switch t {
@@ -136,8 +137,10 @@ class Lower {
 	// with (FnLower.typedCall: an invalid handle), when the program has it
 	public static var spanSupport:Null<TClass> = null;
 
+	// (called again with the types handed over since, by Mir macros: what an
+	// earlier call found stays; spanSupport is reset where a program or a Mir
+	// generation starts)
 	function findHosts(types:Array<core.TType.ModuleType>) {
-		spanSupport = null;
 		for (t in types)
 			switch t {
 				case TClassDecl(c) if (!c.hasClassFlag(CExtern) && !(c.clPath.pack.length > 0 && c.clPath.pack[0] == "hxmc")):

@@ -861,7 +861,7 @@ class StdContext {
 	public static function register(data:Array<{name:String, value:Value}>):Void pluginData = data;
 
 	public static final loadPlugin = EvalEncode.vfun1(filePath -> {
-		var filePath = EvalDecode.decodeString(filePath);
+		var filePath = core.Vfs.resolve(EvalDecode.decodeString(filePath));
 		if (plugins.exists(filePath))
 			return plugins.get(filePath);
 		else {
@@ -1439,8 +1439,12 @@ enum OutFlags {
 }
 
 class StdFile {
+	// port: `decode_path`, before the module StdFile upstream
+	public static function decodePath(v:Value):String return core.Vfs.resolve(EvalDecode.decodeString(v));
+
 	public static function createOut(path:Value, binary:Value, flags:OutFlags):Value {
-		var path = EvalDecode.decodeString(path);
+		var path = decodePath(path);
+		core.Vfs.invalidate(path);
 		var binary = switch binary {
 			case VTrue | VNull: true;
 			case _: false;
@@ -1461,6 +1465,7 @@ class StdFile {
 	public static function writeOut(path:String, content:Bytes):Value {
 		try {
 			sys.io.File.saveBytes(path, content);
+			core.Vfs.invalidate(path);
 			return VNull;
 		} catch (e:Dynamic) {
 			return EvalContext.excString(EvalStdLibA.sysErrorMessage(path, e));
@@ -1476,19 +1481,19 @@ class StdFile {
 	});
 
 	public static final getBytes = EvalEncode.vfun1(path -> {
-		var path = EvalDecode.decodeString(path);
+		var path = decodePath(path);
 		var b = try sys.io.File.getBytes(path) catch (_:Dynamic) EvalContext.excString("Could not read file " + path);
 		return EvalEncode.encodeBytes(b);
 	});
 
 	public static final getContent = EvalEncode.vfun1(path -> {
-		var path = EvalDecode.decodeString(path);
+		var path = decodePath(path);
 		var b = try sys.io.File.getBytes(path) catch (_:Dynamic) EvalContext.excString("Could not read file " + path);
 		return EvalString.createUnknown(core.StringHelper.ofBytes(b));
 	});
 
 	public static final read = EvalEncode.vfun2((path, binary) -> {
-		var path = EvalDecode.decodeString(path);
+		var path = decodePath(path);
 		var binary = switch binary {
 				case VTrue | VNull: true;
 				case _: false;
@@ -1498,13 +1503,13 @@ class StdFile {
 	});
 
 	public static final saveBytes = EvalEncode.vfun2((path, bytes) -> {
-		var path = EvalDecode.decodeString(path);
+		var path = decodePath(path);
 		var bytes = EvalDecode.decodeBytes(bytes);
 		return writeOut(path, bytes);
 	});
 
 	public static final saveContent = EvalEncode.vfun2((path, content) -> {
-		var path = EvalDecode.decodeString(path);
+		var path = decodePath(path);
 		var content = EvalDecode.decodeString(content);
 		return writeOut(path, Bytes.ofString(content));
 	});
@@ -1690,7 +1695,8 @@ class StdFileSystem {
 		EvalStdLib.catchUnixError(p -> {
 			core.Path.mkdirFromPathUnixErr(p);
 			return true;
-		}, core.Path.addTrailingSlash(EvalDecode.decodeString(path)));
+		}, core.Path.addTrailingSlash(StdFile.decodePath(path)));
+		core.Vfs.invalidate(StdFile.decodePath(path));
 		return VNull;
 	});
 
@@ -1698,24 +1704,26 @@ class StdFileSystem {
 		EvalStdLib.catchUnixError(p -> {
 			sys.FileSystem.deleteDirectory(p);
 			return true;
-		}, EvalDecode.decodeString(path));
+		}, StdFile.decodePath(path));
+		core.Vfs.invalidate(StdFile.decodePath(path));
 		return VNull;
 	});
 
 	public static final deleteFile = EvalEncode.vfun1(path -> {
-		var path = EvalDecode.decodeString(path);
+		var path = StdFile.decodePath(path);
 		try sys.FileSystem.deleteFile(path)
 		catch (e:Dynamic) EvalContext.excString(EvalStdLibA.sysErrorMessage(path, e));
+		core.Vfs.invalidate(path);
 		return VNull;
 	});
 
 	public static final exists = EvalEncode.vfun1(path -> {
-		var b = try sys.FileSystem.exists(patchPath(EvalDecode.decodeString(path))) catch (_:Dynamic) false;
+		var b = try sys.FileSystem.exists(patchPath(StdFile.decodePath(path))) catch (_:Dynamic) false;
 		return b.vbool();
 	});
 
 	public static final fullPath = EvalEncode.vfun1(relPath -> {
-		var relPath = EvalDecode.decodeString(relPath);
+		var relPath = StdFile.decodePath(relPath);
 		var p = try sys.FileSystem.fullPath(relPath) catch (_:Dynamic) null;
 		// port: Extc.get_full_path fails with Failure "get_full_path"
 		if (p == null) return EvalContext.excString('Failure("get_full_path")');
@@ -1723,12 +1731,12 @@ class StdFileSystem {
 	});
 
 	public static final isDirectory = EvalEncode.vfun1(dir -> {
-		var b = try sys.FileSystem.isDirectory(patchPath(EvalDecode.decodeString(dir))) catch (_:Dynamic) false;
+		var b = try sys.FileSystem.isDirectory(patchPath(StdFile.decodePath(dir))) catch (_:Dynamic) false;
 		return b.vbool();
 	});
 
 	public static final readDirectory = EvalEncode.vfun1(dir -> {
-		var dir = EvalDecode.decodeString(dir);
+		var dir = StdFile.decodePath(dir);
 		var patched = patchPath(dir);
 		if (!sys.FileSystem.exists(patched)) EvalContext.excString(dir + ": No such file or directory");
 		var isDir = try sys.FileSystem.isDirectory(patched) catch (e:Dynamic) EvalContext.excString(EvalStdLibA.sysErrorMessage(dir, e));
@@ -1738,15 +1746,17 @@ class StdFileSystem {
 	});
 
 	public static final rename = EvalEncode.vfun2((path, newPath) -> {
-		var path = EvalDecode.decodeString(path);
-		var newPath = EvalDecode.decodeString(newPath);
+		var path = StdFile.decodePath(path);
+		var newPath = StdFile.decodePath(newPath);
 		try sys.FileSystem.rename(path, newPath)
 		catch (e:Dynamic) EvalContext.excString(EvalStdLibA.sysErrorMessage(path, e));
+		core.Vfs.invalidate(path);
+		core.Vfs.invalidate(newPath);
 		return VNull;
 	});
 
 	public static final stat = EvalEncode.vfun1(path -> {
-		var s:sys.FileStat = EvalStdLib.catchUnixError(p -> sys.FileSystem.stat(p), patchPath(EvalDecode.decodeString(path)));
+		var s:sys.FileStat = EvalStdLib.catchUnixError(p -> sys.FileSystem.stat(p), patchPath(StdFile.decodePath(path)));
 		return EvalEncode.encodeObj([
 			{name: EvalHash.key_gid, value: VInt(s.gid)},
 			{name: EvalHash.key_uid, value: VInt(s.uid)},

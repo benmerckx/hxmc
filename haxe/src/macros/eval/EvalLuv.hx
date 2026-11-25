@@ -1238,6 +1238,19 @@ class EvalLuv {
 	];
 
 	// port: ---- Pipe
+
+	// port: `Vfs.resolve` on a native string (a path relative to a macro's working directory)
+	static function resolveNative(b:Bytes):Bytes {
+		if (core.Vfs.macroCwd == null) return b;
+		var s = b.toString();
+		return if (core.OcamlFilename.isRelative(s)) Bytes.ofString(core.Vfs.resolve(s)) else b;
+	}
+
+	/* Names in the abstract namespace of Linux start with a null byte. */
+	static function resolvePipeName(name:Bytes):Bytes {
+		return if (name.length > 0 && name.get(0) == 0) name else resolveNative(name);
+	}
+
 	public static final pipeFields:Array<{name:String, value:Value}> = [
 		f("init", EvalEncode.vfun2((v1, v2) -> {
 			var loop = decodeLoop(v1);
@@ -1246,12 +1259,12 @@ class EvalLuv {
 		})),
 		f("bind", EvalEncode.vfun2((v1, v2) -> {
 			var pipe = decodePipe(v1);
-			var name = EvalDecode.decodeNativeString(v2);
+			var name = resolvePipeName(EvalDecode.decodeNativeString(v2));
 			encodeUnitResult(Uv.pipeBind(pipe, name));
 		})),
 		f("connect", EvalEncode.vfun3((v1, v2, v3) -> {
 			var pipe = decodePipe(v1);
-			var target = EvalDecode.decodeNativeString(v2);
+			var target = resolvePipeName(EvalDecode.decodeNativeString(v2));
 			var callback = encodeCallback(v3);
 			unitRequest(callback, req -> {
 				Uv.pipeConnect(pipe, target, req);
@@ -1565,7 +1578,10 @@ class EvalLuv {
 							case _: EvalExceptions.unexpectedValue(v2, "eval.luv.Process.Redirection");
 						});
 					});
-					var workingDirectory = get(EvalHash.key_workingDirectory, EvalDecode.decodeNativeString);
+					var workingDirectory = switch get(EvalHash.key_workingDirectory, EvalDecode.decodeNativeString) {
+						case null: core.Vfs.macroCwd == null ? null : Bytes.ofString(core.Vfs.macroCwd);
+						case dir: resolveNative(dir);
+					}
 					var uid = get(EvalHash.key_uid, EvalDecode.decodeInt);
 					var gid = get(EvalHash.key_gid, EvalDecode.decodeInt);
 					var windowsVerbatimArguments = get(EvalHash.key_windowsVerbatimArguments, EvalDecode.decodeBool);
@@ -1918,7 +1934,7 @@ class EvalLuv {
 		return VNull;
 	}
 
-	static function path(v:Value):Bytes return EvalDecode.decodeNativeString(v);
+	static function path(v:Value):Bytes return resolveNative(EvalDecode.decodeNativeString(v));
 
 	static function openFlags(v:Value):Int {
 		var r = 0;
@@ -2310,7 +2326,7 @@ class EvalLuv {
 		})),
 		f("start", EvalEncode.vfun4((v1, v2, v3, v4) -> {
 			var event = decodeFsEvent(v1);
-			var path = EvalDecode.decodeNativeString(v2);
+			var path = resolveNative(EvalDecode.decodeNativeString(v2));
 			var callback = encodeCallback(v4);
 			var flags = if (v3.match(VNull)) 0 else {
 					var flags = decodeIntFlags(v3);
@@ -2624,9 +2640,13 @@ class EvalLuv {
 
 	public static final pathFields:Array<{name:String, value:Value}> = [
 		f("exePath", EvalEncode.vfun0(() -> pathResult(0))),
-		f("cwd", EvalEncode.vfun0(() -> pathResult(1))),
+		f("cwd", EvalEncode.vfun0(() -> try ok(Bytes.ofString(core.Vfs.getcwd()).vnativeString()) catch (_:Dynamic) pathResult(1))),
 		f("chdir", EvalEncode.vfun1(v -> {
-			encodeUnitResult(Uv.chdir(EvalDecode.decodeNativeString(v)));
+			// port: Error `ENOENT (47)
+			try {
+				core.Vfs.setcwd(EvalDecode.decodeNativeString(v).toString());
+				ok(VNull);
+			} catch (_:Dynamic) error(Uv.errCode(47));
 		})),
 		f("homedir", EvalEncode.vfun0(() -> pathResult(2))),
 		f("tmpdir", EvalEncode.vfun0(() -> pathResult(3))),
