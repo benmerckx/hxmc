@@ -42,8 +42,56 @@ consumers; a local app keeps **`-D esm -D esm.hot`** for dev.
 | **Fuzzer** | `diff:js-esm` lane — eventual, not compared to reference |
 | **Hot upstream unit lane** | `hxmc/test/esm/hot/exclusions.txt` ready; suite not wired |
 | **Consumption docs in CI matrix** | Covered by [esm.md](../esm.md) |
+| **User-facing hot dev entry** | Test harness only; see [Dev loop gap (hot)](#dev-loop-gap-hot) |
 
 Reference port: **reject** **`-D esm`**, **`-D esm.hot`**, **`-D esm.prod`** (implemented in `Generate.hx`).
+
+## Dev loop gap (hot)
+
+**`-D esm.hot`** emit, patch manifests, and in-process `applyHotPatch` are
+implemented and gated in `make esm`. The **developer loop** around them is
+not: there is no npm-facing equivalent of **`haxe --dev`** ([dev.md](../dev.md))
+for Js ESM hot reload.
+
+| | **`haxe --dev`** (`packages/cli/hxmc/bootstrap/dev.mjs`) | **ESM hot today** |
+| --- | --- | --- |
+| Entry | `npx haxe --dev build.hxml` | No supported entry; copy test scripts |
+| Output | `--custom-target hxmc=<out>` | `-js <entry.mjs>` + **`-D esm.hot`** |
+| Long-lived driver | `dev.mjs` (watch, compilation server, run/reload) | `hxmc/test/esm/hot/esm-dev.mjs` (test-only) |
+| After a good build | Starts or reloads the program | **Does not** start Node or a browser |
+| Patch delivery | Snapshot / swap (hxmc protocol) | WebSocket `hot-patch` to a **already running** client |
+| Shipped in `@hxmc/cli` | yes (`dev.mjs`) | **no** (`esm-dev.mjs` lives under `hxmc/test/`) |
+
+**`esm-dev.mjs` is test-oriented.** It watches `--watch` dirs, spawns a
+**one-shot** compiler on each `.hx` change (no `--server-connect` yet),
+then pushes `__hx_hot_patch.mjs` metadata on `/__esm_hot/ws`. The
+`watch-patch` lane (`EsmHotWatchPatchCheck`) runs **`esm-dev.mjs` and a
+separate `run-ws-client.mjs`** that loads the build and applies the patch —
+two processes, not one user command.
+
+**Gaps to close for a user-facing entry** (target: same ergonomics as
+`haxe --dev`, discriminated by **`-js … -D esm.hot`** vs **`--custom-target
+hxmc=…`**, not by folding patch reload into the hxmc snapshot protocol):
+
+1. **Promote the driver** — ship a script beside `dev.mjs` (or branch inside
+   it) from `@hxmc/cli`; document `npx haxe --dev` (or a dedicated flag) for
+   ESM hot builds.
+2. **Infer paths from the build** — `esm-dev.mjs` requires explicit `--out`
+   even though Genesm writes next to the `-js` entry; derive output dir and
+   watch roots from expanded hxml (`-js`, `-cp`, `-lib`), as `dev.mjs` does
+   for `hxmc=` and class paths.
+3. **Run + patch in one loop** — start `node <entry.mjs>` (or browser +
+   dev client) once; on successful rebuild, push patch to the running app
+   (wire `__hx_esm_dev_client.mjs` / env), not only broadcast with “no
+   clients”.
+4. **Reuse the compilation server** — watch → `server/invalidate` →
+   incremental rebuild, matching hxmc dev latency instead of cold spawns.
+5. **Package classpath** — ensure **`hxmc/std/esm`** (or `esm-std` next to
+   `hxmc-std`) is on the npm install path when hot metadata needs std types.
+
+Optional longer-term: **merge orchestration** with `dev.mjs` while keeping
+**two reload backends** (snapshot vs patch); see [esm.md](../esm.md) versus
+hxmc dev and [dev-loop.md](dev-loop.md) principles.
 
 ## Spec gaps to close
 
@@ -83,5 +131,7 @@ Reference port: **reject** **`-D esm`**, **`-D esm.hot`**, **`-D esm.prod`** (im
 
 ## Optional later
 
-- Merge ESM in-process hot reload with **`hxmc dev`** after both workflows are stable.
+- Unified **`haxe --dev`** orchestration (shared watch/server; separate reload
+  paths) — after the [user-facing hot dev entry](#dev-loop-gap-hot) exists on
+  its own.
 - Upstreaming ESM to OCaml Haxe — **out of scope** for hxmc.
