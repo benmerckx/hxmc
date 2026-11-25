@@ -210,11 +210,6 @@ class NativeSys {
 	public static inline function processWait(pid:Int, block:Bool):Int
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.processWait(pid, block) : #end PosixSys.processWait(pid, block) #end;
 
-	// as processWait, but a process a signal ended gives 256 + the signal
-	// (Windows has no signals: its exit code, as processWait)
-	public static inline function processWaitStatus(pid:Int, block:Bool):Int
-		return #if (hxmc.target == "wasm32-wasi") WasiSys.processWait(pid, block) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.processWait(pid, block) : #end PosixSys.processWaitStatus(pid, block) #end;
-
 	// SIGPIPE ignored: a write to a pipe or socket whose reader is gone fails
 	// instead of ending the process (nothing on Windows and WebAssembly)
 	public static inline function ignoreSigpipe():Void {

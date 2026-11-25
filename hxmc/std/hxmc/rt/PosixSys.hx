@@ -652,20 +652,6 @@ class PosixSys {
 
 	// OS threads: waits in a safe region; WNOHANG 1
 	@:hxmc.unsafe(gc) public static function processWait(pid:Int, block:Bool):Int {
-		var st = waitStatus(pid, block);
-		return st < 0 ? -1 : exitCode(st);
-	}
-
-	// as processWait, but a process a signal ended gives 256 + the signal
-	@:hxmc.unsafe(gc) public static function processWaitStatus(pid:Int, block:Bool):Int {
-		var st = waitStatus(pid, block);
-		if (st < 0) return -1;
-		var sig = st & 0x7f;
-		return sig == 0 ? (st >> 8) & 0xff : sig != 0x7f ? 256 + sig : -1;
-	}
-
-	// waitpid's status, -1 for none
-	@:hxmc.unsafe(gc) static function waitStatus(pid:Int, block:Bool):Int {
 		var st = Mem.stack(8);
 		while (true) {
 			var region = Leaf.rt_blocking_enter();
@@ -675,7 +661,7 @@ class PosixSys {
 			if (r <= 0) return -1;
 			break;
 		}
-		return Mem.getI32(st, 0);
+		return exitCode(Mem.getI32(st, 0));
 	}
 
 	// SIGINT and SIGQUIT ignored, as system() does while it waits, until as

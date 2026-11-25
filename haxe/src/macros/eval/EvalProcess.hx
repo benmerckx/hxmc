@@ -1,7 +1,6 @@
 package macros.eval;
 
 import haxe.io.Bytes;
-import haxe.io.BytesInput;
 import core.ds.Failure;
 #if (target.name == "hxmc")
 import hxmc.NativeSys;
@@ -23,40 +22,59 @@ import hxmc.NativeUv as Uv;
 	immediately return EOF and whose [exit] returns code 127 (matching
 	the POSIX shell convention and the old fork+exec behavior where
 	fork always succeeded). */
-// port: haxe/libs/extc/process.ml. On hxmc a process with pipes is hxmc's fork and
-// ... exec (hxmc.NativeSys.processRun, in a directory if given), whose child can only
-// ... end with 127 when it fails: the errors libuv's spawn reports from its child (the
-// ... directory entered, then the program executed, as execvp looks for it) are found
-// ... here before it starts (spawnError). A shell command in a directory with this
-// ... process's descriptors (command) is libuv's spawn, as upstream's (hxmc.NativeUv).
-// ... Other hosts (the port is compiled for them, not run there) use the host's
-// ... sys.io.Process, through /bin/sh in another directory.
+// port: haxe/libs/extc/process.ml, on the libuv that hxmc bundles. Loops,
+// ... process handles and files are integer ids here.
+#if (target.name == "hxmc")
 class EvalProcess {
-	// port: the parent's ends of the pipes; stdout null when the process did not
-	// ... start (stderr then holds the error)
-	final stdin:Null<haxe.io.Output>;
-	final stdout:Null<haxe.io.Input>;
-	final stderr:haxe.io.Input;
-	final processId:Int;
-	#if (target.name != "hxmc")
-	final host:Null<sys.io.Process>;
-	#end
-	var exitCode:Null<Int>;
-	// port: close_stdin happened (upstream's stdin becomes None)
-	var stdinClosed = false;
-	// port: close happened (upstream's pipes become None)
-	var closed = false;
+	/* A process runs on a loop that is its own until it has exited. */
+	final loop:Int;
+	var handle:Null<Int> = null; // None if not started, or closed
+	var processId = 0;
+	var stdin:Null<Int> = null; // None once closed
+	var stdout:Null<Int> = null;
+	var stderr:Null<Int> = null;
+	var exitCode:Null<Int> = null;
 
-	function new(stdin:Null<haxe.io.Output>, stdout:Null<haxe.io.Input>, stderr:haxe.io.Input, processId:Int,
-			#if (target.name != "hxmc") host:Null<sys.io.Process>, #end exitCode:Null<Int>) {
-		this.stdin = stdin;
-		this.stdout = stdout;
-		this.stderr = stderr;
-		this.processId = processId;
-		#if (target.name != "hxmc")
-		this.host = host;
-		#end
-		this.exitCode = exitCode;
+	// port: luv's file operations, as hxmc.rt.Uv numbers them
+	static inline final FS_CLOSE = 1;
+	static inline final FS_READ = 2;
+	static inline final FS_WRITE = 3;
+	// port: luv's Loop.run modes
+	static inline final RUN_DEFAULT = 0;
+	static inline final RUN_ONCE = 1;
+	// port: hxmc.rt.Uv's event for a process that exited
+	static inline final EV_EXIT = 6;
+	static inline final SIGKILL = 9;
+
+	static function luvOk(r:Int):Int {
+		if (r < 0) throw new SpawnError(Uv.strerror(r));
+		return r;
+	}
+
+	static function closeFile(file:Int):Void {
+		fsSync(FS_CLOSE, file, null, 0);
+	}
+
+	// port: luv's File.Sync calls: the result, or a negative error
+	static function fsSync(op:Int, file:Int, data:Null<Bytes>, len:Int, ?into:Bytes, pos:Int = 0):Int {
+		var req = Uv.reqNew();
+		var r = Uv.fs(op, -1, req, null, null, file, 0, 0, -1, 0, data, op == FS_CLOSE ? null : [len]);
+		if (r >= 0) r = Uv.fsResult(req);
+		if (op == FS_READ && r > 0) Uv.reqCopyOut(req, into, pos, 0, r);
+		Uv.fsCleanup(req);
+		Uv.reqFree(req);
+		return r;
+	}
+
+	/* As Unix.create_process on Windows: without a console, the process gets a
+		hidden one. */
+	static function windowsHide():Bool {
+		if (Sys.systemName() != "Windows") return false;
+		// port: Unix.openfile "CONOUT$" [O_WRONLY]; hxmc's mode 3 opens for reading and writing, which a console's output allows
+		var fd = NativeSys.fileOpen("CONOUT$", 3);
+		if (fd < 0) return true;
+		NativeSys.fileClose(fd);
+		return false;
 	}
 
 	/* The program and arguments that run the shell command [cmd], with whether
@@ -70,153 +88,6 @@ class EvalProcess {
 		} else {prog: "/bin/sh", argv: ["/bin/sh", "-c", cmd], verbatim: false};
 	}
 
-	/** Runs [cmd] with [args], or the shell command [cmd] if [args] is [None], in
-		directory [cwd] if given, without changing the directory of this process.
-		Its standard descriptors are new pipes. */
-	public static function run(cmd:String, args:Null<Array<String>>, ?cwd:String):EvalProcess {
-		var prog = args == null ? shell(cmd).prog : cmd;
-		var error = spawnError(prog, args != null, cwd);
-		if (error != null) return failed(prog, error);
-		return try start(cmd, args, cwd) catch (_:Dynamic) failed(prog, ENOENT);
-	}
-
-	/* Process creation failed (e.g. command not found).
-		Match the old fork+exec behavior: the pipes immediately return EOF
-		and the exit code is 127. The error message is written to the
-		stderr pipe so callers can read it. */
-	static function failed(prog:String, error:String):EvalProcess {
-		var msg = prog + ": " + error + "\n";
-		return new EvalProcess(null, null, new BytesInput(Bytes.ofString(msg)), 0, #if (target.name != "hxmc") null, #end 127);
-	}
-
-	// port: libuv's messages (Luv.Error.strerror) of the errors a spawn reports
-	static inline final ENOENT = "no such file or directory";
-	static inline final ENOTDIR = "not a directory";
-	static inline final EACCES = "permission denied";
-
-	// port: the error libuv's spawn reports from its child, which enters [cwd] (chdir),
-	// ... then executes the program (execvp: a name without a slash is looked up on PATH,
-	// ... a candidate that exists but cannot be executed gives EACCES unless a later one
-	// ... runs); null when it would start. Windows: the directory only, the host's process
-	// ... creation fails as libuv's search does (taken to be ENOENT, see run)
-	static function spawnError(prog:String, direct:Bool, cwd:Null<String>):Null<String> {
-		if (cwd != null) {
-			if (!sys.FileSystem.exists(cwd)) return ENOENT;
-			if (!sys.FileSystem.isDirectory(cwd)) return ENOTDIR;
-		}
-		if (!direct || Sys.systemName() == "Windows") return null;
-		inline function at(path:String):String return cwd != null && core.OcamlFilename.isRelative(path) ? cwd + "/" + path : path;
-		// port: PATHEXT is only set on Windows, where the Cosmopolitan build of the
-		// ... port (Sys.systemName() is "Linux" there) also finds programs by extension
-		var pathExt = Sys.getEnv("PATHEXT");
-		var exts = pathExt == null ? [""] : [""].concat(pathExt.split(";"));
-		function attempt(path:String):Null<String> {
-			var error = ENOENT;
-			for (ext in exts) {
-				var p = at(path + ext);
-				if (!sys.FileSystem.exists(p)) continue;
-				// port: 73 = 0o111: some execute bit
-				if (sys.FileSystem.isDirectory(p) || (sys.FileSystem.stat(p).mode & 73) == 0) error = EACCES else return null;
-			}
-			return error;
-		}
-		if (prog.indexOf("/") >= 0 || (pathExt != null && prog.indexOf("\\") >= 0)) return attempt(prog);
-		if (prog == "") return ENOENT;
-		var path = Sys.getEnv("PATH");
-		if (path == null) path = "/bin:/usr/bin";
-		var eacces = false;
-		for (dir in path.split(":")) {
-			switch attempt(dir == "" ? prog : dir + "/" + prog) {
-				case null: return null;
-				case e: if (e == EACCES) eacces = true;
-			}
-		}
-		return eacces ? EACCES : ENOENT;
-	}
-
-	// port: starts the process on new pipes; throws when the host cannot
-	static function start(cmd:String, args:Null<Array<String>>, cwd:Null<String>):EvalProcess {
-		#if (target.name == "hxmc")
-		var fds = [0, 0, 0];
-		var pid = NativeSys.processRun(cmd, args, fds, cwd);
-		if (pid < 0) throw new Failure("process_run");
-		return new EvalProcess(@:privateAccess new sys.io.FileOutput(fds[0]), @:privateAccess new sys.io.FileInput(fds[1]),
-			@:privateAccess new sys.io.FileInput(fds[2]), pid, null);
-		#else
-		var host = if (cwd == null) new sys.io.Process(cmd, args) else {
-			if (Sys.systemName() == "Windows") throw new Failure("port: a process in another directory needs hxmc's processes on Windows");
-			if (args == null) new sys.io.Process("/bin/sh", ["-c", "cd \"$0\" && " + cmd, cwd]) else
-				new sys.io.Process("/bin/sh", ["-c", "cd \"$0\" && exec \"$@\"", cwd, cmd].concat(args));
-		}
-		return new EvalProcess(host.stdin, host.stdout, host.stderr, host.getPid(), host, null);
-		#end
-	}
-
-	/** As Sys.command, the shell command [cmd] with the standard descriptors of
-		this process, in directory [cwd] if given. */
-	public static function command(cmd:String, ?cwd:String):Int {
-		if (cwd == null) return sysCommand(cmd);
-		#if (target.name == "hxmc")
-		// port: hxmc has libuv except on WebAssembly, where WASI has no processes:
-		// ... Sys.command's failure there
-		if (!Uv.available()) return sysCommand(cmd);
-		var sh = shell(cmd);
-		var loop = takeLoop();
-		var exitCode:Null<Int> = null;
-		var exited = false;
-		var flags = (sh.verbatim ? 4 : 0) | (windowsHide() ? 16 : 0);
-		// port: luv's Process.inherit_fd: 0, 1 and 2 of this process as the child's
-		var handle = Uv.processSpawn(loop, Bytes.ofString(sh.prog), [for (a in sh.argv) Bytes.ofString(a)], null, Bytes.ofString(cwd), flags, 0,
-			0, [0, 2, 0, 0, 1, 2, 0, 1, 2, 2, 0, 2], true);
-		if (handle < 0) {
-			release(loop, -1);
-			return 127;
-		}
-		/* As system(), the interrupt and quit signals are ignored while waiting for
-			the child: they go to the child from the terminal. */
-		NativeSys.interruptsIgnored(true);
-		try {
-			while (!exited)
-				Uv.loopRun(loop, 1, (id, event, a, b) -> if (event == 6 && id == handle) {
-					exited = true;
-					/* as Sys.command: 255 for a process ended by a signal */
-					exitCode = (b : Int) != 0 && Sys.systemName() != "Windows" ? 255 : a;
-				});
-		} catch (e:Dynamic) {
-			NativeSys.interruptsIgnored(false);
-			throw e;
-		}
-		NativeSys.interruptsIgnored(false);
-		release(loop, handle);
-		return exitCode;
-		#else
-		return if (Sys.systemName() == "Windows") Sys.command("cd /d \"" + cwd + "\" && " + cmd) else
-			Sys.command("cd " + haxe.SysTools.quoteUnixArg(cwd) + " && " + cmd);
-		#end
-	}
-
-	// port: OCaml's Sys.command (system(), 255 for a process ended by a signal)
-	static function sysCommand(cmd:String):Int {
-		#if (target.name == "hxmc")
-		var r = NativeSys.commandStatus(cmd);
-		return r >= 256 && Sys.systemName() != "Windows" ? 255 : r;
-		#else
-		return Sys.command(cmd);
-		#end
-	}
-
-	#if (target.name == "hxmc")
-	/* As Unix.create_process on Windows: without a console, the process gets a
-		hidden one. */
-	static function windowsHide():Bool {
-		if (Sys.systemName() != "Windows") return false;
-		// port: Unix.openfile "CONOUT$" [O_WRONLY]; hxmc's update mode (read and write) opens a console's output
-		var fd = NativeSys.fileOpen("CONOUT$", 3);
-		if (fd < 0) return true;
-		NativeSys.fileClose(fd);
-		return false;
-	}
-
 	/* Loops are kept for the next process instead of being closed. On Linux,
 		closing one ends its io_uring instance, and the kernel then interrupts a
 		later blocking system call of this thread: a connect or a read on a socket
@@ -228,66 +99,176 @@ class EvalProcess {
 		freeLoopsMutex.acquire();
 		var loop = freeLoops.pop();
 		freeLoopsMutex.release();
-		if (loop != null) return loop;
-		var loop = Uv.loopInit();
-		if (loop < 0) throw new Failure("uv_loop_init");
-		return loop;
+		return loop != null ? loop : luvOk(Uv.loopInit());
+	}
+
+	function new() {
+		loop = takeLoop();
+	}
+
+	// port: on_exit, called while the loop runs
+	function onEvent(id:Int, event:Int, exitStatus:Int, termSignal:Dynamic):Void {
+		if (event == EV_EXIT && id == handle)
+			/* as Sys.command: 255 for a process ended by a signal */
+			exitCode = (termSignal : Int) != 0 && Sys.systemName() != "Windows" ? 255 : exitStatus;
 	}
 
 	/* Closes the handle of [p] and gives its loop back once nothing is left on
 		it. To call once per process. */
-	static function release(loop:Int, handle:Int):Void {
-		if (handle >= 0) Uv.handleClose(handle);
-		Uv.loopRun(loop, 0, (_, _, _, _) -> {});
+	function release():Void {
+		if (handle != null) Uv.handleClose(handle);
+		handle = null;
+		Uv.loopRun(loop, RUN_DEFAULT, onEvent);
 		freeLoopsMutex.acquire();
 		freeLoops.push(loop);
 		freeLoopsMutex.release();
 	}
-	#end
 
-	public function readStdout(b:Bytes, pos:Int, len:Int):Int {
-		if (stdout == null || closed)
-			throw new Failure("process_stdout_read");
-		return stdout.readBytes(b, pos, len);
+	/* Starts [cmd] with [args], or the shell command [cmd] if [args] is [None],
+		as process [p] with the descriptors [fd0], [fd1] and [fd2] of this process
+		as its standard ones. */
+	function spawn(cwd:Null<String>, cmd:String, args:Null<Array<String>>, fd0:Int, fd1:Int, fd2:Int):Void {
+		var s = args == null ? shell(cmd) : {prog: cmd, argv: [cmd].concat(args), verbatim: false};
+		// port: hxmc.rt.Uv's redirections: (child fd, 2 = inherit_fd, 0, parent fd) each
+		var redirect = [0, 2, 0, fd0, 1, 2, 0, fd1, 2, 2, 0, fd2];
+		// port: hxmc.rt.Uv's flags: 4 windows_verbatim_arguments, 16 windows_hide
+		var flags = (s.verbatim ? 4 : 0) | (windowsHide() ? 16 : 0);
+		var h = Uv.processSpawn(loop, Bytes.ofString(s.prog), [for (a in s.argv) Bytes.ofString(a)], null,
+			cwd == null ? null : Bytes.ofString(cwd), flags, 0, 0, redirect, true);
+		if (h < 0) throw new SpawnError(s.prog + ": " + Uv.strerror(h));
+		handle = h;
+		processId = Uv.processPid(h);
 	}
 
-	public function readStderr(b:Bytes, pos:Int, len:Int):Int {
-		if (closed)
-			throw new Failure("process_stderr_read");
-		return stderr.readBytes(b, pos, len);
+	/* Waits for [p] to exit; its exit code. */
+	function wait():Int {
+		while (exitCode == null && handle != null)
+			Uv.loopRun(loop, RUN_ONCE, onEvent);
+		if (handle != null) release();
+		var c = exitCode != null ? exitCode : 255;
+		exitCode = c;
+		return c;
 	}
 
-	public function writeStdin(b:Bytes, pos:Int, len:Int):Int {
-		if (stdinClosed)
-			throw new Failure("process_stdin_write");
-		// port: a process that did not start has a pipe nobody reads (EPIPE); a
-		// ... failed write is libuv's EPIPE, the error of a reader that is gone
-		if (stdin == null)
-			throw new Failure("broken pipe");
-		return try stdin.writeBytes(b, pos, len) catch (_:Dynamic) throw new Failure("broken pipe");
+	static function writeFile(file:Int, b:Bytes, pos:Int, len:Int):Int {
+		return fsSync(FS_WRITE, file, b.sub(pos, len), len);
+	}
+
+	/** Runs [cmd] with [args], or the shell command [cmd] if [args] is [None], in
+		directory [cwd] if given, without changing the directory of this process.
+		Its standard descriptors are new pipes. */
+	public static function run(cmd:String, args:Null<Array<String>>, ?cwd:String):EvalProcess {
+		// port: WASI has no processes, and hxmc has no libuv there
+		if (!Uv.available()) throw new Failure("sys.io.Process is not supported on WASI");
+		var p = new EvalProcess();
+		var files = [];
+		function pipe():Array<Int> {
+			var fds = [0, 0];
+			luvOk(Uv.pipe(0, 0, fds));
+			files.push(fds[0]);
+			files.push(fds[1]);
+			return fds;
+		}
+		var childStdin, childStdout, childStderr;
+		try {
+			var a = pipe();
+			childStdin = a[0];
+			p.stdin = a[1];
+			var b = pipe();
+			p.stdout = b[0];
+			childStdout = b[1];
+			var c = pipe();
+			p.stderr = c[0];
+			childStderr = c[1];
+		} catch (e:SpawnError) {
+			for (f in files) closeFile(f);
+			p.release();
+			throw e;
+		}
+		try {
+			p.spawn(cwd, cmd, args, childStdin, childStdout, childStderr);
+		} catch (e:SpawnError) {
+			/* Process creation failed (e.g. command not found).
+				Match the old fork+exec behavior: the pipes immediately return EOF
+				and the exit code is 127. The error message is written to the
+				stderr pipe so callers can read it. */
+			var msg = Bytes.ofString(e.message + "\n");
+			writeFile(childStderr, msg, 0, msg.length);
+			p.release();
+			p.exitCode = 127;
+		}
+		closeFile(childStdin);
+		closeFile(childStdout);
+		closeFile(childStderr);
+		return p;
+	}
+
+	/* As system(), the interrupt and quit signals are ignored while waiting for
+		the child: they go to the child from the terminal. */
+	static function ignoringSignals<T>(f:() -> T):T {
+		NativeSys.interruptsIgnored(true);
+		var r = try f() catch (e:Dynamic) {
+			NativeSys.interruptsIgnored(false);
+			throw e;
+		}
+		NativeSys.interruptsIgnored(false);
+		return r;
+	}
+
+	/** As Sys.command, the shell command [cmd] with the standard descriptors of
+		this process, in directory [cwd] if given. */
+	public static function command(cmd:String, ?cwd:String):Int {
+		if (cwd == null) return sysCommand(cmd);
+		// port: WASI has no processes: this fails as Sys.command does there
+		if (!Uv.available()) return sysCommand(cmd);
+		var p = try {
+			var p = new EvalProcess();
+			try p.spawn(cwd, cmd, null, 0, 1, 2) catch (e:SpawnError) {
+				p.release();
+				throw e;
+			}
+			p;
+		} catch (_:SpawnError) return 127;
+		return ignoringSignals(() -> p.wait());
+	}
+
+	// port: OCaml's Sys.command: system(), and 255 for a command a signal ended
+	static function sysCommand(cmd:String):Int {
+		var r = NativeSys.commandStatus(cmd);
+		return r >= 256 && Sys.systemName() != "Windows" ? 255 : r;
+	}
+
+	function read(name:String, file:Null<Int>, buf:Bytes, pos:Int, len:Int):Int {
+		inline function fail():Int throw new Failure("process_" + name + "_read");
+		if (file == null) return fail();
+		var n = fsSync(FS_READ, file, null, len, buf, pos);
+		if (n < 0) throw new Failure(Uv.strerror(n));
+		if (n == 0) return fail();
+		return n;
+	}
+
+	public function readStdout(buf:Bytes, pos:Int, len:Int):Int {
+		return read("stdout", stdout, buf, pos, len);
+	}
+
+	public function readStderr(buf:Bytes, pos:Int, len:Int):Int {
+		return read("stderr", stderr, buf, pos, len);
+	}
+
+	public function writeStdin(buf:Bytes, pos:Int, len:Int):Int {
+		if (stdin == null) throw new Failure("process_stdin_write");
+		var n = writeFile(stdin, buf, pos, len);
+		if (n < 0) throw new Failure(Uv.strerror(n));
+		return n;
 	}
 
 	public function closeStdin():Void {
-		if (stdinClosed) return;
-		stdinClosed = true;
-		if (stdin != null)
-			stdin.close();
+		if (stdin != null) closeFile(stdin);
+		stdin = null;
 	}
 
 	public function exit():Int {
-		if (exitCode == null)
-			exitCode = waitExit();
-		return exitCode;
-	}
-
-	// port: wait: the exit code, 255 for a process ended by a signal (as Sys.command)
-	function waitExit():Int {
-		#if (target.name == "hxmc")
-		var s = NativeSys.processWaitStatus(processId, true);
-		return s >= 256 && Sys.systemName() != "Windows" ? 255 : s;
-		#else
-		return host.exitCode(true);
-		#end
+		return exitCode != null ? exitCode : wait();
 	}
 
 	public function pid():Int {
@@ -295,22 +276,50 @@ class EvalProcess {
 	}
 
 	public function close():Void {
-		if (closed) return;
-		closed = true;
 		closeStdin();
-		if (stdout != null) {
-			stdout.close();
-			stderr.close();
-		}
+		if (stdout != null) closeFile(stdout);
+		stdout = null;
+		if (stderr != null) closeFile(stderr);
+		stderr = null;
+		if (handle != null) release();
 	}
 
 	public function kill():Void {
-		if (stdout != null && exitCode == null) {
-			#if (target.name == "hxmc")
-			NativeSys.processKill(processId);
-			#else
-			host.kill();
-			#end
-		}
+		if (exitCode == null && handle != null) Uv.processKill(handle, SIGKILL);
 	}
 }
+
+// port: exception Spawn_error
+private class SpawnError extends haxe.Exception {}
+#else
+// port: the port is compiled for other targets (hl, neko) but never run there.
+// ... They have no libuv, so a process cannot start; Sys.command without a
+// ... directory is the host's.
+class EvalProcess {
+	function new() {}
+
+	public static function run(cmd:String, args:Null<Array<String>>, ?cwd:String):EvalProcess
+		throw new Failure("port: processes need hxmc's libuv");
+
+	public static function command(cmd:String, ?cwd:String):Int {
+		if (cwd == null) return Sys.command(cmd);
+		throw new Failure("port: processes need hxmc's libuv");
+	}
+
+	public function readStdout(buf:Bytes, pos:Int, len:Int):Int throw new Failure("process_stdout_read");
+
+	public function readStderr(buf:Bytes, pos:Int, len:Int):Int throw new Failure("process_stderr_read");
+
+	public function writeStdin(buf:Bytes, pos:Int, len:Int):Int throw new Failure("process_stdin_write");
+
+	public function closeStdin():Void {}
+
+	public function exit():Int return 255;
+
+	public function pid():Int return 0;
+
+	public function close():Void {}
+
+	public function kill():Void {}
+}
+#end
