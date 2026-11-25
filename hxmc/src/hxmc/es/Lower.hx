@@ -17,13 +17,15 @@ import hxmc.es.Es.EsTools.*;
 
 using core.ds.VectorTools;
 
-// What a lowering needs from the program: a type's value, the runtime's names, features. (Link answers it.)
+// What a lowering needs from the program, which it may not change (lowerings run in parallel): its answers are
+// references (Ref) Chunk resolves as it prints, and what the lowering used, recorded (Chunk.Unit, which Chunk replays
+// in the program's order once all are lowered: the files' imports, the runtime's parts, the names in use).
 interface Resolve {
 	// a type as a value (its binding, an extern's native path)
 	function type(t:ModuleType, p:Pos):Ex;
 	// a type found by its path (js.Boot, haxe.Log), as a value
 	function typeByPath(pack:Array<String>, name:String, p:Pos):Ex;
-	function moduleField(m:ModuleDef, f:TClassField):Sym;
+	function moduleField(m:ModuleDef, f:TClassField, p:Pos):Ex;
 	// `$hx.<name>`, the runtime's
 	function rt(name:String):Ex;
 	// an enum value's index's key: `$hx.index`, TypeScript's binding of it
@@ -40,18 +42,16 @@ interface Resolve {
 	// the split (js.Bundle.split) e calls, if it calls one
 	function split(e:TExpr):Null<Splits.SplitPoint>;
 	// a split's key in the runtime's table of their files (its name, its number when minified)
-	function splitKey(name:String):Sym;
+	function splitKey(name:String):Ex;
 	// (modules) the file of a split's code, which is lowered where it is called, its bindings that file's: f's value
 	function inSplit<R>(s:Splits.SplitPoint, f:Int->R):R;
 	// whether a split's code is where it is called (modules), not in a file the runtime loads
 	function splitsInline():Bool;
-	// a field's code begins (its locals are named apart from other fields', minified), a local of it
-	function enterScope():Void;
+	// a field's code (e) begins (its locals are named apart from other fields', minified; FieldNames reads it), a local of it
+	function enterScope(e:TExpr):Void;
 	function declare(s:Sym):Void;
 	// whether the output is TypeScript (casts where Haxe accepted what TypeScript would not)
 	function ts():Bool;
-	// (-D hxmc.js.minify.fields) what the lowering tells of the fields' names (FieldNames.visit)
-	function fieldAnalysis():Null<FieldNames>;
 }
 
 // A typed expression (post-filter) as JavaScript. Decides what depends on the code alone: arrows (a function
@@ -83,22 +83,16 @@ class Lower {
 
 	// a field's code (method, initializer, `__init__`, the main expression): what it assigns first
 	public function prepare(e:TExpr) {
-		r.enterScope();
-		var fields = r.fieldAnalysis();
-		// (ret: the return type of the function e is in, FieldNames)
-		function walk(e:TExpr, ret:Null<T>) {
-			if (fields != null) fields.visit(e, ret);
+		r.enterScope(e);
+		function walk(e:TExpr) {
 			switch e.eexpr {
 				case TBinop(OpAssign | OpAssignOp(_), {eexpr: TLocal(v)}, _) | TUnop(Increment | Decrement, _, {eexpr: TLocal(v)}):
 					assigned.set(v.vId, true);
-				case TFunction(f):
-					walk(f.tfExpr, f.tfType);
-					return;
 				case _:
 			}
-			Texpr.iter(x -> walk(x, ret), e);
+			Texpr.iter(walk, e);
 		}
-		walk(e, null);
+		walk(e);
 	}
 
 	// t: the function's type (its optional arguments), tparams: a method's type parameters
@@ -252,8 +246,6 @@ class Lower {
 	];
 
 	public function localNames():Array<String> return [for (s in locals) s.name];
-
-	public function localSyms():Array<Sym> return [for (s in locals) s];
 
 	// `var _gthis = this` in e's top-level statements whose every use is in arrows (or none): `this`
 	function aliasThis(e:TExpr) {
@@ -672,40 +664,17 @@ class Lower {
 	// o.name, or o["name"] where it is no identifier
 	public static function member(o:Ex, name:String, ?p:Pos):Ex return validIdent(name) ? ex(EMember(o, name), p) : ex(EIndex(o, ex(EStr(name))), p);
 
-	// a field access's namespace (FieldNames: its class's family's, its class's statics'; -1: the global one)
-	function nsOf(f:TFieldAccess):Int {
-		var n = r.fieldAnalysis();
-		return n == null ? -1 : switch f {
-			case FInstance(c, _, _): n.instanceNs(c);
-			case FStatic(c, _): n.staticNs(c);
-			case FClosure(c, _) if (c != null): n.instanceNs(c.cls);
-			case _: -1;
-		}
-	}
-
-	function staticNs(c:TClass):Int {
-		var n = r.fieldAnalysis();
-		return n == null ? -1 : n.staticNs(c);
-	}
-
-	// (an enum's constructors' namespace, its parameters' (the enum a constructor is of))
-	function enumCtorNs(en:TEnum):Int {
-		var n = r.fieldAnalysis();
-		return n == null ? -1 : n.enumCtorNs(en);
-	}
-
-	function enumParamNs(ef:TEnumField):Int {
-		var n = r.fieldAnalysis();
-		return n == null ? -1 : n.ctorParamNs(ef);
-	}
-
-	function staticNsByPath(path:String):Int {
-		var n = r.fieldAnalysis();
-		return n == null ? -1 : n.staticNsByPath(path);
+	// a field access's namespace (FieldNames: its class's family's, its class's statics'; NGlobal: the global one)
+	static function nsOf(f:TFieldAccess):Ns return switch f {
+		case FInstance(c, _, _): NInstance(c);
+		case FStatic(c, _): NStatic(c);
+		case FClosure(c, _) if (c != null): NInstance(c.cls);
+		case _: NGlobal;
 	}
 
 	// a Haxe field of o (its name minified: FieldNames)
-	public static function field(o:Ex, name:String, ns:Int, ?p:Pos):Ex return validIdent(name) ? ex(EField(o, name, ns), p) : ex(EIndex(o, ex(EStr(name))), p);
+	public static function field(o:Ex, name:String, ns:Ns, ?p:Pos):Ex return validIdent(name) ? ex(EField(o, name, ns), p) : ex(EIndex(o, ex(EStr(name))), p);
+
 
 	// a signature's first optional argument
 	static function firstOptional(s:TSignature):Null<Int> {
@@ -792,9 +761,9 @@ class Lower {
 				if (Meta.has(Meta.SelfCall, f.cfMeta)) expr(x) else mkx(ECall(r.rt("bind"), [expr(x), mkx(EFieldName(f.cfName, nsOf(fa)))]));
 			// (a class without a name: its statics at the top level, Genjs's)
 			case TField(_, FStatic(c = {clPath: {pack: [], name: ""}}, f)):
-				hasClassFlag(c, CExtern) ? r.ident(f.cfName) : mkx(EId(r.moduleField(c.clModule, f)));
+				hasClassFlag(c, CExtern) ? r.ident(f.cfName) : r.moduleField(c.clModule, f, p);
 			case TField(_, FStatic({clKind: KModuleFields(m)}, f)):
-				mkx(EId(r.moduleField(m, f)));
+				r.moduleField(m, f, p);
 			// (the runtime, js.Hx: its part)
 			case TField(_, FStatic({clPath: {pack: [], name: "$hx"}}, f)):
 				r.rt(f.cfName);
@@ -805,7 +774,7 @@ class Lower {
 				var o = r.type(TClassDecl(c), p);
 				// (TypeScript: std's extern of a global by another name (`@:native("Error") V8Error`) has what its type does not)
 				if (ts && r.stdExtern(c) && renamed(c)) o = any(o);
-				ts && !hasClassFieldFlag(f, CfPublic) && !visible(c, f, null) && !o.def.match(EAs(_)) ? ex(EFriend(o, f.cfName), p) : field(o, f.cfName, staticNs(c), p);
+				ts && !hasClassFieldFlag(f, CfPublic) && !visible(c, f, null) && !o.def.match(EAs(_)) ? ex(EFriend(o, f.cfName), p) : field(o, f.cfName, NStatic(c), p);
 			case TField(_, FEnum(en, ef)):
 				enumValue(en, ef, e.etype, p);
 			// (Genjs's field of an enum value's index, which the std reads untyped: haxe.Serializer)
@@ -831,7 +800,7 @@ class Lower {
 			case TObjectDecl(fields):
 				mkx(EObject([
 					for (f in fields)
-						({key: validIdent(f.key.name) ? KField(f.key.name, -1) : KString(f.key.name), value: expr(f.expr)} : Prop)
+						({key: validIdent(f.key.name) ? KField(f.key.name, NGlobal) : KString(f.key.name), value: expr(f.expr)} : Prop)
 				]));
 			case TArrayDecl(el): mkx(EArray([for (x in el) expr(x)]));
 			// (TypeScript: std's extern's array of `Any` or `Dynamic`, which its lib may have as `unknown[]`: `Object.values`)
@@ -843,7 +812,7 @@ class Lower {
 			case TNew(c, _, args):
 				var ctor = r.type(TClassDecl(c), p);
 				// (TypeScript: a generic class's type arguments, which it may not infer from the arguments)
-				if (ts && !hasClassFlag(c, CExtern) && c.clParams.length > 0 && ctor.def.match(EId(_))) switch e.eexpr {
+				if (ts && !hasClassFlag(c, CExtern) && c.clParams.length > 0 && ctor.def.match(EId(_) | ERef(_))) switch e.eexpr {
 					case TNew(_, params, _) if (params.length == c.clParams.length): ctor = ex(ETypeArgs(ctor, params.toArray()), p);
 					case _:
 				}
@@ -872,11 +841,11 @@ class Lower {
 				mkx(ECond(n.c, n.yes, n.no == null ? mkx(ENull) : n.no));
 			case TCast(x, t):
 				r.refer("js.Boot.__cast");
-				mkx(ECall(ts ? ex(EFriend(r.typeByPath(["js"], "Boot", p), "__cast"), p) : field(r.typeByPath(["js"], "Boot", p), "__cast", staticNsByPath("js.Boot"), p), [expr(x), r.type(t, p)]));
+				mkx(ECall(ts ? ex(EFriend(r.typeByPath(["js"], "Boot", p), "__cast"), p) : field(r.typeByPath(["js"], "Boot", p), "__cast", NStaticPath("js.Boot"), p), [expr(x), r.type(t, p)]));
 			case TEnumIndex(x): mkx(EIndex(ts && isDead(x) ? any(expr(x)) : expr(x), r.index()));
 			// (TypeScript: a local a test on its index narrowed to the constructor, as it is)
-			case TEnumParameter(x, ef, i) if (!ts || isKnown(x, ef.efIndex)): field(expr(x), paramName(ef, i), enumParamNs(ef), p);
-			case TEnumParameter(x, ef, i): field(any(expr(x)), paramName(ef, i), enumParamNs(ef), p);
+			case TEnumParameter(x, ef, i) if (!ts || isKnown(x, ef.efIndex)): field(expr(x), paramName(ef, i), NCtorParam(ef), p);
+			case TEnumParameter(x, ef, i): field(any(expr(x)), paramName(ef, i), NCtorParam(ef), p);
 			case TIdent(s): r.ident(s);
 			case TReturn(_) | TBreak | TContinue: Error.abort("This expression cannot be compiled to Javascript", p);
 			case TVar(_) | TBlock(_) | TWhile(_) | TSwitch(_) | TTry(_) | TThrow(_): statementValue(e);
@@ -901,13 +870,13 @@ class Lower {
 		var param = new Sym(SLocal, name);
 		param.type = TDynamic(null);
 		var init = ex(ECall(ex(EIndex(ex(EId(param)), ex(ENum(Std.string(s.index))))), [for (v in s.captures) expr(mk(TLocal(v), v.vType, p))]), p);
-		var load = ex(ECall(r.rt("load"), [ex(EId(r.splitKey(s.name)))]), p);
+		var load = ex(ECall(r.rt("load"), [r.splitKey(s.name)]), p);
 		return ex(ECall(ex(EMember(load, "then")), [ex(EFn({params: [param], rest: false, arrow: true, body: [st(SReturn(init))]}))]), p);
 	}
 
 	// a constructor of arguments as a value: a function of them which constructs (`new`, as the constructor is)
 	function enumValue(en:TEnum, ef:TEnumField, t:T, p:Pos):Ex {
-		var c = field(r.type(TEnumDecl(en), p), ef.efName, enumCtorNs(en), p);
+		var c = field(r.type(TEnumDecl(en), p), ef.efName, NEnumCtor(en), p);
 		return switch [follow(ef.efType), follow(t)] {
 			case [TFun(_), TFun(s)]:
 				var ps = [for (a in s.args) {
@@ -951,7 +920,7 @@ class Lower {
 				// (TypeScript: `str` is the cache Resource fills in)
 				any(mkx(EArray(out)));
 			case [TIdent("`trace"), [v, infos]]:
-				if (r.feature("haxe.Log.trace")) mkx(ECall(field(r.typeByPath(["haxe"], "Log", p), "trace", staticNsByPath("haxe.Log")), [expr(v), expr(infos)])) else {
+				if (r.feature("haxe.Log.trace")) mkx(ECall(field(r.typeByPath(["haxe"], "Log", p), "trace", NStaticPath("haxe.Log")), [expr(v), expr(infos)])) else {
 					var at = switch infos.eexpr {
 						case TObjectDecl(fields) if (fields.length >= 2 && fields[0].key.name == "fileName" && fields[1].key.name == "lineNumber"):
 							switch [fields[0].expr.eexpr, fields[1].expr.eexpr] {
@@ -968,7 +937,7 @@ class Lower {
 			case [TField(x, f), []] if (fieldName(f) == "keyValueIterator" && dynamicIterator(x) && !f.match(FStatic(_) | FEnum(_))):
 				mkx(ECall(r.rt("getKeyValueIterator"), [expr(x)]));
 			case [TField(_, FEnum(en, ef)), _]:
-				mkx(ENew(field(r.type(TEnumDecl(en), p), ef.efName, enumCtorNs(en), p), values()));
+				mkx(ENew(field(r.type(TEnumDecl(en), p), ef.efName, NEnumCtor(en), p), values()));
 			case _:
 				var f = expr(callee);
 				if (ts) f = typeArgs(f, callee);
@@ -1097,6 +1066,7 @@ class Lower {
 	static function fresh(x:Ex):Bool return switch x.def {
 		case EArray(_) | EObject(_) | EFn(_) | ENew(_, _): true;
 		case EId(s): s.name == "NaN";
+		case ERef(RIdent("NaN")): true;
 		case ERaw([RText("NaN")]): true;
 		case EMember(_, "NaN"): true;
 		case _: false;
@@ -1146,7 +1116,15 @@ class Lower {
 		return !Casts.numeric(key.etype) && (!Casts.tsAny(inner.etype) || inner.eexpr.match(TIdent(_) | TTypeExpr(_))) ? any(o) : o;
 	}
 
-	static final vendorRe = ~/^(moz|webkit|ms|o)[A-Z]/;
+	// `moz`, `webkit`, `ms` or `o` before a capital (`webkitHidden`)
+	static function vendorPrefixed(name:String):Bool {
+		for (v in ["moz", "webkit", "ms", "o"]) if (StringTools.startsWith(name, v) && name.length > v.length) {
+			var c = StringTools.fastCodeAt(name, v.length);
+			if (c >= "A".code && c <= "Z".code) return true;
+		}
+		return false;
+	}
+
 
 	// the object of a field access: `any` where TypeScript would not have the field Haxe reads
 	function fieldObject(x:TExpr, f:TFieldAccess):Ex {
@@ -1172,7 +1150,7 @@ class Lower {
 			// (of a type parameter's value: TypeScript has its constraint)
 			case FInstance(_, _, _) | FAnon(_) if (follow(x.etype).match(TInst({clKind: KTypeParameter(_)}, _))): any(o);
 			// (an extern's vendor-prefixed member, which TypeScript's library has not)
-			case FInstance(c, _, cf) if (hasClassFlag(c, CExtern) && vendorRe.match(cf.cfName)): any(o);
+			case FInstance(c, _, cf) if (hasClassFlag(c, CExtern) && vendorPrefixed(cf.cfName)): any(o);
 			case FDynamic(_) if (!Casts.tsAny(x.etype) && !x.eexpr.match(TConst(TSuper))): any(o);
 			case _: o;
 		}
@@ -1205,7 +1183,7 @@ class Lower {
 		if (anyOn(f)) return f;
 		return switch callee.eexpr {
 			case TField(o, FStatic(c, cf) | FInstance(c, _, cf)) if (cf.cfParams.length > 0 && !hasClassFlag(c, CExtern)
-				&& f.def.match(EMember(_) | EField(_) | EIndex(_) | EId(_) | EFriend(_)) && (o.eexpr.match(TTypeExpr(_)) || follow(o.etype).match(TInst(_, _))) && typed(o)):
+				&& f.def.match(EMember(_) | EField(_) | EIndex(_) | EId(_) | ERef(_) | EFriend(_)) && (o.eexpr.match(TTypeExpr(_)) || follow(o.etype).match(TInst(_, _))) && typed(o)):
 				var args = instantiation(cf, callee.etype);
 				args == null ? f : ex(ETypeArgs(f, args), f.pos);
 			case _: f;

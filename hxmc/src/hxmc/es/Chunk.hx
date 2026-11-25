@@ -32,6 +32,11 @@ private class Item {
 	public var initInBody = true;
 	// (modules) its `__init__` runs in the entry
 	public var initLate = false;
+	// its code, lowered (Lowering): a class's declaration, its statics' values, its `__init__`'s, its module's functions
+	public var decl:Null<ClassDecl> = null;
+	public final values = new Map<TClassField, Ex>();
+	public var init:Null<Array<St>> = null;
+	public final fns = new Map<TClassField, Fn>();
 
 	public function new(t, index, sym, path) {
 		this.t = t;
@@ -70,6 +75,125 @@ private class OutFile {
 	}
 }
 
+// what a lowering used of the program (Lower.Resolve's calls), in its order; `file`: the file its code is in
+private enum Use {
+	UScope(e:TExpr);
+	UDeclare(s:Sym);
+	UType(t:ModuleType, p:Pos, file:Int);
+	UPath(path:String, file:Int);
+	UIdent(name:String, file:Int);
+	UModuleField(m:ModuleDef, f:TClassField, file:Int);
+	// (a module-level function's name: its binding)
+	UFnName(fn:Fn, m:ModuleDef, f:TClassField, file:Int);
+	URt(name:String, file:Int);
+	UIndex(file:Int);
+	URaw(text:String, file:Int);
+	URefer(path:String);
+	// (modules) a split's code lowered where it is called, back in the caller's file
+	USplitDone(split:Int, caller:Int);
+	// a Lower's locals' names
+	ULocals(names:Array<String>);
+}
+
+// A lowering of a part of the program (a type's code, the main code, ...): it changes nothing it shares with others,
+// so they run in parallel. What it uses of the program it notes (Use); its references (Ref) the printers resolve. Chunk
+// replays the notes of all in the program's order (replay): the files' imports, the runtime's parts, the names in use
+// are those of one lowering after the other.
+@:access(hxmc.es.Chunk)
+private class Lowering implements Lower.Resolve {
+	final chunk:Chunk;
+	// the file the code is in (modules: a split's, while its code is lowered where it is called)
+	var file:Int;
+	public final uses:Array<Use> = [];
+	final features = new Map<String, Bool>();
+	public final run:Null<Lowering->Void>;
+
+	public function new(chunk, file, run) {
+		this.chunk = chunk;
+		this.file = file;
+		this.run = run;
+	}
+
+	public function lower():Lower return new Lower(chunk.com, this);
+
+	// a Lower is done: its locals' names are taken
+	public function done(l:Lower) uses.push(ULocals(l.localNames()));
+
+	public function fnName(fn:Fn, m:ModuleDef, f:TClassField) uses.push(UFnName(fn, m, f, file));
+
+	public function type(t:ModuleType, p:Pos):Ex {
+		uses.push(UType(t, p, file));
+		return ex(ERef(RType(t)), p);
+	}
+
+	public function typeByPath(pack:Array<String>, name:String, p:Pos):Ex {
+		var path = Chunk.dot({pack: pack, name: name});
+		if (!chunk.byPath.exists(path)) Error.abort("es: " + path + " is not in the program", p);
+		uses.push(UPath(path, file));
+		return ex(ERef(RPath(path)));
+	}
+
+	public function moduleField(m:ModuleDef, f:TClassField, p:Pos):Ex {
+		uses.push(UModuleField(m, f, file));
+		return ex(ERef(RModuleField(m, f)), p);
+	}
+
+	public function rt(name:String):Ex {
+		uses.push(URt(name, file));
+		return Chunk.rtEx(name);
+	}
+
+	public function index():Ex {
+		if (!chunk.tsOut) return rt("index");
+		uses.push(UIndex(file));
+		return ex(ERef(RIndex));
+	}
+
+	public function ident(name:String):Ex {
+		var l = Chunk.LEGACY.get(name);
+		if (l != null) return ex(ERaw([RText(rawText(l))]));
+		uses.push(UIdent(name, file));
+		return ex(ERef(RIdent(name)));
+	}
+
+	public function rawText(code:String):String {
+		var out = Chunk.legacyText(code);
+		uses.push(URaw(out, file));
+		return out;
+	}
+
+	public function feature(f:String):Bool {
+		var v = features.get(f);
+		if (v == null) features.set(f, v = chunk.feature(f));
+		return v;
+	}
+
+	public function refer(path:String):Void uses.push(URefer(path));
+
+	public function stdExtern(c:TClass):Bool return chunk.stdExtern(c);
+
+	public function split(e:TExpr):Null<SplitPoint> return chunk.split(e);
+
+	public function splitKey(name:String):Ex return ex(ERef(RSplitKey(name)));
+
+	public function inSplit<R>(s:SplitPoint, f:Int->R):R {
+		var id = chunk.fileOfSplit(s), caller = file;
+		file = id;
+		var r = f(id);
+		file = caller;
+		uses.push(USplitDone(id, caller));
+		return r;
+	}
+
+	public function splitsInline():Bool return chunk.modules;
+
+	public function enterScope(e:TExpr):Void uses.push(UScope(e));
+
+	public function declare(s:Sym):Void uses.push(UDeclare(s));
+
+	public function ts():Bool return chunk.tsOut;
+}
+
 // The bundled output (-D hxmc.js=es): the program in one file, and a file per split (js.Bundle.split).
 //
 // The main file is a classic script as much as a module (`"use strict";` and a block, so nothing is a global): a
@@ -82,7 +206,7 @@ private class OutFile {
 // types it reaches are declared and initialized before); the others, and the `__init__`s that cannot run in a
 // `static {}` block, run after every type of the file is declared, in Haxe's order (docs/plans/esgen.md,
 // "Statics").
-class Chunk implements Lower.Resolve {
+class Chunk {
 	final com:Gctx;
 	final splits:Splits;
 	final files:Array<OutFile> = [];
@@ -103,11 +227,6 @@ class Chunk implements Lower.Resolve {
 	var interfaceValues = false;
 	// externs with @:jsRequire
 	final requires = new Map<String, {sym:Sym, module:String, path:Null<String>}>();
-	// the lowered code, by type
-	final classDecls = new Map<Int, ClassDecl>();
-	final staticValues = new Map<TClassField, Ex>();
-	final initCode = new Map<Int, Array<St>>();
-	final moduleFns = new Map<TClassField, Fn>();
 	var mainCode:Array<St> = [];
 	// types whose code a deferred `__init__` reaches: not initialized before it runs
 	final tainted = new Map<Int, Bool>();
@@ -142,7 +261,11 @@ class Chunk implements Lower.Resolve {
 		for (c in splits.chunks) files.push(new OutFile(files.length, c));
 		// (modules: the entry is the main module's file, when they have one path)
 		if (modules) files[0].path = Path.withoutDirectory(com.file);
-		for (s in splits.splits) splitCalls.set(s.call, s);
+		for (s in splits.splits) {
+			splitCalls.set(s.call, s);
+			if (!splitKeys.exists(s.name)) splitKeys.set(s.name, new Sym(SRuntime, Printer.quote(s.name)));
+		}
+		stdPaths = [for (p in com.classPaths.filter(p -> p.isStdPath() || p.scope == StdTarget)) core.Path.getFullPath(p.path)];
 	}
 
 	public static function generate(com:Gctx) {
@@ -150,13 +273,22 @@ class Chunk implements Lower.Resolve {
 		filters.ES6Ctors.rewriteCtors(com);
 		var c = new Chunk(com);
 		if (com.debug || Gctx.defined(com, core.Define.JsSourceMap) || Gctx.defined(com, core.Define.SourceMap)) c.smap = new SourceMap();
-		c.collect();
-		if (c.modules) c.breakCycles();
-		c.lowerAll();
-		if (c.modules) c.order();
-		c.place();
-		c.name();
-		c.write();
+		inline function phase(name:String, f:Void->Void) {
+			var stop = core.Timer.startTimer(com.timerCtx, ["generate", "js", name]);
+			f();
+			stop();
+		}
+		phase("collect", () -> {
+			c.collect();
+			if (c.modules) c.breakCycles();
+		});
+		phase("lower", () -> c.lowerAll());
+		phase("place", () -> {
+			if (c.modules) c.order();
+			c.place();
+			c.name();
+		});
+		phase("write", () -> c.write());
 	}
 
 	// ------------------------------------------------------------------ the types
@@ -244,7 +376,11 @@ class Chunk implements Lower.Resolve {
 		return item;
 	}
 
-	// ------------------------------------------------------------------ Lower.Resolve
+	// ------------------------------------------------------------------ the program's bindings
+	//
+	// What the lowerings used (Lowering), replayed in the program's order (replay), and what the assembly of the files
+	// uses as it goes: what each file imports, the runtime's parts, the names in use. Their references (Ref) as the
+	// output has them (refEx), which the printers ask for and which changes nothing.
 
 	// a binding of file `file` the file being lowered uses
 	function use(s:Sym, file:Int):Ex {
@@ -279,14 +415,38 @@ class Chunk implements Lower.Resolve {
 		return use(item.sym, item.file);
 	}
 
+	// (what `type` gives, changing nothing)
+	function typeValue(t:ModuleType, p:Null<Pos>):Ex {
+		switch t {
+			case TClassDecl(c) if (isRequire(c)):
+				return ex(EId(requires.get(dot(c.clPath)).sym));
+			case TClassDecl(c) if (hasClassFlag(c, CExtern)):
+				var item = byPath.get(dot(c.clPath));
+				return item != null ? ex(EId(item.sym)) : pathEx(dot(c.clPath), p);
+			case TAbstractDecl(a):
+				var n = dot(a.aPath);
+				return switch n {
+					case "Int" | "Float" | "Bool" | "Dynamic" | "Class" | "Enum": rtEx(n);
+					case _: pathEx(n, p);
+				}
+			case TEnumDecl(e) if (hasEnumFlag(e, EnExtern)):
+				return pathEx(dot(e.ePath), p);
+			case _:
+		}
+		var item = byPath.get(dot(tPath(t)));
+		return item == null ? pathEx(dot(tPath(t)), p) : ex(EId(item.sym));
+	}
+
 	public function typeByPath(pack:Array<String>, name:String, p:Pos):Ex {
 		var item = byPath.get(dot({pack: pack, name: name}));
 		if (item == null) Error.abort("es: " + dot({pack: pack, name: name}) + " is not in the program", p);
 		return use(item.sym, item.file);
 	}
 
+	static function moduleFieldKey(m:ModuleDef, f:TClassField):String return dot(m.mPath) + "." + f.cfName;
+
 	public function moduleField(m:ModuleDef, f:TClassField):Sym {
-		var k = dot(m.mPath) + "." + f.cfName;
+		var k = moduleFieldKey(m, f);
 		var s = moduleFields.get(k);
 		if (s == null) moduleFields.set(k, s = new Sym(SLocal, f.cfName));
 		var owner = moduleFieldOwner.get(k);
@@ -299,6 +459,9 @@ class Chunk implements Lower.Resolve {
 		rtFiles.set(current, true);
 		return ex(EMember(ex(EId(global("$hx"))), name));
 	}
+
+	// (`$hx.<name>`, of a binding of its own)
+	static function rtEx(name:String):Ex return ex(EMember(ex(EId(new Sym(SGlobal, "$hx"))), name));
 
 	// (TypeScript: a binding of its own, which TypeScript narrows `x[index]` by, imported from the runtime)
 	final enumIndex = new Sym(SLocal, "index");
@@ -329,8 +492,14 @@ class Chunk implements Lower.Resolve {
 	}
 
 	function globalPath(path:String, p:Pos):Ex {
+		global(path.split(".")[0]);
+		return pathEx(path, p);
+	}
+
+	// (a global's binding: of its name, which no binding of the program takes)
+	static function pathEx(path:String, p:Null<Pos>):Ex {
 		var parts = path.split(".");
-		var e = ex(EId(global(parts[0])), p);
+		var e = ex(EId(new Sym(SGlobal, parts[0])), p);
 		for (i in 1...parts.length) e = Lower.member(e, parts[i], p);
 		return e;
 	}
@@ -356,10 +525,20 @@ class Chunk implements Lower.Resolve {
 	}
 
 	public function rawText(code:String):String {
-		var out = ~/\$[A-Za-z_]+/g.map(code, r -> {
-			var l = LEGACY.get(r.matched(0));
-			l == null ? r.matched(0) : l;
-		});
+		var out = legacyText(code);
+		rawUses(out);
+		return out;
+	}
+
+	// (Genjs's runtime names replaced by the runtime's)
+	static function legacyText(code:String):String return ~/\$[A-Za-z_]+/g.map(code, r -> {
+		var l = LEGACY.get(r.matched(0));
+		l == null ? r.matched(0) : l;
+	});
+
+	// what untyped code uses: the runtime's parts it names, the types it names by Genjs's names; its words, which no
+	// binding takes
+	function rawUses(out:String) {
 		~/\$hx\.([A-Za-z_]+)/g.map(out, r -> {
 			rtUsed.set(r.matched(1), true);
 			rtFiles.set(current, true);
@@ -373,12 +552,95 @@ class Chunk implements Lower.Resolve {
 			if (item != null) use(item.sym, item.file);
 			w;
 		});
-		return out;
 	}
 
 	public function feature(f:String):Bool return Gctx.hasFeature(com, f);
 
-	public function ts():Bool return tsOut;
+	// a reference as the output has it (the printers': changes nothing)
+	function refEx(r:Ref, p:Null<Pos>):Ex return switch r {
+		case RType(t): typeValue(t, p);
+		case RPath(path): ex(EId(byPath.get(path).sym));
+		case RIdent(name):
+			var item = byFlat.get(name);
+			item != null ? ex(EId(item.sym)) : pathEx(name, null);
+		case RModuleField(m, f): ex(EId(moduleFields.get(moduleFieldKey(m, f))), p);
+		case RSplitKey(name): ex(EId(splitKeys.get(name)));
+		case RIndex: ex(EId(enumIndex));
+	}
+
+	// what a lowering used, as if it happened now (the file being lowered: its file's)
+	function replay(u:Lowering) {
+		var was = current;
+		for (x in u.uses) switch x {
+			case UScope(e):
+				enterScope();
+				if (fieldNames != null) visitFields(e);
+			case UDeclare(s):
+				declare(s);
+			case UType(t, p, file):
+				current = file;
+				type(t, p);
+			case UPath(path, file):
+				current = file;
+				var item = byPath.get(path);
+				use(item.sym, item.file);
+			case UIdent(name, file):
+				current = file;
+				ident(name);
+			case UModuleField(m, f, file):
+				current = file;
+				moduleField(m, f);
+			case UFnName(fn, m, f, file):
+				current = file;
+				fn.name = moduleField(m, f);
+			case URt(name, file):
+				current = file;
+				rt(name);
+			case UIndex(file):
+				current = file;
+				index();
+			case URaw(text, file):
+				current = file;
+				rawUses(text);
+			case URefer(path):
+				refs.set(path, true);
+			case USplitDone(split, caller):
+				// (what the split's code uses of the runtime, of npm modules (@:jsRequire): imported by the caller too)
+				if (rtFiles.exists(split)) rtFiles.set(caller, true);
+				if (indexFiles.exists(split)) indexFiles.set(caller, true);
+				if (enumValueFiles.exists(split)) enumValueFiles.set(caller, true);
+				for (s => from in files[split].needs) if (from < 0) files[caller].needs.set(s, from);
+			case ULocals(names):
+				for (n in names) localNames.set(n, true);
+		}
+		current = was;
+	}
+
+	// (FieldNames) a field's code, as a lowering began it (ret: the return type of the function e is in)
+	function visitFields(e:TExpr) {
+		function walk(e:TExpr, ret:Null<T>) {
+			fieldNames.visit(e, ret);
+			switch e.eexpr {
+				case TFunction(f):
+					walk(f.tfExpr, f.tfType);
+					return;
+				case _:
+			}
+			Texpr.iter(x -> walk(x, ret), e);
+		}
+		walk(e, null);
+	}
+
+	// lowered now, in the file being assembled (`current`); its locals' names taken (`locals`)
+	function lowerNow<R>(f:Lower->R, locals = false):R {
+		var u = new Lowering(this, current, null);
+		var l = u.lower();
+		var r = f(l);
+		if (locals) u.done(l);
+		replay(u);
+		return r;
+	}
+
 
 	// (--debug, -D js-source-map, -D source-map) the files' source maps, beside them (`=inline`: in them), SourceMap
 	var smap:Null<SourceMap> = null;
@@ -412,6 +674,7 @@ class Chunk implements Lower.Resolve {
 		p.types = types;
 		if (modules) p.splitImport = splitImport;
 		if (fieldNames != null && (tight || fieldsDebug)) p.fieldName = fieldName;
+		p.ref = refEx;
 		p.smap = smap;
 		return p;
 	}
@@ -449,41 +712,22 @@ class Chunk implements Lower.Resolve {
 
 	public function refer(path:String):Void refs.set(path, true);
 
-	var stdPaths:Null<Array<String>> = null;
+	// (the std's class paths, TypeScript's externs)
+	var stdPaths:Array<String> = [];
 
 	public function stdExtern(c:TClass):Bool {
-		if (stdPaths == null) stdPaths = [for (p in com.classPaths.filter(p -> p.isStdPath() || p.scope == StdTarget)) core.Path.getFullPath(p.path)];
 		var file = core.Path.UniqueKey.lazyPath(c.clModule.mExtra.mFile);
 		return hasClassFlag(c, CExtern) && Lambda.exists(stdPaths, d -> StringTools.startsWith(file, d));
 	}
 
 	public function split(e:TExpr):Null<SplitPoint> return splitCalls.get(e);
 
+	// the splits' keys in the runtime's table, by their names
 	final splitKeys = new Map<String, Sym>();
 
-	public function splitKey(name:String):Sym {
-		var s = splitKeys.get(name);
-		if (s == null) splitKeys.set(name, s = new Sym(SRuntime, Printer.quote(name)));
-		return s;
-	}
-
-	public function splitsInline():Bool return modules;
-
-	// (modules) a split's code lowered for its file: what it uses that file's needs, not the caller's; what it uses of the
-	// runtime, the caller's, which imports it as it always does
-	public function inSplit<R>(s:SplitPoint, f:Int->R):R {
-		var file = Lambda.find(files, x -> isSplit(x) && x.chunk == s.chunk);
-		var caller = current;
-		current = file.id;
-		var r = f(file.id);
-		current = caller;
-		if (rtFiles.exists(file.id)) rtFiles.set(caller, true);
-		if (indexFiles.exists(file.id)) indexFiles.set(caller, true);
-		if (enumValueFiles.exists(file.id)) enumValueFiles.set(caller, true);
-		// (an npm module (@:jsRequire): imported as the caller imports one)
-		for (s => from in file.needs) if (from < 0) files[caller].needs.set(s, from);
-		return r;
-	}
+	// (modules) the file of a split's code, which is lowered where it is called: what it uses that file's needs, not the
+	// caller's; what it uses of the runtime, the caller's, which imports it as it always does (replay)
+	function fileOfSplit(s:SplitPoint):Int return Lambda.find(files, x -> isSplit(x) && x.chunk == s.chunk).id;
 
 	// the files files reach through what they import
 	function reach(roots:Array<Int>):Map<Int, Bool> {
@@ -623,74 +867,106 @@ class Chunk implements Lower.Resolve {
 
 	// ------------------------------------------------------------------ lowering
 
+	// f of each, on the compiler's pool: but with -D disable-parallelism (-D hxmc.js.parallel: even then) or
+	// -D hxmc.js.serial, one after the other
+	function parallel<A>(l:Array<A>, f:A->Void) {
+		if (l.length < 2 || Gctx.rawDefined(com, "hxmc.js.serial")) {
+			for (x in l) f(x);
+			return;
+		}
+		var was = context.Parallel.enable;
+		if (Gctx.rawDefined(com, "hxmc.js.parallel")) context.Parallel.enable = true;
+		try {
+			context.Parallel.runWithPool(com.pool, pool -> {
+				context.Parallel.ParallelArray.iter(pool, f, l);
+				null;
+			});
+		} catch (e:Dynamic) {
+			context.Parallel.enable = was;
+			throw e;
+		}
+		context.Parallel.enable = was;
+	}
+
+	// Each type's code, the externs' `__init__`s, the main code, the splits' initializers: lowered in parallel, then what
+
+	// each used, in that order (replay).
 	function lowerAll() {
 		// (-D hxmc.js.minify.fields: what the lowering tells of the fields, FieldNames)
 		if (fieldNames == null && Gctx.rawDefined(com, "hxmc.js.minify.fields")) fieldNames = new FieldNames(com);
-		for (item in items) {
-			current = item.file;
-			var lower = new Lower(com, this);
-			switch item.t {
-				case TClassDecl(c) if (fieldsModule(c) != null):
-					var m = fieldsModule(c);
-					for (f in c.clStatics) switch f.cfExpr {
-						case null:
-						case e = {eexpr: TFunction(fn)}:
-							lower.prepare(e);
-							var l = lower.func(fn, false, e.epos, f.cfType, f.cfParams);
-							l.name = moduleField(m, f);
-							moduleFns.set(f, l);
-						case e:
-							lower.prepare(e);
-							item.statics.push(f);
-							staticValues.set(f, lower.expr(e));
-					}
-				case TClassDecl(c):
-					classDecls.set(item.index, lowerClass(item, c, lower));
-				case TEnumDecl(_):
-				case _:
-			}
-			collectLocals(lower);
-		}
-		current = 0;
-		for (c in externInits) {
-			var lower = new Lower(com, this);
-			lower.prepare(c.clInit.cfExpr);
-			externInitCode.set(c, lower.statements(c.clInit.cfExpr));
-			collectLocals(lower);
-		}
-		if (com.main.mainExpr != null) {
-			var lower = new Lower(com, this);
+		var units:Array<Lowering> = [];
+		inline function unit(file:Int, run:Lowering->Void) units.push(new Lowering(this, file, run));
+		for (item in items) unit(item.file, u -> lowerItem(u, item));
+		var externCode:Array<Array<St>> = [for (_ in externInits) null];
+		for (i in 0...externInits.length) unit(0, u -> {
+			var init = externInits[i].clInit.cfExpr;
+			var lower = u.lower();
+			lower.prepare(init);
+			externCode[i] = lower.statements(init);
+			u.done(lower);
+		});
+		if (com.main.mainExpr != null) unit(0, u -> {
+			var lower = u.lower();
 			lower.prepare(com.main.mainExpr);
 			mainCode = lower.statements(com.main.mainExpr);
-			collectLocals(lower);
-		}
+			u.done(lower);
+		});
 		// (a split's initializers: functions of their captures, in its file; modules: none, its code is where it is called)
-		if (!modules) for (f in files) if (isSplit(f)) {
-			current = f.id;
-			for (s in f.chunk.splits) {
-				var lower = new Lower(com, this);
-				var fn:TFunc = {
-					tfArgs: haxe.ds.Vector.fromArrayCopy([for (v in s.captures) {variable: v, defaultValue: (null : TExpr)}]),
-					tfType: s.fn.tfType,
-					tfExpr: s.fn.tfExpr
-				};
-				lower.prepare(s.fn.tfExpr);
-				f.inits[s.index] = lower.func(fn, true, s.call.epos);
-				collectLocals(lower);
-			}
-		}
-		current = 0;
+		if (!modules) for (f in files) if (isSplit(f)) unit(f.id, u -> for (s in f.chunk.splits) {
+			var lower = u.lower();
+			var fn:TFunc = {
+				tfArgs: haxe.ds.Vector.fromArrayCopy([for (v in s.captures) {variable: v, defaultValue: (null : TExpr)}]),
+				tfType: s.fn.tfType,
+				tfExpr: s.fn.tfExpr
+			};
+			lower.prepare(s.fn.tfExpr);
+			f.inits[s.index] = lower.func(fn, true, s.call.epos);
+			u.done(lower);
+		});
+		var stop = core.Timer.startTimer(com.timerCtx, ["generate", "js", "lower", "units"]);
+		parallel(units, u -> u.run(u));
+		stop();
+		for (i in 0...externInits.length) externInitCode.set(externInits[i], externCode[i]);
+		stop = core.Timer.startTimer(com.timerCtx, ["generate", "js", "lower", "replay"]);
+		for (u in units) replay(u);
+		stop();
 	}
+
+	// a type's code (Lowering: its own, which nothing else lowers)
+	function lowerItem(u:Lowering, item:Item) {
+		var lower = u.lower();
+		switch item.t {
+			case TClassDecl(c) if (fieldsModule(c) != null):
+				var m = fieldsModule(c);
+				for (f in c.clStatics) switch f.cfExpr {
+					case null:
+					case e = {eexpr: TFunction(fn)}:
+						lower.prepare(e);
+						var l = lower.func(fn, false, e.epos, f.cfType, f.cfParams);
+						u.fnName(l, m, f);
+						item.fns.set(f, l);
+					case e:
+						lower.prepare(e);
+						item.statics.push(f);
+						item.values.set(f, lower.expr(e));
+				}
+			case TClassDecl(c):
+				item.decl = lowerClass(u, item, c, lower);
+			case _:
+		}
+		u.done(lower);
+	}
+
 
 	static function key(name:String):Key return validIdent(name) ? KName(name) : KString(name);
 
 	// a Haxe field's key (its name minified: FieldNames)
-	static function fieldKey(name:String, ns:Int):Key return validIdent(name) ? KField(name, ns) : KString(name);
+	static function fieldKey(name:String, ns:Ns):Key return validIdent(name) ? KField(name, ns) : KString(name);
 
 	// (FieldNames) the namespace of c's instances' fields, of its statics
-	inline function ins(c:TClass):Int return fieldNames == null ? -1 : fieldNames.instanceNs(c);
+	static inline function ins(c:TClass):Ns return NInstance(c);
 
-	inline function sns(c:TClass):Int return fieldNames == null ? -1 : fieldNames.staticNs(c);
+	static inline function sns(c:TClass):Ns return NStatic(c);
 
 	// a method's function; TypeScript: one of several signatures (@:overload) takes and returns anything
 	function methodFn(lower:Lower, f:TClassField, fn:TFunc, e:TExpr):Fn {
@@ -719,7 +995,7 @@ class Chunk implements Lower.Resolve {
 	static function prot(f:TClassField, m:Member):Member
 		return hasClassFieldFlag(f, CfPublic) || ~/^(get|set)_/.match(f.cfName) ? m : MProtected(m);
 
-	function lowerClass(item:Item, c:TClass, lower:Lower):ClassDecl {
+	function lowerClass(u:Lowering, item:Item, c:TClass, lower:Lower):ClassDecl {
 		var members:Array<Member> = [];
 		if (hasClassFlag(c, CInterface)) return {name: item.sym, superClass: null, members: members};
 		lower.cls = c;
@@ -750,19 +1026,19 @@ class Chunk implements Lower.Resolve {
 				lower.prepare(e);
 				members.push(prot(f, MMethod(fieldKey(f.cfName, sns(c)), methodFn(lower, f, fn, e), true, MkMethod)));
 			// (Type.getClassFields: a variable without a value is a field too)
-			case [Var(_), null] if (feature("Type.getClassFields") && isPhysicalField(f)):
+			case [Var(_), null] if (u.feature("Type.getClassFields") && isPhysicalField(f)):
 				item.statics.push(f);
-				staticValues.set(f, ex(ENull));
+				item.values.set(f, ex(ENull));
 			// (TypeScript: declared, as Haxe has it)
 			case [Var(_), null] if (tsOut && isPhysicalField(f)):
 				members.push(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
 			case [_, null]:
-			case [_, {eexpr: TConst(TNull)}] if (!feature("Type.getClassFields")):
+			case [_, {eexpr: TConst(TNull)}] if (!u.feature("Type.getClassFields")):
 				if (tsOut && isPhysicalField(f)) members.push(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
 			case [_, e]:
 				lower.prepare(e);
 				item.statics.push(f);
-				staticValues.set(f, lower.expr(e));
+				item.values.set(f, lower.expr(e));
 		}
 		switch (c.clInit == null ? null : c.clInit.cfExpr) {
 			case null:
@@ -770,11 +1046,11 @@ class Chunk implements Lower.Resolve {
 				// (TypeScript: as code outside the class, where it may run)
 				lower.cls = null;
 				lower.prepare(e);
-				initCode.set(item.index, lower.statements(e));
+				item.init = lower.statements(e);
 		}
 		return {
 			name: item.sym,
-			superClass: c.clSuper == null ? null : type(TClassDecl(c.clSuper.cls), c.clPos),
+			superClass: c.clSuper == null ? null : u.type(TClassDecl(c.clSuper.cls), c.clPos),
 			members: members,
 			tparams: c.clParams,
 			superArgs: c.clSuper == null ? null : c.clSuper.params.toArray(),
@@ -932,12 +1208,13 @@ class Chunk implements Lower.Resolve {
 		// (modules: the `__init__`s that run in the entry, lowered as its code)
 		if (modules) for (item in items) if (item.initLate) {
 			current = 0;
-			var lower = new Lower(com, this);
 			var init = item.cls.clInit.cfExpr;
-			lower.prepare(init);
 			lateInits.push(st(SComment(item.path + ".__init__")));
-			for (s in initStatements(lower.statements(init))) lateInits.push(s);
-			collectLocals(lower);
+			for (s in initStatements(lowerNow(lower -> {
+				lower.prepare(init);
+				lower.statements(init);
+			}, true)))
+				lateInits.push(s);
 		}
 		current = 0;
 		if (Gctx.rawDefined(com, "hxmc.js.order_report")) {
@@ -1299,7 +1576,7 @@ class Chunk implements Lower.Resolve {
 		});
 		if (hasStringRec)
 			rtSource = rtSource.replace("EnumValue: class EnumValue {}",
-				"EnumValue: class EnumValue {\n\t\ttoString() {\n\t\t\treturn $hx.types." + byPath.get("js.Boot").sym.name + "." + fieldName("__string_rec", fieldNames == null ? -1 : fieldNames.staticNsByPath("js.Boot")) + "(this, \"\");\n\t\t}\n\t}");
+				"EnumValue: class EnumValue {\n\t\ttoString() {\n\t\t\treturn $hx.types." + byPath.get("js.Boot").sym.name + "." + fieldName("__string_rec", NStaticPath("js.Boot")) + "(this, \"\");\n\t\t}\n\t}");
 		var written = new Map<String, Bool>();
 		var hashLength = Std.parseInt(Gctx.definedValueSafe(com, "hxmc.js.hash_length"));
 		if (hashLength == null) hashLength = 8;
@@ -1537,20 +1814,10 @@ class Chunk implements Lower.Resolve {
 
 	var tight = false;
 
-	// the locals of each lowering, which minified names are chosen among
-	final localGroups:Array<Array<Sym>> = [];
-
-	function collectLocals(lower:Lower) {
-		for (n in lower.localNames()) localNames.set(n, true);
-		localGroups.push(lower.localSyms());
-	}
-
 	// (-D hxmc.js.minify.fields: the fields' names too, FieldNames)
 	var fieldNames:Null<FieldNames> = null;
 
 	var fieldsDebug = false;
-
-	public function fieldAnalysis():Null<FieldNames> return fieldNames;
 
 	var fieldsFinished = false;
 
@@ -1563,9 +1830,9 @@ class Chunk implements Lower.Resolve {
 		if (Gctx.rawDefined(com, "hxmc.js.minify.fields_report")) Sys.println(fieldNames.report(Gctx.definedValueSafe(com, "hxmc.js.minify.fields_report") == "names"));
 	}
 
-	public function fieldName(name:String, ns:Int):String {
+	public function fieldName(name:String, ns:Ns):String {
 		if (fieldNames == null || !tight && !fieldsDebug) return name;
-		return fieldNames.lookup(name, ns);
+		return fieldNames.lookup(name, fieldNames.nsIndex(ns));
 	}
 
 	// short names (minified): the types and module-level fields by how often the code uses them, the shortest to the
@@ -1711,7 +1978,7 @@ class Chunk implements Lower.Resolve {
 		}, values);
 		if (hasStringRec && rtSource != "")
 			rtSource = rtSource.replace("EnumValue: class EnumValue {}",
-				"EnumValue: class EnumValue {\n\t\ttoString() {\n\t\t\treturn " + byPath.get("js.Boot").sym.name + "." + fieldName("__string_rec", fieldNames == null ? -1 : fieldNames.staticNsByPath("js.Boot")) + "(this, \"\");\n\t\t}\n\t}");
+				"EnumValue: class EnumValue {\n\t\ttoString() {\n\t\t\treturn " + byPath.get("js.Boot").sym.name + "." + fieldName("__string_rec", NStaticPath("js.Boot")) + "(this, \"\");\n\t\t}\n\t}");
 		out.add(rtSource);
 		if (rtSource != "") out.add("\n");
 		out.add(body);
@@ -1768,7 +2035,7 @@ class Chunk implements Lower.Resolve {
 				if (resolveClass) body.statement(st(SExpr(ex(EAssign("=", ex(EIndex(rt("classes"), ex(EStr(item.path)))), ex(EId(item.sym)))))));
 				switch Texpr.buildMetadata(com.basic, item.t) {
 					case null:
-					case m: body.statement(st(SExpr(ex(EAssign("=", Lower.member(ex(EId(item.sym)), "__meta__"), new Lower(com, this).expr(m))))));
+					case m: body.statement(st(SExpr(ex(EAssign("=", Lower.member(ex(EId(item.sym)), "__meta__"), lowerNow(l -> l.expr(m)))))));
 				}
 			case _:
 		}
@@ -1781,7 +2048,7 @@ class Chunk implements Lower.Resolve {
 					if (tsOut) body.statement(exp(st(SInterface(item.sym, c))));
 					continue;
 				case TClassDecl(c):
-					var d = classDecls.get(item.index);
+					var d = item.decl;
 					var head:Array<Member> = [];
 					if (names && !c.clKind.match(KAbstractImpl(_))) head.push(MField(KComputed(rt("name")), ex(EStr(item.path)), true, null));
 					if (runtimeInterfaces && c.clImplements.length > 0)
@@ -1796,14 +2063,14 @@ class Chunk implements Lower.Resolve {
 					switch Texpr.buildMetadata(com.basic, item.t) {
 						case null:
 						// (not where the class has it already, Haxe's filters')
-						case m if (!c.clStatics.exists("__meta__")): head.push(MField(KName("__meta__"), new Lower(com, this).expr(m), true, TDynamic(null)));
+						case m if (!c.clStatics.exists("__meta__")): head.push(MField(KName("__meta__"), lowerNow(l -> l.expr(m)), true, TDynamic(null)));
 						case _:
 					}
 					// (the statics assigned later, and those without a value: declared before `__init__`, which may
 					// assign them, as Haxe has it)
 					var later:Array<Member> = [];
 					for (f in item.statics) {
-						var v = staticValues.get(f);
+						var v = item.values.get(f);
 						if (!item.inBody.get(f) && modules) {
 							for (m in lazy(item, f, v)) later.push(m);
 						} else if (!item.inBody.get(f)) {
@@ -1814,7 +2081,7 @@ class Chunk implements Lower.Resolve {
 						} else if (f.cfExpr == null || f.cfExpr.eexpr.match(TFunction(_))) head.push(prot(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType)));
 						else later.push(prot(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType)));
 					}
-					var init = initCode.get(item.index);
+					var init = item.init;
 					if (init != null && item.initInBody) head.push(MStaticBlock(init));
 					else if (init != null && !item.initLate) {
 						after.push(st(SComment(item.path + ".__init__")));
@@ -1890,7 +2157,7 @@ class Chunk implements Lower.Resolve {
 			MField(KPrivate(n + "_ready"), ex(EBool(false)), true, null),
 			MMethod(fieldKey(f.cfName, switch item.t {
 				case TClassDecl(c): sns(c);
-				case _: -1;
+				case _: NGlobal;
 			}), {
 				params: [],
 				rest: false,
@@ -1902,7 +2169,7 @@ class Chunk implements Lower.Resolve {
 			}, true, MkGet),
 			MMethod(fieldKey(f.cfName, switch item.t {
 				case TClassDecl(c): sns(c);
-				case _: -1;
+				case _: NGlobal;
 			}), {
 				params: [param],
 				rest: false,
@@ -1973,12 +2240,12 @@ class Chunk implements Lower.Resolve {
 	function moduleFieldsDecl(body:Printer, item:Item, c:TClass, deferredStatics:Array<St>) {
 		var m = fieldsModule(c);
 		for (f in c.clStatics) {
-			var fn = moduleFns.get(f);
+			var fn = item.fns.get(f);
 			if (fn != null) {
 				body.statement(exp(st(SFunction(fn))));
 				continue;
 			}
-			var v = staticValues.get(f);
+			var v = item.values.get(f);
 			if (v == null) continue;
 			var s = moduleField(m, f);
 			s.type = f.cfType;
@@ -2009,25 +2276,25 @@ class Chunk implements Lower.Resolve {
 		var names = [for (n in e.eConstrs.names()) n];
 		names.sort((a, b) -> e.eConstrs.find(a).efIndex - e.eConstrs.find(b).efIndex);
 		// (minified fields: the constructors' keys, the parameters' fields, renamed in the enum's namespaces, FieldNames)
-		var cns = fieldNames == null ? -1 : fieldNames.enumCtorNs(e), pns = fieldNames == null ? -1 : fieldNames.enumParamNs(e);
+		var cns = fieldNames == null ? -1 : fieldNames.enumCtorNs(e);
 		var spec:Array<Prop> = [];
 		for (n in names) {
 			var f = e.eConstrs.find(n);
 			var value = switch follow(f.efType) {
 				case TFun(s) if (s.args.length > 0):
 					var ps = [for (a in s.args) new Sym(SLocal, RESERVED.exists(a.name) ? "$" + a.name : a.name)];
-					var fnBody = [for (i in 0...ps.length) st(SExpr(ex(EAssign("=", Lower.field(ex(EThis), s.args[i].name, pns), ex(EId(ps[i]))))))];
+					var fnBody = [for (i in 0...ps.length) st(SExpr(ex(EAssign("=", Lower.field(ex(EThis), s.args[i].name, NEnumParam(e)), ex(EId(ps[i]))))))];
 					ex(EFn({params: ps, rest: false, arrow: false, body: fnBody, thisAny: tsOut ? true : null, ctor: true, contextual: true}));
 				case _:
 					ex(ENull);
 			}
-			spec.push({key: cns < 0 ? key(n) : fieldKey(n, cns), value: value});
+			spec.push({key: cns < 0 ? key(n) : fieldKey(n, NEnumCtor(e)), value: value});
 		}
 		if (named) spec.push({key: KComputed(rt("name")), value: ex(EStr(item.path))});
 		var args = [ex(EObject(spec))];
 		switch Texpr.buildMetadata(com.basic, item.t) {
 			case null:
-			case m: args.push(new Lower(com, this).expr(m));
+			case m: args.push(lowerNow(l -> l.expr(m)));
 		}
 		// (the constructors' names apart, their keys renamed, where the program reads them: Std.string, Type.enumConstructor)
 		if (cns >= 0 && (tight || fieldsDebug) && fieldNames.constructsRead) {

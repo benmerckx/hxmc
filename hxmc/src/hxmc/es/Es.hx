@@ -4,7 +4,9 @@ import core.Globals.Pos;
 import core.TType;
 
 // JavaScript (ES2022), nothing else: what the generator decides is in the tree, the printer only writes it
-// (docs/plans/esgen.md). Bindings are symbols (Sym), named once the whole output is known (Chunk).
+// (docs/plans/esgen.md). Bindings are symbols (Sym), named once the whole output is known (Chunk). What a lowering
+// cannot know from its own code (which binding a type has in the output, which renaming a field's name takes) it leaves
+// to the program as a whole: a reference (Ref), a namespace (Ns), which Chunk resolves as it prints.
 
 // a binding: a local, a type, a module-level field, the runtime's, a global
 class Sym {
@@ -46,8 +48,38 @@ enum SymKind {
 	}
 }
 
+// what a reference names, as the program as a whole has it (Chunk.refEx): a binding, a global path, the runtime's
+enum Ref {
+	// a type as a value: its binding, an npm module's (@:jsRequire), an extern's native path, the runtime's (`$hx.Int`)
+	RType(t:ModuleType);
+	// a type of the program by its path (js.Boot)
+	RPath(path:String);
+	// an untyped name: a type by Genjs's name for it (flat), else a global path
+	RIdent(name:String);
+	RModuleField(m:ModuleDef, f:TClassField);
+	// a split's key in the runtime's table (its name, its number minified)
+	RSplitKey(name:String);
+	// (TypeScript) the binding of `$hx.index`
+	RIndex;
+}
+
+// the namespace a field's name is renamed in (FieldNames, -D hxmc.js.minify.fields): a class family's instances', its
+// statics', an enum's constructors', their parameters'; NGlobal: the global one
+enum Ns {
+	NGlobal;
+	NInstance(c:TClass);
+	NStatic(c:TClass);
+	NStaticPath(path:String);
+	NEnumCtor(e:TEnum);
+	NEnumParam(e:TEnum);
+	// (the parameters' of the enum a constructor is of)
+	NCtorParam(ef:TEnumField);
+}
+
 enum ExDef {
 	EId(s:Sym);
+	// a binding the program as a whole decides (Ref)
+	ERef(r:Ref);
 	EThis;
 	ESuper;
 	ENull;
@@ -61,11 +93,10 @@ enum ExDef {
 	EClass(c:ClassDecl);
 	// o.name (name a valid identifier: Lower makes others EIndex)
 	EMember(o:Ex, name:String);
-	// a Haxe field's (its name minified: FieldNames)
-	// (ns: its namespace, FieldNames: a family's, a class's statics', -1 the global one)
-	EField(o:Ex, name:String, ns:Int);
+	// a Haxe field's (its name minified in its namespace: FieldNames)
+	EField(o:Ex, name:String, ns:Ns);
 	// a Haxe field's name as a string (`$hx.bind`'s)
-	EFieldName(name:String, ns:Int);
+	EFieldName(name:String, ns:Ns);
 	EPrivate(o:Ex, name:String);
 	// o.name past TypeScript's `protected` (Haxe's `@:privateAccess`, `@:access`, `@:allow`): `o["name"]` in TypeScript, which
 	// it checks as any other member but for access
@@ -105,7 +136,7 @@ enum RawPart {
 enum Key {
 	KName(s:String);
 	// a Haxe field's (its name minified: FieldNames)
-	KField(s:String, ns:Int);
+	KField(s:String, ns:Ns);
 	KString(s:String);
 	KPrivate(s:String);
 	KComputed(e:Ex);
@@ -222,9 +253,16 @@ class EsTools {
 
 	public static inline function st(def:StDef, ?pos:Pos):St return new St(def, pos);
 
-	static final idRe = ~/^[A-Za-z_$][A-Za-z0-9_$]*$/;
+	public static inline function identStart(c:Int):Bool return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code || c == "$".code;
 
-	public static function validIdent(s:String):Bool return idRe.match(s);
+	public static inline function identPart(c:Int):Bool return identStart(c) || (c >= "0".code && c <= "9".code);
+
+	// (no regular expression: lowerings and printers run in parallel, an EReg's state is its own)
+	public static function validIdent(s:String):Bool {
+		if (s.length == 0 || !identStart(StringTools.fastCodeAt(s, 0))) return false;
+		for (i in 1...s.length) if (!identPart(StringTools.fastCodeAt(s, i))) return false;
+		return true;
+	}
 
 	// the reserved words of ES2022 a binding may not be (strict mode, modules)
 	public static final RESERVED = [

@@ -7,6 +7,7 @@ import core.TFunctions.*;
 import core.Meta;
 import core.Texpr;
 import generators.Gctx;
+import hxmc.es.Es.Ns;
 
 // -D hxmc.js.minify.fields: short names for the program's fields, classes' and structures' alike, but for the names
 // something outside the program reads (a name, not a field: a name kept is kept everywhere, so whatever unifies with
@@ -379,6 +380,25 @@ class FieldNames {
 		var c = byPath.get(path);
 		return c == null ? -1 : staticNs(c);
 	}
+
+	// a namespace's index (-1: the global one), allocating none (the printers', in parallel: the lowerings' namespaces
+	// are those visit found)
+	public function nsIndex(ns:hxmc.es.Es.Ns):Int return switch ns {
+		case NGlobal: -1;
+		case NInstance(c): instanceNs(c);
+		case NStatic(c): staticNs(c);
+		case NStaticPath(p): staticNsByPath(p);
+		case NEnumCtor(e): enumNs(e);
+		case NEnumParam(e): paramNsOf(enumNs(e));
+		case NCtorParam(ef): enumOfCtor.exists(ef) ? paramNsOf(enumNs(enumOfCtor.get(ef))) : -1;
+	}
+
+	function enumNs(e:TEnum):Int {
+		var n = hasEnumFlag(e, EnExtern) ? null : enumNsOf.get(e);
+		return n == null ? -1 : n;
+	}
+
+	static inline function paramNsOf(n:Int):Int return n < 0 ? -1 : n + 1;
 
 	// a field's name as printed in namespace ns (-1: the global one)
 	public function lookup(name:String, ns:Int):String {

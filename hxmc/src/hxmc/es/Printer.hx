@@ -31,9 +31,63 @@ class Printer {
 	// objects and arrays up to this width stay on one line
 	static inline final INLINE_WIDTH = 80;
 
-	static final callRe = ~/^\x01(\.[A-Za-z_$][A-Za-z0-9_$]*)+\((\x01(, ?\x01)*)?\)$/;
-	static final pathRe = ~/^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
-	static final safeRe = ~/^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*(\((\x01(, ?\x01)*)?\))?$/;
+	// Untyped code's shapes the printer recognizes, by hand: printers run in parallel, and an EReg's match is its state.
+	// (`\x01` stands for a value; as `^...$` would, a line break may end the text)
+
+	// `a.b.c`
+	static function isPath(s:String):Bool return atEnd(s, path(s, 0));
+
+	// `\x01.f(\x01, \x01)`: a call of a method of the first value
+	static function isMethodCall(s:String):Bool {
+		if (s.length == 0 || StringTools.fastCodeAt(s, 0) != 1) return false;
+		var i = 1, members = 0;
+		while (i < s.length && StringTools.fastCodeAt(s, i) == ".".code) {
+			i = ident(s, i + 1);
+			if (i < 0) return false;
+			members++;
+		}
+		return members > 0 && atEnd(s, args(s, i));
+	}
+
+	// `a.b.c`, `a.b(\x01, \x01)`: what TypeScript checks as it does any other code
+	static function isPlainCall(s:String):Bool {
+		var i = path(s, 0);
+		if (i < 0) return false;
+		return atEnd(s, i) || atEnd(s, args(s, i));
+	}
+
+	static function atEnd(s:String, i:Int):Bool return i >= 0 && (i == s.length || i == s.length - 1 && StringTools.fastCodeAt(s, i) == "\n".code);
+
+	// (the end of an identifier at i, of identifiers joined by `.`, of `(...)` at i; -1: none)
+	static function ident(s:String, i:Int):Int {
+		if (i >= s.length || !EsTools.identStart(StringTools.fastCodeAt(s, i))) return -1;
+		i++;
+		while (i < s.length && EsTools.identPart(StringTools.fastCodeAt(s, i))) i++;
+		return i;
+	}
+
+	static function path(s:String, i:Int):Int {
+		i = ident(s, i);
+		while (i >= 0 && i < s.length && StringTools.fastCodeAt(s, i) == ".".code) i = ident(s, i + 1);
+		return i;
+	}
+
+	static function args(s:String, i:Int):Int {
+		inline function at(k:Int) return k < s.length ? StringTools.fastCodeAt(s, k) : -1;
+		if (i < 0 || at(i) != "(".code) return -1;
+		i++;
+		if (at(i) == 1) {
+			i++;
+			while (at(i) == ",".code) {
+				i++;
+				if (at(i) == " ".code) i++;
+				if (at(i) != 1) return -1;
+				i++;
+			}
+		}
+		return at(i) == ")".code ? i + 1 : -1;
+	}
+
 
 	final buf = new StringBuf();
 	final tight:Bool;
@@ -43,11 +97,13 @@ class Printer {
 	// (modules) a split's call: its imports, the pattern of what its code takes of them (Chunk.splitImport)
 	public var splitImport:Null<Int->{load:String, pattern:String}> = null;
 	// (minified) a Haxe field's name as printed (FieldNames)
-	public var fieldName:Null<String->Int->String> = null;
+	public var fieldName:Null<String->Ns->String> = null;
+	// a reference as the output has it (Chunk.refEx)
+	public var ref:Null<(Ref, Null<core.Globals.Pos>)->Ex> = null;
 	// (-D js-source-map) the map the printed text is marked for (SourceMap)
 	public var smap:Null<SourceMap> = null;
 
-	inline function fname(n:String, ns:Int):String return fieldName == null ? n : fieldName(n, ns);
+	inline function fname(n:String, ns:Ns):String return fieldName == null ? n : fieldName(n, ns);
 
 	// a source map's marker of pos (and of the name printed after it, renamed), or nothing
 	inline function mark(pos:Null<core.Globals.Pos>, ?name:String):String return smap == null ? "" : smap.mark(pos, name);
@@ -64,6 +120,7 @@ class Printer {
 		p.types = types;
 		p.splitImport = splitImport;
 		p.fieldName = fieldName;
+		p.ref = ref;
 		p.smap = smap;
 		return p;
 	}
@@ -143,7 +200,7 @@ class Printer {
 			if (found || e == null) return;
 			switch e.def {
 				// (but a name, a path, a call of one: what TypeScript checks as it does any other)
-				case ERaw(parts) if (safeRe.match([for (p in parts) switch p {
+				case ERaw(parts) if (isPlainCall([for (p in parts) switch p {
 						case RText(s): s;
 						case RValue(_): "\x01";
 					}].join(""))):
@@ -380,9 +437,9 @@ class Printer {
 			case ENew(_) | ECall(_) | EMember(_) | EField(_) | EPrivate(_) | EFriend(_) | EIndex(_) | EImport(_): CALL;
 			case ENum(s) if (s.startsWith("-")): UNARY;
 			// (untyped code: its precedence unknown, but for a name or a path)
-			case ERaw([RText(s)]) if (pathRe.match(s)): PRIMARY;
+			case ERaw([RText(s)]) if (isPath(s)): PRIMARY;
 			// (a call of a method of its first value: `{0}.charCodeAt({1})`)
-			case ERaw(parts) if (callRe.match([for (p in parts) switch p {
+			case ERaw(parts) if (isMethodCall([for (p in parts) switch p {
 					case RText(s): s;
 					case RValue(_): "\x01";
 				}].join(""))): CALL;
@@ -391,7 +448,14 @@ class Printer {
 		}
 	}
 
+	// a reference as what it is (Chunk.refEx)
+	inline function deref(e:Ex):Ex return switch e.def {
+		case ERef(r): ref(r, e.pos);
+		case _: e;
+	}
+
 	function paren(e:Ex, min:Int):String {
+		e = deref(e);
 		var s = exprRaw(e);
 		// (a renamed binding: its own name)
 		var m = smap == null ? "" : switch e.def {
@@ -404,7 +468,7 @@ class Printer {
 	// e where an expression of at least precedence `min` may stand
 	public function expr(e:Ex, min:Int):String return paren(e, min);
 
-	static inline function word(c:String):Bool return ~/^[A-Za-z0-9_$]$/.match(c);
+	static inline function word(c:String):Bool return c.length == 1 && EsTools.identPart(StringTools.fastCodeAt(c, 0));
 
 	// a binary operator between its operands: spaced, or (tight) where tokens would merge (`a - -b`, `x in y`)
 	function binary(sa:String, op:String, sb:String):String {
@@ -420,6 +484,7 @@ class Printer {
 	function exprRaw(e:Ex):String {
 		return switch e.def {
 			case EId(s): s.name;
+			case ERef(r): exprRaw(ref(r, e.pos));
 			case EThis: "this";
 			case ESuper: "super";
 			case ENull: "null";
@@ -494,7 +559,7 @@ class Printer {
 				var params = s.pattern == "" ? [] : [new Sym(SLocal, s.pattern)];
 				s.load + ".then(" + fn({params: params, rest: false, arrow: true, body: f.body, contextual: true}) + ")";
 			// (TypeScript: untyped code's path, its members unchecked, as Haxe has them: `Error.prepareStackTrace`, V8's)
-			case ERaw([RText(s)]) if (types != null && s.indexOf(".") > 0 && pathRe.match(s) && !StringTools.startsWith(s, "$hx.")):
+			case ERaw([RText(s)]) if (types != null && s.indexOf(".") > 0 && isPath(s) && !StringTools.startsWith(s, "$hx.")):
 				var i = s.indexOf(".");
 				"(" + s.substr(0, i) + " as any)" + s.substr(i);
 			case ERaw(parts):
@@ -514,6 +579,7 @@ class Printer {
 	}
 
 	function object(o:Ex):String {
+		o = deref(o);
 		return switch o.def {
 			// (TypeScript: `null` used as an object, which Haxe types and TypeScript rejects)
 			case ENull if (types != null): "(null as any)";
@@ -526,6 +592,7 @@ class Printer {
 	}
 
 	function callee(f:Ex):String {
+		f = deref(f);
 		return switch f.def {
 			case ENull if (types != null): "(null as any)";
 			case EFn(_) | EClass(_): "(" + exprRaw(f) + ")";
@@ -535,8 +602,9 @@ class Printer {
 
 	// (a callee with a call in it: parenthesized, or `new` would take that call's arguments)
 	function newCallee(c:Ex):String {
+		c = deref(c);
 		function plain(e:Ex):Bool return switch e.def {
-			case EId(_) | EThis: true;
+			case EId(_) | ERef(_) | EThis: true;
 			case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | ETypeArgs(o, _) | EFriend(o, _): plain(o);
 			case EIndex(o, _): plain(o);
 			case EClass(_): true;
