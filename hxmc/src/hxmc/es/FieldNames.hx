@@ -272,7 +272,7 @@ class FieldNames {
 	// A class's instances' fields are named in its family's (its ancestors', descendants', interfaces', implementations':
 	// dynamic dispatch stays within one), its statics in another of the family (an ES class inherits its ancestors'
 	// statics): short names start again in each (`Shrink`'s). But a name a field of the family is unified with a
-	// structure under (CfMaybeUsed, the typer's: it may be read structurally), and any kept, is the global namespace's,
+	// structure under (CfStructurallyUsed, the typer's: it may be read structurally), and any kept, is the global namespace's,
 	// as are structures' fields. A family's names avoid the global short names of its own global ones.
 
 	final familyOf = new Map<TClass, TClass>();
@@ -435,7 +435,7 @@ class FieldNames {
 			// (its names unified with structures, an extern's: once per namespace)
 			nsGlobal[ns] = g = new StringMap();
 			for (c in nsClasses[ns]) for (f in (nsStatic[ns] ? c.clStatics : c.clFields))
-				if (hasClassFlag(c, CExtern) || hasClassFieldFlag(f, CfMaybeUsed)) g.set(f.cfName, true);
+				if (hasClassFlag(c, CExtern) || hasClassFieldFlag(f, CfStructurallyUsed)) g.set(f.cfName, true);
 		}
 		return !g.exists(name);
 	}
