@@ -121,6 +121,9 @@ enum ExDef {
 	ESplit(file:Int, fn:Fn);
 	// untyped code: text with expressions between its parts
 	ERaw(parts:Array<RawPart>);
+	// a call of a method of an accessor's name (Properties): as the call, or as the property (`o.x`, `o.x = v` where nothing
+	// uses its value), as its family is (Chunk.accessorEx)
+	EAccessor(a:TClassField, call:Ex, discarded:Bool);
 }
 
 enum RawPart {

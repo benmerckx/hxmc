@@ -37,6 +37,8 @@ private class Item {
 	public final values = new Map<TClassField, Ex>();
 	public var init:Null<Array<St>> = null;
 	public final fns = new Map<TClassField, Fn>();
+	// (a class) the field of each of its declaration's members that is a method's (Properties)
+	public final memberFields:Array<Null<TClassField>> = [];
 
 	public function new(t, index, sym, path) {
 		this.t = t;
@@ -129,6 +131,11 @@ private enum Use {
 	USplitDone(split:Int, caller:Int);
 	// a Lower's locals' names
 	ULocals(names:Array<String>);
+	// (Properties) what the code does with accessors, the names it reads dynamically, its string constants
+	UAccessorCall(a:TClassField, args:Int, discarded:Bool);
+	UAccessorTaken(a:TClassField);
+	UDynamicName(n:String);
+	UString(s:String);
 }
 
 // A lowering of a part of the program (a type's code, the main code, ...): it changes nothing it shares with others,
@@ -231,6 +238,14 @@ private class Lowering implements Lower.Resolve {
 	public function declare(s:Sym):Void uses.push(UDeclare(s));
 
 	public function ts():Bool return chunk.tsOut;
+
+	public function accessorCall(a:TClassField, args:Int, discarded:Bool) if (chunk.props != null) uses.push(UAccessorCall(a, args, discarded));
+
+	public function accessorTaken(a:TClassField) if (chunk.props != null) uses.push(UAccessorTaken(a));
+
+	public function dynamicName(n:String) if (chunk.props != null) uses.push(UDynamicName(n));
+
+	public function stringConst(s:String) if (chunk.props != null) uses.push(UString(s));
 }
 
 // The bundled output (-D hxmc.js=es): the program in one file, and a file per split (js.Bundle.split).
@@ -640,6 +655,15 @@ class Chunk {
 			case URaw(text, file):
 				current = file;
 				rawUses(text);
+				if (props != null) props.raw(text);
+			case UAccessorCall(a, args, discarded):
+				props.called(a, args, discarded);
+			case UAccessorTaken(a):
+				props.taken(a);
+			case UDynamicName(n):
+				props.named(n);
+			case UString(s):
+				props.string(s);
 			case URefer(path):
 				refs.set(path, true);
 			case USplitDone(split, caller):
@@ -710,6 +734,7 @@ class Chunk {
 		if (modules) p.splitImport = id -> splitImport(f.id, id);
 		if (fieldNames != null && (tight || fieldsDebug)) p.fieldName = fieldName;
 		p.ref = refEx;
+		p.accessor = accessorEx;
 		p.smap = smap != null ? smap : f.smap;
 		return p;
 	}
@@ -972,6 +997,8 @@ class Chunk {
 
 	// each used, in that order (replay).
 	function lowerAll() {
+		// (properties as JavaScript's, but with -D hxmc.js.properties=off; not TypeScript's)
+		if (!tsOut && Gctx.definedValueSafe(com, "hxmc.js.properties") != "off") props = new Properties(com);
 		// (-D hxmc.js.minify.fields: what the lowering tells of the fields, FieldNames)
 		if (fieldNames == null && Gctx.rawDefined(com, "hxmc.js.minify.fields")) fieldNames = new FieldNames(com);
 		var units:Array<Lowering> = [];
@@ -1077,14 +1104,18 @@ class Chunk {
 
 	function lowerClass(u:Lowering, item:Item, c:TClass, lower:Lower):ClassDecl {
 		var members:Array<Member> = [];
+		function member(m:Member, ?f:TClassField) {
+			members.push(m);
+			item.memberFields.push(f);
+		}
 		if (hasClassFlag(c, CInterface)) return {name: item.sym, superClass: null, members: members};
 		lower.cls = c;
 		// (TypeScript: its variables declared, its abstract methods)
 		if (tsOut) for (f in c.clFields) switch f.cfKind {
 			case Var(_) if (isPhysicalField(f)):
-				members.push(prot(f, MDeclare(fieldKey(f.cfName, ins(c)), f.cfType, false)));
+				member(prot(f, MDeclare(fieldKey(f.cfName, ins(c)), f.cfType, false)));
 			case Method(_) if (f.cfExpr == null && hasClassFlag(c, CAbstract)):
-				members.push(prot(f, MAbstract(fieldKey(f.cfName, ins(c)), f.cfType, f.cfParams)));
+				member(prot(f, MAbstract(fieldKey(f.cfName, ins(c)), f.cfType, f.cfParams)));
 			case _:
 		}
 		switch c.clConstructor == null ? null : c.clConstructor.cfExpr {
@@ -1092,29 +1123,29 @@ class Chunk {
 				lower.prepare(e);
 				var l = lower.func(f, false, e.epos, c.clConstructor.cfType);
 				if (tsOut && Lambda.exists(c.clFields, x -> x.cfName == "_hx_constructor")) widen(l);
-				members.push(MMethod(KName("constructor"), l, false, MkConstructor));
+				member(MMethod(KName("constructor"), l, false, MkConstructor));
 			case _:
 		}
 		for (f in c.clFields) switch [f.cfKind, f.cfExpr] {
 			case [Method(_), e = {eexpr: TFunction(fn)}]:
 				lower.prepare(e);
-				members.push(prot(f, MMethod(fieldKey(f.cfName, ins(c)), methodFn(lower, f, fn, e), false, MkMethod)));
+				member(prot(f, MMethod(fieldKey(f.cfName, ins(c)), methodFn(lower, f, fn, e), false, MkMethod)), f);
 			case _:
 		}
 		for (f in c.clStatics) switch [f.cfKind, f.cfExpr] {
 			case [Method(_), e = {eexpr: TFunction(fn)}]:
 				lower.prepare(e);
-				members.push(prot(f, MMethod(fieldKey(f.cfName, sns(c)), methodFn(lower, f, fn, e), true, MkMethod)));
+				member(prot(f, MMethod(fieldKey(f.cfName, sns(c)), methodFn(lower, f, fn, e), true, MkMethod)), f);
 			// (Type.getClassFields: a variable without a value is a field too)
 			case [Var(_), null] if (u.feature("Type.getClassFields") && isPhysicalField(f)):
 				item.statics.push(f);
 				item.values.set(f, ex(ENull));
 			// (TypeScript: declared, as Haxe has it)
 			case [Var(_), null] if (tsOut && isPhysicalField(f)):
-				members.push(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
+				member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
 			case [_, null]:
 			case [_, {eexpr: TConst(TNull)}] if (!u.feature("Type.getClassFields")):
-				if (tsOut && isPhysicalField(f)) members.push(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
+				if (tsOut && isPhysicalField(f)) member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)));
 			case [_, e]:
 				lower.prepare(e);
 				item.statics.push(f);
@@ -1136,6 +1167,101 @@ class Chunk {
 			superArgs: c.clSuper == null ? null : c.clSuper.params.toArray(),
 			isAbstract: hasClassFlag(c, CAbstract)
 		};
+	}
+
+	// ------------------------------------------------------------------ properties as JavaScript's (Properties)
+
+	// (null: none, TypeScript's output, -D hxmc.js.properties=off)
+	var props:Null<Properties> = null;
+
+	// an accessor's call as its family is: the property (`o.x`; `o.x = v`, its value used for nothing), else the call
+	// (and through `super`, where the family keeps its methods)
+	function accessorEx(a:TClassField, call:Ex, discarded:Bool):Ex {
+		var f = props == null ? null : props.familyOf(a);
+		if (f == null) return call;
+		var getter = f.isGetter(a);
+		return switch call.def {
+			case ECall({def: EField(o, _, ns), pos: p}, args) if ((getter ? args.length == 0 : discarded && args.length == 1)
+				&& !(o.def.match(ESuper) && f.keeps(getter))):
+				var prop = Lower.field(o, f.property.cfName, ns, p);
+				getter ? prop : ex(EAssign("=", prop, args[0]), call.pos);
+			case _: call;
+		}
+	}
+
+	// a class's members, its accessors of properties that change as JS accessors: the accessor itself, or (its family keeps
+	// them as methods) the method and, after the class's first accessor of the family, the JS accessors that call it, or
+	// the ancestor's through `super` where the class has only one of the pair (a JS accessor hides its ancestors' pair)
+	function accessorMembers(item:Item, c:TClass, members:Array<Member>):Array<Member> {
+		if (props == null) return members;
+		var out:Array<Member> = [];
+		for (i in 0...members.length) {
+			var cf = item.memberFields[i];
+			var fam = cf == null ? null : props.familyOf(cf);
+			if (fam == null) {
+				out.push(members[i]);
+				continue;
+			}
+			var getter = fam.isGetter(cf);
+			switch members[i] {
+				case MMethod(_, fn, isStatic, MkMethod) if (!fam.keeps(getter)):
+					out.push(MMethod(fieldKey(fam.property.cfName, isStatic ? sns(c) : ins(c)), fn, isStatic, getter ? MkGet : MkSet));
+				case m:
+					out.push(m);
+			}
+			if (firstAccessor(item, cf, fam)) for (m in jsAccessors(c, fam)) out.push(m);
+		}
+		return out;
+	}
+
+	static function firstAccessor(item:Item, cf:TClassField, fam:Properties.Family):Bool {
+		for (x in item.memberFields) if (x != null && (fam.isGetter(x) || fam.setters.indexOf(x) >= 0)) return x == cf;
+		return false;
+	}
+
+	// (a property in `$hx.properties`: one JavaScript does not have as its own)
+	function reflected(p:TClassField):Bool return props == null || props.unchanged(p);
+
+	// (c's own accessor of the list, its code in the output)
+	static function ownAccessor(c:TClass, l:Array<TClassField>, isStatic:Bool):Null<TClassField> {
+		for (x in (isStatic ? c.clStatics : c.clFields))
+			if (x.cfKind.match(Method(_)) && x.cfExpr != null && x.cfExpr.eexpr.match(TFunction(_)) && l.indexOf(x) >= 0) return x;
+		return null;
+	}
+
+	static function inheritedAccessor(c:TClass, l:Array<TClassField>):Bool {
+		var s = c.clSuper;
+		while (s != null) {
+			if (ownAccessor(s.cls, l, false) != null) return true;
+			s = s.cls.clSuper;
+		}
+		return false;
+	}
+
+	// the JS accessors c needs besides its accessors that are JS accessors themselves: none unless c has one of fam's; then
+	// one calling c's accessor that stays a method, or the ancestor's through `super`
+	function jsAccessors(c:TClass, fam:Properties.Family):Array<Member> {
+		var isStatic = fam.statics;
+		var halves = [for (getter in [true, false]) {
+			var l = getter ? fam.getters : fam.setters;
+			if (l.length == 0) continue;
+			{getter: getter, own: ownAccessor(c, l, isStatic), inherited: !isStatic && inheritedAccessor(c, l)};
+		}];
+		var out:Array<Member> = [];
+		if (!Lambda.exists(halves, h -> h.own != null && (!fam.keeps(h.getter) || !h.inherited))) return out;
+		var ns = isStatic ? sns(c) : ins(c), name = fam.property.cfName;
+		for (h in halves) {
+			if (h.own != null && !fam.keeps(h.getter)) continue;
+			if (h.own == null && !h.inherited) continue;
+			var on = ex(h.own != null ? EThis : ESuper);
+			var v = new Sym(SLocal, "v");
+			var body = if (h.getter)
+				[st(SReturn(h.own != null ? ex(ECall(Lower.field(on, h.own.cfName, ns), [])) : Lower.field(on, name, ns)))]
+			else
+				[st(SExpr(h.own != null ? ex(ECall(Lower.field(on, h.own.cfName, ns), [ex(EId(v))])) : ex(EAssign("=", Lower.field(on, name, ns), ex(EId(v))))))];
+			out.push(MMethod(fieldKey(name, ns), {params: h.getter ? [] : [v], rest: false, arrow: false, body: body}, isStatic, h.getter ? MkGet : MkSet));
+		}
+		return out;
 	}
 
 	// ------------------------------------------------------------------ where statics go
@@ -1869,6 +1995,10 @@ class Chunk {
 
 	function write() {
 		flags();
+		if (props != null) {
+			props.decide();
+			if (Gctx.rawDefined(com, "hxmc.js.properties_report")) Sys.println(props.report());
+		}
 		if (modules) {
 			writeModules();
 			return;
@@ -2166,9 +2296,9 @@ class Chunk {
 						// (a getter: the interfaces may be defined later, a module of a cycle)
 						head.push(MMethod(KComputed(rt("interfaces")), {params: [], rest: false, arrow: false, body: [st(SReturn(ex(EArray([for (i in c.clImplements) type(TClassDecl(i.cls), c.clPos)]))))]}, true, MkGet));
 					if (properties) {
-						var a = codegen.Codegen.getProperties(c.clFields.toArray());
+						var a = codegen.Codegen.getProperties(c.clFields.toArray().filter(reflected));
 						if (a.length > 0) head.push(MField(KComputed(rt("properties")), ex(EObject([for (x in a) ({key: key(x.name), value: ex(EStr(x.field))} : Prop)])), true, TDynamic(null)));
-						var s = codegen.Codegen.getProperties(c.clStatics.toArray());
+						var s = codegen.Codegen.getProperties(c.clStatics.toArray().filter(reflected));
 						if (s.length > 0) head.push(MField(KComputed(rt("staticProperties")), ex(EObject([for (x in s) ({key: key(x.name), value: ex(EStr(x.field))} : Prop)])), true, TDynamic(null)));
 					}
 					switch Texpr.buildMetadata(com.basic, item.t) {
@@ -2203,7 +2333,7 @@ class Chunk {
 					body.statement(exp(st(SClass({
 							name: d.name,
 							superClass: d.superClass,
-							members: head.concat(later).concat(d.members),
+							members: head.concat(later).concat(accessorMembers(item, c, d.members)),
 							tparams: d.tparams,
 							superArgs: d.superArgs,
 							isAbstract: d.isAbstract

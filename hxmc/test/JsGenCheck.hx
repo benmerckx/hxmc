@@ -105,6 +105,15 @@ class JsGenCheck {
 				// (es-modules: a split imports the modules it needs, no file of its own)
 				var want = v.tag.startsWith("es-modules") ? 0 : splitsIn(src + caseModules(name));
 				check('$name: ${v.tag} has ${want} split files', files.length == want, files.join(" "));
+				// (what the case says its output has: `// output has: <text>`, in the plain es output's main.js)
+				if (v.tag == "es") {
+					var re = ~/^\/\/ output has: (.*)$/gm, pos = 0, code = File.getContent(dir + "/main.js");
+					while (re.matchSub(src, pos)) {
+						check('$name: ${v.tag} has `' + re.matched(1) + "`", code.indexOf(re.matched(1)) >= 0);
+						var m = re.matchedPos();
+						pos = m.pos + m.len;
+					}
+				}
 				if (v.tag == "es-aside") {
 					// (beside them the minified program, main.min.js, with split files of its own)
 					var mins = [for (f in FileSystem.readDirectory(dir)) if (~/_[0-9a-f]{5}\.min\.js$/.match(f)) f];

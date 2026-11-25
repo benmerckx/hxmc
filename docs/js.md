@@ -32,6 +32,8 @@ generator writes ([Reflection](#reflection)).
 | `hxmc.js.hash-length=<n>` | the digits of the hash in a split file's name (8) |
 | `hxmc.js.chunk-base=<expression>` | the address split files are loaded relative to, as a JavaScript expression (default: the main file's) |
 | `hxmc.js.order_report` | prints the statics and `__init__`s that run after the types, the modules the entry runs first, the lazy statics and the classes moved to files of their own |
+| `hxmc.js.properties=off` | properties stay their accessor methods ([Properties](#properties)) |
+| `hxmc.js.properties_report` | prints what became of each property |
 | `js-source-map`, `source-map`, `--debug` | a source map beside each file ([Source maps](#source-maps)) |
 | `source-map=inline` | the source map in the file, as a `data:` URL |
 | `source-map-content` | the sources' text in the maps |
@@ -149,12 +151,41 @@ in a `Map` under a symbol (`$hx.closures`), which `JSON`, `Object.keys` and
 
 ## Properties
 
-A property is what Haxe makes of it: its accessors are methods (`get_x`,
-`set_x`), and reading or writing it calls them (`o.get_x()`, `o.set_x(v)`).
+A property whose read and write are each `get`, `set` or `never`, without
+`@:isVar`, is a JavaScript accessor of its name: `get x() {...}` and
+`set x(v) {...}` hold the accessors' code, and `o.get_x()` and `o.set_x(v)`
+are `o.x` and `o.x = v`, so JavaScript code reads and writes the property as
+Haxe code does. A static one is a static accessor (`Settings.mode`).
+
+A property, the ones that override it and the interfaces' declarations it
+implements change together, or not at all: not when one of them is an
+extern's, has storage (`@:isVar`), is redeclared or shadowed, or is
+implemented by a field of another kind, nor when the class extends an extern
+(whose members of the name the extern may not declare: `haxe.Exception`'s
+`message`). A subclass that overrides one accessor gets the other through
+`super` (`set x(v) { super.x = v; }`).
+
+The accessors stay methods too (`get_x()`, which the JS accessor calls) when
+something needs them as such: a setter call whose value is used (`a = o.x = v`:
+JavaScript's value is `v`, the setter may return another), an accessor taken
+as a value, one named through a structure, `Dynamic`, untyped code or a string
+(`"get_x"`), or one that is `dynamic`, `@:keep` or `@:expose`. A call through
+`super` of a kept accessor stays a call.
+
+Which properties change is decided from the whole program once its code is
+lowered: what each lowering finds (the calls of accessors, whether their values
+are used, the names read dynamically) it notes with the rest of what it uses,
+and the printer writes a call as the property or as the call as its family is.
+
 Where the program reflects on properties (`Reflect.getProperty`,
-`setProperty`), each class lists its properties' accessor methods under
-`$hx.properties` (its instances') and `$hx.staticProperties` (its own), so that
-those find them by the property's name; elsewhere a class lists nothing.
+`setProperty`), each class lists the accessor methods of the properties that
+stay methods under `$hx.properties` (its instances') and
+`$hx.staticProperties` (its own); those find a JS accessor by the property's
+name. Elsewhere a class lists nothing.
+
+Not in TypeScript's output (`es-modules` to `.ts`), whose properties stay
+methods. `-D hxmc.js.properties=off` keeps every property as it is;
+`-D hxmc.js.properties_report` prints what became of each.
 
 ## Reflection
 
@@ -458,8 +489,10 @@ What a program can see of the generator, besides the output's shape:
 - bound methods are cached in a `Map` under a symbol: no `hx__closures__`, no
   `__id__`, no `$haxeUID`;
 - `Type.getInstanceFields` lists the methods before the variables;
-- a property's accessors are methods, as with Genjs, but `Reflect.getProperty`
-  finds them only through `$hx.properties`, which exists only where it is used;
+- a property is a JavaScript accessor where it can be ([Properties](#properties)):
+  its accessor methods, as Genjs has them, may not exist; `Reflect.getProperty`
+  finds those that do only through `$hx.properties`, which exists only where it
+  is used;
 - `$hxClasses`, `$hxEnums`, `$global`, `$estr` and `HxOverrides.iter` are not
   there: `Type.resolveClass` reads `$hx.classes`, the program's scope is a
   block, iterators of arrays come from `$hx`.

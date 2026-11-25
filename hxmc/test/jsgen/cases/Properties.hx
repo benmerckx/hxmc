@@ -1,6 +1,14 @@
-// properties (their accessors are methods, docs/js.md): read-only and read-write ones, a setter whose result differs
-// from its argument, overrides of one accessor, calls through `super`, statics, interfaces, structures, closures of
-// accessors, reflection (Reflect.getProperty, $hx.properties), compound assignment
+// properties (JavaScript accessors where they can be, docs/js.md): read-only and read-write ones, a setter whose result
+// differs from its argument (its value used: the setter stays a method), overrides of one accessor, calls through
+// `super`, statics, interfaces, structures, closures of accessors, reflection (Reflect.getProperty, $hx.properties),
+// compound assignment
+// output has: get size() {
+// output has: set size(v) {
+// output has: box.size = 5;
+// output has: const a = box.set_size(200);
+// output has: super.size = v;
+// output has: static get mode() {
+// output has: Settings.mode = "abc";
 interface Named {
 	var name(get, never):String;
 }

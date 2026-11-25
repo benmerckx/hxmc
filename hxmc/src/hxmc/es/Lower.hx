@@ -52,6 +52,12 @@ interface Resolve {
 	function declare(s:Sym):Void;
 	// whether the output is TypeScript (casts where Haxe accepted what TypeScript would not)
 	function ts():Bool;
+	// (Properties) a call of a method of an accessor's name (args: its arguments; discarded: its value used for nothing), one
+	// taken as a value; a field's name read dynamically; a string constant
+	function accessorCall(a:TClassField, args:Int, discarded:Bool):Void;
+	function accessorTaken(a:TClassField):Void;
+	function dynamicName(n:String):Void;
+	function stringConst(s:String):Void;
 }
 
 // A typed expression (post-filter) as JavaScript. Decides what depends on the code alone: arrows (a function
@@ -368,6 +374,9 @@ class Lower {
 				if (r.feature(f)) stmt(el[1], out) else if (el.length > 2) stmt(el[2], out);
 			case TCall({eexpr: TField(_, FStatic({clPath: {pack: ["js"], name: "Lib"}}, {cfName: "rethrow"}))}, []) if (catchVars.length > 0):
 				push(SThrow(catchVars[0]));
+			// (an accessor's call whose value nothing uses: a property's write may be `o.x = v`, Properties)
+			case TCall(callee, args) if (accessorOf(callee) != null && r.split(e) == null):
+				push(SExpr(call(e, callee, args, true)));
 			case _:
 				push(SExpr(expr(e)));
 		}
@@ -676,6 +685,12 @@ class Lower {
 	public static function field(o:Ex, name:String, ns:Ns, ?p:Pos):Ex return validIdent(name) ? ex(EField(o, name, ns), p) : ex(EIndex(o, ex(EStr(name))), p);
 
 
+	// (Properties) the method a call calls, of an accessor's name, the program's (not an extern's)
+	static function accessorOf(callee:TExpr):Null<TClassField> return switch callee.eexpr {
+		case TField(_, FInstance(c, _, cf) | FStatic(c, cf)) if (!hasClassFlag(c, CExtern) && !hasClassFieldFlag(cf, CfExtern) && Properties.accessorNamed(cf)): cf;
+		case _: null;
+	}
+
 	// a signature's first optional argument
 	static function firstOptional(s:TSignature):Null<Int> {
 		for (i in 0...s.args.length) if (s.args[i].optional) return i;
@@ -720,7 +735,9 @@ class Lower {
 		return switch e.eexpr {
 			case TConst(TInt(i)): mkx(ENum(Std.string(i)));
 			case TConst(TFloat(s)): mkx(ENum(s));
-			case TConst(TString(s)): mkx(EStr(s));
+			case TConst(TString(s)):
+				r.stringConst(s);
+				mkx(EStr(s));
 			case TConst(TBool(b)): mkx(EBool(b));
 			case TConst(TNull): mkx(ENull);
 			case TConst(TThis): mkx(EThis);
@@ -757,7 +774,8 @@ class Lower {
 				mkx(ECall(r.rt("keyValueIterator"), [expr(x)]));
 			case TField(x, FInstance(_, _, f) | FStatic(_, f) | FAnon(f)) if (Meta.has(Meta.SelfCall, f.cfMeta)):
 				expr(x);
-			case TField(x, fa = FClosure(_, f)):
+			case TField(x, fa = FClosure(c, f)):
+				if (c == null) r.dynamicName(f.cfName) else if (Properties.accessorNamed(f)) r.accessorTaken(f);
 				if (Meta.has(Meta.SelfCall, f.cfMeta)) expr(x) else mkx(ECall(r.rt("bind"), [expr(x), mkx(EFieldName(f.cfName, nsOf(fa)))]));
 			// (a class without a name: its statics at the top level, Genjs's)
 			case TField(_, FStatic(c = {clPath: {pack: [], name: ""}}, f)):
@@ -781,6 +799,11 @@ class Lower {
 			case TField(x, FDynamic("_hx_index")):
 				mkx(EIndex(expr(x), r.index()));
 			case TField(x, f):
+				switch f {
+					case FAnon(cf): r.dynamicName(cf.cfName);
+					case FDynamic(n): r.dynamicName(n);
+					case _:
+				}
 				var o = fieldObject(x, f);
 				switch f {
 					// (TypeScript: a `protected` field where Haxe let the code read it, `@:privateAccess`'s)
@@ -890,7 +913,7 @@ class Lower {
 		}
 	}
 
-	function call(e:TExpr, callee:TExpr, args:Vector<TExpr>):Ex {
+	function call(e:TExpr, callee:TExpr, args:Vector<TExpr>, discarded = false):Ex {
 		var p = e.epos;
 		inline function mkx(d:ExDef) return ex(d, p);
 		inline function values() return [for (a in args) expr(a)];
@@ -943,7 +966,12 @@ class Lower {
 				if (ts) f = typeArgs(f, callee);
 				// (TypeScript: a spread argument where a function of fixed arguments is called)
 				if (ts && Lambda.exists(args.toArray(), a -> a.eexpr.match(TUnop(Spread, _, _))) && !f.def.match(ESuper)) f = any(f);
-				mkx(ECall(f, callArgs(callee, args)));
+				var c = mkx(ECall(f, callArgs(callee, args)));
+				var a = accessorOf(callee);
+				if (a == null) c else {
+					r.accessorCall(a, args.length, discarded);
+					mkx(EAccessor(a, c, discarded));
+				}
 		}
 	}
 
@@ -1034,7 +1062,9 @@ class Lower {
 			case ["field", [o, f]]:
 				switch Texpr.skip(f) {
 					// (TypeScript: of an object as `any`, a field it may not have)
-					case {eexpr: TConst(TString(s))}: member(any(expr(o)), s, p);
+					case {eexpr: TConst(TString(s))}:
+						r.dynamicName(s);
+						member(any(expr(o)), s, p);
 					case _: mkx(EIndex(any(expr(o)), expr(f)));
 				}
 			case _:
@@ -1178,6 +1208,7 @@ class Lower {
 		function anyOn(e:Ex):Bool return switch e.def {
 			case EAs(_): true;
 			case EMember(o, _) | EField(o, _, _) | EIndex(o, _) | ECall(o, _) | ETypeArgs(o, _) | EFriend(o, _): anyOn(o);
+			case EAccessor(_, c, _): anyOn(c);
 			case _: false;
 		}
 		if (anyOn(f)) return f;
