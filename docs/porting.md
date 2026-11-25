@@ -163,3 +163,13 @@ upstream. When the pin moves past upstream's fix, the divergence goes. The diver
   unterminated (`&lbrace;` instead). Without the define, literals are read
   as upstream reads them (`syntax.Lexer.lexXmlBraces`, `markupEnd`; the
   unit test `MarkupTest`; #194).
+- The analyzer never runs two analyses of the same field at the same time.
+  An abstract's extra call operators (`@:op(a())`) are listed twice when a
+  class is analyzed, because they are both overloads of the first operator
+  and statics of the impl class. Upstream analyzes both copies in parallel,
+  and the two runs overwrite each other's per-variable data, so a
+  compilation can fail at random with "Unbound variable, please report
+  this". The port runs a field's analyses one after the other, which gives
+  the same result as upstream without parallelism
+  (`optimization.Analyzer.Run`; mir-check's `CallOpOverloads` failed about
+  one run in five without it).

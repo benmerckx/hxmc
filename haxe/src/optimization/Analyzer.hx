@@ -1086,7 +1086,22 @@ class Run {
 		for (cf in c.clFields) processField(false, cf);
 		for (cf in c.clStatics) processField(true, cf);
 		if (c.clConstructor != null) processField(false, c.clConstructor);
-		context.Parallel.ParallelArray.iter(pool, function(cf) runOnFieldInternal(com, out, config, c, cf), fields);
+		// port: diverges from upstream. A field can be listed twice here: an abstract's extra
+		// ... call operators are both overloads of the first one and statics of the impl class.
+		// ... Upstream analyzes both copies at the same time on its pool, and the two runs
+		// ... overwrite each other's per-variable data (v_extra), which can fail with
+		// ... "Unbound variable". Here each field's runs happen in one job, one after the other.
+		if (pool == null) {
+			for (cf in fields) runOnFieldInternal(com, out, config, c, cf);
+		} else {
+			var runs = new Map<TClassField, Int>(), unique = [];
+			for (cf in fields) {
+				var n = runs.get(cf);
+				if (n == null) unique.push(cf);
+				runs.set(cf, n == null ? 1 : n + 1);
+			}
+			context.Parallel.ParallelArray.iter(pool, function(cf) for (_ in 0...runs.get(cf)) runOnFieldInternal(com, out, config, c, cf), unique);
+		}
 		var init = core.TOther.TClassTools.getClInit(c);
 		if (init != null) {
 			var tf:TFunc = {tfArgs: vector(), tfType: init.etype, tfExpr: init};
