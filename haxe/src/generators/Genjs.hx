@@ -637,6 +637,16 @@ class Genjs {
 		return loop(e);
 	}
 
+	public static function tryGenHotClosure(ctx:JsCtx, e:TExpr):Bool {
+		return switch e.eexpr {
+			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
+				&& EsmHotEmit.tryEmitClosure(ctx, m, f, e.epos)):
+				true;
+			case _:
+				false;
+		}
+	}
+
 	public static function genExpr(ctx:JsCtx, e:TExpr):Void {
 		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		switch e.eexpr {
@@ -762,8 +772,7 @@ class Genjs {
 					case _:
 						die("", "genjs.ml");
 				}
-			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
-				&& EsmHotEmit.tryEmitClosure(ctx, m, f, e.epos)):
+			case _ if (tryGenHotClosure(ctx, e)):
 			case TMeta(_, e):
 				genExpr(ctx, e);
 			case TReturn(eo):
@@ -1065,8 +1074,7 @@ class Genjs {
 			case TConst(_) | TLocal(_) | TArray(_) | TBinop(_) | TField(_) | TEnumParameter(_) | TEnumIndex(_) | TTypeExpr(_) | TParenthesis(_) |
 				TObjectDecl(_) | TArrayDecl(_) | TNew(_) | TUnop(_) | TFunction(_) | TIdent(_):
 				genExpr(ctx, e);
-			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
-				&& EsmHotEmit.tryEmitClosure(ctx, m, f, e.epos)):
+			case _ if (tryGenHotClosure(ctx, e)):
 			case TMeta(_, e1):
 				genValue(ctx, e1);
 			case TCall(e, el):
@@ -1433,7 +1441,7 @@ class Genjs {
 						processExpose(f.cfMeta, () -> (dotPath(clPath)) + "." + f.cfName, s -> print(ctx, "$hx_exports" + pathToBrackets(s) + " = "));
 						var wasStatic = ctx.inClassStatic;
 						ctx.inClassStatic = true;
-						genValue(ctx, f.cfExpr != null ? f.cfExpr : e);
+						genValue(ctx, e);
 						ctx.inClassStatic = wasStatic;
 						newline(ctx);
 					case _:
