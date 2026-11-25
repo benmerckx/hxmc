@@ -1,8 +1,7 @@
 package generators;
 
-// Optional prod ESM backend (hxmc Genesm). Set by hxmc when its generators are
-// linked in; the reference-style port alone leaves this null so -D esm still
-// uses Genjs.
+// port: optional Genesm backend (-D esm); hxmc sets generate in EsmInstall.
+// ... the reference port leaves null; Generate rejects -D esm* when unset.
 class EsmHook {
 	public static var generate:Null<Gctx->Void> = null;
 }

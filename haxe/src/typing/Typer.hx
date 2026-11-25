@@ -1640,6 +1640,7 @@ class Typer {
 				Sys.println("IMPORT:");
 				print(ctx.m.importResolution.getList());
 				expression();
+			// port: hxmc esm.hot — keep @:esm.hot.* on locals as TMeta for hot lowering
 			case MetaTag.Custom(s) if (StringTools.startsWith(s, ":esm.hot.") || StringTools.startsWith(s, "esm.hot.")): preserve();
 			case _: ctx.g.retainMeta ? preserve() : expression();
 		};

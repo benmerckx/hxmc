@@ -10,9 +10,11 @@ import core.TType.TClass;
 import core.TType.TClassField;
 import generators.Genjs.JsCtx;
 
-// Optional esm.hot static emit (hxmc GenesmHot). Null on the reference port.
+// port: optional esm.hot emit hooks; hxmc sets these in EsmHotInstall.
 class EsmHotEmit {
+	// port: hxmc esm.hot — swappable static method bodies (GenesmHot)
 	public static var tryEmitClassStatic:Null<(JsCtx, TClass, GlobalTypePath, TClassField) -> Bool> = null;
+	// port: hxmc esm.hot — keyed closures as registry emit, not bare functions
 	public static var tryEmitClosure:Null<(JsCtx, MetadataEntry, TFunc, Pos) -> Bool> = null;
 	// port: hxmc esm.hot — mark cells and closures before RenameVars
 	public static var beforeRename:Null<CommonContext -> Void> = null;

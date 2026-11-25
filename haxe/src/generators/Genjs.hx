@@ -101,7 +101,7 @@ class JsCtx {
 	public var featureCache:Null<StringMap<Bool>>;
 	// port: hxmc Genesm (-D esm) keeps each module in ctx.buf; skip incremental flush to com.file
 	public var noFlush:Bool;
-	// -D esm.hot: do not replace hot-closure emit with a bare closure inside a class static initializer.
+	// port: hxmc esm.hot — skip hot-closure emit inside class static initializers
 	public var inClassStatic:Bool;
 
 	public function new() {}
@@ -637,6 +637,7 @@ class Genjs {
 		return loop(e);
 	}
 
+	// port: hxmc esm.hot — delegate closure TMeta to EsmHotEmit.tryEmitClosure
 	public static function tryGenHotClosure(ctx:JsCtx, e:TExpr):Bool {
 		return switch e.eexpr {
 			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
@@ -740,6 +741,7 @@ class Genjs {
 				genValue(ctx, x);
 			case TField(_, FStatic({clKind: KModuleFields(m)}, f)):
 				var mf = moduleField(m, f);
+				// port: hxmc Genesm (-D esm) — module statics publish on $global
 				if (core.Define.rawDefined(ctx.com.defines, "esm")) spr(ctx, "$global." + mf);
 				else spr(ctx, mf);
 			case TField(x, f):
