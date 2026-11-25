@@ -15,7 +15,8 @@ what, why, and the approach decided. What comes next and in which order:
 | [native-perf.md](native-perf.md) | the native back end as fast as LLVM: the gap harness, measurements, missed transformations |
 | [targets.md](targets.md) | WebAssembly, Android, iOS, Windows, Linux, macOS |
 | [dev-loop.md](dev-loop.md) | the dev loop: faster reloads, snapshot hooks, Windows, iOS devices |
-| [esm.md](esm.md) | ESM output on Js (`-D esm`): idiomatic prod modules; hot reload (separate from hxmc dev) |
+| [esm.md](esm.md) | ESM output on Js (`-D esm`): phases 1–3 design; hot reload (separate from hxmc dev) |
+| [esm-impl.md](esm-impl.md) | ESM hot reload: milestones M0–M5, tests, hxmc-only scope (implements [esm.md](esm.md) phase 2) |
 | [lowlevel.md](lowlevel.md) | C interop and low-level Haxe: native memory, manual memory, value enums |
 | [simd.md](simd.md) | SIMD: the design record of `hxmc.simd` (prior art, semantics, ABIs, benchmarks), 256-bit vectors, auto-vectorization |
 | [objc.md](objc.md) | Objective-C: the decisions behind it, declarations from the headers, blocks, memory |

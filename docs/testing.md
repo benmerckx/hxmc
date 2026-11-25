@@ -12,6 +12,8 @@ Building is in [development.md](development.md).
 | typing or filters in the port | `make test LANES="hxb macro"` |
 | a generator in the port | `make test-fuzz LANE=diff:<target>`, `make test LANES=targets` |
 | display or the server | `make test LANES="display server jsonrpc"` |
+| ESM dev (`Genesm`, `hxmc/std/esm`) | `make esm-unit` after emit or std touch |
+| ESM hot (`GenesmHot`, `esm.hot` runtime, hot filters) | the milestone gate that matches the change (`make esm-hot-m0` … `esm-hot-m4`); `make esm-hot-m5` or `make esm-hot` before a broad hot change |
 | anything broad | all of the above, `make fixpoint`, `make crosshost` |
 
 The fixpoint and crosshost must stay byte-identical.
@@ -90,6 +92,7 @@ each lane on the kept cases and 400 random programs.
 | `Units` | `units`, `quick` | `RootFactsCheck` and `MirCompactCheck` (Roots and MIR compaction on hand-made functions), `CacheCheck`, `RtSearchCheck` (not on Windows), and the frontends' seam: a compiler built from hxmc's sources with its own main (`hxmc/test/frontend`) adds a function to the lowered program through `hxmc.Main.beforeCodegen` ([hxmc.md](hxmc.md#frontends)); the program it builds calls it |
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
 | `EsmGenesmCheck`, `EsmSuites` | `esm-unit` | Genesm emit layout (`EsmGenesmCheck`), then upstream `tests/unit` with `-D esm` (node); exclusions in `hxmc/test/esm/exclusions.txt` ([plans/esm.md](plans/esm.md)) |
+| `EsmHotTier1Check` … `EsmHotM4Check`, `EsmHotDualCheck`, `EsmHotStdGlobalsCheck` | `esm-hot-m0` … `esm-hot-m6`, `esm-hot` | phase-2 hot reload milestones ([below](#esm-phase-2-hot-reload)); not in fixpoint or `LANES=targets` |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `native-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
 | `JniCheck` | `native-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
@@ -157,6 +160,41 @@ needs).
 
 `unit` includes `TestCoroutines`. On wasm32-wasi the call-stack and socket
 tests are `TARGET` skips.
+
+### ESM phase 2 (hot reload)
+
+Phase 1 gate: **`make esm-unit`** (`-D esm` only). Phase 2 adds **`-D esm.hot`**
+harnesses; they do not replace `esm-unit` and are outside fixpoint / reference
+`LANES=targets`.
+
+| Make target | Harness | What |
+| --- | --- | --- |
+| `esm-hot-m0` | `EsmHotTier1Check` | tier-1 body swap via in-process `applyHotPatch` |
+| `esm-hot-m1` | `EsmHotM1Check` | file change → rebuild → WebSocket patch apply |
+| `esm-hot-m2` | `EsmHotM2Check` | `@:esm.hot.cell` / scope, closures, keyed ordinal reset |
+| `esm-hot-m3` | `EsmHotM3Check` | tier-2 class / enum layout hashes and migration |
+| `esm-hot-m4` | `EsmHotM4Check` | heap serializer, transactional apply / rollback |
+| `esm-hot-m5` | `EsmHotDualCheck` | dual-flavor smoke: compile and run with `-D esm` + `-D esm.hot` |
+| `esm-hot-m6` | `EsmHotStdGlobalsCheck` | cross-module std static inits (`StringTools.winMetaCharacters` via `$h`) |
+| `esm-hot-m7` | `EsmHotStaticFnCheck` | static methods not hot-wrapped as closures; full `create` body |
+| `esm-hot-m8` | `EsmHotClassStaticVarCheck` | class static vars init before `publishClass` (wrapped static self-ref) |
+| `esm-hot-m9` | `EsmHotShallowCapCheck` | shallow outer `var` locals stay out of closure `$env` |
+| `esm-hot-m10` | `EsmHotModuleImportCheck` | module emit diff → `importModules` + `__hx_esm_dev_client.mjs` |
+| `esm-hot` | (above) | runs `esm-hot-m0` … `esm-hot-m10` in order |
+
+**When to run:** after edits to `hxmc/src/hxmc/genesm`, hot filters (`HotIds`,
+`HotLowering`, `EsmHotInstall`), `hxmc/std/esm/hot`, or `hxmc/test/esm/hot/`.
+Run the smallest milestone that covers the change; run **`make esm-hot`** before
+merging broad hot work. Keep **`make esm-unit`** green on every ESM change (phase 1
+has no `-D esm.hot`).
+
+Dual-flavor smoke (`esm-hot-m5`) needs the npm-style compiler (`HOST_HAXE`, same as
+`esm-unit`). Hot-only upstream exclusions (stacks, enum indices after patch, …) live
+in `hxmc/test/esm/hot/exclusions.txt` + `exclusions.md` for a future
+`-D esm.hot` unit lane; the current gate is the differential harnesses above.
+
+Phase 3 **`-D esm.prod`** (static imports, bundler smoke) is **not** implemented here;
+see [plans/esm-impl.md](plans/esm-impl.md).
 
 ## CI
 
