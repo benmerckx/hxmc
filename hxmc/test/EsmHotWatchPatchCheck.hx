@@ -11,7 +11,7 @@ class EsmHotWatchPatchCheck {
 	static final FIXTURE = "hxmc/test/esm/hot/body-swap";
 	static final PORT = 19876;
 	static final SRC = '$OUT/src';
-	static final DEV = "hxmc/test/esm/hot/esm-dev.mjs";
+	static final DEV = "packages/cli/hxmc/bootstrap/dev.mjs";
 	static final CLIENT = "hxmc/test/esm/hot/run-ws-client.mjs";
 
 	static function main() {
@@ -51,20 +51,22 @@ class EsmHotWatchPatchCheck {
 		return true;
 	}
 
-	static function compileArgs(haxe:String):Array<String> {
+	static function devDriverArgs(haxe:String):Array<String> {
 		var js = root + "/" + OUT + "/main.mjs";
-		return [haxe, "-cp", root + "/" + SRC, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
+		// `dev.mjs` injects `-D esm.hot` on each resident-server build (docs/plans/esm-dev.md).
+		return [haxe, "-cp", root + "/" + SRC, "-main", "Main", "-D", "esm", "-js", js];
 	}
 
 	static function runWsRoundTrip(haxe:String):Bool {
 		var outAbs = FileSystem.fullPath(OUT);
 		var devLog = '$OUT/dev-server.log';
-		var devCmd = 'node ${quote(root + "/" + DEV)} --port $PORT --out ${quote(outAbs)} --watch ${quote(root + "/" + SRC)} -- '
-			+ [for (a in compileArgs(haxe)) quote(a)].join(" ")
+		var driver = devDriverArgs(haxe);
+		var devCmd = 'node ${quote(root + "/" + DEV)} ${quote(driver[0])} --port $PORT --quiet '
+			+ [for (a in driver.slice(1)) quote(a)].join(" ")
 			+ ' >${quote(devLog)} 2>&1 & echo $$! >${quote('$OUT/dev.pid')}';
-		var start = exec(["sh", "-c", devCmd], {merge: true});
+		var start = exec(["sh", "-c", devCmd], {merge: true, cwd: root});
 		if (start.code != 0) {
-			Sys.println("esm-dev start failed");
+			Sys.println("esm dev driver start failed");
 			return false;
 		}
 		Sys.sleep(0.5);

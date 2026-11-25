@@ -124,8 +124,9 @@ For the supported dev loop, use **`npx haxe --dev … -js <entry.mjs> -D esm`**
 and **`-dce no`**, runs the entry under Node (or **`--dev-browser`** for a
 static page), and pushes `__hx_hot_patch.mjs` over WebSocket `/__esm_hot/ws`.
 The emitted `__hx_esm_dev_client.mjs` connects when
-**`HXMC_ESM_DEV`** is set (Node) or from the browser shell. Test harnesses may
-still use **`hxmc/test/esm/hot/esm-dev.mjs`** until migrated.
+**`HXMC_ESM_DEV`** is set (Node) or from the browser shell. The **`watch-patch`**
+lane in **`make esm`** exercises the packaged **`dev.mjs`** router (driver
+injects **`-D esm.hot`**).
 
 Hot builds use **`-dce no`**. The compilation server can attach **per-unit
 emit hashes** to drive incremental patch manifests (harnessed in
