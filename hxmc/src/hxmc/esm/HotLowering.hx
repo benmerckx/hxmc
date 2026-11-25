@@ -210,6 +210,8 @@ class HotLowering {
 						st.skipRootFn = false;
 						return cur;
 					}
+					// Resident-server rebuilds re-run early lowering; skip lambdas already env-wrapped.
+					if (f.tfArgs.length > 0 && f.tfArgs[0].variable.vName == "$env") return cur;
 					st.lambdaN++;
 					var lid = uid + "/λ" + st.lambdaN;
 					return wrapClosure(com, lid, f, cur, st.fieldLocals);
@@ -327,6 +329,7 @@ class HotLowering {
 
 	static function rewriteCaptures(com:CommonContext, f:TFunc, caps:Array<String>):TFunc {
 		if (caps.length == 0) return f;
+		if (f.tfArgs.length > 0 && f.tfArgs[0].variable.vName == "$env") return f;
 		var capSet = new Map<String, Bool>();
 		for (n in caps) capSet.set(n, true);
 		var env = allocVar(VGenerated, "$env", com.basic.tany, f.tfExpr.epos);
