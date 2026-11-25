@@ -33,10 +33,6 @@ class HotLowering {
 		runLateOn(com.defines, com.basic, com.types);
 	}
 
-	public static function runLateGctx(g:generators.Gctx):Void {
-		runLateOn(g.defines, g.basic, g.types);
-	}
-
 	// Per swappable field at ESM emit.
 	public static function prepareFieldCells(g:generators.Gctx, c:TClass, f:TClassField):Void {
 		if (f.cfExpr == null) return;
@@ -85,21 +81,6 @@ class HotLowering {
 		default: false;
 	}
 
-	static function exprNeedsCellLower(e:TExpr):Bool {
-		var pending = false;
-		HotExprMap.mapTransform(function(cur:TExpr):TExpr {
-			if (!pending) switch cur.eexpr {
-				case TMeta(m, _) if (EsmHotMeta.isCellPending(m) || EsmHotMeta.isCellMetaEntry(m)):
-					pending = true;
-				case TVar(v, _) if (EsmHotMeta.isCell(v.vMeta)):
-					pending = true;
-				default:
-			}
-			return cur;
-		}, e);
-		return pending;
-	}
-
 	static function runLateOn(defines:DefineContext, basic:BasicTypes, types:Array<ModuleType>):Void {
 		if (!core.Define.rawDefined(defines, "esm.hot")) return;
 		if (!hasCellLowerWorkTypes(types)) return;
@@ -107,8 +88,6 @@ class HotLowering {
 		scopeClass = resolveClassTypes(types, ["esm", "hot", "Scope"]);
 		visitAllTypes(types, basic, visitFieldLate);
 	}
-
-	static function hasCellLowerWork(com:CommonContext):Bool return hasCellLowerWorkTypes(com.types);
 
 	static function hasCellLowerWorkTypes(types:Array<ModuleType>):Bool {
 		var pending = false;
@@ -137,11 +116,6 @@ class HotLowering {
 		return pending;
 	}
 
-	public static function run(com:CommonContext):Void {
-		runEarly(com);
-		runLate(com);
-	}
-
 	static function visitAll(com:CommonContext, visit:(CommonContext, TClass, TClassField) -> Void):Void {
 		for (t in com.types) switch t {
 			case TClassDecl(c) if (!hasClassFlag(c, CExtern)):
@@ -164,8 +138,6 @@ class HotLowering {
 			case _:
 		}
 	}
-
-	static function resolveClass(com:CommonContext, path:Array<String>):TClass return resolveClassTypes(com.types, path);
 
 	static function resolveClassTypes(types:Array<ModuleType>, path:Array<String>):TClass {
 		for (mt in types) switch mt {

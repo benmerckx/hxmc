@@ -25,12 +25,6 @@ class EsmHotMeta {
 		return k == PREFIX || StringTools.startsWith(k, PREFIX + ".");
 	}
 
-	public static function hasHot(meta:Metadata):Bool {
-		for (m in meta)
-			if (isHotMeta(m)) return true;
-		return false;
-	}
-
 	public static function isKeyed(meta:Metadata):Bool {
 		for (m in meta)
 			if (hotLeaf(metaKey(m), "keyed")) return true;
@@ -64,9 +58,8 @@ class EsmHotMeta {
 
 	public static function isScope(meta:Metadata):Bool {
 		for (m in meta) {
-			var k = metaKey(m);
-			if (k == PREFIX + ".scope") return true;
-			if (k == PREFIX) for (a in m.exprs) switch a.expr {
+			if (hotLeaf(metaKey(m), "scope")) return true;
+			if (metaKey(m) == PREFIX) for (a in m.exprs) switch a.expr {
 				case EConst(Ident("scope")): return true;
 				default:
 			}
@@ -117,50 +110,6 @@ class EsmHotMeta {
 
 	public static function isClosureMeta(m:MetadataEntry):Bool return metaKey(m) == CLOSURE_META;
 
-	public static function closureId(meta:Metadata):Null<String> {
-		for (m in meta) {
-			if (metaKey(m) != CLOSURE_META) continue;
-			for (a in m.exprs) switch a.expr {
-				case EConst(String(s, _)): return s;
-				default:
-			}
-		}
-		return null;
-	}
-
-	public static function closureCapHash(meta:Metadata):Null<String> {
-		for (m in meta) {
-			if (metaKey(m) != CLOSURE_META) continue;
-			var i = 0;
-			for (a in m.exprs) {
-				i++;
-				if (i != 2) continue;
-				switch a.expr {
-					case EConst(String(s, _)): return s;
-					default:
-				}
-			}
-		}
-		return null;
-	}
-
-	public static function closureCaptures(meta:Metadata):Array<String> {
-		var out:Array<String> = [];
-		for (m in meta) {
-			if (metaKey(m) != CLOSURE_META) continue;
-			var i = 0;
-			for (a in m.exprs) {
-				i++;
-				if (i < 3) continue;
-				switch a.expr {
-					case EConst(String(s, _)): out.push(s);
-					default:
-				}
-			}
-		}
-		return out;
-	}
-
 	public static function policy(meta:Metadata):String {
 		for (m in meta) {
 			var k = metaKey(m);
@@ -174,15 +123,5 @@ class EsmHotMeta {
 			if (k == PREFIX + ".reset") return "reset";
 		}
 		return "reset";
-	}
-
-	public static function wasName(meta:Metadata):Null<String> {
-		for (m in meta)
-			if (metaKey(m) == PREFIX + ".was")
-				for (a in m.exprs) switch a.expr {
-					case EConst(String(s, _)): return s;
-					default:
-				}
-		return null;
 	}
 }

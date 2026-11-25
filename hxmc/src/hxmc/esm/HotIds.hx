@@ -19,11 +19,9 @@ import haxe.crypto.Md5;
 // Unit ID (frozen M0.3): pack.Type#field for methods/statics; pack.Type#λ<n> for lambdas in unit.
 class HotIds {
 	public static var units = new Map<String, HotUnit>();
-	public static var callSiteIds = new Map<String, String>();
 
 	public static function reset():Void {
 		units = new Map();
-		callSiteIds = new Map();
 	}
 
 	public static function run(com:CommonContext):Void {
@@ -135,7 +133,6 @@ class HotIds {
 				case TCall(callee, args) if (keyedCallee(callee)):
 					ordinal++;
 					var siteId = enclosingId + "#" + ordinal;
-					callSiteIds.set(siteId, siteId);
 					var hotArg:TExpr = {eexpr: TConst(TString(siteId)), etype: basic.tstring, epos: cur.epos};
 					var nargs = VectorTools.snoc(args, hotArg);
 					return {eexpr: TCall(callee, nargs), etype: cur.etype, epos: cur.epos};

@@ -13,8 +13,6 @@ using StringTools;
 class GenesmHot {
 	public static function generate(com:generators.Gctx):Void {
 		HotManifest.reset();
-		if (core.Define.rawDefined(com.defines, "esm.hot"))
-			hxmc.esm.HotLowering.runLateGctx(com);
 		Genesm.hotRegistry = true;
 		try {
 			Genesm.generate(com);

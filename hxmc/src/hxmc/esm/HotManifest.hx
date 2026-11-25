@@ -187,7 +187,7 @@ class HotManifest {
 			} else {
 				if (p == null || p.emitHash != u.emitHash) {
 					changed.push(u.id);
-					tiers.set(u.id, classifyTier(u, p));
+					tiers.set(u.id, 1);
 				}
 			}
 		}
@@ -217,12 +217,6 @@ class HotManifest {
 
 	static function classLayoutAppendOnly(prev:String, next:String):Bool {
 		return prev != null && next != null && next.length >= prev.length && next.substr(0, prev.length) == prev;
-	}
-
-	static function classifyTier(cur:ManifestUnit, prev:Null<ManifestUnit>):Int {
-		if (prev == null) return 1;
-		if (prev.codeHash != cur.codeHash) return 1;
-		return 1;
 	}
 
 	static function writePatchMjs(outDir:String, diff:HotPatchDiff, moduleImports:Array<String>):Void {

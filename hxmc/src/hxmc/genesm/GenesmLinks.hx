@@ -103,8 +103,6 @@ class GenesmLinks {
 		return ~/^[0-9]/.match(s) ? "m_" + s : s;
 	}
 
-	public static inline function modAliasForEntry(ownerId:String):String return modAlias(ownerId);
-
 	static function isBuiltInRootName(root:String):Bool return switch root {
 		case "haxe" | "js" | "Std" | "String" | "Math" | "Array" | "Date" | "EReg" | "Enum" | "Class" | "Any" | "Int"
 			| "Float" | "Bool" | "UInt" | "Null": true;
@@ -115,8 +113,6 @@ class GenesmLinks {
 		if (isBuiltInRootName(ref.split(".")[0])) return true;
 		return isBuiltInRootName(ref.split("_")[0]);
 	}
-
-	public static function isExternRefForEntry(t:ModuleType):Bool return isExternRef(t);
 
 	static function isExternRef(t:ModuleType):Bool return switch t {
 		case TClassDecl(c): hasClassFlag(c, CExtern);

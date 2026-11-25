@@ -801,7 +801,6 @@ class ModuleCache {
 
 	static function hook(com:CommonContext, actx:compiler.ParsedArg.ArgContext) {
 		hookCalls++;
-		persist = true;
 		state = null;
 		ServerCache.checkModuleHook = null;
 		typing.Finalization.sortExprHook = null;
