@@ -22,7 +22,7 @@ import hxmc.es.Es.Ns;
 // extern (an argument, a value of an extern's field: the outside reads it), the structures of the externs' signatures,
 // and what goes through std's reflection by name (haxe.Json, Reflect, Type's fields, haxe.Serializer). Nothing else is:
 // a value of a type that goes into `Dynamic` and is read by name otherwise needs `@:shared`.
-class FieldNames {
+class FieldNames implements FieldSink {
 	static final KEEP = [
 		// (what JavaScript reads by name)
 		"constructor", "prototype", "toString", "valueOf", "toJSON", "then", "length", "name"
@@ -574,53 +574,53 @@ class FieldNames {
 	static inline function isExtern(c:TClass, f:TClassField):Bool return hasClassFlag(c, CExtern) || hasClassFieldFlag(f, CfExtern);
 
 	// ---- the code
+	//
+	// What the code tells (scan) is what FieldNames notes (FieldSink): at once (visit), or noted apart, as the lowerings
+	// read their code in parallel, then taken in the program's order (FieldLog). Scanning changes nothing it shares.
 
 	// an expression of the code lowered (Lower.prepare, each once)
-	public function visit(e:TExpr, ret:Null<T>) {
-		if (e.eexpr.match(TField(_, FStatic({clPath: {pack: [], name: "$hx"} | {pack: ["js"], name: "Hx"}}, {cfName: "constructs"})))) constructsRead = true;
-		remember(e);
-		fromDynamic(e, ret);
+	public function visit(e:TExpr, ret:Null<T>) scan(e, ret, this, dynAbstract);
+
+	// (dyn: isDyn's memo, the scanner's own)
+	public static function scan(e:TExpr, ret:Null<T>, s:FieldSink, dyn:Map<TAbstract, Int>) {
+		if (e.eexpr.match(TField(_, FStatic({clPath: {pack: [], name: "$hx"} | {pack: ["js"], name: "Hx"}}, {cfName: "constructs"})))) s.onConstructs();
+		remember(e, s);
+		fromDynamic(e, ret, s, dyn);
 		switch e.eexpr {
 			case TCall(callee, el):
 				switch callee.eexpr {
 					// (the outside: raw code's, an extern's)
 					case TField(_, FStatic({clPath: {pack: ["js"], name: "Syntax"}}, {cfName: "code" | "plainCode"})) | TIdent("__js__"):
 						if (el.length > 0) switch el[0].eexpr {
-							case TConst(TString(s)): words(s, "untyped code");
+							case TConst(TString(code)): s.onWords(code, "untyped code");
 							case _:
 						}
-						why = "given to untyped code";
-						for (i in 1...el.length) shareValue(el[i], false);
+						for (i in 1...el.length) s.onShareValue(el[i], false, "given to untyped code");
 					// (reflection by name, std's and JavaScript's: before the externs, some of it is)
 					case TField(_, FStatic(c, f) | FInstance(c, _, f)) if (READS.exists(generators.Genjs.dotPath(c.clPath) + "." + f.cfName)):
-						why = "read by reflection";
 						var k = generators.Genjs.dotPath(c.clPath) + "." + f.cfName;
-						hits.set(k + " @ " + Std.string(e.epos.pfile).split("/").pop() + (DEEP.exists(k) ? " : " + [for (i in READS.get(k)) if (i < el.length) shortType(Texpr.skip(el[i]).etype)].join(", ") : ""), true);
-						for (i in READS.get(generators.Genjs.dotPath(c.clPath) + "." + f.cfName)) if (i < el.length) {
-							if (DEEP.exists(k)) shareValue(el[i], true) else ownValue(el[i]);
+						s.onHit(k + " @ " + Std.string(e.epos.pfile).split("/").pop() + (DEEP.exists(k) ? " : " + [for (i in READS.get(k)) if (i < el.length) shortType(Texpr.skip(el[i]).etype)].join(", ") : ""));
+						for (i in READS.get(k)) if (i < el.length) {
+							if (DEEP.exists(k)) s.onShareValue(el[i], true, "read by reflection") else s.onOwnValue(el[i], "read by reflection");
 						}
-						constants(el);
+						constants(el, s);
 					case TField(_, FStatic(c, f) | FInstance(c, _, f)) if (isExtern(c, f)):
-						why = "given to an extern";
-						declared(f.cfType, el);
+						s.onDeclared(f.cfType, el, "given to an extern");
 					case TField(_, FStatic({clPath: {name: "Reflect" | "Type"}}, _)):
-						constants(el);
+						constants(el, s);
 					case _:
 				}
 			case TNew(c, _, el) if (hasClassFlag(c, CExtern)):
-				why = "given to an extern";
-				if (c.clConstructor != null) declared(c.clConstructor.cfType, el) else for (a in el) shareValue(a, false);
+				if (c.clConstructor != null) s.onDeclared(c.clConstructor.cfType, el, "given to an extern") else
+					for (a in el) s.onShareValue(a, false, "given to an extern");
 			// (a value of an extern's field: the outside reads it)
 			case TBinop(OpAssign, {eexpr: TField(_, FInstance(c, _, f) | FStatic(c, f))}, v) if (isExtern(c, f)):
-				why = "given to an extern";
-				shareDeclared(v.etype, f.cfType);
+				s.onShareDeclared(v.etype, f.cfType, "given to an extern");
 			// (a value from the outside, `haxe.Json.parse`'s (inline: `JSON.parse`'s): of the type it is taken as)
 			case TVar(v, init) if (init != null && fromOutside(init) != null):
-				why = "taken from an extern";
-				shareDeclared(v.vType, fromOutside(init));
+				s.onShareDeclared(v.vType, fromOutside(init), "taken from an extern");
 			case TBinop(OpAssign, a, b) if (fromOutside(b) != null):
-				why = "taken from an extern";
-				shareDeclared(a.etype, fromOutside(b));
+				s.onShareDeclared(a.etype, fromOutside(b), "taken from an extern");
 			// (an unchecked cast to a structure, `(cast this).x`: its names are whatever the value has, as they are)
 			case TCast(x, null):
 				switch [follow(x.etype), follow(e.etype)] {
@@ -629,44 +629,100 @@ class FieldNames {
 					case [from, TAnon(b)] if (hasFields(from, b)):
 					case [_, TAnon(b)]:
 						for (g in b.aFields) {
-							count(g.cfName);
-							keep(g.cfName, "an unchecked cast's structure");
+							s.onCount(g.cfName);
+							s.onKeep(g.cfName, "an unchecked cast's structure");
 						}
 					case _:
 				}
 			case TObjectDecl(fields):
-				for (f in fields) count(f.key.name);
+				for (f in fields) s.onCount(f.key.name);
 			case TField(_, FDynamic(n)):
-				keep(n, "read off Dynamic");
+				s.onKeep(n, "read off Dynamic");
 			// (an extern's, whether or not the program lists the extern)
 			case TField(_, FInstance(c, _, f) | FStatic(c, f)) if (isExtern(c, f)):
-				keep(f.cfName, "an extern's field");
+				s.onKeep(f.cfName, "an extern's field");
 			case TField(_, FClosure(c, f)) if (c != null && hasClassFlag(c.cls, CExtern)):
-				keep(f.cfName, "an extern's field");
+				s.onKeep(f.cfName, "an extern's field");
 			case TField(_, FInstance(c, _, f)):
-				countIn(instanceNs(c), f.cfName);
+				s.onCountIn(NInstance(c), f.cfName);
 			case TField(_, FStatic(c, f)):
-				countIn(staticNs(c), f.cfName);
+				s.onCountIn(NStatic(c), f.cfName);
 			case TField(_, FClosure(c, f)):
-				if (c == null) accessed.set(f.cfName, true);
-				countIn(c == null ? -1 : instanceNs(c.cls), f.cfName);
+				if (c == null) s.onAccessed(f.cfName);
+				s.onCountIn(c == null ? NGlobal : NInstance(c.cls), f.cfName);
 			case TField(_, FEnum(en, ef)):
-				countIn(enumCtorNs(en), ef.efName);
+				s.onCountIn(NEnumCtor(en), ef.efName);
 			case TEnumParameter(x, ef, i):
 				switch follow(ef.efType) {
-					case TFun(s) if (i < s.args.length): countIn(ctorParamNs(ef), s.args[i].name);
+					case TFun(sig) if (i < sig.args.length): s.onCountIn(NCtorParam(ef), sig.args[i].name);
 					case _:
 				}
 			case TField(_, FAnon(f)):
-				accessed.set(f.cfName, true);
-				count(f.cfName);
-			case TIdent(s):
-				keep(s, "untyped code");
-			case TConst(TString(s)) if (s.length > 0 && s.length < 64):
-				strings.set(s, true);
+				s.onAccessed(f.cfName);
+				s.onCount(f.cfName);
+			case TIdent(n):
+				s.onKeep(n, "untyped code");
+			case TConst(TString(str)) if (str.length > 0 && str.length < 64):
+				s.onString(str);
 			case _:
 		}
 	}
+
+	// ---- what the code tells, noted (FieldSink)
+
+	public function onConstructs() constructsRead = true;
+
+	public function onInstance(t:T) instanceTypes.push(t);
+
+	public function onCall(f:TClassField, args:Array<T>, ret:T) calls.push({f: f, args: args, ret: ret});
+
+	public function onShareData(t:T, why:String) {
+		this.why = why;
+		shareData(t);
+	}
+
+	public function onWords(code:String, why:String) words(code, why);
+
+	public function onShareValue(e:TExpr, all:Bool, why:String) {
+		this.why = why;
+		shareValue(e, all);
+	}
+
+	public function onOwnValue(e:TExpr, why:String) {
+		this.why = why;
+		ownValue(e);
+	}
+
+	public function onHit(k:String) hits.set(k, true);
+
+	public function onKeep(n:String, why:String) keep(n, why);
+
+	public function onDeclared(t:T, el:haxe.ds.Vector<TExpr>, why:String) {
+		this.why = why;
+		declared(t, el);
+	}
+
+	public function onShareDeclared(actual:T, declared:T, why:String) {
+		this.why = why;
+		shareDeclared(actual, declared);
+	}
+
+	public function onCount(n:String) count(n);
+
+	// (a namespace made where it is not yet: an enum's)
+	public function onCountIn(ns:Ns, n:String) countIn(switch ns {
+		case NGlobal: -1;
+		case NInstance(c): instanceNs(c);
+		case NStatic(c): staticNs(c);
+		case NStaticPath(p): staticNsByPath(p);
+		case NEnumCtor(e): enumCtorNs(e);
+		case NEnumParam(e): enumParamNs(e);
+		case NCtorParam(ef): ctorParamNs(ef);
+	}, n);
+
+	public function onAccessed(n:String) accessed.set(n, true);
+
+	public function onString(s:String) strings.set(s, true);
 
 	// a value the outside reads: of the type it has before any cast (`Dynamic`'s, an inline function's argument's)
 	function shareValue(e:TExpr, all:Bool) {
@@ -807,7 +863,8 @@ class FieldNames {
 	// a value out of `Dynamic` into a typed place (an initialized variable, an assignment, a cast, an argument, a
 	// returned value): data
 	// from outside (a service the portal gives, a payload), its type the data's, shared
-	function fromDynamic(e:TExpr, ret:Null<T>) {
+	static function fromDynamic(e:TExpr, ret:Null<T>, s:FieldSink, dyn:Map<TAbstract, Int>) {
+		inline function takenExpr(x:TExpr, to:T) taken(x, to, s, dyn);
 		switch e.eexpr {
 			case TReturn(x) if (x != null && ret != null):
 				takenExpr(x, ret);
@@ -819,7 +876,7 @@ class FieldNames {
 				takenExpr(x, e.etype);
 			case TCall(callee, el):
 				switch follow(callee.etype) {
-					case TFun(s): for (i in 0...el.length) if (i < s.args.length) takenExpr(el[i], s.args[i].type);
+					case TFun(sig): for (i in 0...el.length) if (i < sig.args.length) takenExpr(el[i], sig.args[i].type);
 					case _:
 				}
 			case _:
@@ -827,8 +884,9 @@ class FieldNames {
 	}
 
 	// (and of each branch a value comes from: `c ? json.discount : {...}`, a switch's, a block's last)
-	function takenExpr(x:TExpr, to:T) {
-		taken(x.etype, to);
+	static function taken(x:TExpr, to:T, s:FieldSink, dyn:Map<TAbstract, Int>) {
+		inline function takenExpr(y:TExpr, to:T) taken(y, to, s, dyn);
+		takenType(x.etype, to, s, dyn);
 		switch x.eexpr {
 			case TParenthesis(y) | TMeta(_, y):
 				takenExpr(y, to);
@@ -847,22 +905,17 @@ class FieldNames {
 		}
 	}
 
-	function taken(from:T, to:T) {
-		var df = isDyn(from), dt = isDyn(to);
-		if (df && !dt) {
-			why = "taken from Dynamic";
-			shareData(to);
-		} else if (dt && !df) {
-			// (and into it: a structure read by name there, `interpolate({rank: 7})`; its data, a class's instance not)
-			why = "given to Dynamic";
-			shareData(from);
-		}
+	static function takenType(from:T, to:T, s:FieldSink, dyn:Map<TAbstract, Int>) {
+		var df = isDyn(from, dyn), dt = isDyn(to, dyn);
+		if (df && !dt) s.onShareData(to, "taken from Dynamic");
+		// (and into it: a structure read by name there, `interpolate({rank: 7})`; its data, a class's instance not)
+		else if (dt && !df) s.onShareData(from, "given to Dynamic");
 	}
 
 	// `Dynamic`, `Any`, an abstract of either (an abstract's: memoized, but where its underlying type is a parameter of it)
 	final dynAbstract = new Map<TAbstract, Int>();
 
-	function isDyn(t:T):Bool return switch unwrapNull(t) {
+	static function isDyn(t:T, dynAbstract:Map<TAbstract, Int>):Bool return switch unwrapNull(t) {
 		case TDynamic(_): true;
 		case TMono(m): m.tmType == null;
 		case TAbstract({aPath: {pack: [], name: "Any"}}, _): true;
@@ -872,11 +925,11 @@ class FieldNames {
 				dynAbstract.set(a, 0);
 				k = switch unwrapNull(a.aThis) {
 					case TInst({clKind: KTypeParameter(_)}, _): 2;
-					case u: isDyn(u) ? 1 : 0;
+					case u: isDyn(u, dynAbstract) ? 1 : 0;
 				}
 				dynAbstract.set(a, k);
 			}
-			k == 2 ? isDyn(core.Abstract.getUnderlyingType(a, ps)) : k == 1;
+			k == 2 ? isDyn(core.Abstract.getUnderlyingType(a, ps), dynAbstract) : k == 1;
 		case _: false;
 	}
 
@@ -917,9 +970,9 @@ class FieldNames {
 		}
 	}
 
-	function constants(el:haxe.ds.Vector<TExpr>) {
+	static function constants(el:haxe.ds.Vector<TExpr>, s:FieldSink) {
 		for (a in el) switch Texpr.skip(a).eexpr {
-			case TConst(TString(s)): keep(s, "named by reflection");
+			case TConst(TString(str)): s.onKeep(str, "named by reflection");
 			case _:
 		}
 	}
@@ -939,14 +992,14 @@ class FieldNames {
 
 	// ---- generic code
 
-	function remember(e:TExpr) {
+	static function remember(e:TExpr, s:FieldSink) {
 		switch follow(e.etype) {
-			case TInst(c, ps) if (ps.length > 0 && !hasClassFlag(c, CExtern)): instanceTypes.push(e.etype);
+			case TInst(c, ps) if (ps.length > 0 && !hasClassFlag(c, CExtern)): s.onInstance(e.etype);
 			case _:
 		}
 		switch e.eexpr {
 			case TCall({eexpr: TField(_, FStatic(c, cf) | FInstance(c, _, cf))}, el) if (!hasClassFlag(c, CExtern) && (cf.cfParams.length > 0 || c.clParams.length > 0)):
-				calls.push({f: cf, args: [for (a in el) a.etype], ret: e.etype});
+				s.onCall(cf, [for (a in el) a.etype], e.etype);
 			case _:
 		}
 	}
@@ -1050,4 +1103,115 @@ class FieldNames {
 	}
 
 	static inline function max(a:Int, b:Int):Int return a > b ? a : b;
+}
+
+// what FieldNames notes of the code (FieldNames.scan): FieldNames itself, or a log of it (FieldLog)
+interface FieldSink {
+	function onConstructs():Void;
+	function onInstance(t:T):Void;
+	function onCall(f:TClassField, args:Array<T>, ret:T):Void;
+	function onShareData(t:T, why:String):Void;
+	function onWords(code:String, why:String):Void;
+	function onShareValue(e:TExpr, all:Bool, why:String):Void;
+	function onOwnValue(e:TExpr, why:String):Void;
+	function onHit(k:String):Void;
+	function onKeep(n:String, why:String):Void;
+	function onDeclared(t:T, el:haxe.ds.Vector<TExpr>, why:String):Void;
+	function onShareDeclared(actual:T, declared:T, why:String):Void;
+	function onCount(n:String):Void;
+	function onCountIn(ns:Ns, n:String):Void;
+	function onAccessed(n:String):Void;
+	function onString(s:String):Void;
+}
+
+private enum Note {
+	OnConstructs;
+	OnInstance(t:T);
+	OnCall(f:TClassField, args:Array<T>, ret:T);
+	OnShareData(t:T, why:String);
+	OnWords(code:String, why:String);
+	OnShareValue(e:TExpr, all:Bool, why:String);
+	OnOwnValue(e:TExpr, why:String);
+	OnHit(k:String);
+	OnKeep(n:String, why:String);
+	OnDeclared(t:T, el:haxe.ds.Vector<TExpr>, why:String);
+	OnShareDeclared(actual:T, declared:T, why:String);
+	OnCount(n:String);
+	OnCountIn(ns:Ns, n:String);
+	OnAccessed(n:String);
+	OnString(s:String);
+}
+
+// What a field's code tells of the fields' names, read apart (a lowering's, in parallel: Chunk.Lowering), for FieldNames to
+// take in the program's order (replay)
+class FieldLog implements FieldSink {
+	final notes:Array<Note> = [];
+
+	function new() {}
+
+	// e's (dyn: isDyn's memo, the reader's own)
+	public static function of(e:TExpr, dyn:Map<TAbstract, Int>):FieldLog {
+		var log = new FieldLog();
+		// (ret: the return type of the function e is in)
+		function walk(e:TExpr, ret:Null<T>) {
+			FieldNames.scan(e, ret, log, dyn);
+			switch e.eexpr {
+				case TFunction(f):
+					walk(f.tfExpr, f.tfType);
+					return;
+				case _:
+			}
+			Texpr.iter(x -> walk(x, ret), e);
+		}
+		walk(e, null);
+		return log;
+	}
+
+	public function replay(into:FieldSink) for (n in notes) switch n {
+		case OnConstructs: into.onConstructs();
+		case OnInstance(t): into.onInstance(t);
+		case OnCall(f, args, ret): into.onCall(f, args, ret);
+		case OnShareData(t, why): into.onShareData(t, why);
+		case OnWords(code, why): into.onWords(code, why);
+		case OnShareValue(e, all, why): into.onShareValue(e, all, why);
+		case OnOwnValue(e, why): into.onOwnValue(e, why);
+		case OnHit(k): into.onHit(k);
+		case OnKeep(n, why): into.onKeep(n, why);
+		case OnDeclared(t, el, why): into.onDeclared(t, el, why);
+		case OnShareDeclared(a, d, why): into.onShareDeclared(a, d, why);
+		case OnCount(n): into.onCount(n);
+		case OnCountIn(ns, n): into.onCountIn(ns, n);
+		case OnAccessed(n): into.onAccessed(n);
+		case OnString(s): into.onString(s);
+	}
+
+	public function onConstructs() notes.push(OnConstructs);
+
+	public function onInstance(t:T) notes.push(OnInstance(t));
+
+	public function onCall(f:TClassField, args:Array<T>, ret:T) notes.push(OnCall(f, args, ret));
+
+	public function onShareData(t:T, why:String) notes.push(OnShareData(t, why));
+
+	public function onWords(code:String, why:String) notes.push(OnWords(code, why));
+
+	public function onShareValue(e:TExpr, all:Bool, why:String) notes.push(OnShareValue(e, all, why));
+
+	public function onOwnValue(e:TExpr, why:String) notes.push(OnOwnValue(e, why));
+
+	public function onHit(k:String) notes.push(OnHit(k));
+
+	public function onKeep(n:String, why:String) notes.push(OnKeep(n, why));
+
+	public function onDeclared(t:T, el:haxe.ds.Vector<TExpr>, why:String) notes.push(OnDeclared(t, el, why));
+
+	public function onShareDeclared(actual:T, declared:T, why:String) notes.push(OnShareDeclared(actual, declared, why));
+
+	public function onCount(n:String) notes.push(OnCount(n));
+
+	public function onCountIn(ns:Ns, n:String) notes.push(OnCountIn(ns, n));
+
+	public function onAccessed(n:String) notes.push(OnAccessed(n));
+
+	public function onString(s:String) notes.push(OnString(s));
 }

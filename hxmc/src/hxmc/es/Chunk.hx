@@ -112,7 +112,8 @@ private class Doc {
 
 // what a lowering used of the program (Lower.Resolve's calls), in its order; `file`: the file its code is in
 private enum Use {
-	UScope(e:TExpr);
+	// (a field's code begins: what it tells of the fields' names, -D hxmc.js.minify.fields)
+	UScope(fields:Null<FieldNames.FieldLog>);
 	UDeclare(s:Sym);
 	UType(t:ModuleType, p:Pos, file:Int);
 	UPath(path:String, file:Int);
@@ -222,7 +223,10 @@ private class Lowering implements Lower.Resolve {
 
 	public function splitsInline():Bool return chunk.modules;
 
-	public function enterScope(e:TExpr):Void uses.push(UScope(e));
+	// (FieldNames.isDyn's memo, the lowering's own)
+	final dyn = new Map<TAbstract, Int>();
+
+	public function enterScope(e:TExpr):Void uses.push(UScope(chunk.fieldNames == null ? null : FieldNames.FieldLog.of(e, dyn)));
 
 	public function declare(s:Sym):Void uses.push(UDeclare(s));
 
@@ -606,9 +610,9 @@ class Chunk {
 	function replay(u:Lowering) {
 		var was = current;
 		for (x in u.uses) switch x {
-			case UScope(e):
+			case UScope(log):
 				enterScope();
-				if (fieldNames != null) visitFields(e);
+				if (log != null) log.replay(fieldNames);
 			case UDeclare(s):
 				declare(s);
 			case UType(t, p, file):
@@ -648,21 +652,6 @@ class Chunk {
 				for (n in names) localNames.set(n, true);
 		}
 		current = was;
-	}
-
-	// (FieldNames) a field's code, as a lowering began it (ret: the return type of the function e is in)
-	function visitFields(e:TExpr) {
-		function walk(e:TExpr, ret:Null<T>) {
-			fieldNames.visit(e, ret);
-			switch e.eexpr {
-				case TFunction(f):
-					walk(f.tfExpr, f.tfType);
-					return;
-				case _:
-			}
-			Texpr.iter(x -> walk(x, ret), e);
-		}
-		walk(e, null);
 	}
 
 	// lowered now, in the file being assembled (`current`); its locals' names taken (`locals`)
