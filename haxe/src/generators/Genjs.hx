@@ -101,6 +101,8 @@ class JsCtx {
 	public var featureCache:Null<StringMap<Bool>>;
 	// port: hxmc Genesm (-D esm) keeps each module in ctx.buf; skip incremental flush to com.file
 	public var noFlush:Bool;
+	// -D esm.hot: do not replace hot-closure emit with a bare closure inside a class static initializer.
+	public var inClassStatic:Bool;
 
 	public function new() {}
 }
@@ -760,6 +762,8 @@ class Genjs {
 					case _:
 						die("", "genjs.ml");
 				}
+			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
+				&& EsmHotEmit.tryEmitClosure(ctx, m, f, e.epos)):
 			case TMeta(_, e):
 				genExpr(ctx, e);
 			case TReturn(eo):
@@ -1061,6 +1065,8 @@ class Genjs {
 			case TConst(_) | TLocal(_) | TArray(_) | TBinop(_) | TField(_) | TEnumParameter(_) | TEnumIndex(_) | TTypeExpr(_) | TParenthesis(_) |
 				TObjectDecl(_) | TArrayDecl(_) | TNew(_) | TUnop(_) | TFunction(_) | TIdent(_):
 				genExpr(ctx, e);
+			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
+				&& EsmHotEmit.tryEmitClosure(ctx, m, f, e.epos)):
 			case TMeta(_, e1):
 				genValue(ctx, e1);
 			case TCall(e, el):
@@ -1415,11 +1421,20 @@ class Genjs {
 			case e:
 				switch e.eexpr {
 					case TFunction(_):
+						// port: hxmc GenesmHot swappable static bodies when -D esm.hot
+						if (EsmHotEmit.tryEmitClassStatic != null && EsmHotEmit.tryEmitClassStatic(ctx, c, clPath, f)) {
+							newline(ctx);
+							return;
+						}
+						if (EsmHotEmit.prepareFieldCells != null) EsmHotEmit.prepareFieldCells(ctx, c, f);
 						var path = (sPath(ctx, clPath)) + (staticField(ctx, c, f));
 						ctx.idCounter = 0;
 						print(ctx, path + " = ");
 						processExpose(f.cfMeta, () -> (dotPath(clPath)) + "." + f.cfName, s -> print(ctx, "$hx_exports" + pathToBrackets(s) + " = "));
-						genValue(ctx, e);
+						var wasStatic = ctx.inClassStatic;
+						ctx.inClassStatic = true;
+						genValue(ctx, f.cfExpr != null ? f.cfExpr : e);
+						ctx.inClassStatic = wasStatic;
 						newline(ctx);
 					case _:
 						ctx.statics.unshift({c: c, f: f, e: e});
@@ -1867,6 +1882,8 @@ class Genjs {
 
 	public static function generateStatic(ctx:JsCtx, s:{c:TClass, f:TClassField, e:TExpr}):Void {
 		var c = s.c, f = s.f, e = s.e;
+		var wasStatic = ctx.inClassStatic;
+		ctx.inClassStatic = true;
 		switch c.clKind {
 			case KModuleFields(m):
 				print(ctx, "var " + moduleField(m, f) + " = ");
@@ -1877,6 +1894,7 @@ class Genjs {
 				print(ctx, sPath(ctx, clPath) + staticField(ctx, c, f) + " = ");
 		}
 		genValue(ctx, e);
+		ctx.inClassStatic = wasStatic;
 		newline(ctx);
 	}
 
