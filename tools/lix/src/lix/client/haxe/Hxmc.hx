@@ -10,7 +10,7 @@ import haxe.DynamicAccess;
  * the package's `dist/`, the installation it ships for lix.
  *
  * As a version: `hxmc-<npm version>` (pinned, what `.haxerc` holds), `hxmc-<dist-tag>` (`latest`, `next`) or
- * `hxmc-<commit>` (a nightly's, the last part of its version), and `hxmc` alone for `hxmc-latest`.
+ * `hxmc-<commit>` (a nightly's, the last part of its version), and `hxmc` alone for `hxmc-next` (the newest nightly: hxmc has no releases yet).
  */
 class Hxmc {
 
@@ -21,9 +21,9 @@ class Hxmc {
   static public function isHxmc(version:String)
     return version == 'hxmc' || version.startsWith(PREFIX);
 
-  // the spec after `hxmc-` (`latest` for `hxmc`)
+  // the spec after `hxmc-` (`next` for `hxmc`)
   static public function spec(version:String)
-    return if (version == 'hxmc') 'latest' else version.substr(PREFIX.length);
+    return if (version == 'hxmc') 'next' else version.substr(PREFIX.length);
 
   // npm's documents of the packages (their versions' metadata, `dist-tags`), once per run
   static final packuments = new Map<String, Dynamic>();
