@@ -126,8 +126,8 @@ ulimit -s unlimited 2>/dev/null || true; $(TOOL) $(1) $(2) > $(1).log 2>&1 || { 
 endef
 
 .DEFAULT_GOAL := help
-.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
-	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
+.PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check jsgen jsgen-check port release npm site site-check \
+	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites jsgen-suites corpus-stage corpus-verify \
 	units native-check mir-check dev-check \
 	bench bench-compile bench-micro bench-simd measure quick check clean distclean
 
@@ -172,6 +172,10 @@ help:
 ##   mir-check   the Mir lane (hxmc/test/MirCheck.hx): bin/npm/native/HOST/haxe running the corpus
 ##               in itself, the macro cases with Mir macros against the reference, its compiled
 ##               functions kept across builds, its statics in the compilation server
+##   jsgen       bin/jsgen/haxe: the port with hxmc's JavaScript generator (-D hxmc.js=es)
+##   jsgen-check its cases, split and not, under node (CASES="Basic" for some)
+##   jsgen-suites  upstream's tests/unit by it as es, es-modules and TypeScript (tsc, then node;
+##               JSGEN_TARGETS: a subset; hxmc/test/UpstreamSuites.hx)
 ##   portable-check  hxmc's spans on Eval and JavaScript, built by the reference (make reference),
 ##               print what hxmc's builds print (hxmc/test/PortableCheck.hx)
 ##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
@@ -305,6 +309,20 @@ crosshost: $(TOOL) $(STD) $(HOST_RT)
 # make reference first)
 portable-check: $(TOOL) $(STD)
 	export HAXE_REFERENCE=$(abspath $(REFERENCE)); $(SCRIPT) PortableCheck
+
+# hxmc's JavaScript generator (hxmc/src/hxmc/es, docs/js.md): bin/jsgen/haxe is the
+# port's command line with it (seconds after an edit); its cases built by the
+# port's generator and by it, run under node (hxmc/test/JsGenCheck.hx)
+jsgen: bin/jsgen/haxe
+bin/jsgen/haxe: $(TOOL) $(PORT_SRC) $(HXMC_SRC) $(STD) $(HOST_RT)
+	$(call hxmc,$@,-cp haxe/src -cp hxmc/src -main hxmc.es.Main -D disable-parallelism $(COMPILER_ARGS) $(HXMC_ARGS))
+jsgen-check: bin/jsgen/haxe
+	$(SCRIPT) JsGenCheck $(CASES)
+
+JSGEN_TARGETS ?= es es-modules ts
+jsgen-suites: $(TOOL) bin/jsgen/haxe bin/lix/lix
+	@failed=; for t in $(JSGEN_TARGETS); do $(SCRIPT) UpstreamSuites --target $$t || failed="$$failed $$t"; done; \
+	if [ -n "$$failed" ]; then echo "jsgen-suites: failed:$$failed"; exit 1; fi
 
 # --- The port ---
 

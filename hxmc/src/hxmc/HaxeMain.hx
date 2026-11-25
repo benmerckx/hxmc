@@ -137,6 +137,8 @@ class HaxeMain {
 		hxmc.ir.CInterop.install();
 		hxmc.TargetFlags.install();
 		hxmc.StdDce.install();
+		// (-D hxmc.js=es: hxmc's JavaScript generator, docs/js.md)
+		hxmc.es.JsGen.install();
 		// (not among the compilation's defines: its defines are the reference's,
 		// Compiler.getDefine, hxcpp's Options.txt, the modules' signatures)
 		args = without(args, MACROS);

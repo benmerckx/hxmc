@@ -89,6 +89,7 @@ each lane on the kept cases and 400 random programs.
 | `RtSearchCheck` | `units` | the tool, as npm's platform package's `haxe` without the launcher, finds the runtime objects beside itself and in the target's platform package beside it; `HXMC_RT_DIR` adds to the search; a missing one's error lists every directory searched |
 | `Units` | `units`, `quick` | `RootFactsCheck` and `MirCompactCheck` (Roots and MIR compaction on hand-made functions), `CacheCheck`, `RtSearchCheck` (not on Windows), and the frontends' seam: a compiler built from hxmc's sources with its own main (`hxmc/test/frontend`) adds a function to the lowered program through `hxmc.Main.beforeCodegen` ([hxmc.md](hxmc.md#frontends)); the program it builds calls it |
 | `UpstreamSuites` | `upstream-suites` | upstream's runtime suites built by hxmc and run ([below](#upstreams-runtime-suites)) |
+| `UpstreamSuites --target es|es-modules|ts` | `jsgen-suites` | upstream's unit suite by the JavaScript generator ([below](#upstreams-runtime-suites)) |
 | `DebugCheck` | `check` | gdb or lldb on a `-debug` build: breakpoints, backtraces, the tables |
 | `SharedCheck` | `native-check` | shared libraries of the glibc mode loaded by an hxmc program; Android's `.so`, AndroidHello as `libmain.so` (its SONAME, `ANativeActivity_onCreate` exported) |
 | `JniCheck` | `native-check` | Java through JNI ([interop.md](interop.md#java-jni)): the corpus's JNI cases in the glibc mode (an embedded JVM), also with `RT_VERIFY=1`; `hxmc/test/jni/JniLib.hx` as a library `java` loads (`JNI_OnLoad`, its Haxe object called from Java's threads); both built for android-arm64 and android-x86_64 (run by helder's emulator jobs); a JDK, else the runs are skipped |
@@ -157,6 +158,18 @@ needs).
 `unit` includes `TestCoroutines`. On wasm32-wasi the call-stack and socket
 tests are `TARGET` skips.
 
+`make jsgen-suites` builds `tests/unit` with hxmc's JavaScript generator
+(`bin/jsgen/haxe`, `hxmc/test/upstream/unit-js.hxml`) as `es`, `es-modules`
+and TypeScript (`ts`: es-modules with a `.ts` output), and runs it under node
+(`JSGEN_TARGETS=` narrows it). The TypeScript output is first checked by `tsc`
+(TypeScript 7.0.2, installed under `bin/test/upstream-suites`, or `TSC=`) with
+`strict` but `strictNullChecks`; an error fails the suite. A `*` in
+`skips.txt` means hxmc's own targets; the generator's are named (`es`,
+`es-modules`, `ts`). All three run the whole suite (1620 tests), none skipped.
+`JSGEN_DEFINES=` adds defines (space-separated): `JSGEN_DEFINES="hxmc.js.minify
+hxmc.js.minify.fields" make jsgen-suites JSGEN_TARGETS=es` runs it minified with the
+fields renamed (docs/js.md; bundled only), which passes too.
+
 ## CI
 
 `.github/workflows/build.yml` runs as parallel jobs, each waiting only for
@@ -174,6 +187,7 @@ a release is published only when all of them pass.
 | `crosshost` | yes | `make crosshost` for linux-x86_64, macos-arm64, windows-x86_64 and wasm32-wasi, one target of each format (two jobs, the cases in shards: `--shard i/2`; the module's builds on node workers) |
 | `fuzz-exec` | yes | full runs only: the fuzzer's exec lanes; `PortableCheck` |
 | `upstream-suites` | yes | upstream's runtime suites, natively and on wasm32-wasi |
+| `jsgen` | | hxmc's JavaScript generator: `make jsgen-check jsgen-suites` |
 | `conformance` | yes | the harnesses above on the release binary's Eval: `hxb macro hxblib haxelib unit`, `display server jsonrpc`, `targets` (with `Targets --strict` on self -> hl, neko: the reference still compiles the port's sources, the outputs identical); full runs only: the Eval debugger and the fuzzer's diff lanes |
 | `test` | yes | on each of the six machines: the release binary's smoke test (TLS handshake, libuv), lix, the corpus, the self-compile; then, on Linux x86-64 only, the Mir lane (`MirCheck`, as `make mir-check`) |
 | `wasm` | yes | the corpus and the self-compile under node and wasmtime, also with legacy exception handling |
