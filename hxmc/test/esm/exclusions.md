@@ -1,6 +1,6 @@
 # ESM JS unit suite exclusions (phase 1)
 
-Gate: **`make esm-unit`** or:
+Gate: **`make esm`** (lane `unit`) or:
 
 ```sh
 bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run EsmGenesmCheck

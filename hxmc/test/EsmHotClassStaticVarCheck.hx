@@ -4,14 +4,15 @@ import sys.io.File;
 
 using StringTools;
 
-// Class static vars must init before publishClass so wrapped static methods see them — make esm-hot-m8
+// Class static vars init before publishClass; lane class-static of make esm
 class EsmHotClassStaticVarCheck {
-	static final OUT = "bin/test/esm-hot-m8";
+	static final TAG = "hot class-static";
+	static final OUT = "bin/test/esm/hot/class-static";
 	static final DOL = String.fromCharCode(36);
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
 		rmrf(OUT);
@@ -19,13 +20,7 @@ class EsmHotClassStaticVarCheck {
 		if (!compile(haxe)) Sys.exit(1);
 		if (!checkEmit()) Sys.exit(1);
 		if (!runImport()) Sys.exit(1);
-		Sys.println("esm-hot-m8: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function compile(haxe:String):Bool {
@@ -45,7 +40,7 @@ class EsmHotClassStaticVarCheck {
 			+ '}\n');
 		var args = [haxe, "-cp", root + "/" + OUT, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
 		var log = '$OUT/build.log';
-		Sys.println("esm-hot-m8: compile");
+		Sys.println('$TAG: compile');
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {
 			Sys.println("compile failed\n" + tail(readText(log), 2000));
@@ -66,7 +61,7 @@ class EsmHotClassStaticVarCheck {
 			Sys.println("static var init must appear before publishClass");
 			return false;
 		}
-		Sys.println("esm-hot-m8: emit ok");
+		Sys.println('$TAG: emit ok');
 		return true;
 	}
 
@@ -78,12 +73,12 @@ class EsmHotClassStaticVarCheck {
 			+ 'const G = rt.' + DOL + 'h.StackRuntime;\n'
 			+ 'G.push(3);\n'
 			+ 'if (!G.items || G.items.length !== 1) throw new Error("push failed");\n'
-			+ 'console.log("esm-hot-m8-import: ok");\n');
+			+ 'console.log("hot class-static: ok");\n');
 		var r = exec([Sys.getEnv("NODE") ?? "node", FileSystem.fullPath(runner)], {merge: true, cwd: FileSystem.fullPath(OUT)});
 		if (r.code != 0) {
 			Sys.println("import failed\n" + r.out);
 			return false;
 		}
-		return r.out.indexOf("esm-hot-m8-import: ok") >= 0;
+		return r.out.indexOf("hot class-static: ok") >= 0;
 	}
 }

@@ -4,14 +4,14 @@ import sys.io.File;
 
 using StringTools;
 
-// Module emit diff → patch importModules + dev client — make esm-hot-m10
+// Module emit diff, importModules, dev client; lane module-import of make esm
 class EsmHotModuleImportCheck {
-	static final OUT = "bin/test/esm-hot-m10";
-	static final DOL = String.fromCharCode(36);
+	static final TAG = "hot module-import";
+	static final OUT = "bin/test/esm/hot/module-import";
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
 		rmrf(OUT);
@@ -22,13 +22,7 @@ class EsmHotModuleImportCheck {
 		if (!compile(haxe, "v2")) Sys.exit(1);
 		if (!checkPatch()) Sys.exit(1);
 		if (!checkDevClient()) Sys.exit(1);
-		Sys.println("esm-hot-m10: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function writeMain(label:String):Void {
@@ -43,7 +37,7 @@ class EsmHotModuleImportCheck {
 		var js = root + "/" + OUT + "/main.mjs";
 		var args = [haxe, "-cp", root + "/" + OUT, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
 		var log = '$OUT/$label-build.log';
-		Sys.println('esm-hot-m10: compile $label');
+		Sys.println('$TAG: compile $label');
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {
 			Sys.println('compile failed\n' + tail(readText(log), 2000));
@@ -66,7 +60,7 @@ class EsmHotModuleImportCheck {
 			Sys.println("applyHotPatchFromDev must return applyHotPatch result");
 			return false;
 		}
-		Sys.println("esm-hot-m10: patch ok");
+		Sys.println('$TAG: patch ok');
 		return true;
 	}
 
@@ -80,7 +74,7 @@ class EsmHotModuleImportCheck {
 			Sys.println("dev client must apply patch and call __esmHotRemount");
 			return false;
 		}
-		Sys.println("esm-hot-m10: dev client ok");
+		Sys.println('$TAG: dev client ok');
 		return true;
 	}
 }

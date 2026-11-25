@@ -4,39 +4,34 @@ import sys.io.File;
 
 using StringTools;
 
-// M2: cells, closures, keyed ordinal reset — make esm-hot-m2
-class EsmHotM2Check {
-	static final OUT = "bin/test/esm-hot-m2";
-	static final SRC = "hxmc/test/esm/hot/m2";
+// Hot cells, closures, keyed call ordinals; lane cells of make esm
+class EsmHotCellsCheck {
+	static final TAG = "hot cells";
+	static final OUT = "bin/test/esm/hot/cells";
+	static final SRC = "hxmc/test/esm/hot/cells";
 	static final DOL = String.fromCharCode(36);
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		rmrf(OUT);
 		mkdirs(OUT);
 		prepareKeyedSiteV1();
-		if (!compile(haxe, "m2")) Sys.exit(1);
+		if (!compile(haxe, "v1")) Sys.exit(1);
 		snapshotKeyedSiteV1();
 		writeRunner('$OUT/run-v1.mjs');
 		prepareKeyedSiteV2();
-		if (!compile(haxe, "m2v2")) Sys.exit(1);
+		if (!compile(haxe, "v2")) Sys.exit(1);
 		writeRunnerV2('$OUT/run-v2.mjs');
 		writeOrchestrator('$OUT/run.mjs');
-		Sys.println("esm-hot-m2: run integration");
+		Sys.println('$TAG: run integration');
 		var r = exec(["node", FileSystem.fullPath('$OUT/run.mjs')], {merge: true});
 		if (r.code != 0) {
-			Sys.println("EsmHotM2Check: failed");
+			Sys.println('$TAG: failed');
 			Sys.exit(1);
 		}
-		Sys.println("esm-hot-m2: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function prepareKeyedSiteV1():Void {
@@ -52,7 +47,7 @@ class EsmHotM2Check {
 	static function snapshotKeyedSiteV1():Void {
 		var src = root + "/" + OUT + "/hx/KeyedSite.mjs";
 		var dst = root + "/" + OUT + "/hx/KeyedSite.v1.mjs";
-		if (!FileSystem.exists(src)) fail('missing KeyedSite emit after m2 compile: $src');
+		if (!FileSystem.exists(src)) fail('missing KeyedSite emit after compile: $src');
 		File.copy(src, dst);
 	}
 
@@ -69,7 +64,7 @@ class EsmHotM2Check {
 		var esmStd = FileSystem.fullPath("hxmc/std/esm");
 		var js = root + "/" + OUT + "/main.mjs";
 		var args = [haxe, "-cp", esmStd, "-cp", cp, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-D", "hxmc.no-module-cache", "-dce", "no", "-js", js];
-		Sys.println('esm-hot-m2: compile $label');
+		Sys.println('$TAG: compile $label');
 		var log = '$OUT/$label-build.log';
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {

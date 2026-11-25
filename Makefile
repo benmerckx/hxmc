@@ -127,7 +127,7 @@ endef
 
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
-	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
+	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites esm corpus-stage corpus-verify \
 	units native-check mir-check dev-check \
 	bench bench-compile bench-micro bench-simd measure quick check clean distclean
 
@@ -176,6 +176,8 @@ help:
 ##               print what hxmc's builds print (hxmc/test/PortableCheck.hx)
 ##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
 ##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
+##   esm           Genesm + upstream unit (-D esm) + hot-reload harnesses (hxmc/test/Esm.hx; ESM_ARGS:
+##               lane ids or harness names to run a subset, default all)
 ##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
 ##               JS (hxmc/test/ModuleCacheCheck.hx; PORT=1 adds the port itself)
 ##   dev-check   the dev loop: `hxmc dev` through edits and a compile error, the compilation server's
@@ -498,54 +500,10 @@ test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 # unit on wasm32-wasi; SUITES and SUITES_TARGET narrow it (CI: a job per target)
 SUITES ?=
 SUITES_TARGET ?=
-# upstream unit with -D esm (Genesm); needs HaxeMain (HOST_HAXE or bin/haxe-js)
-esm-unit: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmGenesmCheck --haxe $(HOST_HAXE)
-	$(SCRIPT) EsmSuites --haxe $(HOST_HAXE)
-
-# Phase 2 hot: tier-1 in-process body swap (-D esm.hot)
-esm-hot-m0: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotTier1Check --haxe $(HOST_HAXE)
-
-# Phase 2 hot M1: WebSocket manifest + patch chunk after file edit
-esm-hot-m1: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotM1Check --haxe $(HOST_HAXE)
-
-# Phase 2 hot M2: cells, closures, keyed ordinal reset
-esm-hot-m2: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotM2Check --haxe $(HOST_HAXE)
-
-# Phase 2 hot M3: tier-2 class/enum layout + migration / reload fallback
-esm-hot-m3: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotM3Check --haxe $(HOST_HAXE)
-
-# Phase 2 hot M4: heap serializer + transactional apply / rollback
-esm-hot-m4: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotM4Check --haxe $(HOST_HAXE)
-
-# Phase 2 hot M5: -D esm + -D esm.hot dual-flavor smoke (not fixpoint)
-esm-hot-m5: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotDualCheck --haxe $(HOST_HAXE)
-
-# Phase 2 hot M6: std cross-module static inits (StringTools → SysTools under $h)
-esm-hot-m6: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotStdGlobalsCheck --haxe $(HOST_HAXE)
-
-esm-hot-m7: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotStaticFnCheck --haxe $(HOST_HAXE)
-
-# Phase 2 hot M8: class static vars before publishClass (wrapped static self-ref)
-esm-hot-m8: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotClassStaticVarCheck --haxe $(HOST_HAXE)
-
-esm-hot-m9: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotShallowCapCheck --haxe $(HOST_HAXE)
-
-esm-hot-m10: $(TOOL) $(STD) $(HOST_HAXE)
-	$(SCRIPT) EsmHotModuleImportCheck --haxe $(HOST_HAXE)
-
-# All phase-2 hot milestone gates (M0–M10)
-esm-hot: esm-hot-m0 esm-hot-m1 esm-hot-m2 esm-hot-m3 esm-hot-m4 esm-hot-m5 esm-hot-m6 esm-hot-m7 esm-hot-m8 esm-hot-m9 esm-hot-m10
+# ESM (Genesm, -D esm / -D esm.hot): npm-style compiler; utest via lix (docs/testing.md)
+ESM_ARGS ?=
+esm: $(TOOL) $(STD) $(HOST_HAXE) bin/lix/lix
+	$(SCRIPT) Esm --haxe $(HOST_HAXE) $(ESM_ARGS)
 
 upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
 	@failed=; \

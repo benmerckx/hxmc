@@ -4,14 +4,15 @@ import sys.io.File;
 
 using StringTools;
 
-// Dual-flavor smoke: -D esm + -D esm.hot compile and run under node — make esm-hot-m5
+// -D esm and -D esm.hot together; lane dual-flavor of make esm
 class EsmHotDualCheck {
-	static final OUT = "bin/test/esm-hot-m5";
+	static final TAG = "hot dual-flavor";
+	static final OUT = "bin/test/esm/hot/dual-flavor";
 	static final DOL = String.fromCharCode(36);
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
 		rmrf(OUT);
@@ -21,13 +22,7 @@ class EsmHotDualCheck {
 		if (!checkDualEntry()) Sys.exit(1);
 		writeRunner('$OUT/run-dual.mjs');
 		if (!runDual('$OUT/run-dual.mjs')) Sys.exit(1);
-		Sys.println("esm-hot-m5: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function compileDual(haxe:String):Bool {
@@ -35,7 +30,7 @@ class EsmHotDualCheck {
 		var js = root + "/" + OUT + "/main.mjs";
 		var args = [haxe, "-cp", cp, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
 		var log = '$OUT/dual-build.log';
-		Sys.println("esm-hot-m5: compile dual-flavor");
+		Sys.println('$TAG: compile');
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {
 			Sys.println("dual-flavor: compile failed\n" + tail(readText(log), 2000));

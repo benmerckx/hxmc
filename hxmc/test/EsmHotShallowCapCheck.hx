@@ -4,26 +4,21 @@ import sys.io.File;
 
 using StringTools;
 
-// Outer `var` locals assigned inside hot closures stay lexical — make esm-hot-m9
+// Outer `var` locals stay lexical under hot closures; lane shallow-capture of make esm
 class EsmHotShallowCapCheck {
-	static final OUT = "bin/test/esm-hot-m9";
+	static final TAG = "hot shallow-capture";
+	static final OUT = "bin/test/esm/hot/shallow-capture";
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
 		rmrf(OUT);
 		mkdirs(OUT);
 		if (!compile(haxe)) Sys.exit(1);
 		if (!checkEmit()) Sys.exit(1);
-		Sys.println("esm-hot-m9: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function compile(haxe:String):Bool {
@@ -43,7 +38,7 @@ class EsmHotShallowCapCheck {
 			+ 'class Main { static function main() { trace(Binder.textNode(() -> "x")); } }\n');
 		var args = [haxe, "-cp", root + "/" + OUT, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
 		var log = '$OUT/build.log';
-		Sys.println("esm-hot-m9: compile");
+		Sys.println('$TAG: compile');
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {
 			Sys.println("compile failed\n" + tail(readText(log), 2000));
@@ -66,7 +61,7 @@ class EsmHotShallowCapCheck {
 			Sys.println("expected direct acc assignment in closure body");
 			return false;
 		}
-		Sys.println("esm-hot-m9: emit ok");
+		Sys.println('$TAG: emit ok');
 		return true;
 	}
 }

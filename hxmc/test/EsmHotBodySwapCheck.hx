@@ -4,39 +4,35 @@ import sys.io.File;
 
 using StringTools;
 
-// Tier-1 hot body swap (in-process applyHotPatch): make esm-hot-m0
-class EsmHotTier1Check {
-	static final OUT = "bin/test/esm-hot-m0";
+// In-process applyHotPatch body swap; lane body-swap of make esm
+class EsmHotBodySwapCheck {
+	static final TAG = "hot body-swap";
+	static final OUT = "bin/test/esm/hot/body-swap";
+	static final FIXTURE = "hxmc/test/esm/hot/body-swap";
 	static final DOL = String.fromCharCode(36);
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		rmrf(OUT);
 		mkdirs(OUT);
 		if (!compile(haxe, "v1")) Sys.exit(1);
 		writeRunner('$OUT/run.mjs');
-		Sys.println("esm-hot-m0: run tier-1 patch");
+		Sys.println('$TAG: run patch');
 		var r = exec(["node", FileSystem.fullPath('$OUT/run.mjs')], {merge: true});
 		if (r.code != 0) {
-			Sys.println("EsmHotTier1Check: tier-1 patch failed");
+			Sys.println('$TAG: patch failed');
 			Sys.exit(1);
 		}
-		Sys.println("esm-hot-m0: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function compile(haxe:String, label:String):Bool {
-		var cp = FileSystem.fullPath("hxmc/test/esm/hot/tier1");
+		var cp = FileSystem.fullPath(FIXTURE);
 		var js = root + "/" + OUT + "/main.mjs";
 		var args = [haxe, "-cp", cp, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
-		Sys.println('esm-hot-m0: compile $label');
+		Sys.println('$TAG: compile $label');
 		var log = '$OUT/$label-build.log';
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {

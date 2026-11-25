@@ -1,5 +1,5 @@
 // ESM hot dev: watch sources, rebuild, WebSocket-push patch chunk path.
-//   node esm-dev.mjs --port 8765 --out bin/test/esm-hot-m1 --watch hxmc/test/esm/hot/tier1 -- <haxe> ...
+//   node esm-dev.mjs --port 8765 --out bin/test/esm/hot/watch-patch --watch hxmc/test/esm/hot/body-swap -- <haxe> ...
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

@@ -6,71 +6,65 @@ import sys.io.File;
 
 using StringTools;
 
-// M3: tier-2 class layout migration, enum table stability, extends reload fallback.
-class EsmHotM3Check {
-	static final OUT = "bin/test/esm-hot-m3";
-	static final SRC = "hxmc/test/esm/hot/m3";
+// Class, enum, and extends layout patches; lane layout of make esm
+class EsmHotLayoutCheck {
+	static final TAG = "hot layout";
+	static final OUT = "bin/test/esm/hot/layout";
+	static final SRC = "hxmc/test/esm/hot/layout";
 	static final DOL = String.fromCharCode(36);
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		rmrf(OUT);
 		mkdirs(OUT);
-		if (!checkLayoutTier(haxe)) Sys.exit(1);
-		if (!checkEnumTier(haxe)) Sys.exit(1);
+		if (!checkClassLayoutPatches(haxe)) Sys.exit(1);
+		if (!checkEnumPatches(haxe)) Sys.exit(1);
 		if (!checkExtendsReload(haxe)) Sys.exit(1);
 		var layouts = Json.parse(File.getContent('$OUT/layout-hashes.json'));
 		writeRunner('$OUT/run.mjs', layouts.v1, layouts.v2);
-		Sys.println("esm-hot-m3: run integration");
+		Sys.println('$TAG: run integration');
 		var r = exec(["node", FileSystem.fullPath('$OUT/run.mjs')], {merge: true});
 		if (r.code != 0) {
-			Sys.println("EsmHotM3Check: failed");
+			Sys.println('$TAG: failed');
 			Sys.exit(1);
 		}
-		Sys.println("esm-hot-m3: ok");
+		Sys.println('$TAG: ok');
 	}
 
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
-	}
-
-	static function checkLayoutTier(haxe:String):Bool {
+	static function checkClassLayoutPatches(haxe:String):Bool {
 		var dir = '$OUT/layout';
 		rmrf(dir);
 		mkdirs(dir);
 		prepareLayoutV1();
-		if (!compileModule(haxe, dir, "Main", "layout-v1")) return false;
+		if (!compileModuleWithMain(haxe, dir, "Main", "layout-v1")) return false;
 		prepareLayoutV2();
-		if (!compileModule(haxe, dir, "Main", "layout-v2")) return false;
+		if (!compileModuleWithMain(haxe, dir, "Main", "layout-v2")) return false;
 		var patchPath = dir + "/__hx_hot_patch.mjs";
 		if (!FileSystem.exists(patchPath)) {
-			Sys.println("esm-hot-m3: missing patch after layout v2");
+			Sys.println('$TAG: missing patch after layout v2');
 			return false;
 		}
 		var patch = File.getContent(patchPath);
 		if (patch.indexOf("HotLayout") < 0 || patch.indexOf("tier: 2") < 0) {
-			Sys.println("esm-hot-m3: expected tier-2 HotLayout patch");
+			Sys.println('$TAG: expected HotLayout layout patch');
 			return false;
 		}
 		var v2Layout = layoutHashFromManifest(dir + "/__hx_hot_manifest.json", "HotLayout");
 		if (v2Layout == null) {
-			Sys.println("esm-hot-m3: missing v2 HotLayout layoutHash");
+			Sys.println('$TAG: missing v2 HotLayout layoutHash');
 			return false;
 		}
-		// Snapshot v2 emit beside v1 output for runner.
 		var v2Src = dir + "/hx/HotLayout.mjs";
 		var snap = dir + "/hx/HotLayout.v2.mjs";
 		if (!FileSystem.exists(v2Src)) fail("missing v2 HotLayout emit");
 		snapshotV2HotLayout(v2Src, snap);
 		prepareLayoutV1();
-		if (!compileModule(haxe, dir, "Main", "layout-v1b")) return false;
+		if (!compileModuleWithMain(haxe, dir, "Main", "layout-v1b")) return false;
 		var v1Layout = layoutHashFromManifest(dir + "/__hx_hot_manifest.json", "HotLayout");
 		if (v1Layout == null) {
-			Sys.println("esm-hot-m3: missing v1 HotLayout layoutHash");
+			Sys.println('$TAG: missing v1 HotLayout layoutHash');
 			return false;
 		}
 		File.saveContent('$OUT/layout-hashes.json', Json.stringify({v1: v1Layout, v2: v2Layout}));
@@ -82,16 +76,16 @@ class EsmHotM3Check {
 		rmrf(dir);
 		mkdirs(dir);
 		prepareExtendsV1();
-		if (!compileModule(haxe, dir, "MainExtends", "ext-v1")) return false;
+		if (!compileModuleWithMain(haxe, dir, "MainExtends", "ext-v1")) return false;
 		prepareExtendsV2();
-		if (!compileModule(haxe, dir, "MainExtends", "ext-v2")) return false;
+		if (!compileModuleWithMain(haxe, dir, "MainExtends", "ext-v2")) return false;
 		var patch = File.getContent(dir + "/__hx_hot_patch.mjs");
 		if (patch.indexOf("HotExtends") < 0 || patch.indexOf("tier: 2") < 0) {
-			Sys.println("esm-hot-m3: expected tier-2 HotExtends patch");
+			Sys.println('$TAG: expected HotExtends layout patch');
 			return false;
 		}
 		prepareExtendsV1();
-		if (!compileModule(haxe, dir, "MainExtends", "ext-v1b")) return false;
+		if (!compileModuleWithMain(haxe, dir, "MainExtends", "ext-v1b")) return false;
 		return true;
 	}
 
@@ -102,18 +96,18 @@ class EsmHotM3Check {
 
 	static function prepareLayoutV2():Void copyFixture("HotLayout.v2.hx", "HotLayout.hx");
 
-	static function checkEnumTier(haxe:String):Bool {
+	static function checkEnumPatches(haxe:String):Bool {
 		var dir = '$OUT/enum';
 		rmrf(dir);
 		mkdirs(dir);
 		copyFixture("HotEnum.v1.hx", "HotEnum.hx");
 		copyFixture("HotLayout.v1.hx", "HotLayout.hx");
-		if (!compileModule(haxe, dir, "Main", "enum-v1")) return false;
+		if (!compileModuleWithMain(haxe, dir, "Main", "enum-v1")) return false;
 		copyFixture("HotEnum.v2.hx", "HotEnum.hx");
-		if (!compileModule(haxe, dir, "Main", "enum-v2")) return false;
+		if (!compileModuleWithMain(haxe, dir, "Main", "enum-v2")) return false;
 		var patch = File.getContent(dir + "/__hx_hot_patch.mjs");
 		if (patch.indexOf("HotEnum") < 0 || patch.indexOf("tier: 2") < 0) {
-			Sys.println("esm-hot-m3: expected tier-2 HotEnum patch");
+			Sys.println('$TAG: expected HotEnum layout patch');
 			return false;
 		}
 		return true;
@@ -128,16 +122,12 @@ class EsmHotM3Check {
 		File.saveContent(Path.join([base, to]), File.getContent(Path.join([base, from])));
 	}
 
-	static function compileModule(haxe:String, outDir:String, mainType:String, label:String):Bool {
-		return compileModuleWithMain(haxe, outDir, mainType, label);
-	}
-
 	static function compileModuleWithMain(haxe:String, outDir:String, mainType:String, label:String):Bool {
 		var cp = FileSystem.fullPath(SRC);
 		var esmStd = FileSystem.fullPath("hxmc/std/esm");
 		var js = outDir + "/main.mjs";
 		var args = [haxe, "-cp", esmStd, "-cp", cp, "-main", mainType, "-D", "esm", "-D", "esm.hot", "-D", "hxmc.no-module-cache", "-dce", "no", "-js", js];
-		Sys.println('esm-hot-m3: compile $label');
+		Sys.println('$TAG: compile $label');
 		var log = '$outDir/$label-build.log';
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {
@@ -152,13 +142,6 @@ class EsmHotM3Check {
 		var re = ~/HotLayout = \$h\.publishClass[^\n]*\n/;
 		s = re.replace(s, "");
 		File.saveContent(dst, s);
-	}
-
-	static function layoutHashFromManifest(path:String, id:String):Null<String> {
-		var m:Dynamic = Json.parse(File.getContent(path));
-		for (u in (m.units : Array<Dynamic>))
-			if (u.id == id && u.layoutHash != null) return u.layoutHash;
-		return null;
 	}
 
 	static function writeRunner(path:String, v1Layout:String, v2Layout:String):Void {

@@ -3,7 +3,7 @@ class HotHeap {
 	public var x:Float;
 
 	public function new() {
-		note = "m4";
+		note = "heap-migrate";
 		x = 1.5;
 	}
 }

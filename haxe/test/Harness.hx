@@ -1,3 +1,4 @@
+import haxe.Json;
 import haxe.io.Bytes;
 import haxe.io.Path;
 import sys.FileSystem;
@@ -423,6 +424,21 @@ class Harness {
 	}
 
 	// command lines
+
+	/** Default npm-style hxmc compiler for esm harness scripts. **/
+	public static function hostHaxe():String {
+		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
+			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
+		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+	}
+
+	/** `layoutHash` for a hot-manifest unit id, or null if missing. **/
+	public static function layoutHashFromManifest(path:String, id:String):Null<String> {
+		var m:Dynamic = Json.parse(readText(path));
+		for (u in (m.units : Array<Dynamic>))
+			if (u.id == id && u.layoutHash != null) return u.layoutHash;
+		return null;
+	}
 
 	/** `--name value` and `--flag` options, and the remaining words. **/
 	public static function parseArgs(args:Array<String>, withValue:Array<String>):Args {

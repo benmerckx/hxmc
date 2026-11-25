@@ -27,7 +27,7 @@ const finish = (ok, err) => {
 	}
 	const after = $hx.$h.SwapTarget.version();
 	if (after !== 'v2') throw new Error('after patch: expected v2, got ' + after);
-	console.log('esm-hot-ws: ok');
+	console.log('hot watch-patch: ok');
 	process.exit(ok ? 0 : 1);
 };
 

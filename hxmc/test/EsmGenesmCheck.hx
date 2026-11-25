@@ -6,14 +6,14 @@ using StringTools;
 
 // Genesm layout checks (extern modules not emitted, shared $hx_exports):
 //   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run EsmGenesmCheck [--haxe <compiler>]
-// Wired into make esm-unit before EsmSuites.
+// Lane `genesm` of make esm (Esm.hx).
 class EsmGenesmCheck {
 	static final OUT = "bin/test/esm-genesm";
 	static final DOL = String.fromCharCode(36);
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe (make npm natives or pass --haxe)");
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
 		rmrf(OUT);
@@ -22,12 +22,6 @@ class EsmGenesmCheck {
 		if (!checkExternNoEmit(haxe)) failed++;
 		if (!checkSharedHxExports(haxe)) failed++;
 		Sys.exit(failed > 0 ? 1 : 0);
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
 	}
 
 	static function compile(haxe:String, label:String, cp:String, main:String, js:String):Bool {

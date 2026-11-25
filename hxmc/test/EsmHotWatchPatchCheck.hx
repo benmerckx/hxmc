@@ -1,14 +1,14 @@
 import Harness.*;
 import sys.FileSystem;
 import sys.io.File;
-import haxe.io.Path;
 
 using StringTools;
 
-// M1: file change -> rebuild -> WebSocket patch apply (no manual applyHotPatch): make esm-hot-m1
-class EsmHotM1Check {
-	static final OUT = "bin/test/esm-hot-m1";
-	static final FIXTURE = "hxmc/test/esm/hot/tier1";
+// File watch, rebuild, WebSocket patch delivery; lane watch-patch of make esm
+class EsmHotWatchPatchCheck {
+	static final TAG = "hot watch-patch";
+	static final OUT = "bin/test/esm/hot/watch-patch";
+	static final FIXTURE = "hxmc/test/esm/hot/body-swap";
 	static final PORT = 19876;
 	static final SRC = '$OUT/src';
 	static final DEV = "hxmc/test/esm/hot/esm-dev.mjs";
@@ -16,7 +16,7 @@ class EsmHotM1Check {
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe");
 		rmrf(OUT);
 		mkdirs(OUT);
@@ -24,13 +24,7 @@ class EsmHotM1Check {
 		copyFixture();
 		if (!compile(haxe, "v1")) Sys.exit(1);
 		if (!runWsRoundTrip(haxe)) Sys.exit(1);
-		Sys.println("esm-hot-m1: ok");
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
+		Sys.println('$TAG: ok');
 	}
 
 	static function copyFixture():Void {
@@ -43,7 +37,7 @@ class EsmHotM1Check {
 	static function compile(haxe:String, label:String):Bool {
 		var js = root + "/" + OUT + "/main.mjs";
 		var args = [haxe, "-cp", root + "/" + SRC, "-main", "Main", "-D", "esm", "-D", "esm.hot", "-js", js];
-		Sys.println('esm-hot-m1: compile $label');
+		Sys.println('$TAG: compile $label');
 		var log = '$OUT/$label-build.log';
 		var r = exec(args, {merge: true, log: log});
 		if (r.code != 0) {
@@ -86,7 +80,7 @@ class EsmHotM1Check {
 		var clientOut = "";
 		for (_ in 0...120) {
 			Sys.sleep(1.0);
-			if (FileSystem.exists(clientLog) && File.getContent(clientLog).indexOf("esm-hot-ws: ok") >= 0) {
+			if (FileSystem.exists(clientLog) && File.getContent(clientLog).indexOf("hot watch-patch: ok") >= 0) {
 				clientCode = 0;
 				clientOut = readText(clientLog);
 				break;

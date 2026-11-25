@@ -4,8 +4,8 @@ import sys.io.File;
 
 using StringTools;
 
-// Upstream tests/unit built with -D esm (Genesm) and run under node:
-//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run EsmSuites [--summary <file>]
+// Upstream tests/unit built with -D esm (Genesm) and run under node (lane `unit` of make esm):
+//   bin/hxmc/hxmc -cp hxmc/test -cp haxe/test --run EsmSuites [--haxe <compiler>] [--summary <file>]
 // Needs the npm-style compiler (HaxeMain + Genesm): build or use
 //   bin/npm/native/$(HOST)/haxe  (make npm natives)
 // Logs: bin/test/esm-upstream/unit/
@@ -15,7 +15,7 @@ class EsmSuites {
 
 	static function main() {
 		var o = parseArgs(Sys.args(), ["--haxe", "--summary"]);
-		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? defaultHaxe());
+		var haxe = FileSystem.fullPath(o.opts["--haxe"] ?? hostHaxe());
 		if (!FileSystem.exists(haxe)) fail("compiler not found: $haxe (make npm natives or pass --haxe)");
 		Sys.putEnv("HAXE_STD_PATH", root + "/haxe/upstream/std");
 		UpstreamTargets.installLibs(["utest"], "bin/test/upstream-libs");
@@ -33,12 +33,6 @@ class EsmSuites {
 		Sys.println(text);
 		summary(o.opts["--summary"], text);
 		Sys.exit(r.ok ? 0 : 1);
-	}
-
-	static function defaultHaxe():String {
-		for (c in ["bin/npm/native/" + Sys.getEnv("HXMC_HOST") + "/haxe", "bin/haxe-js"])
-			if (c.indexOf("null") < 0 && FileSystem.exists(c)) return FileSystem.fullPath(c);
-		return FileSystem.fullPath("bin/npm/native/macos-arm64/haxe");
 	}
 
 	static function runUnit(haxe:String, skips:EsmSkips):{ok:Bool, passed:Int, failed:Int, skipped:Int, result:String} {
