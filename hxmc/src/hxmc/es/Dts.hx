@@ -14,8 +14,14 @@ using StringTools;
 // the program's classes and enums by their declarations; typedefs and abstracts are what they
 // stand for; externs and what has no TypeScript counterpart is `any`.
 class Dts {
-	// (hxmc.es.Ts) a structure's property as its accessor methods
-	public static var accessors = false;
+	// (hxmc.es.Ts) a structure's property as its accessor methods: the thread's (printers run in parallel)
+	public static var accessors(get, set):Bool;
+
+	static final accessorsOf = new sys.thread.Tls<Bool>();
+
+	static function get_accessors():Bool return accessorsOf.value == true;
+
+	static function set_accessors(v:Bool):Bool return accessorsOf.value = v;
 
 	// the declarations of a module's types; ref: the name a type's code is reachable by in the
 	// file (null: none, `any`), noting the import it needs

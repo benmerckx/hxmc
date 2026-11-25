@@ -13,16 +13,33 @@ class SourceMap {
 	final marks:Array<{pos:Pos, name:Null<String>}> = [];
 	// (the files and lines of the positions: syntax.Lexer.findPos, once each)
 	final lines = new Map<String, {line:Int, col:Int}>();
+	// the maps of parts of the text, printed apart (in parallel): their markers `<child>.<mark>`
+	final children:Array<SourceMap> = [];
+	final prefix:String;
 
-	public function new() {}
+	public function new(prefix = "") {
+		this.prefix = prefix;
+	}
+
+	// the map of a part of the text, printed apart (made before the parts are printed)
+	public function child():SourceMap {
+		var c = new SourceMap(children.length + ".");
+		children.push(c);
+		return c;
+	}
 
 	// a marker for pos (and the name printed after it, renamed), or nothing
 	public function mark(pos:Null<Pos>, ?name:String):String {
 		if (pos == null || pos.pmin < 0) return "";
 		marks.push({pos: pos, name: name});
-		return String.fromCharCode(START) + (marks.length - 1) + String.fromCharCode(END);
+		return String.fromCharCode(START) + prefix + (marks.length - 1) + String.fromCharCode(END);
 	}
 
+	// a marker's mark (`<mark>`, `<child>.<mark>`)
+	function markOf(id:String):{pos:Pos, name:Null<String>} {
+		var dot = id.indexOf(".");
+		return dot < 0 ? marks[Std.parseInt(id)] : children[Std.parseInt(id.substr(0, dot))].marks[Std.parseInt(id.substr(dot + 1))];
+	}
 	// (the printer's checks of its own text) its first and last characters, its width, past the markers
 	public static function first(s:String):String {
 		var i = 0;
@@ -52,7 +69,7 @@ class SourceMap {
 		var sources:Array<String> = [], sourceIds = new Map<String, Int>();
 		var names:Array<String> = [], nameIds = new Map<String, Int>();
 		var mappings = new StringBuf();
-		var line = 0, col = 0, pending = -1;
+		var line = 0, col = 0, pending:Null<{pos:Pos, name:Null<String>}> = null;
 		// (VLQ: each field relative to the previous segment's, the column to the line's)
 		var lastCol = 0, lastSrc = 0, lastLine = 0, lastSrcCol = 0, lastName = 0, lineSegments = 0;
 		function segment(m:{pos:Pos, name:Null<String>}) {
@@ -89,7 +106,7 @@ class SourceMap {
 			if (c == START) {
 				var j = text.indexOf(String.fromCharCode(END), i);
 				// (of the marks before a character, the last: the innermost, or a name's)
-				pending = Std.parseInt(text.substring(i + 1, j));
+				pending = markOf(text.substring(i + 1, j));
 				i = j + 1;
 				continue;
 			}
@@ -102,9 +119,9 @@ class SourceMap {
 			} else if (c == " ".code || c == "\t".code) {
 				col++;
 			} else {
-				if (pending >= 0) {
-					segment(marks[pending]);
-					pending = -1;
+				if (pending != null) {
+					segment(pending);
+					pending = null;
 				}
 				// (columns in UTF-16 units: a character past U+FFFF two, on a host of code points)
 				col += core.StringHelper.codePointHost && c >= 0x10000 ? 2 : 1;

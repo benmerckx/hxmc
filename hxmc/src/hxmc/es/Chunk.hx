@@ -53,6 +53,19 @@ private class Item {
 	}
 }
 
+// (TypeScript) what code names as types: other files' bindings (by their files), the runtime's `EnumValue`
+private class TypeNames {
+	public final needs = new Map<Sym, Int>();
+	public var enumValue = false;
+
+	public function new() {}
+
+	public function addTo(n:TypeNames) {
+		for (s => from in needs) n.needs.set(s, from);
+		if (enumValue) n.enumValue = true;
+	}
+}
+
 // an output file: main, or a split's (its Splits.SplitChunk)
 private class OutFile {
 	public final id:Int;
@@ -60,19 +73,41 @@ private class OutFile {
 	public final items:Array<Item> = [];
 	// the bindings of other files it uses (by the files they are in)
 	public final needs = new Map<Sym, Int>();
-	// (TypeScript) those it names as types only
-	public final typeNeeds = new Map<Sym, Int>();
+	// (TypeScript) what its code names as types (those of other files it does not use as values: imported as types)
+	public final names = new TypeNames();
 	// its split initializers, in the order of their indexes
 	public final inits:Array<Fn> = [];
 	public var file:Null<String>;
 	// (modules: its path in the output, the files it imports in their order)
 	public var path:Null<String>;
 	public var deps:Array<Int> = [];
+	// the source map of its text (Chunk.newMaps)
+	public var smap:Null<SourceMap> = null;
 
 	public function new(id, chunk) {
 		this.id = id;
 		this.chunk = chunk;
 	}
+}
+
+// a file's statements as a printer takes them (one; several, which tight output declares together; a blank line):
+// assembled one file after the other, printed in parallel (Chunk.print)
+private enum Piece {
+	POne(s:St);
+	PMany(l:Array<St>);
+	PBlank;
+}
+
+private class Doc {
+	public final pieces:Array<Piece> = [];
+
+	public function new() {}
+
+	public function statement(s:St) pieces.push(POne(s));
+
+	public function statements(l:Array<St>) pieces.push(PMany(l));
+
+	public function blank() pieces.push(PBlank);
 }
 
 // what a lowering used of the program (Lower.Resolve's calls), in its order; `file`: the file its code is in
@@ -245,7 +280,6 @@ class Chunk {
 	// TypeScript (es-modules, an output named `.ts`): the files are `.ts`, with types (Ts)
 	final tsOut:Bool;
 	final ext:String;
-	var types:Null<Ts> = null;
 
 	public function new(com:Gctx) {
 		this.com = com;
@@ -253,7 +287,6 @@ class Chunk {
 		modules = Gctx.definedValueSafe(com, "hxmc.js") == "es-modules";
 		tsOut = modules && StringTools.endsWith(com.file, ".ts");
 		ext = tsOut ? ".ts" : ".js";
-		if (tsOut) types = new Ts(typeRef, enumValueRef);
 		if (!modules && StringTools.endsWith(com.file, ".ts")) Error.abort("hxmc.js=es: TypeScript output is es-modules's", core.Globals.nullPos);
 		// (the fields' names: the program's whole, which modules others may import are not)
 		if (modules && Gctx.rawDefined(com, "hxmc.js.minify.fields"))
@@ -272,7 +305,7 @@ class Chunk {
 		SuperFirst.run(com);
 		filters.ES6Ctors.rewriteCtors(com);
 		var c = new Chunk(com);
-		if (com.debug || Gctx.defined(com, core.Define.JsSourceMap) || Gctx.defined(com, core.Define.SourceMap)) c.smap = new SourceMap();
+		if (com.debug || Gctx.defined(com, core.Define.JsSourceMap) || Gctx.defined(com, core.Define.SourceMap)) c.maps = true;
 		inline function phase(name:String, f:Void->Void) {
 			var stop = core.Timer.startTimer(com.timerCtx, ["generate", "js", name]);
 			f();
@@ -480,8 +513,9 @@ class Chunk {
 	final enumValueType = new Sym(SLocal, "EnumValue");
 	final enumValueFiles = new Map<Int, Bool>();
 
-	function enumValueRef():String {
-		enumValueFiles.set(current, true);
+	// (code names it: TypeNames.enumValue, which its file's imports take)
+	function enumValueRef(names:TypeNames):String {
+		names.enumValue = true;
 		return enumValueType.name;
 	}
 
@@ -642,41 +676,91 @@ class Chunk {
 	}
 
 
-	// (--debug, -D js-source-map, -D source-map) the files' source maps, beside them (`=inline`: in them), SourceMap
-	var smap:Null<SourceMap> = null;
+	// (--debug, -D js-source-map, -D source-map) the files' source maps, beside them (`=inline`: in them): each file's
+	// own (OutFile.smap), its printers' (they print in parallel)
+	var maps = false;
+
+	// each file's source map, for the text printed next
+	function newMaps() for (f in files) f.smap = maps ? new SourceMap() : null;
+
+	// a file's text without the source map's markers, and its map's JSON (of the file's name; null: none)
+	function finish(text:String, smap:Null<SourceMap>):{code:String, json:Null<String->String>} {
+		if (smap == null) return {code: text, json: null};
+		var r = smap.finish(text, Gctx.defined(com, core.Define.SourceMapContent));
+		return {code: r.code, json: r.json};
+	}
 
 	// a file's text, written: without the source map's markers, its map beside it (or in it), named in `written`
-	function save(path:String, text:String, ?written:Map<String, Bool>) {
+	function save(path:String, text:String, smap:Null<SourceMap>, ?written:Array<String>) saveFinished(path, finish(text, smap), written);
+
+	function saveFinished(path:String, r:{code:String, json:Null<String->String>}, ?written:Array<String>) {
 		var file = Path.withoutDirectory(path);
-		if (smap == null) {
-			sys.io.File.saveContent(path, text);
+		if (r.json == null) {
+			sys.io.File.saveContent(path, r.code);
 			try sys.FileSystem.deleteFile(path + ".map") catch (_:Dynamic) {}
 			return;
 		}
-		var r = smap.finish(text, Gctx.defined(com, core.Define.SourceMapContent));
 		var json = r.json(file);
 		var url = if (Gctx.definedValueSafe(com, core.Define.SourceMap) == "inline")
 			"data:application/json;charset=utf-8;base64," + haxe.crypto.Base64.encode(haxe.io.Bytes.ofString(json))
 		else {
 			sys.io.File.saveContent(path + ".map", json);
-			if (written != null) written.set(file + ".map", true);
+			if (written != null) written.push(file + ".map");
 			core.StringHelper.urlEncodeString(file) + ".map";
 		}
 		sys.io.File.saveContent(path, r.code + (StringTools.endsWith(r.code, "\n") ? "" : "\n") + "//# sourceMappingURL=" + url + "\n");
 	}
 
-	// a file's text as it is written (the source map's markers out): what a split file's name hashes
-	function plain(text:String):String return smap == null ? text : smap.finish(text).code;
-
-	// a printer of the output's code
-	function printer():Printer {
+	// a printer of a file's code (its source map, TypeScript's types as it names them, a split's imports from it): of a
+	// part of it, printed apart, its part of the source map and what it names (`names`, which the file then takes). What
+	// it asks of the program changes nothing (printers run in parallel).
+	function printer(f:OutFile, ?smap:SourceMap, ?names:TypeNames):Printer {
 		var p = new Printer(tight);
-		p.types = types;
-		if (modules) p.splitImport = splitImport;
+		if (names == null) names = f.names;
+		if (tsOut) p.types = new Ts(t -> typeRef(f, names, t), () -> enumValueRef(names));
+		if (modules) p.splitImport = id -> splitImport(f.id, id);
 		if (fieldNames != null && (tight || fieldsDebug)) p.fieldName = fieldName;
 		p.ref = refEx;
-		p.smap = smap;
+		p.smap = smap != null ? smap : f.smap;
 		return p;
+	}
+
+	// The files' statements, printed: each statement apart (and the blank lines after it), all in parallel (a file of most
+	// of the program's code as soon as one of a little)
+	function printAll(docs:Array<Doc>):Array<String> {
+		var parts:Array<{f:OutFile, from:Int, to:Int, smap:Null<SourceMap>, names:Null<TypeNames>}> = [];
+		for (f in files) {
+			var pieces = docs[f.id].pieces, i = 0;
+			while (i < pieces.length) {
+				var j = i + 1;
+				while (j < pieces.length && pieces[j].match(PBlank)) j++;
+				parts.push({
+					f: f,
+					from: i,
+					to: j,
+					smap: f.smap == null ? null : f.smap.child(),
+					names: tsOut ? new TypeNames() : null
+				});
+				i = j;
+			}
+		}
+		var texts = [for (_ in parts) ""];
+		parallel([for (k in 0...parts.length) k], k -> {
+			var x = parts[k];
+			var p = printer(x.f, x.smap, x.names);
+			for (i in x.from...x.to) switch docs[x.f.id].pieces[i] {
+				case POne(s): p.statement(s);
+				case PMany(l): p.statements(l);
+				case PBlank: p.blank();
+			}
+			texts[k] = p.toString();
+		});
+		var out = [for (_ in files) new StringBuf()];
+		for (k in 0...parts.length) {
+			out[parts[k].f.id].add(texts[k]);
+			if (parts[k].names != null) parts[k].names.addTo(parts[k].f.names);
+		}
+		return [for (b in out) b.toString()];
 	}
 
 	// (TypeScript) std's externs of what TypeScript's lib declares alike (es2022), by name
@@ -684,29 +768,29 @@ class Chunk {
 	static final TS_LIB = ["Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
 		"Int32Array", "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array"];
 
-	// (TypeScript) a type's name in the file being printed (null: none, `any`), imported as a type where it is another's
-	function typeRef(t:ModuleType):Null<String> {
+	// (TypeScript) a type's name in file f (null: none, `any`), imported as a type where it is another's (`names`)
+	function typeRef(f:OutFile, names:TypeNames, t:ModuleType):Null<String> {
 		switch t {
 			case TClassDecl(c) if (hasClassFlag(c, CExtern)):
 				// (an extern of a class the program has, by its @:native path: that class)
 				var item = byPath.get(dot(c.clPath));
-				if (item != null) return typeUse(item);
+				if (item != null) return typeUse(f, names, item);
 				// (std's extern of a class TypeScript's lib declares: that one)
 				var p = Genjs.getGeneratedClassPath(c);
 				// (over an ArrayBuffer, as Haxe has it: TypeScript's (5.7) are generic, `ArrayBufferLike` by default, which a `Blob` does not take)
 				return p.pack.length == 0 && TS_LIB.contains(p.name) && StringTools.startsWith(dot(c.clModule.mPath), "js.lib.") ? p.name + "<ArrayBuffer>" : null;
 			case TAbstractDecl({aPath: {pack: [], name: "EnumValue"}}):
-				return enumValueRef();
+				return enumValueRef(names);
 			case TClassDecl({clKind: KAbstractImpl(_) | KModuleFields(_)}) | TAbstractDecl(_) | TTypeDecl(_):
 				return null;
 			case _:
 		}
 		var item = byPath.get(dot(tPath(t)));
-		return item == null ? null : typeUse(item);
+		return item == null ? null : typeUse(f, names, item);
 	}
 
-	function typeUse(item:Item):String {
-		if (item.file != current) files[current].typeNeeds.set(item.sym, item.file);
+	function typeUse(f:OutFile, names:TypeNames, item:Item):String {
+		if (item.file != f.id) names.needs.set(item.sym, item.file);
 		return item.sym.name;
 	}
 
@@ -742,11 +826,11 @@ class Chunk {
 		return seen;
 	}
 
-	// (modules) a split's call, printed in the file being printed: the modules its code needs (`import()`, of their paths as
+	// (modules) a split's call, printed in file `from`: the modules its code needs (`import()`, of their paths as
 	// the file has them) and the bindings of them its code uses, that file does not have (`[{ A, B }, , { C }]`); the
 	// modules of the split's types nothing of those imports, for what they run. In order, one after the other, where two
 	// are of a cycle (which one runs first decides which defines its classes first); at once otherwise
-	function splitImport(id:Int):{load:String, pattern:String} {
+	function splitImport(current:Int, id:Int):{load:String, pattern:String} {
 		var f = files[id], caller = files[current];
 		var names = new Map<Int, Array<String>>();
 		for (s => from in f.needs) if (from > 0 && from != current && caller.needs.get(s) != from) {
@@ -862,10 +946,17 @@ class Chunk {
 	function splitTable(file:OutFile->String):String {
 		var l = splitList();
 		inline function f(o:OutFile) return ex(EStr(StringTools.endsWith(file(o), ".js") ? file(o).substr(0, file(o).length - 3) : file(o)));
-		return printer().expr(tight ? ex(EArray([for (o in l) f(o)])) : ex(EObject([for (o in l) ({key: key(o.chunk.name), value: f(o)} : Prop)])), 1);
+		return printer(files[0]).expr(tight ? ex(EArray([for (o in l) f(o)])) : ex(EObject([for (o in l) ({key: key(o.chunk.name), value: f(o)} : Prop)])), 1);
 	}
 
 	// ------------------------------------------------------------------ lowering
+
+	// (--times: generate/js/write/<name>)
+	function timed(name:String, f:Void->Void) {
+		var stop = core.Timer.startTimer(com.timerCtx, ["generate", "js", "write", name]);
+		f();
+		stop();
+	}
 
 	// f of each, on the compiler's pool: but with -D disable-parallelism (-D hxmc.js.parallel: even then) or
 	// -D hxmc.js.serial, one after the other
@@ -1152,7 +1243,7 @@ class Chunk {
 	// whether what e reaches is declared and initialized before `item` (or is item); another file's types are
 	// those of files loaded before (main, a split's parents), all initialized
 	function ready(item:Item, e:TExpr):Bool {
-		for (i in reaches(e).keys()) {
+		for (i in reached.get(e).keys()) {
 			if (i == item.index) continue;
 			var other = items[i];
 			// (modules: another file's, which runs before; bundled: a file loaded before)
@@ -1169,7 +1260,23 @@ class Chunk {
 		return true;
 	}
 
+	// what each `__init__` and static's value reaches (place asks again as it goes): computed once, in parallel
+	final reached = new haxe.ds.ObjectMap<TExpr, Map<Int, Bool>>();
+
+	function reachAll() {
+		var l:Array<TExpr> = [];
+		for (item in items) {
+			var c = item.cls;
+			if (c != null && c.clInit != null && c.clInit.cfExpr != null) l.push(c.clInit.cfExpr);
+			for (f in item.statics) if (f.cfExpr != null && !f.cfExpr.eexpr.match(TFunction(_))) l.push(f.cfExpr);
+		}
+		var r:Array<Map<Int, Bool>> = [for (_ in l) null];
+		parallel([for (i in 0...l.length) i], i -> r[i] = reaches(l[i]));
+		for (i in 0...l.length) reached.set(l[i], r[i]);
+	}
+
 	function place() {
+		reachAll();
 		var changed = true;
 		while (changed) {
 			changed = false;
@@ -1199,7 +1306,7 @@ class Chunk {
 			if (!modules) 			for (item in items) {
 				var c = item.cls;
 				var init = c == null ? null : (c.clInit == null ? null : c.clInit.cfExpr);
-				if (init != null && !item.initInBody) for (i in reaches(init).keys()) if (!tainted.exists(i)) {
+				if (init != null && !item.initInBody) for (i in reached.get(init).keys()) if (!tainted.exists(i)) {
 					tainted.set(i, true);
 					changed = true;
 				}
@@ -1505,7 +1612,7 @@ class Chunk {
 		function as(s:Sym, n:String) return s.name == n ? n : n + " as " + s.name;
 		var rtNames = rtFiles.exists(f.id) ? ["$hx"] : [];
 		if (indexFiles.exists(f.id)) rtNames.push(as(enumIndex, "index"));
-		if (enumValueFiles.exists(f.id)) rtNames.push((rtNames.length == 0 ? "" : "type ") + as(enumValueType, "EnumValue"));
+		if (enumValueFiles.exists(f.id) || f.names.enumValue) rtNames.push((rtNames.length == 0 ? "" : "type ") + as(enumValueType, "EnumValue"));
 		if (rtNames.length > 0)
 			b.add("import " + (rtFiles.exists(f.id) ? "" : "type ") + "{ " + rtNames.join(", ") + " } from " + Printer.quote(rel(path, RUNTIME)) + ";\n");
 		for (d in f.deps) {
@@ -1516,10 +1623,10 @@ class Chunk {
 		}
 		// (TypeScript: the types it names only, which nothing runs)
 		var typeFiles = [];
-		for (s => from in f.typeNeeds) if (from != f.id && !f.needs.exists(s) && !typeFiles.contains(from)) typeFiles.push(from);
+		for (s => from in f.names.needs) if (from != f.id && !f.needs.exists(s) && !typeFiles.contains(from)) typeFiles.push(from);
 		typeFiles.sort((a, b) -> Reflect.compare(files[a].path ?? "", files[b].path ?? ""));
 		for (d in typeFiles) {
-			var names = [for (s => from in f.typeNeeds) if (from == d && !f.needs.exists(s)) s.name];
+			var names = [for (s => from in f.names.needs) if (from == d && !f.needs.exists(s)) s.name];
 			names.sort(Reflect.compare);
 			b.add("import type { " + names.join(", ") + " } from " + Printer.quote(rel(path, files[d].path)) + ";\n");
 		}
@@ -1540,11 +1647,13 @@ class Chunk {
 		prepareFieldNames();
 		nameSplitKeys();
 		if (tight) shorten();
-		var decls = [for (f in files) f.id => {
+		var docs = [for (f in files) {
 			current = f.id;
 			body(f);
 		}];
 		current = 0;
+		newMaps();
+		var decls = printAll(docs);
 		// (what the printing found the files use (class heads' interfaces): imported too)
 		for (f in files) for (s => from in f.needs) if (from >= 0 && from != f.id && !f.deps.contains(from) && hasValue(files[from])) f.deps.push(from);
 		// (the types the runtime names) (`{js.Boot}`): registered by their modules in `$hx.types`)
@@ -1580,18 +1689,19 @@ class Chunk {
 		var written = new Map<String, Bool>();
 		var hashLength = Std.parseInt(Gctx.definedValueSafe(com, "hxmc.js.hash_length"));
 		if (hashLength == null) hashLength = 8;
-		// (the modules)
-		for (f in files) if (f.id != 0 && f.path != null && (hasValue(f) || tsOut)) {
+		// (the modules, in parallel)
+		var head = header();
+		var mods = [for (f in files) if (f.id != 0 && f.path != null && (hasValue(f) || tsOut)) f];
+		for (f in mods) sys.FileSystem.createDirectory(Path.directory(Path.join([dir, f.path])));
+		parallel(mods, f -> {
 			var b = new StringBuf();
-			b.add(header());
+			b.add(head);
 			b.add(imports(f, f.path));
 			if (b.length > 0) b.add("\n");
-			b.add(decls.get(f.id));
+			b.add(decls[f.id]);
 			for (item in f.items) if (registered.exists(item.index)) b.add("$hx.types." + item.sym.name + " = " + item.sym.name + ";\n");
-			var out = Path.join([dir, f.path]);
-			sys.FileSystem.createDirectory(Path.directory(out));
-			save(out, b.toString());
-		}
+			save(Path.join([dir, f.path]), b.toString(), f.smap);
+		});
 		// (no files of splits: a split's code is where it is called, the modules it needs imported there: splitImport)
 		// (the runtime)
 		var rt = new StringBuf();
@@ -1625,13 +1735,13 @@ class Chunk {
 		}
 		b.add(imports(files[0], entry));
 		b.add("\n");
-		b.add(decls.get(0));
+		b.add(decls[0]);
 		for (item in files[0].items) if (registered.exists(item.index)) b.add("$hx.types." + item.sym.name + " = " + item.sym.name + ";\n");
-		var p = printer();
+		var p = printer(files[0]);
 		p.statements(lateInits);
 		p.statements(mainCode);
 		b.add(p.toString());
-		save(com.file, b.toString());
+		save(com.file, b.toString(), files[0].smap);
 		if (splits.hasSplits()) prune(dir, written);
 	}
 
@@ -1782,32 +1892,44 @@ class Chunk {
 		var minify = Gctx.definedValueSafe(com, "hxmc.js.minify");
 		// (-D hxmc.js.minify: the output minified; =aside: also `<output>.min.js`, its splits `<name>_<hash>.min.js`)
 		var passes = minify == "aside" ? [false, true] : [minify != ""];
-		prepareFieldNames();
+		timed("fields", prepareFieldNames);
 		for (min in passes) {
 			var suffix = min && minify == "aside" ? ".min.js" : ".js";
-			if (min) shorten();
+			if (min) timed("shorten", shorten);
 			tight = min;
 			nameSplitKeys();
-			// (each file's types, printed as the file being lowered: what they use of other files is its)
-			var decls = [for (f in files) f.id => {
-				current = f.id;
-				body(f);
-			}];
-			current = 0;
+			// (each file's types: assembled as the file being lowered, what they use of other files its; printed in parallel)
+			var docs = [];
+			timed("assemble", () -> {
+				docs = [for (f in files) {
+					current = f.id;
+					body(f);
+				}];
+				current = 0;
+			});
+			newMaps();
+			var decls:Array<String> = [];
+			timed("print", () -> decls = printAll(docs));
 			// (a binding a file takes from another: the file it is in adds it to the scope)
 			var exported = [for (f in files) f.id => new Map<Sym, Bool>()];
 			for (f in files) for (s => from in f.needs) exported.get(from).set(s, true);
-			var bodies = [for (f in files) f.id => decls.get(f.id) + tail(f, exported.get(f.id))];
-			// (the splits first: the main file maps their names to their files)
-			for (f in files) if (isSplit(f)) {
-				var code = splitFile(f, bodies.get(f.id));
-				f.file = fileName(f.chunk.name) + "_" + haxe.crypto.Md5.encode(plain(code)).substr(0, hashLength) + suffix;
-				written.set(f.file, true);
-				save(Path.join([dir, f.file]), code, written);
-			}
-			var main = mainFile(bodies.get(0));
-			var out = suffix == ".js" ? com.file : Path.withoutExtension(com.file) + suffix;
-			save(out, main);
+			var bodies = [for (f in files) decls[f.id] + tail(f, exported.get(f.id))];
+			// (the splits first, named by their code's hashes, in parallel: the main file maps their names to their files)
+			var splitFiles = [for (f in files) if (isSplit(f)) f];
+			var codes = [for (f in splitFiles) splitFile(f, bodies[f.id])];
+			var saved:Array<Array<String>> = [for (_ in splitFiles) null];
+			timed("splits", () -> parallel([for (i in 0...splitFiles.length) i], i -> {
+				var f = splitFiles[i], r = finish(codes[i], f.smap);
+				f.file = fileName(f.chunk.name) + "_" + haxe.crypto.Md5.encode(r.code).substr(0, hashLength) + suffix;
+				var w = [f.file];
+				saveFinished(Path.join([dir, f.file]), r, w);
+				saved[i] = w;
+			}));
+			for (w in saved) for (n in w) written.set(n, true);
+			timed("main", () -> {
+				var main = mainFile(bodies[0]);
+				save(suffix == ".js" ? com.file : Path.withoutExtension(com.file) + suffix, main, files[0].smap);
+			});
 		}
 		if (splits.hasSplits()) prune(dir, written);
 	}
@@ -1996,20 +2118,20 @@ class Chunk {
 		names.sort((a, b) -> Reflect.compare(a.name, b.name));
 		for (s in names) params.push({key: KName(s.name), value: ex(EId(s))});
 		out.add("export default ($hx) => {\n");
-		var p = printer();
+		var p = printer(f);
 		if (params.length > 0) p.statement(st(SVar(VConst, [{name: new Sym(SLocal, "{ " + [for (s in names) s.name].join(", ") + " }"), init: rt("scope")}])));
 		out.add(p.toString());
 		out.add(body);
-		var inits = printer();
+		var inits = printer(f);
 		inits.statement(st(SReturn(ex(EArray([for (fn in f.inits) ex(EFn(fn))])))));
 		out.add(inits.toString());
 		out.add("};\n");
 		return out.toString();
 	}
 
-	// a file's types and the code that runs after them
-	function body(file:OutFile):String {
-		var body = printer();
+	// a file's types and the code that runs after them (assembled: Chunk.print prints them)
+	function body(file:OutFile):Doc {
+		var body = new Doc();
 		var after:Array<St> = [];
 		var deferredStatics:Array<St> = [];
 		var exposed:Array<St> = [];
@@ -2122,12 +2244,12 @@ class Chunk {
 			body.statements(exposed);
 			body.blank();
 		}
-		return body.toString();
+		return body;
 	}
 
 	// the bindings later files take from the file (`exported`), then main's code
 	function tail(file:OutFile, exported:Map<Sym, Bool>):String {
-		var body = printer();
+		var body = printer(file);
 		if (exported.iterator().hasNext()) {
 			var syms = [for (s in exported.keys()) s];
 			syms.sort((a, b) -> Reflect.compare(a.name, b.name));
@@ -2237,7 +2359,7 @@ class Chunk {
 		return found;
 	}
 
-	function moduleFieldsDecl(body:Printer, item:Item, c:TClass, deferredStatics:Array<St>) {
+	function moduleFieldsDecl(body:Doc, item:Item, c:TClass, deferredStatics:Array<St>) {
 		var m = fieldsModule(c);
 		for (f in c.clStatics) {
 			var fn = item.fns.get(f);
@@ -2258,7 +2380,7 @@ class Chunk {
 	}
 
 	// @:expose: a class, its static methods where it is declared, its static variables once they have their values (`later`)
-	function expose(body:Printer, later:Array<St>, c:TClass, item:Item) {
+	function expose(body:Doc, later:Array<St>, c:TClass, item:Item) {
 		Genjs.processExpose(c.clMeta, () -> item.path,
 			s -> body.statement(st(SExpr(ex(ECall(rt("expose"), [ex(EStr(s)), ex(EId(item.sym))]))))));
 		for (f in c.clStatics)
@@ -2272,7 +2394,7 @@ class Chunk {
 	// `const E = $hx.declareEnum({ C: function (a, b) { this.a = a; this.b = b; }, D: null, ..., [$hx.name]: path }, meta)`:
 	// a constructor of arguments a function `new` constructs, the others `null` (the runtime makes their values); in
 	// TypeScript with the enum's declaration and its types (Ts.enumTypes, docs/plans/esgen-enums.md)
-	function enumDecl(body:Printer, item:Item, e:TEnum, named:Bool) {
+	function enumDecl(body:Doc, item:Item, e:TEnum, named:Bool) {
 		var names = [for (n in e.eConstrs.names()) n];
 		names.sort((a, b) -> e.eConstrs.find(a).efIndex - e.eConstrs.find(b).efIndex);
 		// (minified fields: the constructors' keys, the parameters' fields, renamed in the enum's namespaces, FieldNames)
