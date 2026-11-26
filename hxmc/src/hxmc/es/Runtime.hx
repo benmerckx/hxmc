@@ -163,18 +163,6 @@ class Runtime {
 	return {js.Bundle}.import(url).then((m) => $hx.loaded[name] ??= m.default);
 }"
 		},
-		// (-D hxmc.js.hot) a patch: the methods of a class of the patch's (`fresh`, extending the running class's super
-		// class, so `super` in them is the running one's) on the running class, those removed deleted ("s:x": a static's)
-		{
-			name: "hotPatch",
-			needs: [],
-			code: "hotPatch(live, fresh, removed) {
-	for (const [to, from] of [[live, fresh], [live.prototype, fresh.prototype]])
-		for (const k of Reflect.ownKeys(from))
-			if (k != \"prototype\" && k != \"length\" && k != \"name\" && k != \"constructor\") Object.defineProperty(to, k, Object.getOwnPropertyDescriptor(from, k));
-	for (const r of removed) delete (r.startsWith(\"s:\") ? live : live.prototype)[r.slice(2)];
-}"
-		},
 		// @:expose: a path under the global object
 		{
 			name: "expose",
@@ -188,21 +176,8 @@ class Runtime {
 		},
 	];
 
-	// (-D hxmc.js.hot) `bind`: a method as a value calls the method of its name its prototypes have when called, which a
-	// patch may have replaced since (an object's own function, a dynamic method assigned, the one it is now; one function
-	// each time, as `bind`'s, after a patch too)
-	public static final HOT_BIND = "function (o, name) {
-	const m = o[name];
-	if (m == null) return null;
-	if (typeof o != \"object\" && typeof o != \"function\") return m.bind(o);
-	const own = Object.hasOwn(o, name);
-	// (a prototype's method by its name, the same function after a patch too)
-	const key = own ? m : name;
-	const cache = Object.hasOwn(o, $hx.closures) ? o[$hx.closures] : (o[$hx.closures] = new Map());
-	let f = cache.get(key);
-	if (f === undefined) cache.set(key, f = own ? m.bind(o) : (...a) => Object.getPrototypeOf(o)[name].apply(o, a));
-	return f;
-}";
+	// (-D hxmc.js.hot) `bind`: js.Hot's, which a patch's methods reach (hxmc-es/js/Hot.hx)
+	public static final HOT_BIND = "function (o, name) {\n\treturn {js.Hot}.bind(o, name);\n}";
 
 	// (TypeScript) the runtime's type: its symbols unique (a class's computed keys), the base of enums' values (exported:
 	// the files that name it import it), `declareEnum`'s; the rest `any`

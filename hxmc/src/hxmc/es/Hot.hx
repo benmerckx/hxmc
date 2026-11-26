@@ -5,11 +5,10 @@ import haxe.crypto.Md5;
 import haxe.io.Path;
 
 // -D hxmc.js.hot (es-modules): what a build has of the program that a running one can take without starting again
-// (docs/js.md, "Hot reload"). Each build writes, beside the entry, `_hx_hot.json`: of each class its methods' code
-// and its shape (its super class, constructor, fields: what its instances already have), of each other declaration
-// its code, of each file its bindings, and the runtime's parts. The next build compares its own with them: where only
-// methods differ, a patch (`_hx_hot/<n>.js`, Chunk.hotPatch) replaces those of the running classes, which keep their
-// identity, and so their instances and statics; anything else, a reason to start again.
+// (docs/js.md, "Hot reload"). Each build writes, beside the entry, `_hx_hot.json`: each declaration as named parts with
+// their hashes (a class's methods, fields, constructor; an enum's constructors; ...: Chunk.hotPatch names them), the
+// names each file exports, and the runtime's parts. The next build compares its own with them: what changed in each
+// declaration, which Chunk.hotPatch turns into a patch (`_hx_hot/<n>.js`) or into a reason to start again.
 //
 // The record is of the program running: after a patch, of the files and the runtime as the program loaded them,
 // which a patch does not change.
@@ -18,20 +17,19 @@ typedef HotRecord = {
 	// (a file's path) the names it exports
 	var files:haxe.DynamicAccess<Array<String>>;
 	var runtime:Array<String>;
-	// (a class's path) its shape, its methods' code (by their slot: HotMethod)
-	var classes:haxe.DynamicAccess<{shape:String, methods:haxe.DynamicAccess<String>}>;
-	// (a declaration's path, but a class's) its code
-	var others:haxe.DynamicAccess<String>;
-	// what the build is to the program running: a patch's file, or why it cannot be one (null: the first)
+	// (a declaration's path) its parts' hashes
+	var units:haxe.DynamicAccess<haxe.DynamicAccess<String>>;
+	// what the build is to the program running: a patch's file, or why it cannot be one (neither: nothing changed, or
+	// the first build)
 	@:optional var patch:Null<String>;
 	@:optional var reload:Null<String>;
 }
 
-// a class's method: its slot (`s`/`i`: static or not, `m`/`g`/`s`: a method, a getter, a setter, then `:` and its key as
-// printed), its code's hash
-typedef HotMethod = {
-	var slot:String;
-	var hash:String;
+// what changed in a declaration's parts, by their names
+typedef HotDiff = {
+	var added:Array<String>;
+	var changed:Array<String>;
+	var removed:Array<String>;
 }
 
 class Hot {
@@ -46,13 +44,14 @@ class Hot {
 	public function new(dir:String) {
 		this.dir = dir;
 		var path = Path.join([dir, RECORD]);
-		prev = try sys.FileSystem.exists(path) ? Json.parse(sys.io.File.getContent(path)) : null catch (_:Dynamic) null;
+		var was:Null<HotRecord> = try sys.FileSystem.exists(path) ? Json.parse(sys.io.File.getContent(path)) : null catch (_:Dynamic) null;
+		// (a record of another shape: as if none)
+		prev = was != null && was.units != null ? was : null;
 		cur = {
-			seq: prev == null ? 0 : prev.seq + 1,
+			seq: was == null ? 0 : was.seq + 1,
 			files: {},
 			runtime: [],
-			classes: {},
-			others: {}
+			units: {}
 		};
 	}
 
@@ -68,41 +67,27 @@ class Hot {
 		cur.runtime = parts;
 	}
 
-	public function other(path:String, code:String) cur.others.set(path, hash(code));
-
-	// a class's shape and methods; what of them a patch takes (null: none, or the class is not one a patch can change)
-	public function cls(path:String, shape:String, methods:Array<HotMethod>):Null<{changed:Array<String>, removed:Array<String>}> {
+	// a declaration's parts; what changed in them since the previous build (null: nothing, or the declaration is new)
+	public function unit(path:String, parts:Map<String, String>):Null<HotDiff> {
 		var m = new haxe.DynamicAccess<String>();
-		for (x in methods) m.set(x.slot, x.hash);
-		cur.classes.set(path, {shape: hash(shape), methods: m});
-		if (prev == null) return null;
-		var was = prev.classes.get(path);
+		for (k => v in parts) m.set(k, v);
+		cur.units.set(path, m);
+		var was = prev == null ? null : prev.units.get(path);
 		if (was == null) return null;
-		if (was.shape != hash(shape)) {
-			reasons.push(path + ": its shape (super class, constructor, fields)");
-			return null;
-		}
-		var changed = [for (x in methods) if (was.methods.get(x.slot) != x.hash) x.slot];
-		// (as the runtime's hotPatch deletes them: "s:x", "i:x"; not a computed key's, nor a symbol's)
-		var removed = [];
-		for (slot in was.methods.keys()) {
-			var k = slot.substr(3);
-			if (m.exists(slot) || k.charAt(0) == "[" || k.charAt(0) == "#") continue;
-			// (not where the key has a member still: a method now a getter)
-			if (Lambda.exists(methods, x -> x.slot.charAt(0) == slot.charAt(0) && x.slot.substr(3) == k)) continue;
-			removed.push(slot.charAt(0) + ":" + (k.charAt(0) == "\"" ? Json.parse(k) : k));
-		}
-		return changed.length == 0 && removed.length == 0 ? null : {changed: changed, removed: removed};
+		var d:HotDiff = {added: [], changed: [], removed: []};
+		for (k => v in parts) if (!was.exists(k)) d.added.push(k) else if (was.get(k) != v) d.changed.push(k);
+		for (k in was.keys()) if (!parts.exists(k)) d.removed.push(k);
+		for (l in [d.added, d.changed, d.removed]) l.sort(Reflect.compare);
+		return d.added.length + d.changed.length + d.removed.length == 0 ? null : d;
 	}
 
-	// compared with the previous build: what else keeps a patch from being enough (patching: a patch of the classes',
-	// which may use any of the runtime's parts this build has)
+	// why the program running cannot take this build
+	public function restart(why:String) reasons.push(why);
+
+	// compared with the previous build: what else keeps a patch from being enough (patching: a patch, which may use
+	// any of the runtime's parts this build has)
 	public function compare(patching:Bool) {
 		if (prev == null) return;
-		for (path => code in cur.others) {
-			var was = prev.others.get(path);
-			if (was != null && was != code) reasons.push(path + ": changed (only classes' methods are patched)");
-		}
 		for (path => names in cur.files) {
 			var was = prev.files.get(path);
 			if (was != null && was.join(",") != names.join(",")) reasons.push(path + ": its exports changed");
@@ -128,7 +113,6 @@ class Hot {
 			cur.runtime = prev.runtime;
 			cur.patch = patch;
 		} else if (prev != null) cur.reload = reload;
-		var path = Path.join([dir, RECORD]);
-		sys.io.File.saveContent(path, Json.stringify(cur, null, "\t"));
+		sys.io.File.saveContent(Path.join([dir, RECORD]), Json.stringify(cur, null, "\t"));
 	}
 }

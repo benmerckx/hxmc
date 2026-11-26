@@ -32,6 +32,8 @@ class JsGen {
 			if (generators.Gctx.getEsVersion(com.defines) < 6)
 				context.Common.defineValue(com, core.Define.JsEs, "6");
 			overrideStd(com);
+			// (-D hxmc.js.hot: the running program's side of a patch, which its classes' constructors and its patches call)
+			if (core.Define.rawDefined(com.defines, "hxmc.js.hot")) actx.classes.push({pack: ["js"], name: "Hot"});
 			// (an enum is a class)
 			core.Define.rawUndefine(com.defines, "js_enums_as_arrays");
 			// (TypeScript: the enum abstracts' values, as typing left them, before DCE removes the fields it inlined)

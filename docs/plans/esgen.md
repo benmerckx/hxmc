@@ -405,10 +405,10 @@ and fields map to their own).
 
 ## Open
 
-1. **Hot reload**: method patches (`-D hxmc.js.hot`, docs/js.md, "Hot
-   reload"). Open, roughly in order: constructors (built through
-   `_hx_constructor`, as `filters.ES6Ctors` does, so a patch can replace
-   them); fields added to a class (set on its instances, which it would track
-   with `WeakRef`s); enums' constructors added; abstracts' implementations and
-   module-level functions; state kept across a restart (#206's cells); a
-   driver (`haxe --dev`: watch, build, push the patch over a WebSocket).
+1. **Hot reload** (`-D hxmc.js.hot`, docs/js.md, "Hot reload"): classes'
+   methods, constructors, variables, statics and super classes, enums'
+   constructors added, abstracts' and modules' functions. Open: a driver
+   (`haxe --dev`: watch, build, push the patch over a WebSocket); a class
+   added to a module the program has (the patch declaring it, later patches
+   importing it from there); lambdas the old code created running the new
+   code (their captured variables kept shared: not #206's copies).
