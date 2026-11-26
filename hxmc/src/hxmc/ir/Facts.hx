@@ -64,6 +64,7 @@ class Facts {
 		assignTypes();
 		collectNames();
 		assignNames();
+		findExits();
 		findEffects();
 		findFates();
 	}
@@ -93,7 +94,7 @@ class Facts {
 				continue;
 			}
 			function callee(g:FuncInfo)
-				if (cs.indexOf(g) < 0) cs.push(g);
+				if (!exits.exists(g) && cs.indexOf(g) < 0) cs.push(g);
 			function ex(e:Ex) {
 				if (w == hxmc.Effects.UNKNOWN) return;
 				switch e {
@@ -165,6 +166,46 @@ class Facts {
 						queued.set(c, true);
 						work.push(c);
 					}
+		}
+	}
+
+	// Functions that end the program on every way through them (an exit at
+	// the end of each, or a call of one), and never throw (no GC point: no
+	// exception is made): nothing after a call of one runs, so what they
+	// write is no caller's effect (a failed span check's report, Os.exit)
+	var exits = new Map<FuncInfo, Bool>();
+
+	function findExits() {
+		var cands = [];
+		for (f in p.funcs) {
+			if (!f.noGc || f.blocks || f.body.length == 0) continue;
+			var ret = false;
+			function st(s:Stmt) {
+				if (s.match(SReturn(_))) ret = true;
+				if (!ret) iterStmt(st, _ -> {}, s);
+			}
+			for (s in f.body)
+				st(s);
+			if (!ret) cands.push(f);
+		}
+		function ends(ss:haxe.ds.Vector<Stmt>):Bool {
+			for (s in ss)
+				switch s {
+					case SExpr(ECall(g, _)) if (exits.exists(g)): return true;
+					case SExpr(ECallHost("exit" | "_exit" | "_Exit" | "abort", _, _)): return true;
+					case SIf(_, a, b) if (ends(a) && ends(b)): return true;
+					case _:
+				}
+			return false;
+		}
+		var grew = true;
+		while (grew) {
+			grew = false;
+			for (f in cands)
+				if (!exits.exists(f) && ends(f.body)) {
+					exits.set(f, true);
+					grew = true;
+				}
 		}
 	}
 
@@ -283,7 +324,7 @@ class Facts {
 				case ECall(g, args):
 					calls(fateCallers, g, f);
 					for (k in 0...args.length)
-						use(args[k], k > 30 || g.retains & (1 << k) != 0);
+						use(args[k], !exits.exists(g) && (k > 30 || g.retains & (1 << k) != 0));
 				case ECallDispatch(sel, _, args):
 					var l = selCallers.get(sel);
 					if (l == null) selCallers.set(sel, l = []);
