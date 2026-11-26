@@ -85,6 +85,9 @@ private class OutFile {
 	public var deps:Array<Int> = [];
 	// the source map of its text (Chunk.newMaps)
 	public var smap:Null<SourceMap> = null;
+	// (modules) the names it has for the bindings it imports where its own are theirs; the names it has (Chunk.aliases)
+	public final alias = new Map<Sym, String>();
+	public var taken:Null<Map<String, Bool>> = null;
 
 	public function new(id, chunk) {
 		this.id = id;
@@ -129,8 +132,8 @@ private enum Use {
 	URefer(path:String);
 	// (modules) a split's code lowered where it is called, back in the caller's file
 	USplitDone(split:Int, caller:Int);
-	// a Lower's locals' names
-	ULocals(names:Array<String>);
+	// a Lower's locals' names, of its code's file
+	ULocals(names:Array<String>, file:Int);
 	// (Properties) what the code does with accessors, the names it reads dynamically, its string constants
 	UAccessorCall(a:TClassField, args:Int, discarded:Bool);
 	UAccessorTaken(a:TClassField);
@@ -162,7 +165,7 @@ private class Lowering implements Lower.Resolve {
 	public function lower():Lower return new Lower(chunk.com, this);
 
 	// a Lower is done: its locals' names are taken
-	public function done(l:Lower) uses.push(ULocals(l.localNames()));
+	public function done(l:Lower) uses.push(ULocals(l.localNames(), file));
 
 	public function fnName(fn:Fn, m:ModuleDef, f:TClassField) uses.push(UFnName(fn, m, f, file));
 
@@ -685,8 +688,11 @@ class Chunk {
 				if (indexFiles.exists(split)) indexFiles.set(caller, true);
 				if (enumValueFiles.exists(split)) enumValueFiles.set(caller, true);
 				for (s => from in files[split].needs) if (from < 0) files[caller].needs.set(s, from);
-			case ULocals(names):
-				for (n in names) localNames.set(n, true);
+			case ULocals(names, file):
+				for (n in names) {
+					localNames.set(n, true);
+					localsOf(file).set(n, true);
+				}
 		}
 		current = was;
 	}
@@ -747,6 +753,7 @@ class Chunk {
 		if (modules) p.splitImport = id -> splitImport(f.id, id);
 		if (fieldNames != null && (tight || fieldsDebug)) p.fieldName = fieldName;
 		p.ref = refEx;
+		if (f.alias.iterator().hasNext()) p.bind = s -> nameIn(f, s);
 		p.accessor = accessorEx;
 		p.backed = backedEx;
 		p.smap = smap != null ? smap : f.smap;
@@ -813,8 +820,7 @@ class Chunk {
 			case TAbstractDecl(a) if (Casts.branded(a)):
 				var x = abstractTypes.get(a);
 				if (x == null) return null;
-				if (x.file != f.id) names.needs.set(x.sym, x.file);
-				return x.sym.name + (abstractClasses.exists(a) ? ".Self" : "");
+				return typeName(f, names, x.sym, x.file) + (abstractClasses.exists(a) ? ".Self" : "");
 			case TClassDecl({clKind: KAbstractImpl(_) | KModuleFields(_)}) | TAbstractDecl(_) | TTypeDecl(_):
 				return null;
 			case _:
@@ -823,9 +829,19 @@ class Chunk {
 		return item == null ? null : typeUse(f, names, item);
 	}
 
-	function typeUse(f:OutFile, names:TypeNames, item:Item):String {
-		if (item.file != f.id) names.needs.set(item.sym, item.file);
-		return item.sym.name;
+	function typeUse(f:OutFile, names:TypeNames, item:Item):String return typeName(f, names, item.sym, item.file);
+
+	// (TypeScript) a binding's name as a type in file f: as the file has it (its own, imported as a value, aliased), else
+	// imported as a type; by its module (`import("../a/B.ts").B`) where the file has the name or another export does
+	function typeName(f:OutFile, names:TypeNames, s:Sym, file:Int):String {
+		if (file == f.id) return s.name;
+		var a = f.alias.get(s);
+		if (a != null) return a;
+		if (!f.needs.exists(s) && f.taken != null && files[file].path != null
+			&& (f.taken.exists(s.name) || (exportCount != null && exportCount.exists(s.name) && exportCount.get(s.name) > 1)))
+			return "import(" + Printer.quote(rel(f.path, files[file].path)) + ")." + s.name;
+		names.needs.set(s, file);
+		return s.name;
 	}
 
 	public function refer(path:String):Void refs.set(path, true);
@@ -1852,8 +1868,10 @@ class Chunk {
 		if (rtNames.length > 0)
 			b.add("import " + (rtFiles.exists(f.id) ? "" : "type ") + "{ " + rtNames.join(", ") + " } from " + Printer.quote(rel(path, RUNTIME)) + ";\n");
 		for (d in f.deps) {
-			var names = [for (s => from in f.needs) if (from == d) s.name];
-			names.sort(Reflect.compare);
+			var syms = [for (s => from in f.needs) if (from == d) s];
+			syms.sort((a, b) -> Reflect.compare(a.name, b.name));
+			// (as another of its names where the file has that one: aliases)
+			var names = [for (s in syms) f.alias.exists(s) ? s.name + " as " + f.alias.get(s) : s.name];
 			var target = Printer.quote(rel(path, files[d].path));
 			b.add(names.length == 0 ? "import " + target + ";\n" : "import { " + names.join(", ") + " } from " + target + ";\n");
 		}
@@ -1888,6 +1906,7 @@ class Chunk {
 			body(f);
 		}];
 		current = 0;
+		aliases();
 		newMaps();
 		var decls = printAll(docs);
 		// (what the printing found the files use (class heads' interfaces): imported too)
@@ -2199,17 +2218,18 @@ class Chunk {
 	function name() {
 		var taken = new Map<String, Bool>();
 		for (k in RESERVED.keys()) taken.set(k, true);
-		for (k in localNames.keys()) taken.set(k, true);
+		// (modules: a file's names are its own, its code's locals only; the bundle's one scope, all of them)
+		if (!modules) for (k in localNames.keys()) taken.set(k, true);
 		for (k in globals.keys()) taken.set(k, true);
 		for (k in rawWords.keys()) taken.set(k, true);
 		taken.set("$hx", true);
-		function pick(s:Sym, fallback:String) {
+		function pick(s:Sym, fallback:String, into:Map<String, Bool>) {
 			var n = s.hint;
-			if (taken.exists(n)) n = fallback;
+			if (into.exists(n)) n = fallback;
 			var base = n, i = 1;
-			while (taken.exists(n)) n = base + "$" + (i++);
+			while (into.exists(n)) n = base + "$" + (i++);
 			s.name = n;
-			taken.set(n, true);
+			into.set(n, true);
 		}
 		// (a type untyped code names, by Genjs's name for it (flat): that name)
 		var named = new Map<Int, Bool>();
@@ -2218,17 +2238,93 @@ class Chunk {
 			if (rawWords.exists(flat) && !localNames.exists(flat) && !globals.exists(flat)) {
 				item.sym.name = flat;
 				named.set(item.index, true);
+				taken.set(flat, true);
 			}
 		}
 		if (tsOut) {
-			pick(enumIndex, "index$");
-			pick(enumValueType, "EnumValue$");
+			pick(enumIndex, "index$", taken);
+			pick(enumValueType, "EnumValue$", taken);
 		}
-		for (r in requires) pick(r.sym, r.sym.hint + "$");
-		// (TypeScript: the abstracts' types of no implementation, their modules')
-		for (s in typeOnly) pick(s, s.hint + "$");
-		for (item in items) if (!named.exists(item.index)) pick(item.sym, core.Path.flatPath(tPath(item.t)));
-		for (k => s in moduleFields) pick(s, k.split(".").join("_"));
+		for (r in requires) pick(r.sym, r.sym.hint + "$", taken);
+		if (!modules) {
+			for (s in typeOnly) pick(s, s.hint + "$", taken);
+			for (item in items) if (!named.exists(item.index)) pick(item.sym, core.Path.flatPath(tPath(item.t)), taken);
+			for (k => s in moduleFields) pick(s, k.split(".").join("_"), taken);
+			return;
+		}
+		// (modules: each file's declarations named apart from what it has, its locals; another's imported by its name, as
+		// another of its names where the file has that one: imports)
+		nameBase = [for (k => v in taken) k => v];
+		var fileTaken = [for (f in files) [for (k => v in taken) k => v]];
+		for (f in files) for (k in localsOf(f.id).keys()) fileTaken[f.id].set(k, true);
+		for (item in items) if (!named.exists(item.index)) pick(item.sym, core.Path.flatPath(tPath(item.t)), fileTaken[item.file]);
+		for (s in typeOnly) {
+			var file = 0;
+			for (a => x in abstractTypes) if (x.sym == s) file = x.file;
+			pick(s, s.hint + "$", fileTaken[file]);
+		}
+		for (k => s in moduleFields) {
+			var owner = moduleFieldOwner.get(k);
+			pick(s, k.split(".").join("_"), owner == null ? taken : fileTaken[owner.file]);
+		}
+	}
+
+	// (modules) the names every file has (reserved words, globals, untyped code's words, the runtime's)
+	var nameBase:Null<Map<String, Bool>> = null;
+
+	final fileLocals = new Map<Int, Map<String, Bool>>();
+
+	function localsOf(file:Int):Map<String, Bool> {
+		var m = fileLocals.get(file);
+		if (m == null) fileLocals.set(file, m = new Map());
+		return m;
+	}
+
+	// (modules, but minified, whose names are the program's: shorten) the names a file has for the bindings it imports
+	// where its own are theirs (`import { A as A$1 }`), and the names it has, which a type it imports only (TypeScript,
+	// found as it prints) may not be: aliases
+	function aliases() {
+		if (nameBase == null || tight) return;
+		var exported = new Map<String, Int>();
+		for (f in files) for (item in f.items) exported.set(item.sym.name, (exported.exists(item.sym.name) ? exported.get(item.sym.name) : 0) + 1);
+		for (s in typeOnly) exported.set(s.name, (exported.exists(s.name) ? exported.get(s.name) : 0) + 1);
+		for (k => s in moduleFields) exported.set(s.name, (exported.exists(s.name) ? exported.get(s.name) : 0) + 1);
+		exportCount = exported;
+		for (f in files) {
+			var used = [for (k => v in nameBase) k => v];
+			for (k in localsOf(f.id).keys()) used.set(k, true);
+			var ownNames = new Map<String, Bool>();
+			for (item in f.items) {
+				used.set(item.sym.name, true);
+				ownNames.set(item.sym.name, true);
+			}
+			for (s in typeOnly) for (a => x in abstractTypes) if (x.sym == s && x.file == f.id) used.set(s.name, true);
+			for (k => s in moduleFields) {
+				var owner = moduleFieldOwner.get(k);
+				if (owner != null && owner.file == f.id) used.set(s.name, true);
+			}
+			var imported = [for (s => from in f.needs) if (from >= 0 && from != f.id) s];
+			imported.sort((a, b) -> Reflect.compare(a.name, b.name));
+			for (s in imported) {
+				// (its own name where untyped code has it: the binding the code names, Genjs's name for it)
+				var n = s.name, i = 1;
+				while (used.exists(n) && !(n == s.name && rawWords.exists(n) && !localsOf(f.id).exists(n) && !ownNames.exists(n)))
+					n = s.name + "$" + (i++);
+				used.set(n, true);
+				if (n != s.name) f.alias.set(s, n);
+			}
+			f.taken = used;
+		}
+	}
+
+	// (modules) how often a name is a binding's the files export: a type imported only, of a name another has, is named
+	// by its module (`import("./a/B.ts").B`)
+	var exportCount:Null<Map<String, Int>> = null;
+
+	// a binding's name in a file
+	function nameIn(f:OutFile, s:Sym):String {
+		var a = f.alias.get(s);
+		return a == null ? s.name : a;
 	}
 
 	// ------------------------------------------------------------------ the output

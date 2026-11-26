@@ -100,6 +100,8 @@ class Printer {
 	public var fieldName:Null<String->Ns->String> = null;
 	// a reference as the output has it (Chunk.refEx)
 	public var ref:Null<(Ref, Null<core.Globals.Pos>)->Ex> = null;
+	// (modules) a binding's name in the file printed, where it imports it by another (Chunk.nameIn)
+	public var bind:Null<Sym->String> = null;
 	// an accessor's call as its property's family has it (Chunk.accessorEx)
 	public var accessor:Null<(TClassField, Ex, Bool)->Ex> = null;
 	// a property's storage as its family has it (Chunk.backedEx)
@@ -125,6 +127,7 @@ class Printer {
 		p.splitImport = splitImport;
 		p.fieldName = fieldName;
 		p.ref = ref;
+		p.bind = bind;
 		p.accessor = accessor;
 		p.backed = backed;
 		p.smap = smap;
@@ -495,7 +498,7 @@ class Printer {
 
 	function exprRaw(e:Ex):String {
 		return switch e.def {
-			case EId(s): s.name;
+			case EId(s): bind == null ? s.name : bind(s);
 			case ERef(_) | EAccessor(_) | EBacked(_): exprRaw(deref(e));
 			case EThis: "this";
 			case ESuper: "super";
@@ -629,7 +632,7 @@ class Printer {
 		return switch [p.key, p.value.def] {
 			case [k, EFn(f)] if (p.kind == MkGet || p.kind == MkSet):
 				(p.kind == MkGet ? "get " : "set ") + key(k, f.pos) + withParams(f.tparams, () -> signature(f, p.kind == MkGet) + sp(" ") + blockString(f.body));
-			case [KName(n), EId(s)] if (s.name == n): n;
+			case [KName(n), EId(s)] if ((bind == null ? s.name : bind(s)) == n): n;
 			case [k, EFn(f)] if (!f.arrow && f.ctor != true): key(k, f.pos) + withParams(f.tparams, () -> signature(f, true) + sp(" ") + blockString(f.body));
 			case [k, _]: key(k, p.value.pos) + sp(": ") + expr(p.value, ASSIGN);
 		}
