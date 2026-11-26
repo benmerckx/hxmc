@@ -17,6 +17,7 @@ import generators.Genjs.JsCtx;
 // type layout; package globals link modules (entry imports every module).
 class Genesm {
 	public static var hotRegistry = false;
+	public static var prodMode = false;
 
 	public static inline function reg():String return hotRegistry ? "$h" : "$global";
 
@@ -33,7 +34,7 @@ class Genesm {
 		var stdModule = GenesmLinks.buildStdSet(com, groups);
 		var runtimeName = "__hx_esm_runtime.mjs";
 		var esm = core.Define.rawDefined(com.defines, "esm");
-		writeRuntime(Path.join([outDir, runtimeName]), com, esVersion, esm);
+		writeRuntime(Path.join([outDir, runtimeName]), com, esVersion, esm || prodMode);
 		if (com.includeFiles.length > 0)
 			writeIncludes(Path.join([outDir, "__hx_includes.mjs"]), com, "./" + runtimeName);
 		var moduleExports = new Map<String, Array<String>>();
@@ -43,17 +44,27 @@ class Genesm {
 		var emittedModules = buildEmittedModules(com, esVersion, groups);
 		var regCtx = allocCtx(com, esVersion);
 		for (g in groups) registerModuleSymbols(symOwner, regCtx, g.types, Globals.sTypePath(g.module));
+		var typeModDeps = prodMode ? buildTypeModDeps(groups, symOwner, regCtx) : null;
 		for (g in groups) {
-			var links = new GenesmLinks(g.module, stdModule, collapsedModules, emittedModules);
+			var links = new GenesmLinks(g.module, stdModule, collapsedModules, emittedModules, prodMode);
+			var mid = Globals.sTypePath(g.module);
+			if (prodMode && stdModule.exists(mid) && typeModDeps != null)
+				for (d in typeModDeps.get(mid) ?? [])
+					if (d != mid && stdModule.exists(d)) links.ensureRegistryImport(d);
 			var modCtx = allocCtx(com, esVersion);
 			modCtx.typeAccessor = t -> links.typeAccessor(modCtx, t);
+			if (prodMode) {
+				modCtx.cyclicCheck = test -> GenesmProd.isModuleCyclic(mid, test, typeModDeps);
+				modCtx.moduleFieldRef = (m, f) -> links.moduleFieldRef(m, f);
+			}
 			modulePreamble(modCtx, com, g.types);
 			if (!moduleGeneratesCode(modCtx, g.types)) continue;
 			var hotTypes:Array<ModuleType> = [];
 			for (t in sortModuleTypes(g.types)) {
 				Genjs.generateType(modCtx, t);
 				if (hotRegistry) hotTypes.push(t);
-				else modCtx.buf.addString(Genesm.publishType(modCtx, t));
+				else
+					modCtx.buf.addString(Genesm.publishType(modCtx, t, stdModule));
 			}
 			emitModuleInits(modCtx);
 			if (hotRegistry)
@@ -61,19 +72,21 @@ class Genesm {
 					GenesmHot.registerType(modCtx, t);
 					modCtx.buf.addString(Genesm.publishType(modCtx, t));
 				}
-			for (name in GenesmLinks.exportsFromBody(modCtx.buf.contents()))
-				if (!skipModuleGlobalPublish(name)) modCtx.buf.addString(publishGlobalBinding(name));
+			if (!prodMode)
+				for (name in GenesmLinks.exportsFromBody(modCtx.buf.contents()))
+					if (!skipModuleGlobalPublish(name)) modCtx.buf.addString(publishGlobalBinding(name));
 			var body = modCtx.buf.contents();
 			var mid = Globals.sTypePath(g.module);
 			moduleExports.set(mid, GenesmLinks.exportsFromBody(body));
-			modDeps.set(mid, mergeModuleDeps(moduleGlobalDeps(body, symOwner, mid), links.importModules, mid));
+			var bodyDeps = prodMode ? [] : moduleGlobalDeps(body, symOwner, mid);
+			modDeps.set(mid, mergeModuleDeps(bodyDeps, links.importModules, mid));
 			emittedGroups.push(g);
-			writeModule(modDir, g.module, runtimeRel(g.module, runtimeName), g.types, body, modCtx, links);
+			writeModule(modDir, g.module, runtimeRel(g.module, runtimeName), g.types, body, modCtx, links, stdModule, typeModDeps);
 		}
 		writeEntry(com, emittedGroups, stdModule, moduleExports, "./" + runtimeName, modDeps, collapsedModules, emittedModules);
 	}
 
-	static function moduleGroups(com:Gctx):{groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, collapsed:Map<String, String>} {
+	public static function moduleGroups(com:Gctx):{groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, collapsed:Map<String, String>} {
 		var lut = new Map<String, {module:GlobalTypePath, types:Array<ModuleType>}>();
 		for (t in com.types) {
 			var m = typeModule(t);
@@ -226,16 +239,26 @@ class Genesm {
 		}
 	}
 
-	static function writeModule(outDir:String, module:GlobalTypePath, runtimeRel:String, types:Array<ModuleType>, body:String, ctx:JsCtx, links:GenesmLinks):Void {
+	static function writeModule(outDir:String, module:GlobalTypePath, runtimeRel:String, types:Array<ModuleType>, body:String, ctx:JsCtx,
+			links:GenesmLinks, ?stdModule:Map<String, Bool>, ?typeModDeps:Map<String, Array<String>>):Void {
 		var path = Path.join([outDir, moduleFilePath(module)]);
 		core.Path.mkdirFromPath(path);
-		var text = "import * as $hx from \"" + runtimeRel + "\";\n" + links.importPreamble() + body + links.exportSuffix(ctx, types, body);
+		var mid = Globals.sTypePath(module);
+		var stdImports = new StringBuf();
+		if (prodMode && stdModule != null && typeModDeps != null && stdModule.exists(mid))
+			for (d in typeModDeps.get(mid) ?? [])
+				if (d != mid && stdModule.exists(d))
+					stdImports.add('import "' + relativeModuleImport(mid, d) + '";\n');
+		var suffix = links.exportSuffix(ctx, types, body);
+		var flush = if (prodMode) "\n$hx.flushEsmInit();\n" else "";
+		var text = "import * as $hx from \"" + runtimeRel + "\";\n" + stdImports.toString() + links.importPreamble() + body + suffix
+			+ flush;
 		sys.io.File.saveContent(path, text);
 		if (hotRegistry)
 			hxmc.esm.HotManifest.recordModule(Globals.sTypePath(module), "./hx/" + moduleFilePath(module), text);
 	}
 
-	public static function publishType(ctx:JsCtx, t:ModuleType):String {
+	public static function publishType(ctx:JsCtx, t:ModuleType, ?stdModule:Map<String, Bool>):String {
 		return switch t {
 			case TClassDecl(c) if (!hasClassFlag(c, CExtern)):
 				var dotp = Genjs.dotPath(c.clPath);
@@ -335,8 +358,47 @@ class Genesm {
 		}
 		if (generators.Gctx.hasFeature(com, "$global.$haxeUID"))
 			buf.add("$global.$haxeUID |= 0;\n");
+		if (prodMode) appendProdRuntime(buf);
 		if (hotRegistry) appendHotRuntime(buf);
 		sys.io.File.saveContent(path, buf.toString());
+	}
+
+	static function appendProdRuntime(buf:StringBuf):Void {
+		buf.add("export function inherits(resolve,defer) {\n");
+		buf.add("	function res() {\n");
+		buf.add("		if( defer && res.__hx_init__ ) res.__hx_init__();\n");
+		buf.add("		if( typeof Reflect !== \"undefined\" && Reflect.construct )\n");
+		buf.add("			return Reflect.construct(resolve(),arguments,new.target||res);\n");
+		buf.add("		var o = Object.create((resolve()).prototype);\n");
+		buf.add("		var r = resolve().apply(o,arguments);\n");
+		buf.add("		return typeof r === \"object\" && r !== null ? r : o;\n");
+		buf.add("	}\n");
+		buf.add("	if( !defer ) {\n");
+		buf.add("		var sup = resolve();\n");
+		buf.add("		if( sup != null ) Object.setPrototypeOf(res.prototype,sup.prototype);\n");
+		buf.add("	} else res.__hx_init__ = function() {\n");
+		buf.add("		var superClass = resolve();\n");
+		buf.add("		if( superClass != null && superClass.__hx_init__ ) superClass.__hx_init__();\n");
+		buf.add("		if( superClass != null ) Object.setPrototypeOf(res.prototype,superClass.prototype);\n");
+		buf.add("		res.__hx_init__ = undefined;\n");
+		buf.add("	};\n");
+		buf.add("	return res;\n");
+		buf.add("}\n");
+		buf.add("var __hx_esm_init_queue = [];\n");
+		buf.add("export function deferProto(cls,parentThunk,build) {\n");
+		buf.add("	function wire() { var sup = parentThunk(); if( sup == null || sup.prototype == null ) return false; cls.prototype = build(sup); return true; }\n");
+		buf.add("	__hx_esm_init_queue.push(wire);\n");
+		buf.add("	wire();\n");
+		buf.add("}\n");
+		buf.add("export function flushEsmInit() {\n");
+		buf.add("	var q = __hx_esm_init_queue; __hx_esm_init_queue = [];\n");
+		buf.add("	for( var pass = 0; pass < q.length + 1; pass++ ) for( var i = 0; i < q.length; i++ ) q[i]();\n");
+		buf.add("}\n");
+		buf.add("export function createStatic(obj,name,get) {\n");
+		buf.add("	var value = null, done = false;\n");
+		buf.add("	function init() { if( !done && get != null ) { value = get(); get = null; done = true; } }\n");
+		buf.add("	Object.defineProperty(obj,name,{ enumerable: true, get: function() { init(); return value; }, set: function(v) { init(); value = v; } });\n");
+		buf.add("}\n");
 	}
 
 	static function appendHotRuntime(buf:StringBuf):Void {
@@ -565,6 +627,29 @@ class Genesm {
 		}
 	}
 
+	static function buildTypeModDeps(groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, symOwner:Map<String, String>,
+			ctx:JsCtx):Map<String, Array<String>> {
+		var out = new Map<String, Array<String>>();
+		for (g in groups) {
+			var home = Globals.sTypePath(g.module);
+			var dep = new Map<String, Bool>();
+			function noteType(t:ModuleType):Void {
+				var sym = GenesmLinks.jsRef(ctx, t);
+				var owner = symOwner.get(sym);
+				if (owner != null && owner != home) dep.set(owner, true);
+			}
+			for (t in g.types) switch t {
+				case TClassDecl(c):
+					if (c.clSuper != null) noteType(TClassDecl(c.clSuper.cls));
+					for (impl in c.clImplements) noteType(TClassDecl(impl.cls));
+				case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
+				case _:
+			}
+			out.set(home, [for (k in dep.keys()) k]);
+		}
+		return out;
+	}
+
 	static function buildEmittedModules(com:Gctx, esVersion:Int,
 			groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>):Map<String, Bool> {
 		var m = new Map<String, Bool>();
@@ -649,6 +734,11 @@ class Genesm {
 		return runtimeHelperGlobalName(name);
 	}
 
+	public static function isRuntimeExportName(name:String):Bool {
+		if (name == "$global" || name == "$h" || name == "$extend" || name == "$hx_exports") return true;
+		return runtimeHelperGlobalName(name);
+	}
+
 	static function runtimeHelperGlobalName(name:String):Bool return switch name {
 		case "$bind" | "$iterator" | "$getIterator" | "$keyValueIterator" | "$getKeyValueIterator" | "$arrayPush" | "$_": true;
 		case _: false;
@@ -684,31 +774,50 @@ class Genesm {
 	static function writeEntry(com:Gctx, groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, stdModule:Map<String, Bool>,
 			moduleExports:Map<String, Array<String>>, runtimeRel:String, modDeps:Map<String, Array<String>>,
 			collapsedModules:Map<String, String>, emittedModules:Map<String, Bool>):Void {
+		var mainBuf = new StringBuf();
+		var entryImportPreamble = "";
+		switch com.main.mainExpr {
+			case null:
+			case e:
+				var mp:GlobalTypePath = com.main.mainPath != null ? com.main.mainPath : new GlobalTypePath([], "Main");
+				var links = new GenesmLinks(mp, stdModule, collapsedModules, emittedModules, prodMode);
+				var entryCtx = allocCtx(com, generators.Gctx.getEsVersion(com.defines));
+				entryCtx.typeAccessor = t -> prodMode ? links.typeAccessor(entryCtx, t) : reg() + "." + GenesmLinks.jsRef(entryCtx, t);
+				if (prodMode) entryCtx.moduleFieldRef = (m, f) -> links.moduleFieldRef(m, f);
+				var mainJs = Genjs.genSingleExpr(entryCtx, e, false);
+				if (prodMode) entryImportPreamble = links.importPreamble();
+				mainBuf.add(mainJs);
+				mainBuf.add("\n");
+				if (hotRegistry) {
+					mainBuf.add("$hx.$h.__esmHotRemount = function() {\n");
+					mainBuf.add(Genjs.genSingleExpr(entryCtx, e, false));
+					mainBuf.add("\n};\n");
+				}
+		}
 		var buf = new StringBuf();
 		buf.add("import * as $hx from \"" + runtimeRel + "\";\n");
 		if (com.includeFiles.length > 0) buf.add("import \"./__hx_includes.mjs\";\n");
 		buf.add("const " + reg() + " = $hx." + reg() + ";\n");
 		if (hotRegistry) buf.add("const $global = $hx.$global;\n");
+		buf.add(entryImportPreamble);
+		if (prodMode && com.main.mainExpr != null) {
+			var mainMp:GlobalTypePath = com.main.mainPath != null ? com.main.mainPath : new GlobalTypePath([], "Main");
+			var mainId = Globals.sTypePath(mainMp);
+			var ex = moduleExports.get(mainId) ?? [];
+			var bind = mainMp.name;
+			if (!ex.contains(bind))
+				for (n in ex)
+					if (StringTools.endsWith(n, "_main")) {
+						bind = n;
+						break;
+					}
+			if (ex.contains(bind))
+				buf.add('import { ' + bind + ' } from "./hx/' + moduleFilePath(mainMp) + '";\n');
+		}
 		for (g in topoModuleImports(groups, modDeps))
 			buf.add('import "./hx/' + moduleFilePath(g.module) + '";\n');
-		switch com.main.mainExpr {
-			case null:
-			case e:
-				var mp:GlobalTypePath = com.main.mainPath != null ? com.main.mainPath : new GlobalTypePath([], "Main");
-				var links = new GenesmLinks(mp, stdModule, collapsedModules, emittedModules);
-				var entryCtx = allocCtx(com, generators.Gctx.getEsVersion(com.defines));
-				entryCtx.typeAccessor = t -> {
-					var ref = GenesmLinks.jsRef(entryCtx, t);
-					return reg() + "." + ref;
-				};
-				buf.add(Genjs.genSingleExpr(entryCtx, e, false));
-				buf.add("\n");
-				if (hotRegistry) {
-					buf.add("$hx.$h.__esmHotRemount = function() {\n");
-					buf.add(Genjs.genSingleExpr(entryCtx, e, false));
-					buf.add("\n};\n");
-				}
-		}
+		if (prodMode) buf.add("$hx.flushEsmInit();\n");
+		buf.add(mainBuf.toString());
 		sys.io.File.saveContent(com.file, buf.toString());
 	}
 

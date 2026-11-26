@@ -21,6 +21,7 @@ class EsmGenesmCheck {
 		var failed = 0;
 		if (!checkExternNoEmit(haxe)) failed++;
 		if (!checkSharedHxExports(haxe)) failed++;
+		if (!checkProdStaticImports(haxe)) failed++;
 		Sys.exit(failed > 0 ? 1 : 0);
 	}
 
@@ -105,5 +106,28 @@ class EsmGenesmCheck {
 	static function failMsg(msg:String):Bool {
 		Sys.println(msg);
 		return false;
+	}
+
+	static function checkProdStaticImports(haxe:String):Bool {
+		var dir = '$OUT/prod-imports';
+		mkdirs(dir);
+		var cp = "hxmc/test/esm/src";
+		var js = '$dir/main.mjs';
+		if (!compile(haxe, "prod-static-imports", cp, "Main", js)) return false;
+		var mainHx = readText('$dir/hx/Main.mjs');
+		if (!mainHx.contains('import { Util }'))
+			return failMsg("prod-static-imports: Main.mjs missing static Util import");
+		if (mainHx.contains(DOL + "global.Util"))
+			return failMsg("prod-static-imports: Main.mjs still uses " + DOL + "global for sibling types");
+		var entry = readText(js);
+		if (!entry.contains('import { Main }'))
+			return failMsg("prod-static-imports: entry missing Main named import");
+		var r = exec([Sys.getEnv("NODE") ?? "node", FileSystem.fullPath(js)], {cwd: dir, merge: true});
+		if (r.code != 0) {
+			Sys.println("prod-static-imports: run failed\n" + r.out);
+			return false;
+		}
+		Sys.println("prod-static-imports: ok");
+		return true;
 	}
 }
