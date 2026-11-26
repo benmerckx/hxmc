@@ -10,22 +10,23 @@ This is **not** upstream Haxe. Stock **`--js`** without **`-D esm`** uses the
 usual single-bundle backend (**`Genjs`**) and must stay byte-identical to the
 reference OCaml compiler on the **fixpoint** (hxmc rebuilds itself to match the
 reference) and **`UpstreamTargets`** (multi-target parity suite in
-[testing.md](testing.md)). **`-D esm`** switches to multi-file emit (**`Genesm`**
-/ **`GenesmHot`**) instead.
+[testing.md](testing.md)). **`-D esm`** switches to multi-file emit
+(**`GenesmProd`** for release, **`GenesmHot`** with **`-D esm.hot`**) instead of
+single-bundle **`Genjs`**.
 
 ESM hot reload is a **separate dev workflow** from [hxmc dev](dev.md) (native /
 Wasm snapshot reload over TCP or WebSocket).
 
 ## Quick start
 
-**Dev modules** (`-D esm`, multi-file layout, no hot):
+**Release / bundler** (`-D esm`, no hot — static `import` / `export` between user modules):
 
 ```sh
 bin/hxmc/hxmc -main Main -D esm -js out/main.mjs   # hxml or flags
 node out/main.mjs
 ```
 
-**Hot reload** (`-D esm` and `-D esm.hot`):
+**Hot reload** (`-D esm` and **`-D esm.hot`**, or **`haxe --dev`** with **`-D esm`**):
 
 ```sh
 bin/hxmc/hxmc -main Main -D esm -D esm.hot -dce no -js out/main.mjs
@@ -36,18 +37,18 @@ Smoke sample: `hxmc/test/esm/hello.hxml` after `make hxmc`.
 
 | Define | Generator | Linking | Hot reload |
 | --- | --- | --- | --- |
-| `-D esm` | `Genesm` | `$global` on `globalThis` | no |
-| `-D esm` + `-D esm.hot` | `GenesmHot` | `$h` registry | yes (dev) |
-| `-D esm.prod` | *(not implemented)* | static `import` between user modules | no |
+| `-D esm` | `GenesmProd` | static `import` / `export` between user modules | no |
+| `-D esm` + `-D esm.hot` | `GenesmHot` | `$h` registry (dev publish table) | yes (dev) |
 
-**`Genesm`** / **`GenesmHot`** are the multi-file JavaScript backends for **`-D esm`**
-and **`-D esm.hot`** (replacing single-bundle **`Genjs`**). Registries **`$global`**
-and **`$h`** are defined under [Linking](#linking).
+**`GenesmProd`** / **`GenesmHot`** are the multi-file JavaScript backends for
+**`-D esm`** (release vs hot dev). They replace single-bundle **`Genjs`**. Hot
+dev registry **`$h`** is defined under [Linking](#linking).
 
 **`-D esm`** sets **`js`** as well. Use the usual Js platform (`-js` /
-`--js <entry.mjs>`). **`esm.hot`** implies **`esm`**; **`esm.prod`** must not
-be combined with **`esm.hot`**. The reference compiler **rejects** all
-**`esm*`** defines.
+`--js <entry.mjs>`). **`esm.hot`** implies **`esm`**. Do **not** pass
+**`-D esm.prod`** in application hxml — production output is **`-D esm`** alone
+(the compiler may still recognize `esm.prod` only for internal transition). The
+reference compiler **rejects** all **`esm*`** defines.
 
 ## Output layout
 
@@ -57,14 +58,15 @@ be combined with **`esm.hot`**. The reference compiler **rejects** all
 | --- | --- |
 | `<entry>.mjs` | Modules kept after dead-code elimination (DCE), imported for side effects in dependency order |
 | `hx/<module path>.mjs` | One emitted file per Haxe module (small modules may be merged into one file) |
-| `__hx_esm_runtime.mjs` | shared runtime (`$global` / `$h`, hot helpers when enabled) |
+| `__hx_esm_runtime.mjs` | shared runtime (prod: minimal init; hot: `$h` and patch helpers) |
 | `__hx_includes.mjs` | only when the build lists `--include` files |
 | `__hx_hot_patch.mjs` | hot only: patch units + manifest hook |
 | `__hx_esm_dev_client.mjs` | hot only: applies patches from the dev transport |
 
 Pure std extern modules may emit **no** `.mjs` under `hx/` (types link via the
-runtime). In **`-D esm`** and **`-D esm.hot`** dev layouts, cross-module Haxe
-types do **not** use `import { Type }` between user modules (see linking below).
+runtime). **Release** **`-D esm`** (`GenesmProd`) uses normal ESM
+`import` / `export` between user modules. **Hot** **`-D esm.hot`** keeps the
+**`$h`** publish table instead of sibling `import` for user types (see linking).
 
 **Consumption rule:** run or bundle from the **entry** `.mjs` (or a dev server
 that preserves the same load order). Importing a lone `hx/*.mjs` without the
@@ -74,27 +76,32 @@ entry graph is unsupported.
 
 **Externs** (`@:jsRequire`, npm packages): normal ESM `import` / `export`.
 
-**User Haxe types** in dev use the **publish table** (below), not
-`import { MyType }` between your own modules:
+**User Haxe types** in **release** builds link with static ESM imports:
 
-- **`-D esm`:** **`Genesm`** writes types to **`$global`** as each `hx/*.mjs` loads.
-- **`-D esm.hot`:** **`GenesmHot`** writes types and swappable bodies to **`$h`**
+- **`-D esm`** (no hot): **`GenesmProd`** emits `import { MyType } from "./…"` /
+  `export { … }` between sibling `hx/*.mjs` files and named imports on the
+  entry `.mjs` — a bundler-visible graph with no `$global` publish table for
+  ordinary cross-module types.
+
+**Hot dev** **`GenesmHot`** uses the **publish table** instead of sibling
+`import` for swappable user types:
+
+- **`-D esm.hot`:** types and swappable bodies live on **`$h`**
   (`Genesm.reg()`).
 
-**`-D esm.prod`** (not implemented): static `import`/`export` between Haxe user
-modules for bundler-visible graphs — see [plans/esm.md](plans/esm.md).
+Further prod design notes: [plans/esm.md](plans/esm.md).
 
-### Publish table (dev linking)
+### Publish table (hot dev linking)
 
 | Symbol | Meaning |
 | --- | --- |
-| **`$global`** | Object on `globalThis` where **`-D esm`** (non-hot) publishes class constructors and enum tables after each module loads |
-| **`$h`** | Hot-reload registry (same role as `$global`, plus function bodies and patch helpers) when **`-D esm.hot`** is on |
-| **Publish table** | Pattern where modules write types onto `$global` or `$h` instead of `import { MyType }` from sibling files |
+| **`$h`** | Hot-reload registry where **`GenesmHot`** publishes class constructors, enum tables, swappable bodies, and patch helpers |
+| **Publish table** | Hot-only pattern: modules write user types onto `$h` instead of `import { MyType }` from sibling files |
 | **`modDeps`** | Transitive Haxe **module** dependencies of the compilation's main module — the entry `.mjs` side-effect-imports this closure |
 
-Runtime helpers (exceptions, reflection, hot runtime) live in **`__hx_esm_runtime.mjs`**
-and still use `$global` even in hot mode.
+Runtime helpers (exceptions, reflection, hot runtime) live in
+**`__hx_esm_runtime.mjs`** (hot mode still bridges std through **`$h`** where
+needed).
 
 ## Hot reload under `-D esm.hot` (default dev behavior)
 
@@ -191,8 +198,9 @@ emit hashes** to drive incremental patch manifests (harnessed in
 
 ## Classpath and port touch
 
-**`-D esm`** switches `Generate.hx` to `EsmInstall` / `Genesm` (minimal
-`// port:` hook in `haxe/src`). **`hxmc/std/esm`** is appended when present
+**`-D esm`** switches `Generate.hx` to `EsmInstall` / **`GenesmProd`** or
+**`GenesmHot`** (minimal `// port:` hook in `haxe/src`). **`hxmc/std/esm`** is
+appended when present
 (same last-`-cp`-wins pattern as `hxmc/std` on the native target).
 
 Add **`esm.*`** std shadows only when tests or hot behavior require them; most
@@ -203,7 +211,7 @@ bundle layout.
 
 | Make target | What |
 | --- | --- |
-| `esm` | `Esm.hx`: Genesm layout, upstream unit (**`-D esm`**), hot-reload harnesses; `ESM_ARGS` narrows lanes |
+| `esm` | `Esm.hx`: Genesm layout (lane `genesm`: prod static imports + **esbuild** bundler smoke), upstream unit (**`-D esm`**), hot-reload harnesses; `ESM_ARGS` narrows lanes |
 
 Details: [testing.md](testing.md#esm-tests). Hot harnesses are **outside** the
 **fixpoint** gate and the reference **`LANES=targets`** job. A future **upstream

@@ -9,7 +9,7 @@ class EsmInstall {
 		installed = true;
 		generators.EsmHook.generate = function(com) {
 			if (core.Define.rawDefined(com.defines, "esm.hot")) hxmc.genesm.GenesmHot.generate(com);
-			else hxmc.genesm.Genesm.generate(com);
+			else hxmc.genesm.GenesmProd.generate(com);
 		};
 		Defines.addEsmDefine();
 		hxmc.esm.EsmHotInstall.install();

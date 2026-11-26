@@ -173,7 +173,7 @@ lanes in order with a Tiers-style summary.
 
 | Lane id | Harness | What |
 | --- | --- | --- |
-| `genesm` | `EsmGenesmCheck` | extern layout, shared `$hx_exports` |
+| `genesm` | `EsmGenesmCheck` | extern layout, shared `$hx_exports`, prod static imports, **esbuild** bundler smoke (`prod-bundler`) |
 | `unit` | `EsmSuites` | upstream unit with **`-D esm`**; `hxmc/test/esm/exclusions.txt` |
 | `body-swap` | `EsmHotBodySwapCheck` | in-process `applyHotPatch` body swap |
 | `watch-patch` | `EsmHotWatchPatchCheck` | file watch → rebuild → WebSocket patch |
@@ -198,8 +198,8 @@ Hot-only upstream exclusions (stacks, enum indices after patch, …) live in
 `hxmc/test/esm/hot/exclusions.txt` for a future **`-D esm.hot`** unit lane; the
 gate today is the differential harnesses above.
 
-Phase 3 **`-D esm.prod`** (static imports, bundler smoke) is **not** implemented;
-see [plans/esm.md](plans/esm.md).
+Production emit (**`-D esm`** → `GenesmProd`) is covered by the **`genesm`**
+lane checks above; see [esm.md](esm.md).
 
 ## CI
 

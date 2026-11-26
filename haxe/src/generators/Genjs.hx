@@ -103,6 +103,10 @@ class JsCtx {
 	public var noFlush:Bool;
 	// port: hxmc esm.hot — skip hot-closure emit inside class static initializers
 	public var inClassStatic:Bool;
+	// port: hxmc GenesmProd — cyclic module check (deferred super/static).
+	public var cyclicCheck:Null<String -> Bool> = null;
+	// port: hxmc GenesmProd — cross-module package static field reference.
+	public var moduleFieldRef:Null<(ModuleDef, TClassField) -> String> = null;
 
 	public function new() {}
 }
@@ -741,8 +745,12 @@ class Genjs {
 				genValue(ctx, x);
 			case TField(_, FStatic({clKind: KModuleFields(m)}, f)):
 				var mf = moduleField(m, f);
+				// port: hxmc GenesmProd — module statics use static import bindings
+				if (generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm()
+					&& ctx.moduleFieldRef != null)
+					spr(ctx, ctx.moduleFieldRef(m, f));
 				// port: hxmc Genesm (-D esm) — module statics publish on $global
-				if (core.Define.rawDefined(ctx.com.defines, "esm")) spr(ctx, "$global." + mf);
+				else if (core.Define.rawDefined(ctx.com.defines, "esm")) spr(ctx, "$global." + mf);
 				else spr(ctx, mf);
 			case TField(x, f):
 				function skip(e:TExpr):TExpr {
@@ -1587,14 +1595,24 @@ class Genjs {
 			&& (c.clSuper != null || c.clFields.length > 0 || c.clConstructor != null);
 		var hasPrototype = c.clSuper != null || hasClass || Lambda.exists(c.clFields, f -> canGenClassField(ctx, f));
 		if (hasPrototype) {
+			var cyclicSup = false;
 			switch c.clSuper {
 				case null:
 					print(ctx, p + ".prototype = {");
 				case {cls: csup}:
 					var psup = ctx.typeAccessor(TClassDecl(csup));
+					var supMod = Globals.sTypePath(csup.clModule.mPath);
+					var homeMod = Globals.sTypePath(c.clModule.mPath);
+					// port: hxmc GenesmProd — defer prototype wiring for cyclic std/user module edges
+					cyclicSup = generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm() && supMod != homeMod
+						&& (!(generators.EsmHook.isProdEsmStd != null && generators.EsmHook.isProdEsmStd(supMod))
+							|| (ctx.cyclicCheck != null && ctx.cyclicCheck(supMod)));
 					print(ctx, p + ".__super__ = " + psup);
 					newline(ctx);
-					print(ctx, p + ".prototype = $extend(" + psup + ".prototype,{");
+					if (cyclicSup)
+						print(ctx, "$hx.deferProto(" + p + ",function(){return " + psup + ";},function(sup){return $extend(sup.prototype,{");
+					else
+						print(ctx, p + ".prototype = $extend(" + psup + ".prototype,{");
 			}
 
 			var bend = openBlock(ctx);
@@ -1622,6 +1640,7 @@ class Genjs {
 			print(ctx, "\n}");
 			switch c.clSuper {
 				case null: ctx.separator = true;
+				case _ if (cyclicSup): print(ctx, ");});");
 				case _: print(ctx, ")");
 			}
 			newline(ctx);
@@ -1643,7 +1662,12 @@ class Genjs {
 
 		if (c.clSuper != null) {
 			var psup = ctx.typeAccessor(TClassDecl(c.clSuper.cls));
-			print(ctx, " extends " + psup);
+			var supMod = Globals.sTypePath(c.clSuper.cls.clPath);
+			if (generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm() && ctx.cyclicCheck != null
+				&& ctx.cyclicCheck(supMod))
+				print(ctx, " extends $hx.inherits(() => " + psup + ",true)");
+			else
+				print(ctx, " extends " + psup);
 		}
 
 		spr(ctx, " {");

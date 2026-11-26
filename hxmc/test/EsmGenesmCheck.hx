@@ -21,6 +21,8 @@ class EsmGenesmCheck {
 		var failed = 0;
 		if (!checkExternNoEmit(haxe)) failed++;
 		if (!checkSharedHxExports(haxe)) failed++;
+		if (!checkProdStaticImports(haxe)) failed++;
+		if (!checkProdBundlerSmoke(haxe)) failed++;
 		Sys.exit(failed > 0 ? 1 : 0);
 	}
 
@@ -105,5 +107,53 @@ class EsmGenesmCheck {
 	static function failMsg(msg:String):Bool {
 		Sys.println(msg);
 		return false;
+	}
+
+	static function checkProdStaticImports(haxe:String):Bool {
+		var dir = '$OUT/prod-imports';
+		mkdirs(dir);
+		var cp = "hxmc/test/esm/src";
+		var js = '$dir/main.mjs';
+		if (!compile(haxe, "prod-static-imports", cp, "Main", js)) return false;
+		var mainHx = readText('$dir/hx/Main.mjs');
+		if (!mainHx.contains('import { Util }'))
+			return failMsg("prod-static-imports: Main.mjs missing static Util import");
+		if (mainHx.contains(DOL + "global.Util"))
+			return failMsg("prod-static-imports: Main.mjs still uses " + DOL + "global for sibling types");
+		var entry = readText(js);
+		if (!entry.contains('import { Main }'))
+			return failMsg("prod-static-imports: entry missing Main named import");
+		var r = exec([Sys.getEnv("NODE") ?? "node", FileSystem.fullPath(js)], {cwd: dir, merge: true});
+		if (r.code != 0) {
+			Sys.println("prod-static-imports: run failed\n" + r.out);
+			return false;
+		}
+		Sys.println("prod-static-imports: ok");
+		return true;
+	}
+
+	static function checkProdBundlerSmoke(haxe:String):Bool {
+		var dir = '$OUT/bundler-smoke';
+		mkdirs(dir);
+		var cp = "hxmc/test/esm/src";
+		var js = '$dir/main.mjs';
+		if (!compile(haxe, "prod-bundler", cp, "Main", js)) return false;
+		var absJs = FileSystem.fullPath(js);
+		var npxR = exec(["which", "npx"], {merge: true});
+		var npx = npxR.code == 0 ? StringTools.trim(npxR.out).split("\n")[0] : "npx";
+		var b = exec([npx, "--yes", "esbuild", absJs, "--bundle", "--platform=node", "--format=esm", "--outfile=bundle.mjs"],
+			{cwd: dir, merge: true});
+		if (b.code != 0) {
+			Sys.println("prod-bundler: esbuild failed\n" + tail(b.out, 2000));
+			return false;
+		}
+		var bundle = '$dir/bundle.mjs';
+		var r = exec([Sys.getEnv("NODE") ?? "node", FileSystem.fullPath(bundle)], {cwd: dir, merge: true});
+		if (r.code != 0) {
+			Sys.println("prod-bundler: run failed\n" + r.out);
+			return false;
+		}
+		Sys.println("prod-bundler: ok");
+		return true;
 	}
 }
