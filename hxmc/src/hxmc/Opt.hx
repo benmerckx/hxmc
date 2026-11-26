@@ -2661,7 +2661,7 @@ class Opt {
 		return op == VirtualCall || op == ClosureCall || op == AnonCall || op == NewArray || op == NArrayDyn || op == Box || op == Unbox;
 
 	// object-level operations that dereference their first operand (LICM: not null after)
-	static inline function objDeref(op:Op):Bool
+	public static inline function objDeref(op:Op):Bool
 		return switch op {
 			case NullCheck | GetField | SetField | InitField | ArrayLength | ArrayGet | ArraySet | ArrayPush | NArrayLength | NArrayGet | NArraySet | EnumTag: true;
 			case _: false;

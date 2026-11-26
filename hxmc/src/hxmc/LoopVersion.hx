@@ -273,9 +273,10 @@ class LoopVersion {
 		return true;
 	}
 
-	// A loop without Array reads or calls (as try1's) that reads the length
-	// of a string from before the loop, not read before it: a copy entered
-	// when the string is not null, its length read in the test (the loop's
+	// A loop without Array reads or calls but calm ones (as try1's) that reads
+	// the length of a string, or a field or the length of an object, from
+	// before the loop, not read before it: a copy entered when the string or
+	// object is not null, its length or field read in the test (the loop's
 	// loads of the string's length and width then move out of the copy:
 	// Opt.licm, a load through an object dereferenced before the loop); a
 	// string whose width the loop reads: a byte per unit too (the copy's
@@ -291,6 +292,7 @@ class LoopVersion {
 		if (pre < 0) return false;
 		var size = 0;
 		var strs:Array<Int> = [], widths:Array<Int> = [];
+		var objs:Array<MIns> = []; // (a read of a field or a length of each object from before the loop)
 		for (b in members)
 			for (i in b.ins) {
 				if (i.dead) continue;
@@ -300,9 +302,13 @@ class LoopVersion {
 					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
 					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet | SetField:
 					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
+					case Call if (calm(i)):
 					case _:
 						return false;
 				}
+				if ((i.op == GetField && !i.info.t.match(TVoid) || i.op == ArrayLength || i.op == NArrayLength) && i.a >= 0 && !inLoop(v(i.a).block)
+					&& !Lambda.exists(objs, o -> o.a == i.a))
+					objs.push(i);
 				if (i.op == Load && i.mem == Opt.MConst && i.imm == 0 && i.size == 4 && i.b < 0 && i.ty == I32 && i.a >= 0 && !inLoop(v(i.a).block)
 					&& strs.indexOf(i.a) < 0)
 					strs.push(i.a);
@@ -321,8 +327,16 @@ class LoopVersion {
 			}
 			true;
 		});
-		if (strs.length == 0) return false;
-		version(h, members, inLoop, cfg, pre, -1, -1, null, null, [], [], strs, widths);
+		objs = objs.filter(o -> {
+			for (b in f.blocks) {
+				if (inLoop(b) || cfg.index(b) < 0 || !cfg.dominates(cfg.index(b), at)) continue;
+				for (i in b.ins)
+					if (!i.dead && (i.op == Load || i.op == Store || Opt.objDeref(i.op)) && i.a == o.a) return false;
+			}
+			!Lambda.exists(strs, s -> s == o.a);
+		});
+		if (strs.length == 0 && objs.length == 0) return false;
+		version(h, members, inLoop, cfg, pre, -1, -1, null, null, [], [], strs, widths, objs);
 		return true;
 	}
 
@@ -357,7 +371,7 @@ class LoopVersion {
 	}
 
 	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitK:Null<Int>, limitArr:Null<Arr>,
-			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>) {
+			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>, ?objs:Array<MIns>) {
 		var preB = h.preds[pre];
 		// ---- the test before the loop: blocks failing to slow, which enters the loop as it was
 		var slow = newBlock();
@@ -444,6 +458,15 @@ class LoopVersion {
 					w.mem = Opt.MConst;
 					test(cmp(CEq, w.id, iconst(Abi.T_STRING1)));
 				}
+			}
+		// the objects not null, a field or length of each read (Opt: dereferenced before the copy)
+		if (objs != null)
+			for (o in objs) {
+				test(cmp(CNe, o.a, lzero()));
+				var x = add(gb, o.op, o.ty);
+				x.a = o.a;
+				x.info = o.info.copy(null);
+				x.vty = o.vty;
 			}
 		var lim = limitK != null ? iconst(limitK) : limitArr == null ? limit : lengthOf(arrayBefore(limitArr));
 		for (e in arrays) {
