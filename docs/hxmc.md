@@ -1002,6 +1002,38 @@ under `hxmc_idhash_lock`. `Map<SomeEnum, V>` is upstream's
 `EnumValueMap`, not an identity map. `ObjectMapGc` checks maps across
 collections; `make bench-micro WHICH=maps` measures them.
 
+### Maps and threads
+
+A map is not safe to use from several threads at once without a lock, as
+on other targets. What hxmc adds is that such a race fails where it happens,
+as Go's maps do, instead of damaging memory that something else uses
+later:
+
+- **Writes are marked.** `set`, `remove`, `clear` and `reserve` set the
+  map's `writing` field for their duration. A write that finds it set
+  throws `"concurrent map writes"`; a read (`get`, `exists`, `copy`,
+  `toString`, an iterator's `next`) that finds it set throws
+  `"concurrent map read and map write"`. The field is a plain one, not an
+  atomic: it catches most races, not all (two writes can both find it
+  clear).
+- **The arrays are never left.** The maps' arrays (`hxmc.rt.MapSlots`) are
+  read without testing each index, as the maps keep theirs in bounds. A
+  race can break that: a thread can read a table's arrays before a growth
+  and its counts after it. So each operation reads the arrays once, tests
+  that they are as large as its counts say before it probes, and tests
+  each entry the index names before reading it. Every probe loop stops
+  after visiting each slot once (an index without an empty slot is a
+  race's). Any of these throws `"concurrent map access"`.
+  `ObjectMap.update`, which has no GC point and holds
+  `hxmc_idhash_lock`, returns false instead and its caller throws.
+
+All three are Strings, as `"Null Access"` is. A map that threw one may
+be left in any state, and throws again. `MapRaces` (the corpus) races
+four threads on each kind of map. The tests cost about 1 ns an operation
+on a table in the cache (`make bench-micro WHICH=maps`: 8 to 25% of
+operations of 4 to 35 ns); the compiler building itself takes the same
+time, and 1% more memory at its peak (the field, in every map).
+
 ## Module cache
 
 The compilation server's HXB module cache, made durable

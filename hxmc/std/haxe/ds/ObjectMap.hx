@@ -16,6 +16,7 @@ package haxe.ds;
 
 import hxmc.rt.MapSlots;
 import hxmc.rt.MapSlots.RefSlots;
+import hxmc.rt.MapSlots.MapRace;
 import hxmc.rt.IdHash;
 
 /**
@@ -47,6 +48,9 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 	var used:Int; // entries appended, the removed ones included
 	var live:Int;
 	var mask:Int; // cap - 1
+	// a write under way (MapRace: threads using the map together; bringing
+	// the index up to date is not one, threads that only read do it)
+	var writing:Bool;
 
 	/**
 		Creates a new ObjectMap.
@@ -60,20 +64,38 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 
 	// the index brought up to date with the collections since
 	inline function sync() {
-		if (IdHash.seen(slots) != IdHash.count()) update();
+		var slots = this.slots;
+		if (slots == null) throw MapRace.TORN;
+		if (IdHash.seen(slots) != IdHash.count() && !update()) throw MapRace.TORN;
 	}
+
+	// a write begins (another under way: a race, MapRace), and ends
+	inline function begin() {
+		if (writing) throw MapRace.WRITES;
+		writing = true;
+	}
+
+	inline function end()
+		writing = false;
 
 	// the entry of k (whose hash is h), or -1; the index is up to date
 	inline function find(k:Dynamic, h:Int):Int {
 		var slots = this.slots, kvs = this.kvs, mask = this.mask;
+		// (the arrays read once, the index's size tested once: MapSlots; an entry the index names, tested)
+		if (!fits(slots, mask)) throw MapRace.TORN;
 		var i = h & mask;
-		var r = -1;
+		var r = -1, left = mask;
 		while (true) {
-			var e = slots[3 + 2 * i];
+			// (each slot once at most: an index without an empty slot is a race's, MapRace)
+			if (--left < -1) throw MapRace.TORN;
+			var e = slots.at(3 + 2 * i);
 			if (e == 0) break;
-			if (slots[2 + 2 * i] == h && hxmc.Native.refEq(kvs[2 * e - 2], k)) {
-				r = e - 1;
-				break;
+			if (slots.at(2 + 2 * i) == h) {
+				if (e < 0 || e > kvs.length >> 1) throw MapRace.TORN;
+				if (hxmc.Native.refEq(kvs.at(2 * e - 2), k)) {
+					r = e - 1;
+					break;
+				}
 			}
 			i = (i + 1) & mask;
 		}
@@ -84,16 +106,19 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		See `Map.get`
 	**/
 	public function get(k:K):Null<T> {
+		if (writing) throw MapRace.READ_WRITE;
 		if (live == 0) return null;
 		sync();
 		var e = find(k, hashOf(k));
-		return e < 0 ? null : kvs[2 * e + 1];
+		// (find tested the entry)
+		return e < 0 ? null : kvs.at(2 * e + 1);
 	}
 
 	/**
 		See `Map.exists`
 	**/
 	public function exists(k:K):Bool {
+		if (writing) throw MapRace.READ_WRITE;
 		if (live == 0) return false;
 		sync();
 		return find(k, hashOf(k)) >= 0;
@@ -103,20 +128,23 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		See `Map.set`
 	**/
 	public function set(k:K, v:T):Void {
+		begin();
+		var e = -1;
 		if (live > 0) {
 			sync();
-			var e = find(k, hashOf(k));
-			if (e >= 0) {
-				kvs[2 * e + 1] = v;
-				return;
-			}
+			e = find(k, hashOf(k));
 		}
-		// the allocations first: a collection they run moves keys, so the
-		// hash is taken after them
-		if (used >= (mask + 1) >> 1) grow();
-		if (nyoung == youngCap && IdHash.young(k)) growYoung();
-		sync();
-		add(k, v);
+		if (e >= 0)
+			kvs.put(2 * e + 1, v); // (find tested the entry)
+		else {
+			// the allocations first: a collection they run moves keys, so the
+			// hash is taken after them
+			if (used >= (mask + 1) >> 1) grow();
+			if (nyoung == youngCap && IdHash.young(k)) growYoung();
+			sync();
+			add(k, v);
+		}
+		end();
 	}
 
 	// appends an entry (there is room for it, and in `young`) and indexes it;
@@ -138,47 +166,78 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 
 	inline function index(h:Int, e:Int) {
 		var slots = this.slots, mask = this.mask;
-		var i = h & mask;
-		while (slots[3 + 2 * i] != 0)
-			i = (i + 1) & mask;
-		slots[2 + 2 * i] = h;
-		slots[3 + 2 * i] = e + 1;
+		if (!fits(slots, mask) || !indexIn(slots, mask, h, e)) throw MapRace.TORN;
 	}
 
+	// (without a GC point) the index's slot for entry e, whose hash is h, in
+	// an index of `slots` and `mask` whose size the caller has tested; false
+	// where the index has no empty slot (a race's: MapRace)
+	@:hxmc.unsafe static inline function indexIn(slots:MapSlots<Int>, mask:Int, h:Int, e:Int):Bool {
+		var i = h & mask, left = mask;
+		while (slots.at(3 + 2 * i) != 0 && left >= 0) {
+			i = (i + 1) & mask;
+			left--;
+		}
+		if (left < 0) return false;
+		slots.put(2 + 2 * i, h);
+		slots.put(3 + 2 * i, e + 1);
+		return true;
+	}
+
+	// (without a GC point) whether `slots` holds an index of mask + 1 slots:
+	// not where a write under way on another thread grew the table between
+	// the reads of the two (MapRace)
+	@:hxmc.unsafe static inline function fits(slots:MapSlots<Int>, mask:Int):Bool
+		return slots != null && mask >= 0 && slots.length >= 4 + 2 * mask;
+
 	// empties slot i, moving back the slots after it whose probe chain
-	// passes through it (backward-shift deletion: no tombstones)
-	@:hxmc.unsafe function unindex(i:Int) {
-		var slots = this.slots, mask = this.mask;
-		var j = i;
+	// passes through it (backward-shift deletion: no tombstones); false where
+	// the index is not of the size it should be (MapRace)
+	@:hxmc.unsafe static function unindex(slots:MapSlots<Int>, mask:Int, i:Int):Bool {
+		if (!fits(slots, mask) || i < 0 || i > mask) return false;
+		var j = i, left = mask;
 		while (true) {
 			j = (j + 1) & mask;
-			var e = slots[3 + 2 * j];
+			if (--left < 0) return false;
+			var e = slots.at(3 + 2 * j);
 			if (e == 0) break;
-			var home = slots[2 + 2 * j] & mask;
+			var home = slots.at(2 + 2 * j) & mask;
 			// (j stays where it is when its home is cyclically in (i, j])
 			if (i <= j ? (i < home && home <= j) : (i < home || home <= j)) continue;
-			slots[2 + 2 * i] = slots[2 + 2 * j];
-			slots[3 + 2 * i] = e;
+			slots.put(2 + 2 * i, slots.at(2 + 2 * j));
+			slots.put(3 + 2 * i, e);
 			i = j;
 		}
-		slots[3 + 2 * i] = 0;
+		slots.put(3 + 2 * i, 0);
+		return true;
 	}
 
 	/**
 		See `Map.remove`
 	**/
 	public function remove(k:K):Bool {
-		if (live == 0) return false;
+		if (live == 0) {
+			if (writing) throw MapRace.READ_WRITE;
+			return false;
+		}
+		begin();
+		var r = removeEntry(k);
+		end();
+		return r;
+	}
+
+	function removeEntry(k:K):Bool {
 		if (dead == null) dead = new MapSlots<Bool>((mask + 1) >> 1); // (before the hash)
 		sync();
 		var slots = this.slots, kvs = this.kvs, mask = this.mask;
 		var h = hashOf(k);
-		var i = h & mask;
+		var i = h & mask, left = mask;
 		while (true) {
+			if (--left < -1) throw MapRace.TORN;
 			var e = slots[3 + 2 * i];
 			if (e == 0) return false;
 			if (slots[2 + 2 * i] == h && hxmc.Native.refEq(kvs[2 * e - 2], k)) {
-				unindex(i);
+				if (!unindex(slots, mask, i)) throw MapRace.TORN;
 				dead[e - 1] = true;
 				kvs[2 * e - 2] = null;
 				kvs[2 * e - 1] = null;
@@ -227,43 +286,71 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 
 	// the index brought up to date with the collections since it last was
 	// (the first thread to find it out of date does it: a map may be shared
-	// by threads that only read it); no allocation
-	@:hxmc.unsafe function update() {
+	// by threads that only read it); no allocation. It reads the table once:
+	// false where its arrays and counts are not of one size (a write under way
+	// on another thread: MapRace; the caller throws, the lock released)
+	@:hxmc.unsafe function update():Bool {
 		IdHash.lock();
+		var ok = true;
 		var n = IdHash.count();
-		if (IdHash.seen(slots) != n) {
-			var m = IdHash.majors();
-			if (m != majors || 2 * nyoung > live) {
-				// every key moved (or most of them): index them all again
-				var slots = this.slots;
-				for (i in 0...mask + 1)
-					slots[3 + 2 * i] = 0;
-				for (e in 0...used)
-					if (dead == null || !dead[e]) index(hashOf(kvs[2 * e]), e);
-			} else {
-				// minor collections: the keys young when added moved, the others did not
-				var slots = this.slots, mask = this.mask, young = this.young;
-				for (j in 0...nyoung) {
-					var e = young[2 * j];
-					if (dead != null && dead[e]) continue;
-					// (its slot, in the probe chain of the hash it was added with)
-					var i = young[2 * j + 1] & mask;
-					while (slots[3 + 2 * i] != e + 1)
-						i = (i + 1) & mask;
-					unindex(i);
-					index(hashOf(kvs[2 * e]), e);
+		var slots = this.slots, kvs = this.kvs, dead = this.dead, young = this.young;
+		var mask = this.mask, used = this.used, nyoung = this.nyoung;
+		if (slots == null)
+			ok = false;
+		else if (IdHash.seen(slots) != n) {
+			if (!fits(slots, mask) || kvs == null || kvs.length < 2 * used || (dead != null && dead.length < used)
+				|| (nyoung > 0 && (young == null || young.length < 2 * nyoung)))
+				ok = false;
+			else {
+				var m = IdHash.majors();
+				if (m != majors || 2 * nyoung > live) {
+					// every key moved (or most of them): index them all again
+					for (i in 0...mask + 1)
+						slots.put(3 + 2 * i, 0);
+					for (e in 0...used)
+						if ((dead == null || !dead.at(e)) && !indexIn(slots, mask, hashOf(kvs.at(2 * e)), e)) {
+							ok = false;
+							break;
+						}
+				} else {
+					// minor collections: the keys young when added moved, the others did not
+					for (j in 0...nyoung) {
+						var e = young.at(2 * j);
+						if (e < 0 || e >= used) {
+							ok = false;
+							break;
+						}
+						if (dead != null && dead.at(e)) continue;
+						// (its slot, in the probe chain of the hash it was added with: each slot once at most)
+						var i = young.at(2 * j + 1) & mask, probes = 0;
+						while (slots.at(3 + 2 * i) != e + 1 && probes <= mask) {
+							i = (i + 1) & mask;
+							probes++;
+						}
+						if (probes > mask || !unindex(slots, mask, i)) {
+							ok = false;
+							break;
+						}
+						if (!indexIn(slots, mask, hashOf(kvs.at(2 * e)), e)) {
+							ok = false;
+							break;
+						}
+					}
+				}
+				if (ok) {
+					// (the nursery is empty after a collection: no key is young)
+					this.nyoung = 0;
+					if (youngCap > 1024) {
+						this.young = null;
+						youngCap = 0;
+					}
+					majors = m;
+					IdHash.setSeen(slots, n);
 				}
 			}
-			// (the nursery is empty after a collection: no key is young)
-			nyoung = 0;
-			if (youngCap > 1024) {
-				young = null;
-				youngCap = 0;
-			}
-			majors = m;
-			IdHash.setSeen(slots, n);
 		}
 		IdHash.unlock();
+		return ok;
 	}
 
 	/**
@@ -294,6 +381,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		See `Map.copy`
 	**/
 	public function copy():ObjectMap<K, T> {
+		if (writing) throw MapRace.READ_WRITE;
 		var m = new ObjectMap<K, T>();
 		for (j in 0...used)
 			if (dead == null || !dead[j]) m.set(kvs[2 * j], kvs[2 * j + 1]);
@@ -304,6 +392,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		See `Map.toString`
 	**/
 	public function toString():String {
+		if (writing) throw MapRace.READ_WRITE;
 		var b = new StringBuf();
 		b.add("[");
 		var first = true;
@@ -323,6 +412,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		See `Map.clear`
 	**/
 	public function clear():Void {
+		begin();
 		slots = null;
 		kvs = null;
 		dead = null;
@@ -332,6 +422,7 @@ class ObjectMap<K:{}, T> implements haxe.Constraints.IMap<K, T> {
 		used = 0;
 		live = 0;
 		mask = -1;
+		end();
 	}
 
 	public function size():Int
@@ -361,6 +452,7 @@ private class ObjectMapIterator<K:{}, T> {
 		return i < m.used;
 
 	public function next():Dynamic {
+		if (m.writing) throw MapRace.READ_WRITE;
 		if (i >= m.used) return null; // (past the end)
 		var r:Dynamic = m.kvs[2 * i + at];
 		i++;
