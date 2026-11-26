@@ -307,10 +307,18 @@ const Color = $hx.declareEnum({
   `v[$hx.enumOf]`), which TypeScript narrows `v` by, to the enum's union;
 - an enum value's `toString` is `Std.string`'s.
 
-In TypeScript ([TypeScript](#typescript)) a constructor is a declared class of
-the enum's module (`Color$Rgb`), the enum's type the union of them, generic as
-the enum is: TypeScript narrows on the index, and checks a `switch` for being
-exhaustive (docs/plans/esgen-enums.md).
+In TypeScript ([TypeScript](#typescript)) `declareEnum`'s type argument is the
+enum as Haxe declares it, its constructors in order (`readonly Red: Color`,
+`readonly Rgb: new (r: number, ...) => Color`, a GADT's result); the enum's type
+is the union of its constructors' interfaces (`export declare namespace Color {
+interface Rgb extends EnumValue { readonly [index]: 2; readonly r: number; ... }
+}`), generic as the enum is. A match narrows on `v[index]` (`index` a binding
+of its own, `_hx.ts`'s: TypeScript narrows by an identifier's unique symbol
+only), reads the arguments by name where it narrowed (else `(v as any).r`), and
+a `switch` over them is exhaustive. Why this shape: `new` of a plain function is
+as fast as of a class (a runtime building values from their parameters' names
+was 15 times slower), the declaration reads as Haxe's enum, and TypeScript's
+own `enum` has no arguments and is not erasable.
 
 ## Minifying
 

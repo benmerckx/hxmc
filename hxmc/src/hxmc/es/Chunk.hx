@@ -275,8 +275,8 @@ private class Lowering implements Lower.Resolve {
 //
 // Classes are classes with their statics in their bodies, where the code that initializes them can run there (the
 // types it reaches are declared and initialized before); the others, and the `__init__`s that cannot run in a
-// `static {}` block, run after every type of the file is declared, in Haxe's order (docs/plans/esgen.md,
-// "Statics").
+// `static {}` block, run after every type of the file is declared, in Haxe's order (docs/js.md,
+// Classes).
 class Chunk {
 	final com:Gctx;
 	final splits:Splits;
@@ -3559,8 +3559,8 @@ class Chunk {
 
 	// `const E = $hx.declareEnum({ C: function (a, b) { this.a = a; this.b = b; }, D: null, ..., [$hx.name]: path }, meta)`:
 	// a constructor of arguments a function `new` constructs, the others `null` (the runtime makes their values); in
-	// TypeScript with the enum's declaration and its types (Ts.enumTypes, docs/plans/esgen-enums.md)
-	// (its arguments of `declareEnum`: hot's)
+	// TypeScript with the enum's declaration and its types (Ts.enumTypes, docs/js.md, Enums); its arguments of `declareEnum`
+	// (hot's)
 	function enumDecl(body:Doc, item:Item, e:TEnum, named:Bool):Array<Ex> {
 		var names = [for (n in e.eConstrs.names()) n];
 		names.sort((a, b) -> e.eConstrs.find(a).efIndex - e.eConstrs.find(b).efIndex);

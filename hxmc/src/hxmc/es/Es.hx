@@ -4,7 +4,7 @@ import core.Globals.Pos;
 import core.TType;
 
 // JavaScript (ES2022), nothing else: what the generator decides is in the tree, the printer only writes it
-// (docs/plans/esgen.md). Bindings are symbols (Sym), named once the whole output is known (Chunk). What a lowering
+// (docs/js.md). Bindings are symbols (Sym), named once the whole output is known (Chunk). What a lowering
 // cannot know from its own code (which binding a type has in the output, which renaming a field's name takes) it leaves
 // to the program as a whole: a reference (Ref), a namespace (Ns), which Chunk resolves as it prints.
 
