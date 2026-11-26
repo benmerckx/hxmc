@@ -29,11 +29,13 @@ class GenesmProd {
 		var seen = new Map<String, Bool>();
 		function testCycles(test:String):Bool {
 			seen.set(test, true);
-			for (d in deps.get(test) ?? [])
+			for (d in deps.get(test) ?? []) {
+				if (d == homeId) return true;
 				if (seen.exists(d)) {
 					if (d == homeId) return true;
 				} else if (testCycles(d))
 					return true;
+			}
 			return false;
 		}
 		return testCycles(testId);

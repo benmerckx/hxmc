@@ -21,14 +21,22 @@ class GenesmLinks {
 	final namedByOwner = new Map<String, Array<{sym:String, local:String}>>();
 	final localNames = new Map<String, Bool>();
 	final aliasCount = new Map<String, Int>();
+	final typeModDeps:Null<Map<String, Array<String>>>;
 
 	public function new(home:GlobalTypePath, stdModule:Map<String, Bool>, ?collapsedModules:Map<String, String>,
-			?emittedModules:Map<String, Bool>, ?prodMode:Bool = false) {
+			?emittedModules:Map<String, Bool>, ?prodMode:Bool = false, ?moduleDeps:Map<String, Array<String>>) {
 		homeId = Globals.sTypePath(home);
 		this.stdModule = stdModule;
 		prod = prodMode;
 		collapsed = collapsedModules ?? new Map();
 		this.emittedModules = emittedModules ?? new Map();
+		typeModDeps = moduleDeps;
+	}
+
+	function cyclicWith(ownerId:String):Bool {
+		if (!prod || typeModDeps == null) return false;
+		var resolved = resolveModuleId(ownerId);
+		return GenesmProd.isModuleCyclic(homeId, resolved, typeModDeps);
 	}
 
 	function resolveModuleId(id:String):String {
@@ -109,6 +117,7 @@ class GenesmLinks {
 		var resolved = resolveModuleId(ownerId);
 		if (resolved == "" || resolved == homeId) return sym;
 		if (!emittedModules.exists(resolved)) return "$global." + sym;
+		if (cyclicWith(resolved)) return "$global." + sym;
 		if (namedByOwner.exists(resolved))
 			for (item in namedByOwner.get(resolved))
 				if (item.sym == sym)
@@ -143,8 +152,12 @@ class GenesmLinks {
 		}
 		if (stdModule.exists(owner) && owner != homeId) {
 			if (owner.indexOf(".") < 0 && isBuiltInRootName(owner)) ensureRegistryImport(owner);
+			if (cyclicWith(owner)) return "$global." + ref;
+			if (emittedModules.exists(resolveModuleId(owner)))
+				return ensureNamedImport(owner, ref);
 			return "$global." + ref;
 		}
+		if (cyclicWith(owner)) return "$global." + ref;
 		return ensureNamedImport(owner, ref);
 	}
 
@@ -201,10 +214,15 @@ class GenesmLinks {
 	}
 
 	public function exportSuffix(ctx:JsCtx, types:Array<ModuleType>, body:String):String {
-		var publish = if (prod) "" else Genesm.globalPublishLines(ctx, types);
-		if (stdModule.exists(homeId) && homeId.indexOf(".") < 0 && !prod) return publish;
 		var names = exportsFromBody(body);
 		if (prod) names = names.filter(n -> !Genesm.isRuntimeExportName(n));
+		var publish = if (prod) {
+			var b = new StringBuf();
+			for (n in names) b.add(Genesm.publishGlobalBinding(n));
+			b.toString();
+		} else
+			Genesm.globalPublishLines(ctx, types);
+		if (stdModule.exists(homeId) && homeId.indexOf(".") < 0 && !prod) return publish;
 		if (names.length == 0) return publish;
 		return publish + "export { " + names.join(", ") + " };\n";
 	}

@@ -22,6 +22,7 @@ class EsmGenesmCheck {
 		if (!checkExternNoEmit(haxe)) failed++;
 		if (!checkSharedHxExports(haxe)) failed++;
 		if (!checkProdStaticImports(haxe)) failed++;
+		if (!checkProdBundlerSmoke(haxe)) failed++;
 		Sys.exit(failed > 0 ? 1 : 0);
 	}
 
@@ -128,6 +129,31 @@ class EsmGenesmCheck {
 			return false;
 		}
 		Sys.println("prod-static-imports: ok");
+		return true;
+	}
+
+	static function checkProdBundlerSmoke(haxe:String):Bool {
+		var dir = '$OUT/bundler-smoke';
+		mkdirs(dir);
+		var cp = "hxmc/test/esm/src";
+		var js = '$dir/main.mjs';
+		if (!compile(haxe, "prod-bundler", cp, "Main", js)) return false;
+		var absJs = FileSystem.fullPath(js);
+		var npxR = exec(["which", "npx"], {merge: true});
+		var npx = npxR.code == 0 ? StringTools.trim(npxR.out).split("\n")[0] : "npx";
+		var b = exec([npx, "--yes", "esbuild", absJs, "--bundle", "--platform=node", "--format=esm", "--outfile=bundle.mjs"],
+			{cwd: dir, merge: true});
+		if (b.code != 0) {
+			Sys.println("prod-bundler: esbuild failed\n" + tail(b.out, 2000));
+			return false;
+		}
+		var bundle = '$dir/bundle.mjs';
+		var r = exec([Sys.getEnv("NODE") ?? "node", FileSystem.fullPath(bundle)], {cwd: dir, merge: true});
+		if (r.code != 0) {
+			Sys.println("prod-bundler: run failed\n" + r.out);
+			return false;
+		}
+		Sys.println("prod-bundler: ok");
 		return true;
 	}
 }

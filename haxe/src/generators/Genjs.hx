@@ -1603,8 +1603,10 @@ class Genjs {
 					var psup = ctx.typeAccessor(TClassDecl(csup));
 					var supMod = Globals.sTypePath(csup.clModule.mPath);
 					var homeMod = Globals.sTypePath(c.clModule.mPath);
+					// port: hxmc GenesmProd — defer prototype wiring for cyclic std/user module edges
 					cyclicSup = generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm() && supMod != homeMod
-						&& !(generators.EsmHook.isProdEsmStd != null && generators.EsmHook.isProdEsmStd(supMod));
+						&& (!(generators.EsmHook.isProdEsmStd != null && generators.EsmHook.isProdEsmStd(supMod))
+							|| (ctx.cyclicCheck != null && ctx.cyclicCheck(supMod)));
 					print(ctx, p + ".__super__ = " + psup);
 					newline(ctx);
 					if (cyclicSup)

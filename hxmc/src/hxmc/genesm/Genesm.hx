@@ -46,7 +46,7 @@ class Genesm {
 		for (g in groups) registerModuleSymbols(symOwner, regCtx, g.types, Globals.sTypePath(g.module));
 		var typeModDeps = prodMode ? buildTypeModDeps(groups, symOwner, regCtx) : null;
 		for (g in groups) {
-			var links = new GenesmLinks(g.module, stdModule, collapsedModules, emittedModules, prodMode);
+			var links = new GenesmLinks(g.module, stdModule, collapsedModules, emittedModules, prodMode, typeModDeps);
 			var mid = Globals.sTypePath(g.module);
 			if (prodMode && stdModule.exists(mid) && typeModDeps != null)
 				for (d in typeModDeps.get(mid) ?? [])
@@ -247,12 +247,12 @@ class Genesm {
 		var stdImports = new StringBuf();
 		if (prodMode && stdModule != null && typeModDeps != null && stdModule.exists(mid))
 			for (d in typeModDeps.get(mid) ?? [])
-				if (d != mid && stdModule.exists(d))
+				if (d != mid && stdModule.exists(d) && !GenesmProd.isModuleCyclic(mid, d, typeModDeps))
 					stdImports.add('import "' + relativeModuleImport(mid, d) + '";\n');
 		var suffix = links.exportSuffix(ctx, types, body);
-		var flush = if (prodMode) "\n$hx.flushEsmInit();\n" else "";
-		var text = "import * as $hx from \"" + runtimeRel + "\";\n" + stdImports.toString() + links.importPreamble() + body + suffix
-			+ flush;
+		var flushHead = if (prodMode) "$hx.flushEsmInit();\n" else "";
+		var text = "import * as $hx from \"" + runtimeRel + "\";\n" + stdImports.toString() + links.importPreamble() + flushHead
+			+ body + suffix;
 		sys.io.File.saveContent(path, text);
 		if (hotRegistry)
 			hxmc.esm.HotManifest.recordModule(Globals.sTypePath(module), "./hx/" + moduleFilePath(module), text);
@@ -399,6 +399,8 @@ class Genesm {
 		buf.add("	function init() { if( !done && get != null ) { value = get(); get = null; done = true; } }\n");
 		buf.add("	Object.defineProperty(obj,name,{ enumerable: true, get: function() { init(); return value; }, set: function(v) { init(); value = v; } });\n");
 		buf.add("}\n");
+		for (name in ["Int", "Float", "Bool", "Enum", "Class", "Dynamic"])
+			buf.add("if( $global." + name + " == null ) $global." + name + " = {};\n");
 	}
 
 	static function appendHotRuntime(buf:StringBuf):Void {
@@ -638,10 +640,26 @@ class Genesm {
 				var owner = symOwner.get(sym);
 				if (owner != null && owner != home) dep.set(owner, true);
 			}
+			function scanExpr(e:TExpr):Void {
+				switch e.eexpr {
+					case TTypeExpr(t):
+						noteType(t);
+					case TNew(cls, _, args):
+						noteType(TClassDecl(cls));
+						for (a in args) scanExpr(a);
+					default:
+						core.Texpr.iter(scanExpr, e);
+				}
+			}
 			for (t in g.types) switch t {
 				case TClassDecl(c):
 					if (c.clSuper != null) noteType(TClassDecl(c.clSuper.cls));
 					for (impl in c.clImplements) noteType(TClassDecl(impl.cls));
+					if (c.clConstructor != null && c.clConstructor.cfExpr != null) scanExpr(c.clConstructor.cfExpr);
+					for (cf in c.clFields)
+						if (cf.cfExpr != null) scanExpr(cf.cfExpr);
+					for (cf in c.clStatics)
+						if (cf.cfExpr != null) scanExpr(cf.cfExpr);
 				case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 				case _:
 			}
@@ -746,7 +764,7 @@ class Genesm {
 
 	// Genjs.sPath / Path.flatPath escapes underscores in a single-segment name; top-level
 	// vars keep the source spelling (e.g. @:native or js.Syntax.code) but field access uses flatPath.
-	static function publishGlobalBinding(localName:String):String {
+	public static function publishGlobalBinding(localName:String):String {
 		var flat = core.Path.flatPath({pack: [], name: localName});
 		// Runtime helpers always live on $global even in esm.hot (user types use reg()).
 		var g = "$global";
@@ -780,7 +798,7 @@ class Genesm {
 			case null:
 			case e:
 				var mp:GlobalTypePath = com.main.mainPath != null ? com.main.mainPath : new GlobalTypePath([], "Main");
-				var links = new GenesmLinks(mp, stdModule, collapsedModules, emittedModules, prodMode);
+				var links = new GenesmLinks(mp, stdModule, collapsedModules, emittedModules, prodMode, modDeps);
 				var entryCtx = allocCtx(com, generators.Gctx.getEsVersion(com.defines));
 				entryCtx.typeAccessor = t -> prodMode ? links.typeAccessor(entryCtx, t) : reg() + "." + GenesmLinks.jsRef(entryCtx, t);
 				if (prodMode) entryCtx.moduleFieldRef = (m, f) -> links.moduleFieldRef(m, f);
