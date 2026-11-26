@@ -34,7 +34,7 @@ generator writes ([Reflection](#reflection)).
 | `hxmc.js.order_report` | prints the statics and `__init__`s that run after the types, the modules the entry runs first, the lazy statics and the classes moved to files of their own |
 | `hxmc.js.properties=off` | properties stay their accessor methods ([Properties](#properties)) |
 | `hxmc.js.properties_report` | prints what became of each property |
-| `hxmc.js.hot` | (`es-modules`, JavaScript, not minified) each build can patch the program already running from the previous one ([Hot reload](#hot-reload)) |
+| `hxmc.js.hot` | (`es-modules`, not minified; an error with TypeScript's output) each build can patch the program already running from the previous one ([Hot reload](#hot-reload)) |
 | `dts` | (`es`) `<output>.d.ts`, declaring what `@:expose` puts on the global object ([Modules](#modules)) |
 | `js-source-map`, `source-map`, `--debug` | a source map beside each file ([Source maps](#source-maps)) |
 | `source-map=inline` | the source map in the file, as a `data:` URL |
@@ -578,7 +578,7 @@ TypeScript's output) under `HxTypes` at its path (`HxTypes.pack.A`), the others
 
 ## Hot reload
 
-With `-D hxmc.js.hot` (es-modules, JavaScript, not minified), a build can patch
+With `-D hxmc.js.hot` (es-modules, not minified, not TypeScript), a build can patch
 a program that is already running from the previous build, instead of having to
 restart it. This is for development; a release build leaves the define out.
 

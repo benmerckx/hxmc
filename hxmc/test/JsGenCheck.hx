@@ -211,6 +211,15 @@ class JsGenCheck {
 			var want = File.getContent('$dir/expected.txt');
 			check('hot/$name: prints expected.txt', out.toString() == want, "expected:\n" + want + "\nprinted:\n" + out);
 		}
+		// (hot: es-modules's JavaScript only, an error with TypeScript's output)
+		if (only.length == 0 || only.contains("hot")) {
+			var dir = '$OUT/hot/ts';
+			rmrf(dir);
+			FileSystem.createDirectory(dir);
+			var c = exec([haxe, "-cp", '$HOT/methods/v1', "-cp", '$HOT/methods/common', "-cp", "hxmc/portable", "-main", "Main", "--js", dir + "/index.ts",
+				"-D", "hxmc.js=es-modules", "-D", "hxmc.js.hot"], {merge: true});
+			check("hot: with an output named .ts fails", c.code != 0 && c.out.indexOf("hxmc.js.hot: not with TypeScript's output") >= 0, c.out);
+		}
 		Sys.println(failures == 0 ? "all passed" : '$failures failed');
 		Sys.exit(failures == 0 ? 0 : 1);
 	}

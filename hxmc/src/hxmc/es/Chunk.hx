@@ -333,8 +333,9 @@ class Chunk {
 		if (modules && Gctx.rawDefined(com, "hxmc.js.minify.fields"))
 			Error.abort("hxmc.js.minify.fields: the bundled output's (hxmc.js=es), not es-modules's: what imports a module reads its fields by their names", core.Globals.nullPos);
 		hot = if (!Gctx.rawDefined(com, "hxmc.js.hot")) null else {
-			if (!modules || tsOut)
-				Error.abort("hxmc.js.hot: es-modules's, to JavaScript (-D hxmc.js=es-modules, an output named .js)", core.Globals.nullPos);
+			if (!modules) Error.abort("hxmc.js.hot: es-modules's (-D hxmc.js=es-modules)", core.Globals.nullPos);
+			// (a patch is JavaScript the running program imports, which TypeScript's output is not until compiled)
+			if (tsOut) Error.abort("hxmc.js.hot: not with TypeScript's output (an output named .ts)", core.Globals.nullPos);
 			if (Gctx.definedValueSafe(com, "hxmc.js.minify") != "")
 				Error.abort("hxmc.js.hot: not minified (a patch names what the running program has by its names)", core.Globals.nullPos);
 			new Hot(Path.directory(com.file));
