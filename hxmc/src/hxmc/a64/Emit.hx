@@ -30,10 +30,13 @@ class Emit implements hxmc.Target.Emitter {
 	// Windows commits the stack one guard page at a time: frames of a page or
 	// more touch each page as they grow
 	var probe:Bool;
+	var pac:Bool; // Abi.pac
+	var signs = false; // the function being written signs its return address
 
-	public function new(obj:Obj, probe = false) {
+	public function new(obj:Obj, probe = false, pac = false) {
 		this.obj = obj;
 		this.probe = probe;
+		this.pac = pac;
 		text = obj.section(".text", Text, 16);
 		a = new Asm(text);
 	}
@@ -96,6 +99,14 @@ class Emit implements hxmc.Target.Emitter {
 				// the caller's x29 (this stub keeps no record of its own)
 				a.movR(true, 0, Asm.FP);
 				a.ret();
+			case hxmc.MirBuild.STUB_STRIP:
+				// x0 without its signature: xpaclri strips x30 only (the return
+				// address is in x16 for these three instructions)
+				a.movR(true, X16, Asm.LR);
+				a.movR(true, Asm.LR, 0);
+				a.xpaclri();
+				a.movR(true, 0, Asm.LR);
+				a.br(X16);
 			case hxmc.MirBuild.STUB_LANDING:
 				// hxmc_objc_caught(x0) as though the call returning to x1 had
 				// called it (where an unwinder resumes a frame)
@@ -161,6 +172,12 @@ class Emit implements hxmc.Target.Emitter {
 				saveOff[k] = frameSize - 8 - 8 * k;
 		}
 		// prologue
+		// (Windows, probe: key IB, which its unwind codes name)
+		signs = pac && f.exposed;
+		if (signs) {
+			a.pacsp(probe);
+			op(Unwind.PAC);
+		}
 		a.pair(false, Asm.FP, Asm.LR, SP, -16, 1);
 		op(Unwind.SAVEFPLR, 16);
 		a.movSp(Asm.FP, SP);
@@ -305,6 +322,10 @@ class Emit implements hxmc.Target.Emitter {
 		op(Unwind.SPFP);
 		a.pair(true, Asm.FP, Asm.LR, SP, 16, 2);
 		op(Unwind.RESTOREFPLR, 16);
+		if (signs) {
+			a.autsp(probe);
+			op(Unwind.AUT);
+		}
 		a.ret();
 		op(Unwind.RET);
 	}

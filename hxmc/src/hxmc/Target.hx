@@ -27,5 +27,5 @@ class Target {
 		return abi.arm ? new hxmc.a64.Isel(abi) : new hxmc.x64.Isel(abi);
 
 	public static function emitter(abi:Abi, obj:Obj):Emitter
-		return abi.wasm ? new hxmc.wasm.WasmEmitter(obj) : abi.arm ? new hxmc.a64.Emit(obj, abi.os == "windows") : new hxmc.x64.Emit(obj, abi.os == "windows", abi.framePointers);
+		return abi.wasm ? new hxmc.wasm.WasmEmitter(obj) : abi.arm ? new hxmc.a64.Emit(obj, abi.os == "windows", abi.pac) : new hxmc.x64.Emit(obj, abi.os == "windows", abi.framePointers);
 }

@@ -1875,6 +1875,28 @@ its body: outgoing arguments are part of it and nothing allocates on the
 stack dynamically. `hxmc_call_on_stack`, the main thread's stack switch,
 runs on its frame pointer, which unwinders follow back.
 
+**Return addresses** are signed with pointer authentication (Armv8.3)
+in the functions whose frame holds memory C or raw stores write: a
+`Mem.stack` area, a struct value's slot, a C struct passed by copy or
+returned through memory (`MirWriter.exposedSlot`; an inlined callee's
+slots count in its caller, and a slot the optimizer removes does not).
+Safe code writes no frame memory by address; an overflow of such a slot
+runs up the frame into the function's own saved x30 first, and the
+function's return then faults instead of jumping where the overwrite
+points. The prologue starts with `paciasp` (Windows: `pacibsp`, the key
+its unwind codes name), the epilogue's `ldp x29, x30` is followed by
+`autiasp` (`autibsp`): hint instructions, no-ops on cores before Armv8.3,
+so one binary runs everywhere. The unwind tables describe it
+(`DW_CFA_AARCH64_negate_ra_state`, Windows' `pac_sign_lr`) and
+`Mem.strip` drops the signature from a frame record's return address
+(`Stacks.retOf`: `xpaclri` in the stub `hxmc_strip`, as the signature
+starts at the address space's size, 39 bits on most Android kernels).
+On by default for arm64 on Linux, Android and Windows; not on Apple's
+platforms, which run arm64 processes with the keys off (only arm64e
+signs); `-D hxmc.pac=0` turns it off. The C libraries the runtime links
+(mbedtls, libuv) are built with `-mbranch-protection=pac-ret`
+(`hxmc/deps/deps.sh`).
+
 **Source lines** flow from the typed AST: `SPos` statements
 (`FnLower.stmt`), `MIns.pos` (an inlined copy takes its call's position),
 `LIns.pos`, and a row per change in `FuncRec.lines`. Native builds always
@@ -1946,6 +1968,7 @@ turns the optimizer off.
 | `hxmc.compact=0` | | yes | no compressed references: `@:hxmc.compact` changes nothing |
 | `hxmc.inline=<flat>,<loop>,<runtime>,<IR nodes>,<depth>` | | yes | inlining limits (16,48,3,40,2; wasm 4,16,3,40,2); an empty field keeps its default |
 | `hxmc.frame-pointers=0` | | yes | x86-64: no frame pointers |
+| `hxmc.pac=0` | | yes | arm64: no signed return addresses ([Return addresses](#return-addresses)) |
 | `hxmc.symbols` | `HXMC_SYMBOLS` | yes | a symbol table |
 | `hxmc.checked` | | yes | a diagnostic build: checks on, no Mir optimizations ([using.md](using.md#options); the std reads it) |
 | `hxmc.llvm[=O1\|O2\|O3\|Os]` | `HXMC_LLVM` | yes | (experimental) the functions LLVM takes compiled by clang ([plans/llvm.md](plans/llvm.md)) |

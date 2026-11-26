@@ -104,6 +104,13 @@ class Abi {
 	// (rbp; x29): arm64 always (Apple's ABI requires it, and its prologue is
 	// the record), x86-64 unless -D hxmc.frame-pointers=0 (Options.framePointers)
 	public var framePointers = false;
+	// return addresses signed with pointer authentication (a64.Emit: no-ops
+	// before Armv8.3) in the functions with a frame slot that C or raw stores
+	// write (MFunc.exposed): a linear overflow of the slot reaches the
+	// function's own saved x30 first, which then fails at its return. Not on
+	// Apple's platforms, which run arm64 processes with the keys off (only
+	// arm64e signs). -D hxmc.pac=0: off (Options.pac)
+	public var pac = false;
 
 	function new(name, arm, os, size, prev, sp, align, setjmp, prefix) {
 		this.name = name;
@@ -137,6 +144,7 @@ class Abi {
 		}
 		platform = os;
 		rtName = name;
+		pac = arm && os != "macos";
 	}
 
 	// -D hxmc.libc=<libc>: the C library the program links with, where a

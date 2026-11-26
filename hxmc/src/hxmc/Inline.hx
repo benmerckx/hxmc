@@ -373,6 +373,8 @@ class Inline {
 			var slotBase = f.slots.length;
 			for (s in g.slots)
 				f.slots.push(s);
+			for (k in g.exposed)
+				f.exposed.push(slotBase + k);
 			// values first (operands may refer forward: phis)
 			for (gb in g.blocks)
 				for (i in gb.ins) {

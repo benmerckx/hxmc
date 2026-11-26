@@ -345,6 +345,19 @@ class Asm {
 	public function ret()
 		w(0xD65F03C0);
 
+	// x30 signed with sp as the modifier and authenticated (hint space: no-ops
+	// before Armv8.3), with key IA, or IB as Windows' unwind codes name it
+	public function pacsp(b:Bool)
+		w(b ? 0xD503237F : 0xD503233F);
+
+	public function autsp(b:Bool)
+		w(b ? 0xD50323FF : 0xD50323BF);
+
+	// x30 without its signature, whatever the address space's size (hint
+	// space too)
+	public function xpaclri()
+		w(0xD50320FF);
+
 	public function brk()
 		w(0xD4200000);
 

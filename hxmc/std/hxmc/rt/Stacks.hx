@@ -139,6 +139,11 @@ class Stacks {
 		return true;
 	}
 
+	// the return address in frame record f, without the signature of a
+	// function that signs it (arm64 pointer authentication, hxmc's Abi.pac)
+	@:hxmc.unsafe static inline function retOf(f:Ptr):Ptr
+		return Mem.strip(Mem.getPtr(f, 8));
+
 	// the frame record of the caller of record f's function (ret: f's return
 	// address, into the caller): the rbp f's function saved, the caller's
 	// record where the caller keeps it there (the native code: push rbp, mov
@@ -235,7 +240,7 @@ class Stacks {
 		var n = 0;
 		var interp = !ic.isNull();
 		while (n < max && !f.isNull() && (f.toI64() & 7) == 0 && (limit.isNull() || f.ult(limit))) {
-			var ret = Mem.getPtr(f, 8);
+			var ret = retOf(f);
 			var up = callerOf(f, ret);
 			if (limit.isNull()) {
 				// (the caller is a function of the table: its frame record is one)
@@ -520,8 +525,8 @@ class Stacks {
 		if (top.isNull() || n >= MAX) return n;
 		// (the catching function's record on the stack of this call: its frame is live)
 		var f = Mem.frame();
-		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(Mem.getPtr(f, 8)))
-			f = callerOf(f, Mem.getPtr(f, 8));
+		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(retOf(f)))
+			f = callerOf(f, retOf(f));
 		if (f != top) return n;
 		return n + walkFrom(top, buf.add(8 * n), MAX - n, Ptr.nil(), thrownTopKind, thrownTopFrames);
 	}

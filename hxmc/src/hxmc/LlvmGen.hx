@@ -354,6 +354,8 @@ class LlvmGen {
 		b.add('attributes #1 = { noreturn nounwind }\n');
 		b.add('attributes #2 = { returns_twice }\n');
 		b.add('attributes #3 = { nounwind willreturn memory(none) }\n');
+		// (Abi.pac: a function with a slot C or raw stores write)
+		if (abi.pac) b.add('\nattributes #4 = { nounwind uwtable "frame-pointer"="all"${keepFrames ? ' noinline "disable-tail-calls"="true"' : ""} "sign-return-address"="non-leaf" "sign-return-address-key"="${abi.os == "windows" ? "b_key" : "a_key"}" }\n');
 		if (lines && count > 0) {
 			var cu = diUnit();
 			var v = md("!{i32 7, !\"Dwarf Version\", i32 4}"), dv = md("!{i32 2, !\"Debug Info Version\", i32 3}");
@@ -1236,7 +1238,7 @@ private class FnWriter {
 			spFile = file;
 			dbg = g.md('!DILocation(line: 0, column: 0, scope: $sp)');
 		}
-		into.add('define ${LlvmGen.ty(f.ret)} ${LlvmGen.symName(f.name)}(${ps.join(", ")}) #0${sp != null ? " !dbg " + sp : ""} {\n');
+		into.add('define ${LlvmGen.ty(f.ret)} ${LlvmGen.symName(f.name)}(${ps.join(", ")}) #${g.abi.pac && f.exposed.length > 0 ? 4 : 0}${sp != null ? " !dbg " + sp : ""} {\n');
 		// each block's body and terminator apart: a phi's argument read from a
 		// slot is loaded at the end of its pred (pending), before the terminator
 		var bodies = [], terms = [], order = [];

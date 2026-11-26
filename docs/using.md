@@ -51,6 +51,7 @@ lists the ones marked with *.
 | `-D hxmc.no-stacks` | no call stacks: `haxe.CallStack` and exception stacks are empty |
 | `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
 | `-D hxmc.frame-pointers=0` | x86-64: no frame pointers (arm64 always keeps them) |
+| `-D hxmc.pac=0` | arm64 on Linux, Android and Windows: no signed return addresses in the functions whose frame C or raw memory writes reach ([Return addresses](hxmc.md#return-addresses)) |
 | `-D hxmc.checked` * | diagnostic build: enable NativeArray bounds, null, span and tagged-reference checks and disable Mir optimizations, including check elimination. Overrides the individual check switches. Raw operations in unsafe code remain unsafe. |
 | `-D hxmc.strict` | raw memory outside `@:hxmc.unsafe` code is an error in the program's own code, not a warning (hxmc's std: always) ([Unsafe code](interop.md#unsafe-code)); so is an unguarded API newer than the deployment target ([Availability](interop.md#availability)) |
 | `-D hxmc.null-checks=0\|1` * | test references against null before each access. Default: on for WebAssembly, off natively, where a fault handler throws instead ([Null access](#null-access)) |

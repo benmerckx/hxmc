@@ -113,6 +113,7 @@ class LFunc {
 	public var depths = false; // the blocks' loopDepth set (IselBase: the Mir's), else Regalloc's from the layout
 	public var display:Null<String>; // (-debug) the Haxe name of the function (FuncRec.name)
 	public var foreignPasses = false; // (FuncInfo.foreignPasses: Unwind.PASS)
+	public var exposed = false; // an exposed slot of MFunc's is still taken (Abi.pac)
 	var hints:Array<Int> = []; // vreg - NPHYS -> preferred register (physical or virtual), -1
 
 	// jump threading, before emission: a branch (or a jump table's entry)

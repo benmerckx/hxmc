@@ -331,7 +331,7 @@ class MirWriter {
 	// C functions that neither collect nor wait in a safe region, besides
 	// the runtime functions FnLower.noGcHost names
 	static var QUIET = [
-		"hxmc_zero" => true, "memset" => true, "memcpy" => true, "memmove" => true, "floor" => true, "ceil" => true,
+		"hxmc_zero" => true, "hxmc_strip" => true, "memset" => true, "memcpy" => true, "memmove" => true, "floor" => true, "ceil" => true,
 		"hxmc_barrier_slow" => true, "setjmp" => true, "_setjmp" => true, "__mingw_setjmp" => true, "hxmc_tls_base" => true,
 	];
 
@@ -367,6 +367,14 @@ class MirWriter {
 		var i = mk(StackAddr, I64);
 		i.imm = slot;
 		return add(i);
+	}
+
+	// a new slot that C or raw stores write, its address: its function signs
+	// its return address (Abi.pac)
+	function exposedSlot(size:Int, align:Int):Int {
+		var s = f.slot(size, align);
+		f.exposed.push(s);
+		return stackAddr(s);
 	}
 
 	// ---- blocks

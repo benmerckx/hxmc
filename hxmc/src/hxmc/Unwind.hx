@@ -30,6 +30,8 @@ import hxmc.Obj;
 //   RET             the epilogue's return (the code after it has the body's frame)
 //   PASS            no personality: a foreign exception passes the frame
 //                   (an entry Objective-C calls, ObjC.entry; the stub hxmc_objc_landing)
+//   PAC             arm64 x30 signed (pointer authentication, Abi.pac)
+//   AUT             arm64 x30 authenticated: as it was
 // Within a function the frame is the same at every instruction of the body
 // (outgoing arguments are part of the frame: no pushes around calls); the
 // stack switch of hxmc_call_on_stack runs on the frame pointer.
@@ -60,6 +62,8 @@ class Unwind {
 	// NONE: no unwind information (an LLVM function described in no way read
 	// here): left out of the tables
 	public static inline var NONE = 18;
+	public static inline var PAC = 19;
+	public static inline var AUT = 20;
 
 	public static inline function none(ops:haxe.ds.Vector<Int>):Bool
 		return ops.length >= 4 && ops[0] == NONE;
@@ -259,6 +263,11 @@ class Unwind {
 						defCfaOffset(spOff);
 					}
 				case NOP | PASS:
+				case PAC | AUT:
+					// DW_CFA_AARCH64_negate_ra_state (the epilogue's is undone by
+					// its restore_state)
+					advance(at);
+					b.u8(0x2d);
 				case ENDPROLOGUE:
 					if (pending.length > 0) {
 						advance(at);
@@ -650,6 +659,8 @@ class Unwind {
 					}
 				case NOP:
 					c.u8(0xe3);
+				case PAC | AUT:
+					c.u8(0xfc); // pac_sign_lr (pacibsp, autibsp)
 				case _:
 			}
 			return c;

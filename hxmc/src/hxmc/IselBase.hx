@@ -260,6 +260,8 @@ class IselBase {
 			var s = mf.slots[k];
 			f.slot(taken[k] ? s.size : 0, taken[k] ? s.align : 1);
 		}
+		for (k in mf.exposed)
+			if (taken[k]) f.exposed = true;
 		vreg = hxmc.Lir.Arrays.filled(mf.vals.length, -1);
 		useCount = hxmc.Lir.Arrays.filled(mf.vals.length, 0);
 		folded = new Vector(mf.vals.length);

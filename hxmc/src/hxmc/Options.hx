@@ -116,7 +116,7 @@ class Options {
 	// key; Driver.toolKey: Options.codeKey). (hxmc.checked: the define only, the
 	// std reads it too)
 	public static final FLAGS = [
-		"hxmc.opt", "hxmc.frame-pointers", "hxmc.symbols", "hxmc.inline", "hxmc.checked", "hxmc.compact",
+		"hxmc.opt", "hxmc.frame-pointers", "hxmc.pac", "hxmc.symbols", "hxmc.inline", "hxmc.checked", "hxmc.compact",
 		// (experimental) the LLVM back end's (Options.llvm)
 		"hxmc.llvm", "hxmc.llvm-rt", "hxmc.llvm-cpu", "hxmc.llvm-tbaa", "hxmc.llvm-whole", "hxmc.llvm-consts", "hxmc.llvm-release", "hxmc.llvm-flags", "hxmc.llvm-clang", "hxmc.llvm-pgo", "hxmc.llvm-inline"
 	];
@@ -174,6 +174,8 @@ class Options {
 	// profilers and debuggers walk the stack by frame pointer: the default;
 	// -D hxmc.frame-pointers=0 off (arm64 always has them: Abi)
 	public var framePointers = true;
+	// -D hxmc.pac=0: no pointer authentication of return addresses (Abi.pac)
+	public var pac = true;
 	// -debug (or -D hxmc.lines alone): source lines (DWARF .debug_line and
 	// .debug_info on ELF and Mach-O) from the typed AST's positions
 	// (hxmc.ir.Ir.Stmt.SPos)
@@ -412,6 +414,7 @@ class Options {
 			case _: throw "hxmc: -D hxmc.span-checks=" + sc + ": 0 or 1";
 		}
 		o.framePointers = on("hxmc.frame-pointers", true, com.defines);
+		o.pac = on("hxmc.pac", true, com.defines);
 		o.debugLines = def("debug") != null || def("hxmc.lines") != null;
 		o.stacks = def("hxmc.no_stacks") == null;
 		o.stacksAlways = o.stacks && def("hxmc.stacks") != null;

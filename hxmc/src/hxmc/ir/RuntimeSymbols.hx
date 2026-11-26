@@ -34,7 +34,7 @@ using core.TFunctions;
 // target's linker, C library or DataGen defines is not the runtime's and
 // is not here (rt_types and the program's tables, _setjmp, memcpy and
 // floor, wasm32's linker cells and thread-local globals, rt_throw and the
-// other builtins of LinkWasm, the stubs hxmc_zero, hxmc_frame,
+// other builtins of LinkWasm, the stubs hxmc_zero, hxmc_frame, hxmc_strip,
 // hxmc_call_on_stack and hxmc_tls_base). The names the lowering makes from
 // the std's externs (String_toUpperCase, Math_sin, ...) are not either: a
 // missing implementation fails the build of a program that calls it, by
