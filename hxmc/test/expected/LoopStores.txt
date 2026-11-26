@@ -1,0 +1,5 @@
+exit 0
+in range: 4425 1221 20
+grows: 327 12 93
+aliased: 32.5 5.5
+bools: [true,false,false,true,false,false,true,false]

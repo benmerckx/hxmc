@@ -111,6 +111,7 @@ class Effects {
 				false;
 			case Untag: i.info.t.match(TRef(_));
 			case ArrayGet: Opt.ptrElem(i.info.t) && !i.info.prechecked;
+			case ArraySet if (i.info.prechecked && !Opt.ptrElem(i.info.t)): false;
 			// (in the hit block of its test: no slow path)
 			case AnonStore: false;
 			case _: true;
@@ -129,6 +130,8 @@ class Effects {
 			case SetField: fieldStore(i.info.t, i.info.loc, i.info.compact);
 			case AnonStore: ANY_FIELD;
 			case NArraySet | ArrayInit | NArrayInit: NARRAY_STORE;
+			// (LoopVersion's copy: in range, of the kind: its elements only)
+			case ArraySet if (i.info.prechecked && !Opt.ptrElem(i.info.t)): NARRAY_STORE;
 			case ArraySet | ArrayPush: ARRAY_STORE;
 			case RefStore: RAW_STORE;
 			// (its selector's implementations' summaries, MirBuild)
