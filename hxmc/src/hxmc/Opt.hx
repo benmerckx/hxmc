@@ -2837,36 +2837,85 @@ class Opt {
 	static inline var YOUNG_SLOTS = 63;
 
 	// A reference stored into an object allocated since the last point where
-	// a collection may happen (in the block, or one entered only from such a
-	// block) needs no write barrier: the object is young (OInfo.fresh; its
-	// store still publishes what it stores, MIns.release).
+	// a collection may happen needs no write barrier: the object is young
+	// (OInfo.fresh; its store still publishes what it stores, MIns.release).
+	// Which objects are young, forward to a fixed point: what an allocation
+	// adds, a point that may collect empties (Effects.collects: a call of a
+	// function that never collects keeps them), a join keeps what every way
+	// there has, a phi of young objects on each of its edges is one too. A
+	// stored value that is never young (static data: a string literal) needs
+	// none either.
 	function freshTargets() {
 		var cfg = f.cfg();
 		var order = cfg.rpo;
 		var n = order.length;
 		var inOrder = number(order);
-		var outs = MFunc.ints(n, -1);
-		for (k in 0...n) {
+		var vals = f.vals;
+		// per block: the young objects at its end (null: not reached yet)
+		var outs = new Vector<Null<Array<Int>>>(n);
+		inline function young(at:Array<Int>, v:Int):Bool
+			return at.indexOf(v) >= 0;
+		function entry(k:Int):Array<Int> {
 			var b = order[k];
-			var last = -1; // the object allocated since the last collection point
-			if (b.preds.length == 1 && !b.handler) {
-				var p = b.preds[0];
-				if (p.mark == inOrder && p.tmp < k) last = outs[p.tmp];
+			if (b.handler || k == 0) return [];
+			var set:Null<Array<Int>> = null;
+			for (p in b.preds) {
+				if (p.mark != inOrder) return [];
+				var o = outs[p.tmp];
+				if (o == null) continue;
+				set = set == null ? o.copy() : set.filter(v -> o.indexOf(v) >= 0);
 			}
+			if (set == null) return [];
+			// (a phi of young objects, each young on its edge)
 			for (i in b.ins) {
+				if (i.op != Phi) break;
+				if (i.dead || i.ty != I64 || i.args.length != b.preds.length) continue;
+				var all = true;
+				for (q in 0...i.args.length) {
+					var o = outs[b.preds[q].tmp];
+					if (o == null || !young(o, i.args[q]) && i.args[q] != i.id) all = false;
+				}
+				if (all) set.push(i.id);
+			}
+			return set;
+		}
+		function walk(k:Int, apply:Bool):Array<Int> {
+			var set = entry(k);
+			for (i in order[k].ins) {
 				if (i.dead) continue;
-				if (i.op == SetField && last >= 0 && i.a == last && i.info.young) {
+				if (apply && i.op == SetField && i.info.young && (young(set, i.a) || neverYoung(vals[i.b]))) {
 					i.args = i.args.slice(0, i.args.length - 2);
 					i.info.young = false;
 					i.info.fresh = true;
 					freshStores++;
 				}
-				if (Effects.collects(i)) last = -1;
-				if (i.op == New && i.info.n <= YOUNG_SLOTS) last = i.id;
+				if (Effects.collects(i)) set = [];
+				if (i.op == New && i.info.n <= YOUNG_SLOTS && !i.info.frame) set.push(i.id);
+				else if (i.op == Copy && young(set, i.a)) set.push(i.id);
 			}
-			outs[k] = last;
+			return set;
 		}
+		var changed = true, rounds = 0;
+		while (changed && rounds++ < 8) {
+			changed = false;
+			for (k in 0...n) {
+				var o = walk(k, false);
+				var old = outs[k];
+				if (old == null || old.length != o.length || Lambda.exists(o, v -> old.indexOf(v) < 0)) {
+					outs[k] = o;
+					changed = true;
+				}
+			}
+		}
+		// (not settled: the blocks as they were, a single way in from a young one)
+		if (changed) return;
+		for (k in 0...n)
+			walk(k, true);
 	}
+
+	// a value no collection made: the address of static data
+	static inline function neverYoung(x:MIns):Bool
+		return x.op == SymAddr;
 
 	// A barrier's operands that no other store shares, nor moved out of a
 	// loop, go again: MemLower loads them after the store, as it would
