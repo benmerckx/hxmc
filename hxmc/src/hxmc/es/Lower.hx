@@ -74,6 +74,8 @@ class Lower {
 	final locals = new Map<Int, Sym>();
 	// locals assigned after their declaration (`let`)
 	var assigned = new Map<Int, Bool>();
+	// (TypeScript) locals of opaque abstracts computed with (`x++`, `x |= y`): `any`
+	final computed = new Map<Int, Bool>();
 	// locals that are `this` (`_gthis` where only arrows use it)
 	final thisAliases = new Map<Int, Bool>();
 	var catchVars:Array<Ex> = [];
@@ -101,6 +103,8 @@ class Lower {
 			switch e.eexpr {
 				case TBinop(OpAssign | OpAssignOp(_), {eexpr: TLocal(v)}, _) | TUnop(Increment | Decrement, _, {eexpr: TLocal(v)}):
 					assigned.set(v.vId, true);
+					// (TypeScript: computed with, an opaque abstract's local is `any`: `(x as any)` is no target)
+					if (ts && !e.eexpr.match(TBinop(OpAssign, _, _)) && Casts.opaque(v.vType)) computed.set(v.vId, true);
 				case _:
 			}
 			Texpr.iter(walk, e);
@@ -248,7 +252,7 @@ class Lower {
 		var s = locals.get(v.vId);
 		if (s == null) {
 			s = new Sym(SLocal, RESERVED.exists(v.vName) || GLOBALS.exists(v.vName) || (ts && v.vName == "index") ? "$" + v.vName : v.vName);
-			s.type = v.vType;
+			s.type = computed.exists(v.vId) ? TDynamic(null) : v.vType;
 			locals.set(v.vId, s);
 		}
 		// (each time: a local may be used by the code of two fields, filters.ES6Ctors' constructors)
@@ -754,6 +758,11 @@ class Lower {
 		if (s != null) return splitCall(s, p);
 		if (statementLike(e)) return statementValue(e);
 		return switch e.eexpr {
+			// (TypeScript: a literal Haxe types as a branded abstract, in its code: as `any`, it has not the brand)
+			case TConst(TInt(_) | TFloat(_) | TString(_) | TBool(_)) | TObjectDecl(_) | TArrayDecl(_)
+				| TBinop(OpAdd | OpSub | OpMult | OpDiv | OpMod | OpShl | OpShr | OpUShr | OpAnd | OpOr | OpXor, _, _) | TUnop(Neg | NegBits, _, _)
+				if (ts && Casts.literalCast(e.etype)):
+				any(expr({eexpr: e.eexpr, etype: tDynamic, epos: e.epos}));
 			case TConst(TInt(i)): mkx(ENum(Std.string(i)));
 			case TConst(TFloat(s)): mkx(ENum(s));
 			case TConst(TString(s)):
@@ -766,6 +775,8 @@ class Lower {
 			case TLocal(v) if (thisAliases.exists(v.vId)): mkx(EThis);
 			// (TypeScript: a GADT's value where a match refined its type, which TypeScript doesn't)
 			case TLocal(v) if (ts && refined(v, e.etype)): any(mkx(EId(local(v))));
+			// (TypeScript: as its declaration has it, where Haxe has it as another, an abstract's `this` as the abstract)
+			case TLocal(v) if (ts && Casts.need(v.vType, e.etype)): any(mkx(EId(local(v))));
 			case TLocal(v): mkx(EId(local(v)));
 			case TArray(a, i): mkx(EIndex(arrayObject(a, i), expr(i)));
 			case TBinop(OpAssign | OpAssignOp(_), a, b):
@@ -788,7 +799,7 @@ class Lower {
 				Casts.disjoint(a.etype, b.etype) || fresh(x) || fresh(y) || decidedTest(a, b) ? mkx(EBinary(binop(op), any(x), any(y))) : mkx(EBinary(binop(op), x, y));
 			case TBinop(op = OpSub | OpMult | OpDiv | OpMod | OpShl | OpShr | OpUShr | OpAnd | OpOr | OpXor, a, b) if (ts):
 				mkx(EBinary(binop(op), num(a), num(b)));
-			case TBinop(op, a, b): mkx(EBinary(binop(op), expr(a), expr(b)));
+			case TBinop(op, a, b): mkx(EBinary(binop(op), native(a), native(b)));
 			case TField(x, f) if (fieldName(f) == "iterator" && dynamicIterator(x) && !f.match(FStatic(_) | FEnum(_))):
 				mkx(ECall(r.rt("iterator"), [expr(x)]));
 			case TField(x, f) if (fieldName(f) == "keyValueIterator" && dynamicIterator(x) && !f.match(FStatic(_) | FEnum(_))):
@@ -847,7 +858,13 @@ class Lower {
 					for (f in fields)
 						({key: validIdent(f.key.name) ? KField(f.key.name, NGlobal) : KString(f.key.name), value: expr(f.expr)} : Prop)
 				]));
-			case TArrayDecl(el): mkx(EArray([for (x in el) expr(x)]));
+			// (TypeScript: each of the array's type: Haxe's abstracts let one be another without a cast, in the abstract's code)
+			case TArrayDecl(el):
+				var t = switch follow(e.etype) {
+					case TInst({clPath: {pack: [], name: "Array"}}, [t]) if (ts): t;
+					case _: null;
+				}
+				mkx(EArray([for (x in el) t == null ? expr(x) : as(expr(x), x.etype, t)]));
 			// (TypeScript: std's extern's array of `Any` or `Dynamic`, which its lib may have as `unknown[]`: `Object.values`)
 			case TCall(callee = {eexpr: TField(_, FStatic(c, _))}, args) if (ts && r.stdExtern(c) && mentionsAny(e.etype)): any(call(e, callee, args));
 			case TCall(callee, args): call(e, callee, args);
@@ -874,12 +891,17 @@ class Lower {
 					var v = expr(args[i]);
 					sig != null && i < sig.args.length && !ExtType.isRest(follow(sig.args[i].type)) ? as(v, args[i].etype, sig.args[i].type) : v;
 				}], args, hasClassFlag(c, CExtern) ? null : c.clConstructor);
-				if (c.clConstructor != null && Meta.has(Meta.SelfCall, c.clConstructor.cfMeta)) mkx(ECall(ctor, a)) else mkx(ENew(ctor, a));
-			case TUnop(Spread, _, x): mkx(ESpread(expr(x)));
+				var made = if (c.clConstructor != null && Meta.has(Meta.SelfCall, c.clConstructor.cfMeta)) mkx(ECall(ctor, a)) else mkx(ENew(ctor, a));
+				// (TypeScript: of its class, its type arguments', where Haxe has it as another type: a structure of an abstract)
+				switch e.eexpr {
+					case TNew(_, params, _) if (ts && ctor.def.match(ETypeArgs(_))): as(made, TInst(c, params), e.etype);
+					case _: made;
+				}
+			case TUnop(Spread, _, x): mkx(ESpread(native(x)));
 			case TUnop(op = Increment | Decrement, flag, x): mkx(EUpdate(op == Increment ? "++" : "--", flag == Prefix, target(x)));
-			case TUnop(Not, _, x): mkx(EUnary("!", expr(x)));
-			case TUnop(Neg, _, x): mkx(EUnary("-", expr(x)));
-			case TUnop(NegBits, _, x): mkx(EUnary("~", expr(x)));
+			case TUnop(Not, _, x): mkx(EUnary("!", native(x)));
+			case TUnop(Neg, _, x): mkx(EUnary("-", native(x)));
+			case TUnop(NegBits, _, x): mkx(EUnary("~", native(x)));
 			case TFunction(f): mkx(EFn(func(f, true, p, e.etype)));
 			case TIf(c, a, b):
 				var n = narrowing(c, () -> as(expr(a), a.etype, e.etype), b == null ? null : () -> as(expr(b), b.etype, e.etype));
@@ -992,7 +1014,7 @@ class Lower {
 			case [TField(_, FEnum(en, ef)), _]:
 				mkx(ENew(field(r.type(TEnumDecl(en), p), ef.efName, NEnumCtor(en), p), values()));
 			case _:
-				var f = expr(callee);
+				var f = native(callee);
 				if (ts) f = typeArgs(f, callee);
 				// (TypeScript: a spread argument where a function of fixed arguments is called)
 				if (ts && Lambda.exists(args.toArray(), a -> a.eexpr.match(TUnop(Spread, _, _))) && !f.def.match(ESuper)) f = any(f);
@@ -1111,8 +1133,12 @@ class Lower {
 
 	// ------------------------------------------------------------------ TypeScript's casts (Casts)
 
+	// (TypeScript) what JavaScript does something with (indexes, calls, computes with, iterates, reads a field of): an opaque
+	// abstract's value as `any` (Casts.opaque)
+	function native(e:TExpr):Ex return ts && Casts.opaque(e.etype) ? any(expr(e)) : expr(e);
+
 	// x, where Haxe has it as a `from` and a `to` is expected
-	function as(x:Ex, from:T, to:T):Ex return ts && (Casts.need(from, to) || extraLiteral(x, to)) ? any(x) : x;
+	function as(x:Ex, from:T, to:T):Ex return ts && (Casts.need(from, to) || extraLiteral(x, to) || (x.def.match(EObject(_) | EArray(_)) && Casts.literalCast(to))) ? any(x) : x;
 
 	// (an array of `Any` or `Dynamic`, which TypeScript infers as `unknown[]` from what its lib declares generic)
 	static function mentionsAny(t:T):Bool return switch follow(t) {
@@ -1167,7 +1193,7 @@ class Lower {
 
 	// the array of `a[i]`: by a key not a number (untyped code's), the object as TypeScript has it may not have it
 	function arrayObject(a:TExpr, i:TExpr):Ex {
-		var o = expr(a);
+		var o = native(a);
 		if (!ts) return o;
 		var key = i;
 		while (key.eexpr.match(TCast(_, null))) key = switch key.eexpr {
@@ -1195,7 +1221,7 @@ class Lower {
 
 	// the object of a field access: `any` where TypeScript would not have the field Haxe reads
 	function fieldObject(x:TExpr, f:TFieldAccess):Ex {
-		var o = expr(x);
+		var o = native(x);
 		if (!ts) return o;
 		// (casts in a row, an inlined abstract's `this`: TypeScript has what the innermost one has)
 		var inner = x;

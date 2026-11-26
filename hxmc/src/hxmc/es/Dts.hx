@@ -246,6 +246,9 @@ class Dts {
 				(follow(p).match(TFun(_)) ? "(" + s + ")" : s) + " | null";
 			// (the runtime's, where ref names it)
 			case TAbstract(a = {aPath: {pack: [], name: "EnumValue"}}, _): ref(TAbstractDecl(a)) ?? "EnumValue";
+			// (a brand of its own, where ref names it: TypeScript's output, Ts.abstractDecl)
+			case TAbstract(a, params) if (Casts.branded(a) && ref(TAbstractDecl(a)) != null):
+				ref(TAbstractDecl(a)) + (params.length == 0 ? "" : "<" + [for (p in params) sub(p)].join(", ") + ">");
 			case TAbstract(a, params):
 				// (what it stands for, where that names no type parameter of its own)
 				a.aParams.length == 0 && !hasCoreMeta(a) ? sub(a.aThis) : "any";

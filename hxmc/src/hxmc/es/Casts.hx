@@ -17,8 +17,13 @@ class Casts {
 		return switch [a, b] {
 			// (a class or enum as a value: `any` to TypeScript, as Dts types it)
 			case [KAny | KType, _] | [_, KAny | KType]: false;
+			// (an abstract: another's only by a cast; its underlying type where it is `to` it, a `from` type's value where it is
+			// `from` it, as the brand has them)
+			case [KAbstract(x), KAbstract(y)]: x != y;
+			case [KAbstract(x), _]: !(toThis(x) || enumValues(x) != null) || need(underlying(from), to, depth + 1);
+			case [_, KAbstract(y)]: !Lambda.exists(froms(to), f -> !need(from, f, depth + 1));
 			// (a structure with a field the other has not: TypeScript checks an object literal's, Haxe let it)
-			case [KOther, KOther]: extraFields(from, to);
+			case [KOther, KOther]: extraFields(from, to) || ((mentionsBranded(from, 0) || mentionsBranded(to, 0)) && fieldsNeed(from, to, depth));
 			// (a structure or function as a class's value: Haxe's classes are nominal, a cast made it one)
 			case [KOther, KClass(_)]: true;
 			// (a structure as a primitive, or the other way around: only a cast does that)
@@ -26,7 +31,7 @@ class Casts {
 			// (an array as a structure: TypeScript's arrays have not Haxe's fields; an instance as a structure of a type
 			// parameter, which Haxe bound and TypeScript does not)
 			case [KArray, KOther]: !to.match(TType({tPath: {pack: [], name: "Iterable"}}, _));
-			case [KClass(_), KOther]: mentionsParam(to, 0);
+			case [KClass(_), KOther]: mentionsParam(to, 0) || mentionsBranded(to, 0);
 			case [KOther, _] | [_, KOther]: false;
 			case [KParam(x), KParam(y)]: x != y;
 			case [_, KParam(_)] | [KParam(_), _]: true;
@@ -38,6 +43,118 @@ class Casts {
 			case [KEnum(_) | KEnumValue, KEnumValue]: false;
 			case _: true;
 		}
+	}
+
+	// An abstract is a type of its own to TypeScript (a brand, Ts.abstractDecl), but for the std's core types and the
+	// abstracts TypeScript could not tell apart (an extern's, a multi-type's: Map, whose values are its specializations'):
+	// as Haxe has it, a value of its underlying type goes where it is `from` it, and it where it is `to` it.
+	public static function branded(a:TAbstract):Bool {
+		var m = a.aMeta;
+		return !core.Meta.has(core.Meta.CoreType, m) && !core.Meta.has(core.Meta.MultiType, m) && !core.Meta.has(core.Meta.Extern, m)
+			&& !(a.aPath.pack.length == 0 && a.aPath.name == "EnumValue")
+			// (one over Dynamic, Any: nothing to tell apart; the std's constraints, haxe.Constructible, haxe.Function)
+			&& !isDynamic(a.aThis) && !follow(a.aThis).match(TAbstract({aPath: {pack: [], name: "Any"}}, _))
+			// (a rest argument's: JavaScript's rest parameter, an array)
+			&& !(a.aPath.pack.length == 1 && a.aPath.pack[0] == "haxe" && a.aPath.name == "Rest");
+	}
+
+	// whether a value of t is an abstract's TypeScript has as no value of its underlying type (it is not `to` it): what
+	// JavaScript does with the value (index it, call it, compute with it, iterate it), only cast
+	public static function opaque(t:T):Bool return switch kind(t) {
+		case KAbstract(a): !toThis(a) && enumValues(a) == null;
+		case _: false;
+	}
+
+	// (an enum abstract) its values, as TypeScript's literals (`0`, `"a"`), or null: one not a constant, or not an enum abstract
+	// (as typing left them, before DCE removes the fields it inlined: recordEnums)
+	public static function enumValues(a:TAbstract):Null<Array<String>> return enums.get(a);
+
+	static final enums = new haxe.ds.ObjectMap<TAbstract, Array<String>>();
+
+	// (after typing) the enum abstracts' values
+	public static function recordEnums(types:Array<ModuleType>) {
+		enums.clear();
+		for (t in types) switch t {
+			case TAbstractDecl(a) if (a.aEnum && a.aImpl != null):
+				var v = valuesOf(a.aImpl);
+				if (v != null) enums.set(a, v);
+			case _:
+		}
+	}
+
+	static function valuesOf(impl:TClass):Null<Array<String>> {
+		var out = [];
+		for (f in impl.clStatics) if (core.Meta.has(core.Meta.Enum, f.cfMeta) && f.cfKind.match(Var(_))) {
+			var e = f.cfExpr;
+			while (e != null && e.eexpr.match(TCast(_, _) | TParenthesis(_) | TMeta(_, _))) e = switch e.eexpr {
+				case TCast(x, _) | TParenthesis(x) | TMeta(_, x): x;
+				case _: e;
+			}
+			switch e == null ? null : e.eexpr {
+				case TConst(TInt(i)): out.push(Std.string(i));
+				case TConst(TFloat(s)): out.push(s);
+				case TConst(TString(s)): out.push(Printer.quote(s));
+				case TConst(TBool(b)): out.push(b ? "true" : "false");
+				case TConst(TNull): out.push("null");
+				case _: return null;
+			}
+		}
+		return out.length == 0 ? null : out;
+	}
+
+	// whether an abstract is `to` its underlying type, `from` it (directly: not through a function, @:to, @:from)
+	public static function toThis(a:TAbstract):Bool return Lambda.exists(a.aTo, t -> isThis(a, t));
+
+	public static function fromThis(a:TAbstract):Bool return Lambda.exists(a.aFrom, t -> isThis(a, t));
+
+	public static function isThis(a:TAbstract, t:T):Bool return core.TUnification.fastEq(follow(t), follow(a.aThis));
+
+	// an abstract's type's underlying type, of its arguments
+	public static function underlying(t:T):T return switch follow(t) {
+		case TAbstract({aPath: {pack: [], name: "Null"}}, [p]): underlying(p);
+		case TAbstract(a, ps): applyParams(a.aParams, ps, a.aThis);
+		case t: t;
+	}
+
+	// the types whose values go where an abstract's type is (its `from` types, of its arguments)
+	static function froms(t:T):Array<T> return switch follow(t) {
+		case TAbstract({aPath: {pack: [], name: "Null"}}, [p]): froms(p);
+		case TAbstract(a, ps): [for (f in a.aFrom) applyParams(a.aParams, ps, f)];
+		case _: [];
+	}
+
+	// (structures, functions: of their fields', results', arguments' types, one needing a cast)
+	static function fieldsNeed(from:T, to:T, depth:Int):Bool return switch [follow(from), follow(to)] {
+		case [TAnon(a), TAnon(b)]:
+			var found = false;
+			b.aFields.iter((n, g) -> if (!found && a.aFields.exists(n) && need(a.aFields.get(n).cfType, g.cfType, depth + 1)) found = true);
+			found;
+		case [TFun(s), TFun(t)]:
+			if (need(s.ret, t.ret, depth + 1)) return true;
+			for (i in 0...s.args.length) if (i < t.args.length && need(t.args[i].type, s.args[i].type, depth + 1)) return true;
+			false;
+		case _: false;
+	}
+
+	// (a structure that has a branded abstract: a class's value, which Haxe let be one, TypeScript checks against it)
+	static function mentionsBranded(t:T, depth:Int):Bool {
+		if (depth > 6) return false;
+		return switch follow(t) {
+			case TAbstract(a, _) if (branded(a)): true;
+			case TAnon(a): Lambda.exists(a.aFields, f -> mentionsBranded(f.cfType, depth + 1));
+			case TFun(s):
+				if (mentionsBranded(s.ret, depth + 1)) return true;
+				for (a in s.args) if (mentionsBranded(a.type, depth + 1)) return true;
+				false;
+			case _: false;
+		}
+	}
+
+	// whether a literal (a number, a string, an object, an array) of type t needs a cast: t a branded abstract's, but an
+	// enum abstract's (its literals) and one `from` its underlying type
+	public static function literalCast(t:T):Bool return switch kind(t) {
+		case KAbstract(a): enumValues(a) == null && !fromThis(a);
+		case _: false;
 	}
 
 	static function mentionsParam(t:T, depth:Int):Bool {
@@ -134,6 +251,8 @@ class Casts {
 			case TAbstract({aPath: {pack: [], name: "Null"}}, [p]): sub(p);
 			case TAbstract({aPath: {pack: [], name: "EnumValue"}}, _): KEnumValue;
 			case TAbstract({aPath: {pack: [], name: "Class" | "Enum"}}, _): KType;
+			// (a brand of its own, TypeScript's: Ts.abstractDecl)
+			case TAbstract(a, _) if (branded(a)): KAbstract(a);
 			case TAbstract(a, params): a.aParams.length == 0 && !core.Meta.has(core.Meta.CoreType, a.aMeta) ? sub(a.aThis) : KAny;
 			case TInst({clKind: KTypeParameter(p)}, _): KParam(p.ttpName);
 			case TInst({clPath: {pack: [], name: "String"}}, _): KString;
@@ -161,6 +280,8 @@ private enum Kind {
 	KEnumValue;
 	// a class or an enum as a value
 	KType;
+	// an abstract, branded (Casts.branded)
+	KAbstract(a:TAbstract);
 	// structures and functions
 	KOther;
 }

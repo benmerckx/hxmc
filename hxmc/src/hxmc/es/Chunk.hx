@@ -59,12 +59,15 @@ private class Item {
 private class TypeNames {
 	public final needs = new Map<Sym, Int>();
 	public var enumValue = false;
+	// the abstracts it names (their brands: _abstracts.d.ts)
+	public final abstracts = new haxe.ds.ObjectMap<TAbstract, Bool>();
 
 	public function new() {}
 
 	public function addTo(n:TypeNames) {
 		for (s => from in needs) n.needs.set(s, from);
 		if (enumValue) n.enumValue = true;
+		for (a in abstracts.keys()) n.abstracts.set(a, true);
 	}
 }
 
@@ -806,6 +809,10 @@ class Chunk {
 				return p.pack.length == 0 && TS_LIB.contains(p.name) && StringTools.startsWith(dot(c.clModule.mPath), "js.lib.") ? p.name + "<ArrayBuffer>" : null;
 			case TAbstractDecl({aPath: {pack: [], name: "EnumValue"}}):
 				return enumValueRef(names);
+			// (an abstract: its brand, global)
+			case TAbstractDecl(a) if (Casts.branded(a)):
+				names.abstracts.set(a, true);
+				return brandName(a);
 			case TClassDecl({clKind: KAbstractImpl(_) | KModuleFields(_)}) | TAbstractDecl(_) | TTypeDecl(_):
 				return null;
 			case _:
@@ -1926,7 +1933,10 @@ class Chunk {
 			if (rtUsed.exists("index")) rt.add("export const index: typeof Hx.index = $hx.index;\n");
 		} else rt.add("export " + rtSource);
 		sys.io.File.saveContent(Path.join([dir, RUNTIME]), rt.toString());
-		if (tsOut) externDeclarations(dir);
+		if (tsOut) {
+			externDeclarations(dir);
+			abstractDeclarations(dir);
+		}
 		// (the entry: the included files first, as they are, a module the entry imports before anything else)
 		var entry = Path.withoutDirectory(com.file);
 		var b = new StringBuf();
@@ -2087,6 +2097,60 @@ class Chunk {
 			if (inNs) b.add("}\n");
 		}
 		sys.io.File.saveContent(Path.withoutExtension(com.file) + ".d.ts", b.toString());
+	}
+
+	// ------------------------------------------------------------------ TypeScript: abstracts
+
+	// an abstract's brand's name (global: _abstracts.d.ts)
+	static function brandName(a:TAbstract):String return "HxAbstract." + core.Path.flatPath(a.aPath);
+
+	// _abstracts.d.ts: the abstracts the output names, each a type of its own (`declare namespace HxAbstract`), branded
+	// by a symbol of its own, which exists only to TypeScript: `A(V) from V to V` is V (as Haxe has them, TypeScript
+	// cannot tell them apart); `A(V) to V` V and the brand (a V, no V an A); `A(V) from V` the brand, or V (a V an A, no A
+	// a V); `A(V)` the brand alone, of V (neither). Its other `from` types' values are A's too. The program's types it
+	// names by their modules (`import("./pack/A.ts").A`), the abstracts by their brands, which it declares too.
+	function abstractDeclarations(dir:String) {
+		var todo:Array<TAbstract> = [], seen = new haxe.ds.ObjectMap<TAbstract, Bool>();
+		function want(a:TAbstract) if (!seen.exists(a)) {
+			seen.set(a, true);
+			todo.push(a);
+		}
+		for (f in files) for (a in f.names.abstracts.keys()) want(a);
+		function ref(t:ModuleType):Null<String> {
+			switch t {
+				case TAbstractDecl({aPath: {pack: [], name: "EnumValue"}}): return "import(\"./" + RUNTIME + "\").EnumValue";
+				case TAbstractDecl(a) if (Casts.branded(a)):
+					want(a);
+					return brandName(a);
+				case TClassDecl({clKind: KAbstractImpl(_) | KModuleFields(_)}) | TAbstractDecl(_) | TTypeDecl(_): return null;
+				case _:
+			}
+			var item = byPath.get(dot(tPath(t)));
+			if (item == null || files[item.file].path == null) return null;
+			return "import(" + Printer.quote("./" + files[item.file].path) + ")." + item.sym.name;
+		}
+		var b = new StringBuf();
+		b.add("declare namespace HxAbstract {\n");
+		var i = 0;
+		while (i < todo.length) {
+			var a = todo[i++];
+			var n = core.Path.flatPath(a.aPath);
+			var scope = [for (p in a.aParams) p.ttpName];
+			var v = Dts.type(a.aThis, ref, scope);
+			var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
+			// (an enum abstract: its values, TypeScript's literals, which it compares and narrows)
+			var parts = values != null ? values : [
+				if (to && from) v else if (to) "(" + v + ") & { readonly [" + n + "$]: true }" else "{ readonly [" + n + "$]: " + v + " }"
+			];
+			if (from && (values != null || !to)) parts.push(v);
+			for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(Dts.type(f, ref, scope));
+			b.add("\t// " + dot(a.aPath) + "\n");
+			if (!(to && from) && values == null) b.add("\tconst " + n + "$: unique symbol;\n");
+			// (a function type in a union in parentheses, as TypeScript requires)
+			b.add("\ttype " + n + Dts.typeParams(a.aParams, ref, scope) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";\n");
+		}
+		b.add("}\n");
+		sys.io.File.saveContent(Path.join([dir, "_abstracts.d.ts"]), b.toString());
 	}
 
 	// ------------------------------------------------------------------ names

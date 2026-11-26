@@ -34,6 +34,8 @@ class JsGen {
 			overrideStd(com);
 			// (an enum is a class)
 			core.Define.rawUndefine(com.defines, "js_enums_as_arrays");
+			// (TypeScript: the enum abstracts' values, as typing left them, before DCE removes the fields it inlined)
+			com.callbacks.addAfterTyping(types -> Casts.recordEnums(types));
 			com.jsGen = () -> Chunk.generate(context.Common.toGctx(com));
 		}
 	}
