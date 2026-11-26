@@ -17,6 +17,7 @@ class Esm {
 		{id: "body-swap", name: "hot body swap", harness: "EsmHotBodySwapCheck"},
 		{id: "watch-patch", name: "hot watch and patch", harness: "EsmHotWatchPatchCheck"},
 		{id: "cells", name: "hot cells and ordinals", harness: "EsmHotCellsCheck"},
+		{id: "cells-markup", name: "hot cells markup entry", harness: "EsmHotCellsMarkupCheck"},
 		{id: "layout", name: "hot class and enum layout", harness: "EsmHotLayoutCheck"},
 		{id: "heap", name: "hot heap serializer", harness: "EsmHotHeapCheck"},
 		{id: "dual-flavor", name: "hot dual compile", harness: "EsmHotDualCheck"},

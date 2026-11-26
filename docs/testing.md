@@ -178,6 +178,7 @@ lanes in order with a Tiers-style summary.
 | `body-swap` | `EsmHotBodySwapCheck` | in-process `applyHotPatch` body swap |
 | `watch-patch` | `EsmHotWatchPatchCheck` | file watch → rebuild → WebSocket patch |
 | `cells` | `EsmHotCellsCheck` | `@:esm.hot.cell` / scope, closures, keyed ordinals |
+| `cells-markup` | `EsmHotCellsMarkupCheck` | keyed cells lower when entry uses markup / `@:build` |
 | `layout` | `EsmHotLayoutCheck` | class / enum layout hashes and migration |
 | `heap` | `EsmHotHeapCheck` | heap serializer, transactional apply / rollback |
 | `dual-flavor` | `EsmHotDualCheck` | **`-D esm`** and **`-D esm.hot`** compile and run |

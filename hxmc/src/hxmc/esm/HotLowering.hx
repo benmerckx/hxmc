@@ -18,8 +18,8 @@ import haxe.ds.Vector;
 
 // M2: lower @:esm.hot.cell / scope; assign closure IDs and env-lowering (esm.md §4–§6).
 class HotLowering {
-	static var cellClass:TClass;
 	static var scopeClass:TClass;
+	static var lateTypes:Array<ModuleType>;
 	static var cellIdByVar = new Map<String, TExpr>();
 
 	// After typing, before RenameVars: keyed call sites, closure IDs, pending cell marks.
@@ -38,6 +38,7 @@ class HotLowering {
 		if (f.cfExpr == null) return;
 		var uid = HotIds.unitId(c, f.cfName);
 		var keyed = EsmHotMeta.isKeyed(f.cfMeta);
+		// Emit can run after runLate was skipped on a false-negative work scan (markup/JSX entry graphs).
 		f.cfExpr = mapCellMark(uid, keyed, hotIdVar(f), f.cfExpr);
 		visitFieldLate(g.basic, c, f);
 	}
@@ -83,37 +84,16 @@ class HotLowering {
 
 	static function runLateOn(defines:DefineContext, basic:BasicTypes, types:Array<ModuleType>):Void {
 		if (!core.Define.rawDefined(defines, "esm.hot")) return;
-		if (!hasCellLowerWorkTypes(types)) return;
-		cellClass = resolveClassTypes(types, ["esm", "hot", "Cell"]);
-		scopeClass = resolveClassTypes(types, ["esm", "hot", "Scope"]);
+		// Always lower: hasCellLowerWorkTypes false-negatives skipped runLate on markup-heavy entry graphs.
+		// Do not resolve esm.hot.Cell here — DCE may drop it from com.types while cells still lower to $h.cell.
+		lateTypes = types;
+		scopeClass = null;
 		visitAllTypes(types, basic, visitFieldLate);
 	}
 
-	static function hasCellLowerWorkTypes(types:Array<ModuleType>):Bool {
-		var pending = false;
-		function scan(e:TExpr):Void {
-			if (pending) return;
-			// Texpr.iter does not invoke f on TMeta nodes; cells are wrapped in TMeta.
-			HotExprMap.mapTransform(function(cur:TExpr):TExpr {
-				if (!pending) switch cur.eexpr {
-					case TMeta(m, _) if (EsmHotMeta.isCellPending(m) || EsmHotMeta.isCellMetaEntry(m)):
-						pending = true;
-					case TVar(v, _) if (EsmHotMeta.isCell(v.vMeta)):
-						pending = true;
-					default:
-				}
-				return cur;
-			}, e);
-		}
-		for (t in types) switch t {
-			case TClassDecl(c) if (!hasClassFlag(c, CExtern)):
-				for (cf in c.clFields) if (cf.cfExpr != null) scan(cf.cfExpr);
-				for (cf in c.clStatics) if (cf.cfExpr != null) scan(cf.cfExpr);
-				var ctor = c.clConstructor;
-				if (ctor != null && ctor.cfExpr != null) scan(ctor.cfExpr);
-			default:
-		}
-		return pending;
+	static function ensureScopeClass():TClass {
+		if (scopeClass != null) return scopeClass;
+		return scopeClass = resolveClassTypes(lateTypes, ["esm", "hot", "Scope"]);
 	}
 
 	static function visitAll(com:CommonContext, visit:(CommonContext, TClass, TClassField) -> Void):Void {
@@ -244,8 +224,9 @@ class HotLowering {
 
 	static function wrapScope(basic:BasicTypes, uid:String, e:TExpr, pos:Pos):TExpr {
 		var sid = uid + "#scope";
-		var enter = Builder.resolveAndMakeStaticCall(scopeClass, "enter", VectorTools.vector(Builder.makeString(basic, sid, pos)), pos);
-		var exit = Builder.resolveAndMakeStaticCall(scopeClass, "exit", VectorTools.vector(), pos);
+		var scope = ensureScopeClass();
+		var enter = Builder.resolveAndMakeStaticCall(scope, "enter", VectorTools.vector(Builder.makeString(basic, sid, pos)), pos);
+		var exit = Builder.resolveAndMakeStaticCall(scope, "exit", VectorTools.vector(), pos);
 		return {eexpr: TBlock(VectorTools.vector(enter, e, exit)), etype: e.etype, epos: pos};
 	}
 
