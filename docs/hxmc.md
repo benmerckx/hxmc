@@ -616,6 +616,12 @@ match; a closure capturing nothing is static data.
   register(...)` in a class nothing names) works there and not here; register
   in an `__init__`, which always runs, or use one of the class's statics.
   hxmc's own reachability, not the port: `porting.md` covers `haxe/src`.
+- **`Type.createEmptyInstance`**: once it is used, it can make each class
+  whose value live code has, so their methods are kept as an instance's. A
+  class live code only tests (`Std.isOfType`, `Std.downcast`, the test of a
+  receiver's class a dispatched call missing an argument makes for each
+  implementation's default) is no value: the test reads its type index, and
+  a class nothing makes keeps none of its methods.
 - **`Type.createInstance`**: once it is used, each class whose value live
   code can have keeps a constructor entry. A class without a constructor,
   or whose entry was dropped, fails as on Eval (`Instance constructor not

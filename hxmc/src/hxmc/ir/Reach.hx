@@ -35,9 +35,10 @@ import hxmc.ir.Ir;
 // name only what the tables have, so a dropped method is not among them). A
 // name computed any other way can be any name: every method of the
 // instantiated classes stays then. Type.createEmptyInstance instantiates the
-// classes whose class value live code has, and those it can name when it can
-// also resolve a class by its name (Type.resolveClass; the others it does not
-// find: ClassInfo.unnamed).
+// classes whose class value live code has (a type test's class is none: the
+// test reads its type index), and those it can name when it can also resolve
+// a class by its name (Type.resolveClass; the others it does not find:
+// ClassInfo.unnamed).
 //
 // Type.createInstance, live, instantiates the classes whose value live code
 // can have (named in live code, those it can name when it can resolve one by
@@ -114,6 +115,9 @@ class Reach {
 	static inline var DYN_SET_PROPERTY = "hxmc_rt_Dyn_setProperty";
 	static inline var STR_CONCAT = "hxmc_rt_Str_concat";
 	static inline var STR_OR_NULL = "hxmc_rt_Str_orNull";
+	// the runtime's type tests (Dyn.isOf: hx_is, a receiver's default's test
+	// too, FnLower.receiverDefault; Std.isOfType, Std.downcast)
+	static var TYPE_TESTS = ["hxmc_rt_Dyn_isOf", "hxmc_rt_Dyn_isOfType", "hxmc_rt_Dyn_downcast"];
 	// the functions returning names from the tables: those of the fields,
 	// methods or statics of a type or object, of an enum's constructors
 	static var TABLE_ARRAYS = [
@@ -624,6 +628,16 @@ class Reach {
 		}
 		function ex(e:Ex) {
 			switch e {
+				// (a type test's class: its type index read, no value of it, so
+				// Type.createEmptyInstance makes none; named, as -dce full keeps it)
+				case ECall(g, args) if (TYPE_TESTS.indexOf(g.name) >= 0 && args.length == 2 && args[1].match(EType(TRClass(_)))):
+					mark(g);
+					ex(args[0]);
+					switch args[1] {
+						case EType(TRClass(c)): name(c);
+						case _:
+					}
+					return;
 				case ECall(g, args):
 					// (live once the program reads stacks: flushStacks)
 					if (g.withStacks && !stacksOn) {
