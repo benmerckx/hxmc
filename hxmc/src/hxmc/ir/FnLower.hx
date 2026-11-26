@@ -37,6 +37,9 @@ class FnLower {
 	// struct values in this frame that nothing else holds (a call's result, a
 	// copy): whoever takes one keeps it as its own memory
 	var freshSlots = new Map<Local, Bool>();
+	// the typer's temporaries of a compound assignment to a struct's
+	// field (`var fh = s[i]; fh.f += v`): the place itself, not a copy
+	var places = new Map<Int, {addr:() -> Ex, heap:Bool}>();
 	var curExpr:Null<TExpr> = null; // (the expression being lowered: errors)
 	var structCtor = false; // (lowering a struct's constructor)
 	var out:Array<Stmt> = []; // (the statements of the block being lowered)
@@ -1381,6 +1384,12 @@ class FnLower {
 					// a struct local: its memory in the frame, a copy of the
 					// value (or the value itself, a temporary of this frame)
 					if (isBoxed(v)) cfail('the struct local ' + v.vName + ' is captured by a closure and assigned: not supported (a class instead)', e);
+					// (Haxe's analyzer often folds it back into the assignment,
+					// but not always, and not when it is off)
+					if (init != null && v.vKind.match(VGenerated) && v.vName == "fh") {
+						places.set(v.vId, placeOf(init, true));
+						return;
+					}
 					var s = if (init != null) structOwn(init, sc) else {
 						var s = newSlot(structTy(sc), false);
 						zeroStruct(ELocal(s), sc);
@@ -1882,6 +1891,14 @@ class FnLower {
 			case TConst(TSuper):
 				if (thisLocal == null) fail("super outside a method", e);
 				ELocal(thisLocal);
+			case TLocal(v) if (places.exists(v.vId)):
+				var p = places.get(v.vId);
+				var sc = structOf(v.vType);
+				// (in an object, which may move: a copy)
+				if (!p.heap) return coerce(ELocal(asLocal(p.addr(), structTy(sc))), structTy(sc), tyOf(e));
+				var s = newSlot(structTy(sc), true);
+				copyStruct(ELocal(s), p.addr(), sc);
+				coerce(ELocal(s), structTy(sc), tyOf(e));
 			case TLocal(v):
 				if (appends.exists(v.vId)) flushAppend(v);
 				var lo = local(v, e);
@@ -6088,6 +6105,8 @@ class FnLower {
 	// (write: for an assignment, which a copy out of a box cannot take)
 	function placeOf(e:TExpr, write = false):{addr:() -> Ex, heap:Bool} {
 		switch strip(e).eexpr {
+			case TLocal(v) if (places.exists(v.vId)):
+				return places.get(v.vId);
 			case TField(obj, FInstance(c, _, cf)) if (CInterop.isStruct(c)):
 				var base = placeOf(obj, write);
 				var off = CInterop.field(c, cf.cfName).off;

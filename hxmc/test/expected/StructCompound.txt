@@ -1,0 +1,5 @@
+exit 0
+StructCompound.hx:90: 5896956, -1, 59
+StructCompound.hx:92: 5896956, -1, 59
+StructCompound.hx:102: 1000, 1001, 2000, 5
+StructCompound.hx:106: 3, -1, 1
