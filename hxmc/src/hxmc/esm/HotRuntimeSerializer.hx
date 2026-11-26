@@ -259,9 +259,14 @@ class HotRuntimeSerializer {
 		buf.add("				continue;\n");
 		buf.add("			}\n");
 		buf.add("			if( tier !== 1 || e.fn == null ) continue;\n");
+		buf.add("			var kind1 = e.kind || \"function\";\n");
 		buf.add("			var uf = $h.units[e.id];\n");
+		buf.add("			if( kind1 === \"closure\" || ( uf != null && uf.kind === \"closure\" ) ) {\n");
+		buf.add("				$h.patchClosureLex(e.id, e.hash || \"\", e.fn);\n");
+		buf.add("				out.applied.push(e.id);\n");
+		buf.add("				continue;\n");
+		buf.add("			}\n");
 		buf.add("			if( uf == null ) $h.registerFunction(e.id, e.hash || \"\", e.fn);\n");
-		buf.add("			else if( uf.kind === \"closure\" ) { uf.hash = e.hash || uf.hash; uf.fn = e.fn; uf.stale = false; }\n");
 		buf.add("			else if( uf.kind === \"function\" ) { uf.hash = e.hash || uf.hash; uf.fn = e.fn; }\n");
 		buf.add("			out.applied.push(e.id);\n");
 		buf.add("		}\n");

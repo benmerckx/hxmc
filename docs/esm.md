@@ -130,6 +130,7 @@ repo ships **`function`**, **`class`**, and **`enum`** only ([plans/esm.md](plan
 | **Keyed callees** | A **keyed** callee is a method that holds **`@:esm.hot.cell`** state **and** is called from another method on the **same type**. Callers pass a synthetic **`__hotId`** (compiler-only, not in your source) so each call site keeps distinct cell storage. |
 | **Call-site ids** | `enclosingUnitId#ordinal` — depth-first ordinal of keyed calls inside the **caller** unit (all keyed calls share one counter per caller). |
 | **Body change detection** | `codeHash` / `emitHash` from structural hashes of the lowered body (not a user-visible type signature key). |
+| **Closure units** | Lexical id `unit/λN` is the patch/manifest key. Each `registerClosure` at runtime also allocates a unique instance id (`lexId#<seq>`); `makeClosure` uses that instance id so repeated invocations of the same hot function do not overwrite live closures. |
 
 **Opt out:** `@:esm.hot(false)` on a type or field (for drivers, stable
 entrypoints, or code that must not go through `$h.invoke`).

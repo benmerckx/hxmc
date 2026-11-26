@@ -187,6 +187,7 @@ lanes in order with a Tiers-style summary.
 | `static-fn` | `EsmHotStaticFnCheck` | static methods not hot-wrapped as closures |
 | `class-static` | `EsmHotClassStaticVarCheck` | class static vars before `publishClass` |
 | `shallow-capture` | `EsmHotShallowCapCheck` | shallow outer `var` locals stay lexical |
+| `closure-per-invoke` | `EsmHotClosurePerInvokeCheck` | distinct closure instance id per `registerClosure` |
 | `module-import` | `EsmHotModuleImportCheck` | module diff → `importModules` + dev client |
 
 **When to run:** after edits to `Genesm` / `GenesmHot`, `hxmc/std/esm`, hot

@@ -75,10 +75,10 @@ class GenesmHot {
 		var implJs = emitFnJs(ctx, e);
 		var emitHash = HotManifest.recordEmit(id, implJs);
 		if (caps.length == 0) {
-			Genjs.print(ctx, "(");
-			Genjs.print(ctx, Genesm.reg() + '.registerClosure("' + jsEscape(id) + '","' + jsEscape(capHash2) + '","' + jsEscape(emitHash) + '",');
+			Genjs.print(ctx, Genesm.reg() + ".makeClosure(" + Genesm.reg() + '.registerClosure("' + jsEscape(id) + '","'
+				+ jsEscape(capHash2) + '","' + jsEscape(emitHash) + '",');
 			Genjs.print(ctx, implJs);
-			Genjs.print(ctx, "), " + Genesm.reg() + '.makeClosure("' + jsEscape(id) + '",null))');
+			Genjs.print(ctx, "),null)");
 			return;
 		}
 		Genjs.print(ctx, "(function(");
@@ -87,8 +87,9 @@ class GenesmHot {
 		Genjs.print(ctx, "var $env = {");
 		concatEnvPairs(ctx, caps);
 		Genjs.spr(ctx, "};");
+		Genjs.print(ctx, "return " + Genesm.reg() + ".makeClosure(");
 		emitClosureRegister(ctx, id, capHash2, emitHash, implJs);
-		Genjs.print(ctx, "return " + Genesm.reg() + '.makeClosure("' + jsEscape(id) + '",' + String.fromCharCode(36) + "env);");
+		Genjs.print(ctx, "," + String.fromCharCode(36) + "env);");
 		Genjs.spr(ctx, "})(");
 		concatIdents(ctx, caps);
 		Genjs.spr(ctx, ")");
@@ -97,7 +98,7 @@ class GenesmHot {
 	static function emitClosureRegister(ctx:JsCtx, id:String, capHash:String, emitHash:String, implJs:String):Void {
 		Genjs.print(ctx, Genesm.reg() + '.registerClosure("' + jsEscape(id) + '","' + jsEscape(capHash) + '","' + jsEscape(emitHash) + '",');
 		Genjs.print(ctx, implJs);
-		Genjs.spr(ctx, ");");
+		Genjs.spr(ctx, ")");
 	}
 
 	static function concatIdents(ctx:JsCtx, caps:Array<String>):Void {

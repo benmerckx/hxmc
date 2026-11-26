@@ -26,6 +26,7 @@ class Esm {
 		{id: "static-fn", name: "hot static method emit", harness: "EsmHotStaticFnCheck"},
 		{id: "class-static", name: "hot class static vars", harness: "EsmHotClassStaticVarCheck"},
 		{id: "shallow-capture", name: "hot shallow capture", harness: "EsmHotShallowCapCheck"},
+		{id: "closure-per-invoke", name: "hot closure per registration", harness: "EsmHotClosurePerInvokeCheck"},
 		{id: "module-import", name: "hot module import client", harness: "EsmHotModuleImportCheck"},
 	];
 
