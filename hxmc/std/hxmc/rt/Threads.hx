@@ -666,6 +666,9 @@ class Threads {
 	// the end of the thread's run of fresh nursery pages (Gc.tlabRefill: its
 	// TLABs are cut from it; null: none, reset by each collection)
 	var runEnd:Ptr;
+	// the value of the throw Stacks recorded last (a root: kept until the
+	// next record, so a throw of it again is known, Start.throwValue)
+	var thrown:Ptr;
 }
 
 @:hxmc.c @:hxmc.fast private extern class C {

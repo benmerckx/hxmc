@@ -192,9 +192,13 @@ class Faults {
 	// signal frame lies below the red zone, which this word is in; Windows:
 	// below the 32 bytes the callee may use, in the exception frame's top
 	// part, which the dispatcher no longer needs: as Go does); arm64: in the
-	// link register. The stack pointer 16-byte aligned as at a call.
+	// link register. The stack pointer 16-byte aligned as at a call. The
+	// address is the instruction's plus one: a frame is named by its return
+	// address minus one (Stacks), which must be in the faulting instruction,
+	// not in the one before (on the line before, for an instruction a line
+	// starts with)
 	@:hxmc.unsafe static function redirect(ctx:Ptr, pcOff:Int, spOff:Int, lrOff:Int) {
-		var pc = Mem.getPtr(ctx, pcOff);
+		var pc = Mem.getPtr(ctx, pcOff).add(1);
 		var sp = Mem.getI64(ctx, spOff) & ~(15 : I64);
 		if (Platform.arm()) {
 			Mem.setI64(ctx, spOff, sp);

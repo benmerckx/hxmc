@@ -461,6 +461,7 @@ class Stacks {
 	// throws 2.3 million times, 150 frames deep on average: 2.3 s more
 	// recorded whole, against 7 s)
 	@:hxmc.unsafe @:hxmc.withStacks public static function recordThrow(handler:Ptr) {
+		recorded = false;
 		if (rethrowing) {
 			rethrowing = false;
 			// (the first throw's record stopped at the catch passing it on, whose frame is live)
@@ -469,6 +470,8 @@ class Stacks {
 			thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
 			thrownTopKind = walkEndKind;
 			thrownTopFrames = walkEndFrames;
+			thrownHandler = handler;
+			recorded = true;
 			return;
 		}
 		if ((flags() & EXCEPTION_STACKS) != 0) {
@@ -491,7 +494,31 @@ class Stacks {
 			thrownTop = handler.isNull() ? Ptr.nil() : walkEnd;
 			thrownTopKind = walkEndKind;
 			thrownTopFrames = walkEndFrames;
-		}
+		} else return;
+		thrownHandler = handler;
+		recorded = true;
+	}
+
+	// whether the record is the last throw's: made, or gone on with (a
+	// throw recordThrow leaves out does not record)
+	@:hxmc.threadLocal public static var recorded:Bool;
+
+	// the try that caught the last recorded throw (its jump buffer)
+	@:hxmc.threadLocal static var thrownHandler:Ptr;
+
+	// whether a throw to handler comes from the catch of the last recorded
+	// throw: that try left (handler above its own: not the same try entered
+	// again, nor one below), the function that caught it still running,
+	// below here (its record, where that stack stops, live)
+	@:hxmc.unsafe public static function caughtLive(handler:Ptr):Bool
+		return !thrown.isNull() && !thrownTop.isNull() && !thrownHandler.isNull()
+			&& (handler.isNull() || thrownHandler.ult(handler)) && reaches(thrownTop);
+
+	@:hxmc.unsafe static function reaches(top:Ptr):Bool {
+		var f = Mem.frame();
+		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(retOf(f)))
+			f = callerOf(f, retOf(f));
+		return f == top;
 	}
 
 	// the frame record of the function that caught the last throw (where its
@@ -524,10 +551,7 @@ class Stacks {
 		var top = thrownTop;
 		if (top.isNull() || n >= MAX) return n;
 		// (the catching function's record on the stack of this call: its frame is live)
-		var f = Mem.frame();
-		while (!f.isNull() && f.ult(top) && (f.toI64() & 7) == 0 && known(retOf(f)))
-			f = callerOf(f, retOf(f));
-		if (f != top) return n;
+		if (!reaches(top)) return n;
 		return n + walkFrom(top, buf.add(8 * n), MAX - n, Ptr.nil(), thrownTopKind, thrownTopFrames);
 	}
 
@@ -679,7 +703,17 @@ class Stacks {
 	// throw, as haxe.CallStack.toString prints them, on stderr
 	@:hxmc.unsafe(gc) @:hxmc.withStacks public static function report() {
 		var buf = Mem.stack(8 * MAX);
-		var n = walk(buf, MAX);
+		print(buf, walk(buf, MAX));
+	}
+
+	// the last recorded throw's stack, as report prints the stack (an uncaught
+	// throw: its record goes to the end of the stack)
+	@:hxmc.unsafe(gc) @:hxmc.withStacks public static function reportThrow() {
+		var buf = Mem.stack(8 * MAX);
+		print(buf, lastThrowInto(buf));
+	}
+
+	@:hxmc.unsafe(gc) static function print(buf:Ptr, n:Int) {
 		var s = new StringBuf();
 		var k = 0;
 		while (k < n) {

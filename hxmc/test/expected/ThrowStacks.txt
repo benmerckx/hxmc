@@ -1,0 +1,4 @@
+exit 0
+ThrowStacks.hx:55: boom, fail:28 < rethrow:33 < main:53
+ThrowStacks.hx:60: Null Access, length:44 < main:58
+ThrowStacks.hx:67: 1, fail:28 < rethrow:33 < main:49
