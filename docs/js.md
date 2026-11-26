@@ -549,6 +549,19 @@ lets a `Null<T>` be a `T` without a check):
 - a class still constructed in two steps (`_hx_constructor`) takes its
   constructors' arguments as optional `any`.
 
+TypeScript code written against the output, importing its modules, checks them
+under its own `tsconfig`, and `strictNullChecks` is one for the whole program:
+no file or function has its own. The output has `string` where Haxe means a
+string or `null`, so under `strictNullChecks` its code fails and its values are
+taken as never `null`. Strict code checks the output apart instead: as a project
+of its own (`strictNullChecks: false`, `composite`) that it references (project
+references: it sees the declarations only), or compiled once to `.js` and
+`.d.ts`, as a library is. A `switch` over an enum abstract's values (`case
+Color.Red:`) leaves `never` once it has them all, under any options; a
+function falling out of a partial one fails (`Function lacks ending return
+statement`) under `strictNullChecks` only, `noImplicitReturns` or a `default:
+const x: never = c;` catching it without.
+
 `-D dts` in `es` (the bundle) writes `<output>.d.ts`: what `@:expose` puts on
 the global object, declared under its path (`declare namespace a.b { class C
 {...} }`, `declare function f(...)`, `let v`): an exposed class's public API
