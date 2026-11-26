@@ -134,7 +134,7 @@ private enum Use {
 	// (Properties) what the code does with accessors, the names it reads dynamically, its string constants
 	UAccessorCall(a:TClassField, args:Int, discarded:Bool);
 	UAccessorTaken(a:TClassField);
-	UDynamicName(n:String, structural:Bool);
+	UDynamicName(n:String);
 	UString(s:String);
 	UStorage(p:TClassField, by:Null<TClass>);
 	UReflected(t:T);
@@ -245,7 +245,7 @@ private class Lowering implements Lower.Resolve {
 
 	public function accessorTaken(a:TClassField) if (chunk.propsOn) uses.push(UAccessorTaken(a));
 
-	public function dynamicName(n:String, structural:Bool) if (chunk.propsOn) uses.push(UDynamicName(n, structural));
+	public function dynamicName(n:String) if (chunk.propsOn) uses.push(UDynamicName(n));
 
 	public function stringConst(s:String) if (chunk.propsOn) uses.push(UString(s));
 
@@ -666,8 +666,8 @@ class Chunk {
 				props.called(a, args, discarded);
 			case UAccessorTaken(a):
 				props.taken(a);
-			case UDynamicName(n, structural):
-				props.named(n, structural);
+			case UDynamicName(n):
+				props.named(n);
 			case UString(s):
 				props.string(s);
 			case UStorage(p, by):

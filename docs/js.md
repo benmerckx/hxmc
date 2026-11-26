@@ -168,14 +168,16 @@ overrides one accessor gets the other through `super` (`set x(v) { super.x =
 v; }`).
 
 `#x` is its class body's: a property with storage changes only where nothing
-else reads the storage as Haxe has it, a field of the instance. Not where code
+else uses the storage as Haxe has it, a field of the instance. Not where code
 outside the class uses it (a subclass's accessor, an `__init__`, a split's
 code), where a static's value is set after its class (`hxmc.js.order_report`),
-where reflection reads the fields of the class's instances (a value of the
-class's type, an ancestor's or an interface's, given to `Reflect.fields`,
-`Reflect.field`, `JSON.stringify`, `Type.getInstanceFields`, ...), nor where
-its name is read off `Dynamic`, untyped code names it or a string constant is
-it (`"x"`, which reflection may be given).
+where reflection reads the fields of the class's instances or its own (a value
+of the class's type, an ancestor's or an interface's, or the class itself,
+given to `Reflect.field`, `Reflect.fields`, `Reflect.setField`,
+`JSON.stringify`, `Type.getInstanceFields`, `Type.getClass`, ...), nor where
+untyped code names it. Reading it otherwise by name (`Reflect.getProperty`, a
+`Dynamic`'s field, a structure's) calls the getter, as hxcpp's
+`@:nativeProperty` does.
 
 The accessors stay methods too (`get_x()`, which the JS accessor calls) when
 something needs them as such: a setter call whose value is used (`a = o.x = v`:
@@ -509,6 +511,11 @@ What a program can see of the generator, besides the output's shape:
   its accessor methods, as Genjs has them, may not exist; `Reflect.getProperty`
   finds those that do only through `$hx.properties`, which exists only where it
   is used;
+- a property with storage (`@:isVar`) whose storage is a #private field
+  ([Properties](#properties)) is no field to reflection on a value of no type
+  the program knows: `Reflect.field` of its name calls its getter, `Reflect.setField`
+  its setter (and throws without one), `Reflect.fields` and `JSON.stringify` do not
+  list it;
 - `$hxClasses`, `$hxEnums`, `$global`, `$estr` and `HxOverrides.iter` are not
   there: `Type.resolveClass` reads `$hx.classes`, the program's scope is a
   block, iterators of arrays come from `$hx`.

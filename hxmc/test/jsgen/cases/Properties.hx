@@ -154,6 +154,10 @@ class Properties {
 		trace(t.total, Tally.hits);
 		Tally.hits = 10;
 		trace(t.total, Tally.hits);
+		// (by name: the getter, the storage's value)
+		trace(Reflect.getProperty(t, "total"));
+		var d:Dynamic = t;
+		trace(d.total);
 
 		var g:Gauge = new DoubleGauge();
 		g.level = 4;

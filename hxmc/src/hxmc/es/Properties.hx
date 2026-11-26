@@ -35,10 +35,8 @@ class Properties {
 	// which only its code reads (`#x` is the class body's)
 	final owners = new ObjectMap<TClassField, TClass>();
 	final storage = new ObjectMap<TClassField, Family>();
-	// what the code names dynamically (`'` + a string constant's), of that what it reads but through a structure, untyped
-	// code's words
+	// what the code names dynamically (`'` + a string constant's), untyped code's words
 	final names = new StringMap<Bool>();
-	final unstructured = new StringMap<Bool>();
 	final words = new StringMap<Bool>();
 
 	// (the program's classes)
@@ -206,11 +204,8 @@ class Properties {
 		if (f != null) f.keep(a, "taken as a value");
 	}
 
-	// a field's name read dynamically (structural: a structure's; Dynamic's, js.Syntax.field's)
-	public function named(n:String, structural:Bool) {
-		names.set(n, true);
-		if (!structural) unstructured.set(n, true);
-	}
+	// a field's name read dynamically (a structure's, Dynamic's, js.Syntax.field's)
+	public function named(n:String) names.set(n, true);
 
 	// a string constant (reflection may name an accessor by it: `"get_x"`, never a name @:native gives it)
 	public function string(s:String) names.set("'" + s, true);
@@ -233,11 +228,25 @@ class Properties {
 		if (c != null && c != by) exclude(p, by == null ? "storage used outside a class" : 'storage used by ${dotPath(by)}');
 	}
 
-	// the classes whose instances reflection reads the fields of (Reflect.fields, JSON.stringify), of a value of their type
+	// the classes whose instances reflection reads the fields of (Reflect.fields, JSON.stringify), of a value of their type (and
+	// whose class a value gives, Type.getClass: what reflection does with it then, the program does not show)
 	final reflectedClasses = new ObjectMap<TClass, Bool>();
 
+	// the functions whose arguments' fields reflection reads as fields (FieldNames.READS: but those that read a property
+	// through its accessors, getProperty, setProperty), and those that give a value's class
+	public static function reflects(k:String):Null<Array<Int>> return switch k {
+		case "Reflect.getProperty" | "Reflect.setProperty": null;
+		case "Type.getClass" | "js.Boot.getClass": [0];
+		case _: FieldNames.READS.get(k);
+	}
+
 	public function reflected(t:T) switch follow(t) {
-		case TAbstract({aPath: {pack: [], name: "Null"}}, [p]): reflected(p);
+		// (a class as a value: its instances', Type.getInstanceFields')
+		case TAbstract({aPath: {pack: [], name: "Null" | "Class"}}, [p]): reflected(p);
+		case TAnon(a): switch a.aStatus {
+				case ClassStatics(c): reflectedClasses.set(c, true);
+				case _:
+			}
 		case TInst(c, _) if (!c.clKind.match(KTypeParameter(_))): reflectedClasses.set(c, true);
 		case _:
 	}
@@ -278,13 +287,11 @@ class Properties {
 	// whether a property's storage is a #private field (of its class)
 	public inline function backed(p:TClassField):Bool return changed.exists(p) && owners.exists(p);
 
-	// (a structure reads a class's property where its field unified with the structure's, as the typer marks it: not by name)
+	// (reading it by name, through a structure or Dynamic, calls the getter: the same value; writing it by name and listing
+	// the fields of a value of no type the program knows, reflection's, differ: docs/js.md)
 	function storageNamed(p:TClassField):Null<String> {
 		var c = owners.get(p);
 		if (c != null && readByReflection(c)) return "read by reflection";
-		if (hasClassFieldFlag(p, CfStructurallyUsed)) return "unified with a structure";
-		if (unstructured.exists(p.cfName) || unstructured.exists(realName(p))) return "named dynamically";
-		if (names.exists("'" + realName(p))) return "named in a string";
 		if (words.exists(p.cfName) || words.exists(realName(p))) return "named in untyped code";
 		return null;
 	}
