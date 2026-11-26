@@ -13,7 +13,9 @@ exit 0
 "\bbs\fff" same
 "plain text longer than a few words of four units each, with no escape at all" same
 "é ü ñ 中文 😀 end" same
-"ctlchars" same
+"ctl\u0001\u001fchars" same
+"nul\u0000\u000b\u001b" same
+"é\u0000\u0010" same
 "mixed \"q\" and \\b\\ and \n" same
 {"a":"x\"y","b":["1","two\n"],"c":{"d":"\\"}}
 "Aé😀"

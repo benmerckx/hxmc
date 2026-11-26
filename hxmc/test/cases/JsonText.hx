@@ -1,13 +1,14 @@
 // haxe.Json's strings (hxmc's JsonPrinter.quote, StringBuf.addJsonString;
 // JsonParser.parseString over hxmc.rt.Str.jsonRun): escapes at every
 // position of a word of four units, runs longer than a word, non-ASCII and
-// surrogates, \u escapes, and the errors (an unclosed string, a 0 unit);
+// surrogates, \u escapes, every other unit below 0x20 as \u00XX (valid
+// JSON, as upstream's printer is not), and the errors (an unclosed string, a 0 unit);
 // StringBuf.addSub's ranges, copied without a substring.
 class JsonText {
 	static function main() {
 		var samples = [
 			"", "a", "ab\"", "abc\"", "abcd\"", "abcde\\", "\"\"\"\"\"", "\\\\\\\\", "line\nbreak", "tab\there", "cr\rlf\n", "\x08bs\x0Cff",
-			"plain text longer than a few words of four units each, with no escape at all", "é ü ñ 中文 😀 end", "ctl\x01\x1Fchars", "mixed \"q\" and \\b\\ and \n",
+			"plain text longer than a few words of four units each, with no escape at all", "é ü ñ 中文 😀 end", "ctl\x01\x1Fchars", "nul\x00\x0B\x1B\x7F", "\u00e9\x00\x10", "mixed \"q\" and \\b\\ and \n",
 		];
 		for (s in samples) {
 			var j = haxe.Json.stringify(s);
