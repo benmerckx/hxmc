@@ -99,6 +99,14 @@ class Emit implements hxmc.Target.Emitter {
 				// the caller's x29 (this stub keeps no record of its own)
 				a.movR(true, 0, Asm.FP);
 				a.ret();
+			case hxmc.MirBuild.STUB_STRIP:
+				// x0 without its signature: xpaclri strips x30 only (the return
+				// address is in x16 for these three instructions)
+				a.movR(true, X16, Asm.LR);
+				a.movR(true, Asm.LR, 0);
+				a.xpaclri();
+				a.movR(true, 0, Asm.LR);
+				a.br(X16);
 			case hxmc.MirBuild.STUB_LANDING:
 				// hxmc_objc_caught(x0) as though the call returning to x1 had
 				// called it (where an unwinder resumes a frame)

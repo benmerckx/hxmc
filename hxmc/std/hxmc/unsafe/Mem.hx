@@ -102,11 +102,16 @@ extern class Mem {
 	// not on WebAssembly). Not a GC point.
 	static function zero(p:Ptr, bytes:I64):Void;
 	// the calling function's frame record (Abi.framePointers): [frame] is the
-	// caller's record, [frame + 8] the return address (arm64: signed above
-	// its 48 bits where Abi.pac signs it, hxmc.rt.Stacks.retOf); null where
-	// functions keep none (x86-64 with -D hxmc.frame-pointers=0,
-	// WebAssembly). A call of the stub hxmc_frame. Not a GC point.
+	// caller's record, [frame + 8] the return address (arm64: signed where
+	// Abi.pac signs it, strip); null where functions keep none (x86-64 with
+	// -D hxmc.frame-pointers=0, WebAssembly). A call of the stub hxmc_frame.
+	// Not a GC point.
 	static function frame():Ptr;
+	// code address p without the pointer-authentication signature in its
+	// high bits, where they start at the address space's size (arm64: the
+	// stub hxmc_strip, xpaclri, a no-op before Armv8.3; elsewhere p). Not a
+	// GC point.
+	static function strip(p:Ptr):Ptr;
 
 	// loads at p + off (8/16-bit and f32 loads widen; getI32 of 4 bytes); an
 	// off written x + c or x - c (c a constant) is x, extended to 64 bits,

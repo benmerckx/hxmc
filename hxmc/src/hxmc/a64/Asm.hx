@@ -353,6 +353,11 @@ class Asm {
 	public function autsp(b:Bool)
 		w(b ? 0xD50323FF : 0xD50323BF);
 
+	// x30 without its signature, whatever the address space's size (hint
+	// space too)
+	public function xpaclri()
+		w(0xD50320FF);
+
 	public function brk()
 		w(0xD4200000);
 

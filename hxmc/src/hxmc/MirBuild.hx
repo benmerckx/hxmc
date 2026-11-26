@@ -86,6 +86,7 @@ class MirBuild extends MirWriter {
 	public static inline var STUB_CALL_ON_STACK = "hxmc_call_on_stack";
 	public static inline var STUB_ZERO = "hxmc_zero";
 	public static inline var STUB_FRAME = "hxmc_frame";
+	public static inline var STUB_STRIP = "hxmc_strip";
 	// (Mach-O with Objective-C: DataGen.objcCaught, for hxmc.rt.ObjCExceptions)
 	public static inline var STUB_LANDING = "hxmc_objc_landing";
 	public static inline var OBJC_CAUGHT = "hxmc_objc_caught";
@@ -2062,11 +2063,10 @@ class MirBuild extends MirWriter {
 	function cStructRet(c:core.TType.TClass):{addr:Int, ret:CAbi.CRet} {
 		var l = hxmc.ir.CInterop.layout(c);
 		// (the registers' words are stored whole: the slot is rounded up to them)
-		var size = (l.size + 7) & ~7, align = l.align > 8 ? l.align : 8;
-		var ret = CAbi.ret(abi, c);
-		// (in registers, the call's own code stores them)
-		var addr = ret.match(RRegs(_)) ? stackAddr(f.slot(size, align)) : exposedSlot(size, align);
-		return {addr: addr, ret: ret};
+		// (exposed in registers too: the slot is the struct value, whose address
+		// C may get later)
+		var addr = exposedSlot((l.size + 7) & ~7, l.align > 8 ? l.align : 8);
+		return {addr: addr, ret: CAbi.ret(abi, c)};
 	}
 
 	// MIns.cRet of a result in registers: per part, 8 an integer register's
@@ -2468,6 +2468,8 @@ class MirBuild extends MirWriter {
 				iconst(0);
 			case "frame":
 				abi.framePointers ? call(STUB_FRAME, vector(), I64) : lconst32(0);
+			case "strip":
+				abi.arm ? call(STUB_STRIP, exs(args), I64) : ex(args[0]);
 			case _: throw new Unsupported("unknown intrinsic " + name);
 		}
 	}

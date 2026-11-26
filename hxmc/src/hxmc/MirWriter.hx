@@ -331,7 +331,7 @@ class MirWriter {
 	// C functions that neither collect nor wait in a safe region, besides
 	// the runtime functions FnLower.noGcHost names
 	static var QUIET = [
-		"hxmc_zero" => true, "memset" => true, "memcpy" => true, "memmove" => true, "floor" => true, "ceil" => true,
+		"hxmc_zero" => true, "hxmc_strip" => true, "memset" => true, "memcpy" => true, "memmove" => true, "floor" => true, "ceil" => true,
 		"hxmc_barrier_slow" => true, "setjmp" => true, "_setjmp" => true, "__mingw_setjmp" => true, "hxmc_tls_base" => true,
 	];
 

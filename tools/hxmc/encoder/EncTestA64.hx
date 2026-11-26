@@ -81,6 +81,7 @@ class EncTestA64 {
 		emit('autiasp', a -> a.autsp(false));
 		emit('pacibsp', a -> a.pacsp(true));
 		emit('autibsp', a -> a.autsp(true));
+		emit('xpaclri', a -> a.xpaclri());
 		emit('mrs x5, TPIDR_EL0', a -> a.mrsTp(5));
 		emit('mov x29, sp', a -> a.movSp(29, 31));
 		emit('mov sp, x29', a -> a.movSp(31, 29));
