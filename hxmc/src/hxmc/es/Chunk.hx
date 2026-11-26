@@ -2106,8 +2106,16 @@ class Chunk {
 				for (f in c.clStatics) Genjs.processExpose(f.cfMeta, () -> item.path + "." + f.cfName, s -> entries.push({path: s, c: c, f: f}));
 			case _:
 		}
+		// (an abstract: its type, under HxTypes, at its path; the abstracts it names too)
+		var abstracts:Array<TAbstract> = [], wanted = new haxe.ds.ObjectMap<TAbstract, Bool>();
 		function ref(t:ModuleType):Null<String> return switch t {
 			case TClassDecl(c) if (exposedAt.exists(c)): exposedAt.get(c);
+			case TAbstractDecl(a) if (Casts.branded(a)):
+				if (!wanted.exists(a)) {
+					wanted.set(a, true);
+					abstracts.push(a);
+				}
+				"HxTypes." + dot(a.aPath);
 			case _: null;
 		}
 		var b = new StringBuf();
@@ -2131,6 +2139,17 @@ class Chunk {
 			}
 			if (inNs) b.add("}\n");
 		}
+		// (the abstracts: types only, of the brand `HxTypes.brand`)
+		var i = 0, branded = false, types = new StringBuf();
+		while (i < abstracts.length) {
+			var a = abstracts[i++];
+			var d = abstractDecl(a, (t, scope) -> Dts.type(t, ref, scope), ps -> Dts.typeParams(ps, ref, [for (p in ps) p.ttpName]), "HxTypes.brand");
+			if (d.branded) branded = true;
+			var parts = a.aPath.pack.copy();
+			types.add("declare namespace HxTypes" + [for (p in parts) "." + p].join("") + " {\n\ttype " + a.aPath.name + d.decl + "\n}\n");
+		}
+		if (branded) b.add("declare namespace HxTypes {\n\tconst brand: unique symbol;\n}\n");
+		b.add(types.toString());
 		sys.io.File.saveContent(Path.withoutExtension(com.file) + ".d.ts", b.toString());
 	}
 
@@ -2167,22 +2186,33 @@ class Chunk {
 		var ts = new Ts(t -> typeRef(file, file.names, t), () -> enumValueRef(file.names), props);
 		var branded = false;
 		for (a => x in abstractTypes) if (x.file == file.id) {
-			var scope = [for (p in a.aParams) p.ttpName];
-			ts.scope = scope;
-			var v = ts.type(a.aThis);
-			var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
-			// (the brand: of the abstract's path, and of its underlying type, which tells `A<Int>` from `A<String>`)
-			var tag = "{ readonly [$brand]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
-			var parts = values != null ? values : [if (to && from) v else if (to) (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v) + " & " + tag else tag];
-			if (values == null && !(to && from)) branded = true;
-			if (from && (values != null || !to)) parts.push(v);
-			for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(ts.type(f));
-			var decl = ts.params(a.aParams) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";";
+			var d = abstractDecl(a, (t, scope) -> {
+				ts.scope = scope;
+				ts.type(t);
+			}, ps -> ts.params(ps), "$brand");
+			if (d.branded) branded = true;
 			// (an implementation that stays a class: of its namespace, `A.Self`, which TypeScript merges with it)
-			out.push(st(SRaw(abstractClasses.exists(a) ? "export declare namespace " + x.sym.name + " { type Self" + decl + " }" : "export type " + x.sym.name + decl)));
+			out.push(st(SRaw(abstractClasses.exists(a) ? "export declare namespace " + x.sym.name + " { type Self" + d.decl + " }" : "export type " + x.sym.name + d.decl)));
 		}
 		if (branded) out.unshift(st(SRaw("declare const $brand: unique symbol;")));
 		return out;
+	}
+
+	// an abstract as TypeScript has it (Casts): its type parameters and what it is (`<T> = V & { ... };`), whether it is
+	// branded; the brand of the abstract's path and of its underlying type, which tells `A<Int>` from `A<String>` (type: a
+	// type's text, of the type parameters in scope; params: the type parameters'; brand: the brand symbol's name)
+	static function abstractDecl(a:TAbstract, type:(T, Array<String>) -> String, params:TypeParams->String, brand:String):{decl:String, branded:Bool} {
+		var scope = [for (p in a.aParams) p.ttpName];
+		var v = type(a.aThis, scope);
+		var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
+		var tag = "{ readonly [" + brand + "]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
+		var parts = values != null ? values : [if (to && from) v else if (to) (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v) + " & " + tag else tag];
+		if (from && (values != null || !to)) parts.push(v);
+		for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(type(f, scope));
+		return {
+			decl: params(a.aParams) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";",
+			branded: values == null && !(to && from)
+		};
 	}
 
 	// the abstracts whose implementations stay classes (their types `A.Self`)

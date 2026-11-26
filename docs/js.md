@@ -520,7 +520,9 @@ the global object, declared under its path (`declare namespace a.b { class C
 (constructor, methods, variables, properties as JavaScript has them, an
 ancestor's that is not exposed itself), `readonly` for what only the class
 writes (`final`, `(default, null)`, a property without a setter); the types it
-names by the paths they are exposed at, the others `any`. Not in `es-modules`
+names by the paths they are exposed at, an abstract as its type (branded, as in
+TypeScript's output) under `HxTypes` at its path (`HxTypes.pack.A`), the others
+`any`. Not in `es-modules`
 (TypeScript's output is its declarations).
 
 ## Differences from Genjs at run time

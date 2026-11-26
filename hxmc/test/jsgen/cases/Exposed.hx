@@ -13,6 +13,9 @@
 // dts has: static unit(): lib.shapes.Circle;
 // dts has: declare function makeCircle(r: number): lib.shapes.Circle;
 // dts has: let version: string;
+// dts has: perimeter(): HxTypes.Length;
+// dts has: const brand: unique symbol;
+// dts has: type Length = number & { readonly [HxTypes.brand]: { readonly "Length": number } };
 // dts lacks: get_kind
 // dts lacks: secret
 class Shape {
@@ -48,6 +51,8 @@ class Circle extends Shape {
 
 	public function area() return Math.PI * radius * radius;
 
+	public function perimeter():Length return new Length(2 * Math.PI * radius);
+
 	public static function unit() return new Circle(1);
 
 	@:expose("makeCircle") static function make(r:Float) return new Circle(r);
@@ -55,10 +60,16 @@ class Circle extends Shape {
 	@:expose("lib.version") static var version = "1.0";
 }
 
+// (an abstract its API names: a type of its own, branded, under HxTypes)
+abstract Length(Float) to Float {
+	public inline function new(v:Float) this = v;
+}
+
 class Exposed {
 	static function main() {
 		var c = Circle.unit();
 		c.label = "one";
-		trace(c.describe(), c.id, c.radius, c.area() > 3);
+		var p:Float = c.perimeter();
+		trace(c.describe(), c.id, c.radius, c.area() > 3, p > 6);
 	}
 }
