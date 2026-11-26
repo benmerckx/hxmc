@@ -93,7 +93,6 @@ class Corpus {
 	// failure does not fail the run, their passing does)
 	static final MIR_RUN_KNOWN = [
 		"CallStacks" => "interpreted frames are not in native call stacks",
-		"SignedFrames" => "interpreted frames are not in native call stacks",
 		"CallStacksGc" => "interpreted frames are not in native call stacks",
 		"MethodAdapters" => "a function converted to another function type compares unequal to what it adapts",
 		"SafeRegionRoots" => "it runs itself as a child (Sys.programPath): under --mir-run that is the compiler",
