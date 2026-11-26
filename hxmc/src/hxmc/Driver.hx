@@ -30,6 +30,7 @@ class Driver {
 		prep = new Prep(prog);
 		abi.setLibc(o.libc);
 		abi.framePointers = !abi.wasm && (abi.arm || o.framePointers);
+		if (!o.pac) abi.pac = false;
 		if (o.shared && (abi.os == "macos" || abi.os == "windows")) {
 			// (macOS and iOS: a Mach-O dylib, LinkMachO; Windows: a DLL, LinkPE; the code is position-independent already)
 			abi.output = SharedLibrary;

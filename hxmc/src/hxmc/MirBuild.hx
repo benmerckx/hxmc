@@ -1928,7 +1928,7 @@ class MirBuild extends MirWriter {
 				// (at its C alignment: Win64 passes __m128 and a struct with one in it
 				// as the address of a 16-byte aligned copy)
 				var al = l.align > 8 ? l.align : 8;
-				var copy = stackAddr(f.slot((l.size + 7) & ~7, al));
+				var copy = exposedSlot((l.size + 7) & ~7, al);
 				copyBytes(copy, v, l.size);
 				args.push(copy);
 				sizes.push(8);
@@ -2021,7 +2021,7 @@ class MirBuild extends MirWriter {
 						case CStruct(c): c;
 						case _: null;
 					};
-					var s = stackAddr(f.slot((hxmc.ir.CInterop.layout(c).size + 7) & ~7, 8));
+					var s = exposedSlot((hxmc.ir.CInterop.layout(c).size + 7) & ~7, 8);
 					for (j in 0...parts.length) {
 						var v = ps[p.at + j];
 						if (parts[j].float && parts[j].size == 4) store(4, s, parts[j].off, special("freg_to_f32bits", vector(v), I32))
@@ -2062,8 +2062,11 @@ class MirBuild extends MirWriter {
 	function cStructRet(c:core.TType.TClass):{addr:Int, ret:CAbi.CRet} {
 		var l = hxmc.ir.CInterop.layout(c);
 		// (the registers' words are stored whole: the slot is rounded up to them)
-		var addr = stackAddr(f.slot((l.size + 7) & ~7, l.align > 8 ? l.align : 8));
-		return {addr: addr, ret: CAbi.ret(abi, c)};
+		var size = (l.size + 7) & ~7, align = l.align > 8 ? l.align : 8;
+		var ret = CAbi.ret(abi, c);
+		// (in registers, the call's own code stores them)
+		var addr = ret.match(RRegs(_)) ? stackAddr(f.slot(size, align)) : exposedSlot(size, align);
+		return {addr: addr, ret: ret};
 	}
 
 	// MIns.cRet of a result in registers: per part, 8 an integer register's
@@ -2367,9 +2370,9 @@ class MirBuild extends MirWriter {
 			case "arm": iconst(abi.arm ? 1 : 0);
 			case "target": iconst(targetCode(abi));
 			case "platform": iconst(abi.platformCode());
-			case "stack": stackAddr(f.slot(intLiteral(args[0], "Mem.stack"), 16));
+			case "stack": exposedSlot(intLiteral(args[0], "Mem.stack"), 16);
 			// (a struct value's memory: FnLower.newSlot)
-			case "structSlot": stackAddr(f.slot((intLiteral(args[0], "a struct slot") + 7) & ~7, intLiteral(args[1], "a struct slot")));
+			case "structSlot": exposedSlot((intLiteral(args[0], "a struct slot") + 7) & ~7, intLiteral(args[1], "a struct slot"));
 			case "ult": cmp(CULt, ex(args[0]), ex(args[1]));
 			// (a span's element check: Opt.condProp drops it where a loop proves it)
 			case "spanUlt": marked(cmp(CULt, ex(args[0]), ex(args[1])), MIns.SPAN_CHECK);

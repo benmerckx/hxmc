@@ -369,6 +369,14 @@ class MirWriter {
 		return add(i);
 	}
 
+	// a new slot that C or raw stores write, its address: its function signs
+	// its return address (Abi.pac)
+	function exposedSlot(size:Int, align:Int):Int {
+		var s = f.slot(size, align);
+		f.exposed.push(s);
+		return stackAddr(s);
+	}
+
 	// ---- blocks
 
 	// blocks made while set are slow paths (the inline-cache path behind a
