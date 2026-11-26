@@ -500,16 +500,22 @@ lets a `Null<T>` be a `T` without a check):
 - an abstract is a type of its own, its module's (`export type A`), beside its
   implementation of the same name: one `import { A }` brings both. It is
   branded by a symbol only TypeScript has (`declare const $brand: unique
-  symbol`, the brand the abstract's path), as Haxe lets values go:
-  `A(V) from V to V` is `V`; `A(V) to V` is `V & { readonly [$brand]: "A" }` (an
-  A is a V, no V an A); `A(V) from V` is `{ readonly [$brand]: "A" } | V` (a V
-  is an A, no A a V); `A(V)` the brand alone (neither); its other `from` types'
-  values are A's too. An enum abstract is the union of its values' literals
-  (`0 | 1 | 2`), which TypeScript compares and narrows. Not the std's core
-  types, a multi-type's (`Map`), an extern's, one over `Dynamic`, `haxe.Rest`.
-  Where Haxe converts without a cast (in the abstract's own code above all),
-  the value is `(e as any)`, and what JavaScript does with an opaque abstract's
-  value (index it, call it, compute with it) is of it as `any`;
+  symbol`; the brand `B` below is `{ readonly [$brand]: { readonly "pack.A": V
+  } }`, of the abstract's path and its underlying type, which tells `A<Int>`
+  from `A<String>`), as Haxe lets values go: `A(V) from V to V` is `V`;
+  `A(V) to V` is `V & B` (an A is a V, no V an A); `A(V) from V` is `B | V` (a
+  V is an A, no A a V); `A(V)` is `B` (neither); its other `from` types' values
+  are A's too. An enum abstract is the union of its values' literals (`0 | 1 |
+  2`), which TypeScript compares and narrows. Not the std's core types, a
+  multi-type's (`Map`), an extern's, one over `Dynamic`, `haxe.Rest`. Its
+  methods take their `this` as the abstract (`next(this1$: Id)`), their code
+  the underlying value (`let this1: number = (this1$ as any)`). Where Haxe
+  converts without a cast (in the abstract's own code above all), the value is
+  `(e as any)`, and what JavaScript does with an opaque abstract's value (index
+  it, call it, compute with it) is of it as `any`. A module whose names an
+  import has imports it as another (`import { A as A$1 }`); a type it imports
+  only, of a name it has or another export has, it names by its module
+  (`import("./a/B.ts").B`);
 - a class itself as a value (its statics) is `typeof` it;
 - a class still constructed in two steps (`_hx_constructor`) takes its
   constructors' arguments as optional `any`.
