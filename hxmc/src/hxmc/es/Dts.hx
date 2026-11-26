@@ -98,8 +98,9 @@ class Dts {
 ";
 
 	// head: before `class` (`export declare `, `declare `, `` in a namespace); name: the declared name (else ref's)
+	// (props: the properties JavaScript has as accessors, which it declares as properties, not their accessor methods)
 	public static function classDecl(b:StringBuf, c:TClass, ref:ModuleType->Null<String>, head = "export declare ", ?name:String, indent = "",
-			?skip:String->Bool) {
+			?skip:String->Bool, ?props:Properties, inherit = false) {
 		var n = name != null ? name : ref(TClassDecl(c));
 		if (n == null) return;
 		var isExtern = hasClassFlag(c, CExtern);
@@ -109,6 +110,15 @@ class Dts {
 		b.add(indent + head + (iface ? "interface " : "class ") + n + params);
 		var sup = c.clSuper != null ? ref(TClassDecl(c.clSuper.cls)) : null;
 		if (sup != null) b.add(" extends " + sup + typeArgs(c.clSuper.params, ref, scope));
+		// (inherit: an ancestor of no name here, the program's own: its members the class's; an extern's are not declared)
+		var inherited:Array<TClassField> = [];
+		if (sup == null && inherit && !isExtern) {
+			var s = c.clSuper;
+			while (s != null && ref(TClassDecl(s.cls)) == null && !hasClassFlag(s.cls, CExtern)) {
+				for (f in s.cls.clFields) if (!c.clFields.exists(f.cfName) && !Lambda.exists(inherited, x -> x.cfName == f.cfName)) inherited.push(f);
+				s = s.cls.clSuper;
+			}
+		}
 		var impls = [for (i in c.clImplements) {
 			var r = ref(TClassDecl(i.cls));
 			if (r != null) r + typeArgs(i.params, ref, scope);
@@ -121,15 +131,23 @@ class Dts {
 			case TFun(s): b.add(indent + "\tconstructor(" + args(s, ref, scope) + ");\n");
 			case _:
 		}
-		for (f in c.clFields) member(b, f, false, ref, scope, isExtern, indent);
-		if (!iface) for (f in c.clStatics) if (skip == null || !skip(f.cfName)) member(b, f, true, ref, scope, isExtern, indent);
+		for (f in c.clFields) member(b, f, false, ref, scope, isExtern, indent, props);
+		for (f in inherited) member(b, f, false, ref, scope, false, indent, props);
+		if (!iface) for (f in c.clStatics) if (skip == null || !skip(f.cfName)) member(b, f, true, ref, scope, isExtern, indent, props);
 		b.add(indent + "}\n");
 	}
 
 	// (an extern's: by its native name, with its overloads, but its inline methods, which JavaScript has not)
 	static function member(b:StringBuf, f:TClassField, isStatic:Bool, ref:ModuleType->Null<String>, scope:Array<String>, isExtern = false,
-			indent = "") {
+			indent = "", ?props:Properties) {
 		if (!hasClassFieldFlag(f, CfPublic) && !isExtern) return;
+		// (the program's property: a JS accessor, its name's, or its accessor methods, and its storage, if it has one)
+		if (!isExtern && f.cfKind.match(Var(_)) && Properties.isProperty(f) && (props == null || props.unchanged(f)) && !isPhysicalField(f)) return;
+		if (!isExtern && props != null) switch props.familyOf(f) {
+			case null:
+			case fam if (!fam.keeps(fam.isGetter(f))): return;
+			case _:
+		}
 		if (isExtern && f.cfKind.match(Method(MethInline) | Var({vRead: AccInline}))) return;
 		var n = f.cfName;
 		if (isExtern) try n = core.Native.getNativeName(f.cfMeta).name catch (_:core.ds.NotFound) {}
@@ -142,7 +160,7 @@ class Dts {
 				case [Method(_), TFun(s)]:
 					b.add(name + typeParams(f.cfParams, ref, scope) + "(" + args(s, ref, scope) + "): " + type(s.ret, ref, scope) + ";\n");
 				// (one written only in the class, its constructor, or not at all: `final`, `(get, never)`, `(default, null)`)
-				case [Var({vWrite: AccNever | AccCtor | AccInline}), _]:
+				case [Var({vWrite: AccNever | AccNo | AccCtor | AccInline}), _]:
 					b.add("readonly " + name + ": " + type(f.cfType, ref, scope) + ";\n");
 				case _:
 					b.add(name + ": " + type(f.cfType, ref, scope) + ";\n");

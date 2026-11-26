@@ -34,6 +34,7 @@ generator writes ([Reflection](#reflection)).
 | `hxmc.js.order_report` | prints the statics and `__init__`s that run after the types, the modules the entry runs first, the lazy statics and the classes moved to files of their own |
 | `hxmc.js.properties=off` | properties stay their accessor methods ([Properties](#properties)) |
 | `hxmc.js.properties_report` | prints what became of each property |
+| `dts` | (`es`) `<output>.d.ts`, declaring what `@:expose` puts on the global object ([Modules](#modules)) |
 | `js-source-map`, `source-map`, `--debug` | a source map beside each file ([Source maps](#source-maps)) |
 | `source-map=inline` | the source map in the file, as a `data:` URL |
 | `source-map-content` | the sources' text in the maps |
@@ -151,13 +152,14 @@ in a `Map` under a symbol (`$hx.closures`), which `JSON`, `Object.keys` and
 
 ## Properties
 
-A property whose read and write are each `get`, `set` or `never` is a
-JavaScript accessor of its name: `get x() {...}` and `set x(v) {...}` hold the
-accessors' code, and `o.get_x()` and `o.set_x(v)` are `o.x` and `o.x = v`, so
-JavaScript code reads and writes the property as Haxe code does. A static one
-is a static accessor (`Settings.mode`). With `@:isVar`, its storage is the
-class's #private field (`#x`, `this.#x` in the accessors' code; a static's
-`static #x = <value>`).
+A property whose read and write are each `get`, `set`, `never` or `null` (at
+least one of them a call) is a JavaScript accessor of its name: `get x() {...}`
+and `set x(v) {...}` hold the accessors' code, and `o.get_x()` and
+`o.set_x(v)` are `o.x` and `o.x = v`, so JavaScript code reads and writes the
+property as Haxe code does. A static one is a static accessor
+(`Settings.mode`). With storage (`@:isVar`, or `null`: `(get, null)`), its
+storage is the class's #private field (`#x`, `this.#x` in the class's code; a
+static's `static #x = <value>`).
 
 A property, the ones that override it and the interfaces' declarations it
 implements change together, or not at all: not when one of them is an
@@ -201,7 +203,11 @@ name. Elsewhere a class lists nothing.
 
 In TypeScript's output the accessors have their types (`get x(): number`,
 `set x(v: number)`, a setter returning nothing), and an interface declares a
-property that is a JS accessor (`x: number`), not its accessor methods.
+property that is a JS accessor (`x: number`; `readonly`, without a setter), not
+its accessor methods. A variable only its class's constructor writes (`final`,
+`(default, null)`, `(default, never)`) is `readonly`; where the Haxe code writes
+it elsewhere (a method, a subclass, a constructor in two steps), it writes it as
+`(o as any).x = v`, as TypeScript lets it.
 `-D hxmc.js.properties=off` keeps every property as it is;
 `-D hxmc.js.properties_report` prints what became of each.
 
@@ -488,7 +494,14 @@ lets a `Null<T>` be a `T` without a check):
 - a class still constructed in two steps (`_hx_constructor`) takes its
   constructors' arguments as optional `any`.
 
-`.d.ts` files beside `.js` (`-D dts`) are not written.
+`-D dts` in `es` (the bundle) writes `<output>.d.ts`: what `@:expose` puts on
+the global object, declared under its path (`declare namespace a.b { class C
+{...} }`, `declare function f(...)`, `let v`): an exposed class's public API
+(constructor, methods, variables, properties as JavaScript has them, an
+ancestor's that is not exposed itself), `readonly` for what only the class
+writes (`final`, `(default, null)`, a property without a setter); the types it
+names by the paths they are exposed at, the others `any`. Not in `es-modules`
+(TypeScript's output is its declarations).
 
 ## Differences from Genjs at run time
 

@@ -13,6 +13,8 @@
 // output has: return this.#total;
 // output has: static #hits = 0;
 // output lacks: get level()
+// output has: #ticks = 0;
+// output has: get ticks() {
 interface Named {
 	var name(get, never):String;
 }
@@ -98,6 +100,17 @@ class Tally {
 	static function set_hits(v:Int) return hits = v;
 }
 
+// (`(get, null)`: storage, the class's code writing it, a #private field)
+class Ticker {
+	public var ticks(get, null):Int = 0;
+
+	public function new() {}
+
+	function get_ticks() return ticks;
+
+	public function tick() ticks++;
+}
+
 // (its storage read by a subclass: the property stays as it is)
 class Gauge {
 	@:isVar public var level(get, set):Int = 1;
@@ -158,6 +171,11 @@ class Properties {
 		trace(Reflect.getProperty(t, "total"));
 		var d:Dynamic = t;
 		trace(d.total);
+
+		var k = new Ticker();
+		k.tick();
+		k.tick();
+		trace(k.ticks);
 
 		var g:Gauge = new DoubleGauge();
 		g.level = 4;

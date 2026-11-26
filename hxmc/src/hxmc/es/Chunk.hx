@@ -1110,6 +1110,9 @@ class Chunk {
 		return null;
 	}
 
+	// (TypeScript) a variable only its class's constructor writes (Properties.readonlyVar): `readonly`
+	static function readonly(f:TClassField, m:Member):Member return Properties.readonlyVar(f) ? MReadonly(m) : m;
+
 	// (TypeScript) Haxe's `private`: `protected`
 	// (not an accessor method: a property's, which structures and interfaces name)
 	static function prot(f:TClassField, m:Member):Member
@@ -1126,7 +1129,7 @@ class Chunk {
 		// (TypeScript: its variables declared, its abstract methods)
 		if (tsOut) for (f in c.clFields) switch f.cfKind {
 			case Var(_) if (isPhysicalField(f)):
-				member(prot(f, MDeclare(fieldKey(f.cfName, ins(c)), f.cfType, false)), f);
+				member(prot(f, readonly(f, MDeclare(fieldKey(f.cfName, ins(c)), f.cfType, false))), f);
 			case Method(_) if (f.cfExpr == null && hasClassFlag(c, CAbstract)):
 				member(prot(f, MAbstract(fieldKey(f.cfName, ins(c)), f.cfType, f.cfParams)));
 			case _:
@@ -1134,7 +1137,9 @@ class Chunk {
 		switch c.clConstructor == null ? null : c.clConstructor.cfExpr {
 			case e = {eexpr: TFunction(f)}:
 				lower.prepare(e);
+				lower.ctorOf = c;
 				var l = lower.func(f, false, e.epos, c.clConstructor.cfType);
+				lower.ctorOf = null;
 				if (tsOut && Lambda.exists(c.clFields, x -> x.cfName == "_hx_constructor")) widen(l);
 				member(MMethod(KName("constructor"), l, false, MkConstructor));
 			case _:
@@ -1155,10 +1160,10 @@ class Chunk {
 				item.values.set(f, ex(ENull));
 			// (TypeScript: declared, as Haxe has it)
 			case [Var(_), null] if (tsOut && isPhysicalField(f)):
-				member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)), f);
+				member(prot(f, readonly(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true))), f);
 			case [_, null]:
 			case [_, {eexpr: TConst(TNull)}] if (!u.feature("Type.getClassFields")):
-				if (tsOut && isPhysicalField(f)) member(prot(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true)), f);
+				if (tsOut && isPhysicalField(f)) member(prot(f, readonly(f, MDeclare(fieldKey(f.cfName, sns(c)), f.cfType, true))), f);
 			case [_, e]:
 				lower.prepare(e);
 				item.statics.push(f);
@@ -1228,7 +1233,7 @@ class Chunk {
 
 	// a static's member (its value in the class's body): of a property with storage, the #private field
 	function staticMember(c:TClass, f:TClassField, v:Null<Ex>):Member
-		return isBacked(f) ? MField(KPrivate(f.cfName), v, true, f.cfType) : prot(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType));
+		return isBacked(f) ? MField(KPrivate(f.cfName), v, true, f.cfType) : prot(f, readonly(f, MField(fieldKey(f.cfName, sns(c)), v, true, f.cfType)));
 
 	// a class's members, its accessors of properties that change as JS accessors: the accessor itself, or (its family keeps
 	// them as methods) the method and, after the class's first accessor of the family, the JS accessors that call it, or
@@ -2039,6 +2044,51 @@ class Chunk {
 		sys.io.File.saveContent(Path.join([dir, "_externs.d.ts"]), b.toString());
 	}
 
+	// ------------------------------------------------------------------ the bundle's declarations (-D dts)
+
+	// `<output>.d.ts`: what @:expose puts on the global object, declared (global, a namespace per path): a class, its
+	// public API (and its ancestors' that are not exposed themselves), a static function, a static variable (its value
+	// when it is exposed); the types they name by the paths they are exposed at, the others `any`
+	function writeDts() {
+		var exposedAt = new haxe.ds.ObjectMap<TClass, String>();
+		var entries:Array<{path:String, c:TClass, f:Null<TClassField>}> = [];
+		for (item in items) switch item.t {
+			case TClassDecl(c) if (fieldsModule(c) == null && !hasClassFlag(c, CInterface)):
+				Genjs.processExpose(c.clMeta, () -> item.path, s -> {
+					if (!exposedAt.exists(c)) exposedAt.set(c, s);
+					entries.push({path: s, c: c, f: null});
+				});
+				for (f in c.clStatics) Genjs.processExpose(f.cfMeta, () -> item.path + "." + f.cfName, s -> entries.push({path: s, c: c, f: f}));
+			case _:
+		}
+		function ref(t:ModuleType):Null<String> return switch t {
+			case TClassDecl(c) if (exposedAt.exists(c)): exposedAt.get(c);
+			case _: null;
+		}
+		var b = new StringBuf();
+		b.add(header());
+		for (e in entries) {
+			var parts = e.path.split("."), n = parts.pop();
+			if (!Lambda.foreach(parts.concat([n]), s -> validIdent(s) && !RESERVED.exists(s))) {
+				b.add("// " + e.path + ": not a path TypeScript declares\n");
+				continue;
+			}
+			var inNs = parts.length > 0, indent = inNs ? "\t" : "", head = inNs ? "" : "declare ";
+			if (inNs) b.add("declare namespace " + parts.join(".") + " {\n");
+			if (e.f == null) Dts.classDecl(b, e.c, ref, head, n, indent, null, props, true);
+			else switch [e.f.cfKind, follow(e.f.cfType)] {
+				case [Method(_), TFun(s)]:
+					var scope = [for (p in e.f.cfParams) p.ttpName];
+					b.add(indent + head + "function " + n + Dts.typeParams(e.f.cfParams, ref, scope) + "(" + Dts.args(s, ref, scope) + "): "
+						+ Dts.type(s.ret, ref, scope) + ";\n");
+				case _:
+					b.add(indent + head + (hasClassFieldFlag(e.f, CfFinal) ? "const " : "let ") + n + ": " + Dts.type(e.f.cfType, ref, []) + ";\n");
+			}
+			if (inNs) b.add("}\n");
+		}
+		sys.io.File.saveContent(Path.withoutExtension(com.file) + ".d.ts", b.toString());
+	}
+
 	// ------------------------------------------------------------------ names
 
 	function name() {
@@ -2137,6 +2187,7 @@ class Chunk {
 				save(suffix == ".js" ? com.file : Path.withoutExtension(com.file) + suffix, main, files[0].smap);
 			});
 		}
+		if (Gctx.rawDefined(com, "dts")) writeDts();
 		if (splits.hasSplits()) prune(dir, written);
 	}
 

@@ -73,7 +73,8 @@ class Ts implements Types {
 			var opt = core.Meta.has(core.Meta.Optional, f.cfMeta) ? "?" : "";
 			switch [f.cfKind, follow(f.cfType)] {
 				case [Var(_), _]:
-					if (isPhysicalField(f) || (props != null && !props.unchanged(f))) b.add(indent + "\t" + n + opt + ": " + type(f.cfType) + ";\n");
+					var ro = Properties.readonlyVar(f) || (props != null && props.readonlyProperty(f)) ? "readonly " : "";
+					if (isPhysicalField(f) || (props != null && !props.unchanged(f))) b.add(indent + "\t" + ro + n + opt + ": " + type(f.cfType) + ";\n");
 				case [Method(_), TFun(_)] if (!jsAccessor(f)):
 					var inner = scope;
 					scope = inner.concat([for (p in f.cfParams) p.ttpName]);

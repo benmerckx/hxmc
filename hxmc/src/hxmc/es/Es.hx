@@ -243,6 +243,8 @@ enum Member {
 	MDeclare(key:Key, type:T, isStatic:Bool);
 	MAbstract(key:Key, type:T, tparams:TypeParams);
 	MProtected(m:Member);
+	// (TypeScript) a field written only in its class's constructor, or not at all (`final`, `(default, null)`)
+	MReadonly(m:Member);
 	MStaticBlock(body:Array<St>);
 	MComment(text:String);
 }

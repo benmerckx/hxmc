@@ -371,10 +371,18 @@ class Properties {
 		if (getter) f.getters.push(a) else f.setters.push(a);
 	}
 
-	// `(get|never, set|never)`, at least one of them a call (@:isVar: with storage, which the output has as a #private field)
+	// (TypeScript: `readonly`) a variable only its class's constructor writes, or nothing: `final`, `(default, null)`,
+	// `(default, never)` (not a property's storage, which `isProperty` has)
+	public static function readonlyVar(f:TClassField):Bool return f.cfKind.match(Var({vRead: AccNormal | AccNo, vWrite: AccNo | AccNever | AccCtor}));
+
+	// (TypeScript: `readonly`) a property JavaScript has as an accessor without a setter
+	public function readonlyProperty(p:TClassField):Bool return !unchanged(p) && !p.cfKind.match(Var({vWrite: AccCall}));
+
+	// `(get|never|null, set|never|null)`, at least one of them a call (with storage, `null` or @:isVar: the output's a #private
+	// field, the class's code reading and writing it)
 	public static function isProperty(p:TClassField):Bool return switch p.cfKind {
 		case Var({vRead: r, vWrite: w}):
-			(r.match(AccCall | AccNever) && w.match(AccCall | AccNever) && (r == AccCall || w == AccCall));
+			(r.match(AccCall | AccNever | AccNo) && w.match(AccCall | AccNever | AccNo) && (r == AccCall || w == AccCall));
 		case _: false;
 	}
 

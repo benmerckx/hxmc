@@ -81,6 +81,9 @@ class Lower {
 	// return type of the function lowered
 	final ts:Bool;
 	public var cls:Null<TClass> = null;
+	// (TypeScript) the class whose constructor is lowered (`readonly` fields written there as they are), the functions' depth
+	public var ctorOf:Null<TClass> = null;
+	var depth = 0;
 	var retType:Null<T> = null;
 
 	public function new(com:Gctx, r:Resolve) {
@@ -107,6 +110,13 @@ class Lower {
 
 	// t: the function's type (its optional arguments), tparams: a method's type parameters
 	public function func(f:TFunc, canArrow:Bool, p:Pos, ?t:T, ?tparams:TypeParams):Fn {
+		depth++;
+		var r = funcIn(f, canArrow, p, t, tparams);
+		depth--;
+		return r;
+	}
+
+	function funcIn(f:TFunc, canArrow:Bool, p:Pos, ?t:T, ?tparams:TypeParams):Fn {
 		var arrow = canArrow && !hasOwnThis(f);
 		var params = [for (a in f.tfArgs) local(a.variable)];
 		var n = f.tfArgs.length;
@@ -891,6 +901,14 @@ class Lower {
 	function target(e:TExpr):Ex {
 		return switch e.eexpr {
 			case TField(x, f = FInstance(_) | FAnon(_) | FDynamic(_)) if (Genjs.isIteratorFieldAccess(f)): field(expr(x), fieldName(f), nsOf(f), e.epos);
+			// (TypeScript: a `readonly` field, but in its class's constructor, `this`'s: of the object as `any`)
+			case TField(x, fa = FInstance(_, _, cf) | FStatic(_, cf)) if (ts && Properties.readonlyVar(cf)
+				&& !(fa.match(FInstance(_)) && depth == 1 && ctorOf != null && Lambda.has(ctorOf.clFields, cf) && Texpr.skip(x).eexpr.match(TConst(TThis)))):
+				var o = switch fa {
+					case FStatic(c, _): r.type(TClassDecl(c), e.epos);
+					case _: expr(x);
+				}
+				field(ex(EAs(o), o.pos), cf.cfName, nsOf(fa), e.epos);
 			case TParenthesis(x) | TMeta(_, x): target(x);
 			case _: expr(e);
 		}

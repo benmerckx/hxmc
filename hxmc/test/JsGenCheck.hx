@@ -13,6 +13,7 @@ using StringTools;
 class JsGenCheck {
 	static final CASES = "hxmc/test/jsgen/cases";
 	static final OUT = "bin/test/jsgen";
+	static final TSC = "bin/test/upstream-suites/typescript-5.9.3/node_modules/.bin/tsc";
 	static var failures = 0;
 	static var haxe:String;
 
@@ -93,9 +94,12 @@ class JsGenCheck {
 				{tag: "es-fields-debug", args: ["-D", "hxmc.js=es", "-D", "hxmc.js.minify", "-D", "hxmc.js.minify.fields", "--debug"]},
 				{tag: "es-wrapped", args: ["-D", "hxmc.js=es", "-D", "hxmc.check.wrapped"]},
 				{tag: "es-modules", args: ["-D", "hxmc.js=es-modules"]}, {tag: "es-modules-debug", args: ["-D", "hxmc.js=es-modules", "--debug"]},
-				{tag: "es-full", args: ["-D", "hxmc.js=es", "--dce", "full"]}, {tag: "es-modules-full", args: ["-D", "hxmc.js=es-modules", "--dce", "full"]}
+				{tag: "es-full", args: ["-D", "hxmc.js=es", "--dce", "full"]}, {tag: "es-modules-full", args: ["-D", "hxmc.js=es-modules", "--dce", "full"]},
+				{tag: "es-dts", args: ["-D", "hxmc.js=es", "-D", "dts"]}
 			]) {
 				if (v.tag == "es-wrapped" && !wrappable) continue;
+				// (-D dts: where the case says what its declarations have)
+				if (v.tag == "es-dts" && src.indexOf("// dts has: ") < 0) continue;
 				var dir = '$OUT/$name/${v.tag}';
 				var r = build(name, dir, v.args);
 				check('$name: ${v.tag} runs', r.ok, r.out);
@@ -105,6 +109,22 @@ class JsGenCheck {
 				// (es-modules: a split imports the modules it needs, no file of its own)
 				var want = v.tag.startsWith("es-modules") ? 0 : splitsIn(src + caseModules(name));
 				check('$name: ${v.tag} has ${want} split files', files.length == want, files.join(" "));
+				// (-D dts: what the case says the declarations have, or lack; TypeScript reads them, with tsc: HXMC_TSC, else the
+				// upstream suites')
+				if (v.tag == "es-dts") {
+					var re = ~/^\/\/ dts (has|lacks): (.*)$/gm, pos = 0, dts = FileSystem.exists(dir + "/main.d.ts") ? File.getContent(dir + "/main.d.ts") : "";
+					while (re.matchSub(src, pos)) {
+						check('$name: ${v.tag} ' + re.matched(1) + " `" + re.matched(2) + "`", (dts.indexOf(re.matched(2)) >= 0) == (re.matched(1) == "has"), dts);
+						var m = re.matchedPos();
+						pos = m.pos + m.len;
+					}
+					var tsc = Sys.getEnv("HXMC_TSC");
+					if (tsc == null && FileSystem.exists(TSC)) tsc = TSC;
+					if (tsc != null) {
+						var t = exec([tsc, "--noEmit", "--strict", dir + "/main.d.ts"], {merge: true});
+						check('$name: ${v.tag} main.d.ts checks', t.code == 0, t.out);
+					}
+				}
 				// (what the case says its output has, or lacks: `// output has: <text>`, `// output lacks: <text>`, in the plain es
 				// output's main.js)
 				if (v.tag == "es") {

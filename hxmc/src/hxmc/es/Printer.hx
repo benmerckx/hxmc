@@ -744,15 +744,16 @@ class Printer {
 	static function isStatic(m:Member):Bool return switch m {
 		case MField(_, _, s, _) | MMethod(_, _, s, _) | MDeclare(_, _, s): s;
 		case MStaticBlock(_): true;
-		case MProtected(m): isStatic(m);
+		case MProtected(m) | MReadonly(m): isStatic(m);
 		case _: false;
 	}
 
-	function member(b:StringBuf, m:Member, t:String, mods:String) {
+	// (ro: `readonly `, TypeScript's, after `static`)
+	function member(b:StringBuf, m:Member, t:String, mods:String, ro = "") {
 		switch m {
 			case MField(k, v, isStatic, type):
 				var ty = types == null || type == null ? "" : ": " + types.type(type);
-				b.add(t + mods + (isStatic ? "static " : "") + key(k, v == null ? null : v.pos) + ty + (v == null ? "" : sp(" = ") + expr(v, ASSIGN)) + ";" + nl());
+				b.add(t + mods + (isStatic ? "static " : "") + ro + key(k, v == null ? null : v.pos) + ty + (v == null ? "" : sp(" = ") + expr(v, ASSIGN)) + ";" + nl());
 			case MMethod(k, f, isStatic, kind):
 				var head = (isStatic ? "static " : "") + switch kind {
 					case MkConstructor: "constructor";
@@ -766,11 +767,13 @@ class Printer {
 			case MComment(text):
 				if (!tight) for (l in text.split("\n")) b.add(t + "// " + l + "\n");
 			case MDeclare(k, type, isStatic):
-				if (types != null) b.add(t + mods + "declare " + (isStatic ? "static " : "") + key(k) + ": " + types.type(type) + ";" + nl());
+				if (types != null) b.add(t + mods + "declare " + (isStatic ? "static " : "") + ro + key(k) + ": " + types.type(type) + ";" + nl());
 			case MAbstract(k, type, tparams):
 				if (types != null) b.add(t + mods + "abstract " + key(k) + withParams(tparams, () -> types.params(tparams) + types.signature(type)) + ";" + nl());
 			case MProtected(inner):
-				member(b, inner, t, types == null ? mods : mods + "protected ");
+				member(b, inner, t, types == null ? mods : mods + "protected ", ro);
+			case MReadonly(inner):
+				member(b, inner, t, mods, types == null ? ro : "readonly ");
 		}
 	}
 
