@@ -1059,7 +1059,7 @@ class Str {
 	}
 
 	static inline function jsonEscaped(u:Int):Bool
-		return u == '"'.code || u == '\\'.code || u <= 13 && (u == 10 || u == 13 || u == 9 || u == 8 || u == 12);
+		return u == '"'.code || u == '\\'.code || u < 0x20;
 
 	// the index of the first unit of s from i, before n, that JsonPrinter
 	// escapes (n if none); the words skipped stop at any unit below 0x20
@@ -1088,8 +1088,9 @@ class Str {
 	}
 
 	// s as haxe.format.JsonPrinter quotes a string (its seven escapes, the
-	// other units as they are), appended in one go: the runs without an
-	// escape copied whole (JsonPrinter.quote, hxmc's)
+	// other units below 0x20 as \u00XX, which upstream's leaves as they are:
+	// invalid JSON; the others as they are), appended in one go: the runs
+	// without an escape copied whole (JsonPrinter.quote, hxmc's)
 	@:hxmc.unsafe(gc) @:hxmc.host("StringBuf_addJsonString") static function sbAddJson(b:Dynamic, s:String):Void {
 		// (room for s and the quotes; an escape makes room for itself and
 		// the rest: it may collect)
@@ -1107,19 +1108,29 @@ class Str {
 			}
 			if (j == n) break;
 			var u = unit(s, j);
-			if (at + 2 + (n - j - 1) + 1 > Repr.sbCapacity(b)) {
-				Repr.sbSetLen(b, at);
-				reserve(b, 2 + (n - j - 1) + 1);
-			}
-			sbUnit(b, at++, '\\'.code);
-			sbUnit(b, at++, switch u {
+			var e = switch u {
 				case 10: 'n'.code;
 				case 13: 'r'.code;
 				case 9: 't'.code;
 				case 8: 'b'.code;
 				case 12: 'f'.code;
-				case _: u;
-			});
+				case '"'.code | '\\'.code: u;
+				case _: -1;
+			};
+			var w = e < 0 ? 6 : 2;
+			if (at + w + (n - j - 1) + 1 > Repr.sbCapacity(b)) {
+				Repr.sbSetLen(b, at);
+				reserve(b, w + (n - j - 1) + 1);
+			}
+			sbUnit(b, at++, '\\'.code);
+			if (e < 0) {
+				sbUnit(b, at++, 'u'.code);
+				sbUnit(b, at++, '0'.code);
+				sbUnit(b, at++, '0'.code);
+				sbUnit(b, at++, '0'.code + (u >> 4));
+				sbUnit(b, at++, (u & 15) < 10 ? '0'.code + (u & 15) : 'a'.code - 10 + (u & 15));
+			} else
+				sbUnit(b, at++, e);
 			i = j + 1;
 		}
 		sbUnit(b, at++, '"'.code);
