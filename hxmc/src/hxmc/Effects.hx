@@ -66,8 +66,20 @@ class Effects {
 		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_get") || n == "hxmc_unsafe_Mem_cstr") return 0;
 		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_set")) return RAW_STORE;
 		if (StringTools.startsWith(n, "hxmc_narray_set_")) return NARRAY_STORE;
+		// (allocations: memory nothing reads before; a collection apart)
+		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") || n == "hxmc_narray_new") return 0;
+		var c = C.get(n);
+		if (c != null) return c;
 		return UNKNOWN;
 	}
+
+	// C functions the runtime calls: what they write of the memory the
+	// program reads (malloc's own state is not; locks and atomics are
+	// unknown: they make other threads' writes visible)
+	static var C = [
+		"strlen" => 0, "strcmp" => 0, "strncmp" => 0, "memcmp" => 0, "getenv" => 0, "sysconf" => 0, "malloc" => 0, "calloc" => 0, "realloc" => 0, "free" => 0,
+		"memcpy" => RAW_STORE, "memmove" => RAW_STORE, "memset" => RAW_STORE
+	];
 
 	// the classes a call writes (i.kills known: its callee's summary)
 	public static inline function call(i:MIns):Int
