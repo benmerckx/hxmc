@@ -1268,6 +1268,7 @@ class MirBuild extends MirWriter {
 				c.keepsFrame = keepsFrame(c.sym);
 				c.keepsStatics = !g.writesStatics;
 				c.kills = g.writes;
+				c.retains = g.retains;
 				c.args = xs;
 				c.argTys = g.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));
 				var id = add(c);

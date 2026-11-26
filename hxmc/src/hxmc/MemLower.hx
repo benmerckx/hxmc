@@ -257,6 +257,8 @@ class MemLower extends MirWriter {
 			case NullCheck:
 				nullTest(r(x.a), o.key);
 				-1;
+			case New if (o.frame):
+				frameObject(o.n, o.tindex, o.zero);
 			case New:
 				var v = alloc(o.n, o.tindex, o.kind, o.zero);
 				switch o.name {
@@ -819,6 +821,25 @@ class MemLower extends MirWriter {
 
 	// the allocation slow path's stubs: hxmc_new$<header low word>$<type symbol or #index>$<bytes>
 	public static inline var ALLOC_STUB = "hxmc_new$";
+
+	// a record of n slots in a slot of the frame (FrameAlloc): its header as
+	// alloc writes it, its slots zeroed when they must read as zeros; no GC
+	// point (its continuation entered by the one edge)
+	function frameObject(n:Int, tidx:Int, zero:Bool):Int {
+		var ptr = stackAddr(frameSlot(8 * (n + 1), 8));
+		var flags = (n < 0xFFFF ? n : 0xFFFF) << 16;
+		storeM(Opt.MInit, 4, ptr, 0, tyConst(tidx, flags));
+		storeM(Opt.MInit, 4, ptr, 4, iconst(0));
+		if (zero)
+			for (k in 0...n)
+				storeM(Opt.MInit, 8, ptr, 8 * (k + 1), lconst(0, 0));
+		var o = op2(Add, I64, ptr, lconst32(8));
+		var join = joinBlock();
+		jmp(join);
+		seal(join);
+		cur = join;
+		return o;
+	}
 
 	// an object of n slots: inline bump allocation; the slow path collects.
 	// zero: the slots must read as zeros (Mem.alloc), else every slot is

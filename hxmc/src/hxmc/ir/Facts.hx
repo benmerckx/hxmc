@@ -65,6 +65,7 @@ class Facts {
 		collectNames();
 		assignNames();
 		findEffects();
+		findFates();
 	}
 
 	// ---- effects
@@ -140,6 +141,131 @@ class Facts {
 				}
 			}
 		}
+	}
+
+	// Which parameters each function may retain (FuncInfo.retains): a
+	// parameter's value, and the locals it is copied into, may be read
+	// through (fields, tests, lengths, comparisons) and passed to a callee's
+	// parameter that does not retain it; any other use (a store anywhere, a
+	// return, a throw, a capture, a box, an unknown callee) retains it. From
+	// nothing retained, to a fixed point over the program (recursion alone
+	// retains nothing).
+	function findFates() {
+		var todo = [];
+		for (f in p.funcs) {
+			f.retains = f.hostCode || f.args.length > 30 ? -1 : 0;
+			if (f.retains == 0 && f.args.length > 0) todo.push(f);
+		}
+		var changed = true;
+		while (changed) {
+			changed = false;
+			for (f in todo) {
+				var r = fates(f);
+				if (r != f.retains) {
+					f.retains = r;
+					changed = true;
+				}
+			}
+		}
+	}
+
+	// the parameters f retains, as its callees' fates say now
+	static function fates(f:FuncInfo):Int {
+		// per local: the parameters it may hold
+		var taint = new Map<Int, Int>();
+		for (k in 0...f.args.length)
+			taint.set(f.args[k].id, 1 << k);
+		var retained = 0, grew = true;
+		function alias(e:Ex):Null<Local>
+			return switch e {
+				case ELocal(l): l;
+				case ECast(_, x): alias(x);
+				case _: null;
+			}
+		function use(e:Ex, keeps:Bool) {
+			switch e {
+				case ELocal(l):
+					if (keeps) {
+						var t = taint.get(l.id);
+						if (t != null) retained |= t;
+					}
+				case ECast(_, x): use(x, keeps);
+				case EField(_, _, x) | EInstOf(_, x) | EEnumTag(x, _) | EEnumParam(_, _, x) | EArrLen(x) | EBoxGet(_, x) | EAnonGet(_, _, x, _) | ENot(x) | EConv(_, x) | EUnbox(_, x)
+					| ECapture(_, _, x):
+					use(x, false);
+				case EArrGet(_, a, i) | EArrGetU(_, a, i):
+					use(a, false);
+					use(i, false);
+				case EBin(_, a, b):
+					use(a, false);
+					use(b, false);
+				case ECall(g, args):
+					for (k in 0...args.length)
+						use(args[k], k > 30 || g.retains & (1 << k) != 0);
+				case ECallHost(n, args, _):
+					var pure = FnLower.isPure(n);
+					for (a in args)
+						use(a, !pure);
+				case _: Facts.iterEx(x -> use(x, true), e);
+			}
+		}
+		function st(s:Stmt) {
+			switch s {
+				case SSet(l, e):
+					var a = alias(e);
+					if (a != null) {
+						var t = taint.get(a.id);
+						if (t != null) {
+							var o = taint.get(l.id);
+							var n = o == null ? t : o | t;
+							if (n != o) {
+								taint.set(l.id, n);
+								grew = true;
+							}
+						}
+					} else use(e, false);
+				case SExpr(e) | SIf(e, _, _) | SSwitch(e, _, _): use(e, false);
+				case SSetField(_, _, o, v) | SAnonSet(_, _, o, v) | SBoxSet(_, o, v):
+					use(o, false);
+					use(v, true);
+				case SArrSet(_, _, i, v):
+					use(i, false);
+					use(v, true);
+				case SArrPush(_, _, v) | SSetGlobal(_, v) | SThrow(v): use(v, true);
+				case SReturn(e): if (e != null) use(e, true);
+				case _:
+			}
+			switch s {
+				case SIf(_, a, b):
+					for (x in a)
+						st(x);
+					for (x in b)
+						st(x);
+				case SLoop(body):
+					for (x in body)
+						st(x);
+				case SSwitch(_, cases, def):
+					for (c in cases)
+						for (x in c.body)
+							st(x);
+					for (x in def)
+						st(x);
+				case STry(body, catches):
+					for (x in body)
+						st(x);
+					for (c in catches)
+						for (x in c.body)
+							st(x);
+				case _:
+			}
+		}
+		// (the locals' aliases to a fixed point, then what they meet)
+		while (grew) {
+			grew = false;
+			for (s in f.body)
+				st(s);
+		}
+		return retained;
 	}
 
 	// ---- names

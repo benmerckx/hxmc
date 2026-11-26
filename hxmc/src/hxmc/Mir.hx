@@ -189,6 +189,8 @@ enum abstract Op(Int) to Int {
 	// 4 bytes at loc (a 4-byte index), the address shifted right by 3
 	// (MemLower.access); in registers a reference as any other
 	public var compact = false;
+	// New: in a slot of the frame, not the heap (FrameAlloc)
+	public var frame = false;
 
 	public function new() {}
 
@@ -225,6 +227,7 @@ enum abstract Op(Int) to Int {
 		o.ops = ops;
 		o.prechecked = prechecked;
 		o.compact = compact;
+		o.frame = frame;
 		return o;
 	}
 }
@@ -287,6 +290,8 @@ enum abstract Cond(Int) to Int from Int {
 	// Call: the classes its callee writes (its summary, FuncInfo.writes; Effects.call
 	// adds what any call changes and a collection's); -1: unknown, every class
 	public var kills = -1;
+	// Call: the arguments its callee may retain (FuncInfo.retains; -1: all)
+	public var retains = -1;
 	public var variadic = -1; // Call: the first variadic argument of a C function (-1: none)
 	public var argTys:Vector<MTy> = vector(); // Call: the C types of the arguments (I32 stays 32-bit in the ABI)
 	// Call of a C function (MirBuild.cCall), not of the runtime or a Haxe function

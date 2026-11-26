@@ -115,6 +115,7 @@ class Driver {
 	var raRounds = 0;
 	var escRemoved = 0;
 	var escAgain = 0; // (of them, after the optimizer answered reads of zeroed fields)
+	var frameObjects = 0; // (FrameAlloc)
 	var escFolds = 0;
 	var loopsVersioned = 0; // (LoopVersion)
 	var allocsFolded = 0; // (Fold)
@@ -314,6 +315,15 @@ class Driver {
 					op = new Opt(mf);
 					op.run();
 				}
+				// (objects only non-retaining callees see: in the frame)
+				if (interp == null && mf.allocs > 0) {
+					var n = FrameAlloc.run(mf);
+					if (n > 0) {
+						lock.acquire();
+						frameObjects += n;
+						lock.release();
+					}
+				}
 				// (the rooted locals' slots nothing reads any more)
 				var fs = new Frames(mf);
 				fs.run();
@@ -497,6 +507,7 @@ class Driver {
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced ($escAgain after reads of zeroed fields folded), $escFolds type tests folded (cpu ${ms(escTime)})');
+		Sys.println('hxmc: $frameObjects objects in their frames (FrameAlloc)');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));

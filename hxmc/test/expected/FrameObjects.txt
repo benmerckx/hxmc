@@ -1,0 +1,5 @@
+exit 0
+len2: 25 40000
+scaled: 6 8 1 200
+loop: 83209625
+kept: 5 6; pushed: 2 7 10; same: 10

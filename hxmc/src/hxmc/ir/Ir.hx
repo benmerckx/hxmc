@@ -307,6 +307,11 @@ class LambdaInfo {
 	// the memory classes (Opt.MOther...) it may write, its callees' included
 	// (Facts.findEffects; -1: unknown, every class): MIns.kills of its calls
 	public var writes:Int = -1;
+	// the parameters it may retain (bit k: args[k]; Facts.findFates): store
+	// anywhere, return, throw, capture, or pass to code that may (-1: all).
+	// An argument it does not retain is not reachable from anything once it
+	// returns (FrameAlloc)
+	public var retains:Int = -1;
 	// it calls rt_blocking_enter (blocksHere), or a function that does
 	// (blocks): another thread may collect while it runs (Facts.findNoGc)
 	public var blocks:Bool = false;

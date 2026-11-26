@@ -91,6 +91,7 @@ class Effects {
 		if (i.op == Call) return !i.keepsFrame || i.returnsTwice;
 		if (!i.isObj()) return false;
 		return switch i.op {
+			case New if (i.info.frame): false;
 			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | InitField | Tag | SetField | NArraySet | ArrayInit
 				| NArrayInit | RefStore:
 				false;

@@ -483,6 +483,7 @@ class LoopVersion {
 				x.returnsTwice = i.returnsTwice;
 				x.keepsFrame = i.keepsFrame;
 				x.kills = i.kills;
+				x.retains = i.retains;
 				x.variadic = i.variadic;
 				x.argTys = i.argTys;
 				x.cCall = i.cCall;
