@@ -76,36 +76,54 @@ entry graph is unsupported.
 **`-D esm.prod`** (not implemented): static `import`/`export` between Haxe user
 modules for bundler-visible graphs — see [plans/esm.md](plans/esm.md).
 
-## Hot metadata and runtime
+## Hot reload under `-D esm.hot` (default dev behavior)
 
-Compiler surface uses the **`@:esm.hot.*`** prefix only. Haxe types in
-`hxmc/std/esm` mirror the runtime (`esm.hot.*`).
+With **`-D esm.hot`** (injected by **`haxe --dev`** on ESM Js builds — see
+[dev.md](dev.md)), ordinary application code needs **no** hot metadata for
+**body replacement**. Users write normal methods; the compiler registers hot
+units and emits the `$h` registry ([`GenesmHot`](hxmc/src/hxmc/genesm/GenesmHot.hx)).
 
-| Metadata | Typical site | Role |
-| --- | --- | --- |
-| `@:esm.hot.keyed` | Function / method | Compiler injects caller call-site id at each call (magic `__hotId`) |
-| `@:esm.hot.cell` | Field, local | Keyed cell; lowered to `esm.hot.Cell` / `$new` / `$ctor` in emit |
-| `@:esm.hot.scope` | Block | Scope boundary for nested keyed state |
-| `@:esm.hot.function` | Method | Swappable body via the function kind |
-| `@:esm.hot(keep)` / `reset` / `migrate("…")` | Field, type, unit | Policy when hashes change |
-| `@:esm.hot.was("OldName")` | Field, type | Rename mapping across patches |
+### What the compiler does automatically
 
-**Call-site ids (v1):** `enclosingUnitId#ordinal` — the *n*-th call to a
-`@:esm.hot.keyed` callee inside that unit (structural ordinal). Inserting or
-reordering keyed calls shifts ordinals and **resets** those cells unless an
-explicit string id was used (e.g. macro `esm.hot.cell("fixed", …)`).
+| Mechanism | Rule |
+| --- | --- |
+| **Swappable methods** | Every method, `static function`, and constructor with a body becomes a tier-1 **`function`** unit (`pack.Type#fieldName`), unless opted out. Static `var` / property initializers are not swappable units. |
+| **Class / enum units** | Non-extern types get tier-2 **`class`** / **`enum`** units from layout (field names + coarse types, enum constructors). |
+| **Keyed callees** | When a method contains **`@:esm.hot.cell`** (or lowered cell markers) **and** another method on the **same type** calls it, the compiler treats it as **keyed**: call sites receive a synthetic id; emit adds a compiler-only `__hotId` parameter (never shown in user source). |
+| **Call-site ids** | `enclosingUnitId#ordinal` — depth-first ordinal of keyed calls inside the **caller** unit (all keyed calls share one counter per caller). |
+| **Body change detection** | `codeHash` / `emitHash` from structural hashes of the lowered body (not a user-visible type signature key). |
 
-**Keyed callees:** source signature unchanged; under **`-D esm.hot`** the
-typer adds an extra argument at call sites only. **v1** expects one
-**`-D esm.hot`** compile of the whole app graph (not a hot app calling a
-prebuilt lib compiled without hot).
+**Opt out:** `@:esm.hot(false)` on a type or field (for drivers, stable
+entrypoints, or code that must not go through `$h.invoke`).
 
-**Dev API** (`esm.hot.Hot` in the std classpath): `applyPatch`,
-`esmSerialize` / `esmUnserialize`, `trackInstance` (runtime heap snapshot API,
-not `haxe.Serializer` / `haxe.Unserializer`). Patches classify by **severity
-(tiers 1–4)** and dispatch through builtin **kinds** (`function`, `class`,
-`enum`). See [plans/esm.md](plans/esm.md) for framework kinds and heap migration
-rules still being hardened.
+**Typical app:** edit any method body → patch swaps that **`function`** unit.
+**Locals** inside a method are **not** preserved across body swap unless you use
+**cells** (below). **Instance and static fields** follow tier-2 class policy when
+layout changes.
+
+### When users add metadata (power user / state)
+
+| Metadata | Role |
+| --- | --- |
+| `@:esm.hot(false)` | Opt out of implicit swappable-body hot units on the annotated type or field |
+| `@:esm.hot.cell` | Preserve a local or field across patches (`$h.cell`); id `unit#cell.name` or call-site–scoped when the callee is keyed |
+| `@:esm.hot.scope` | Scope boundary for nested keyed state |
+| `@:esm.hot(keep)` / `reset` / `migrate("…")` | Policy when structure hashes change |
+| `@:esm.hot.was("OldName")` | Rename mapping across patches |
+
+Explicit **`esm.hot.cell("fixedId", …)`** (when implemented in stdlib macros)
+pins a cell id when call ordinals would be fragile.
+
+**Keyed-call caveat:** inserting or reordering keyed calls in a caller shifts
+ordinals and **resets** affected cells unless a **fixed string id** is used.
+
+**Monolithic hot compile:** the app and its Haxe user types should be built
+with **`-D esm.hot`** together (no prebuilt non-hot lib called from a hot app).
+
+**Dev API** (`esm.hot.Hot` on `hxmc/std/esm`): `applyPatch`, `esmSerialize` /
+`esmUnserialize`, `trackInstance`. Patches use tiers **1–4** and builtin kinds
+**`function`**, **`class`**, **`enum`**. Framework kinds stay external — see
+[plans/esm.md](plans/esm.md).
 
 ## Patches and dev workflow
 

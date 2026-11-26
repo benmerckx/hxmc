@@ -77,7 +77,7 @@ the same project uses **`haxe --dev -D esm -js …`** locally for hot reload.
 | **Consumption docs in CI matrix** | Covered by [esm.md](../esm.md) |
 | **User-facing hot dev entry** | Test harness + manual **`-D esm.hot`**; target: **`haxe --dev -D esm`** — [esm-dev.md](esm-dev.md) |
 
-Reference port: **reject** **`-D esm`**, **`esm.hot`**, **`esm.prod`** (implemented in `Generate.hx`). Internal hot metadata and `@:esm.hot.*` remain hxmc-only.
+Reference port: **reject** **`-D esm`**, **`esm.hot`**, **`esm.prod`** (implemented in `Generate.hx`). Default hot policy and optional `@:esm.hot.*` remain hxmc-only; see [esm.md](../esm.md) for the authoritative hot UX.
 
 ## Dev loop gap (hot)
 
@@ -105,9 +105,9 @@ orchestration, and reload backends (patch vs hxmc snapshot).
 2. **`@:coreApi` and ESM std shadows** — override rules when `esm.hot` touches std.
 3. **Ecosystem** — `haxe-react`, tink, hxnodejs under **`-D js` + `-D esm`**; audit CommonJS-oriented `@:jsRequire` externs.
 4. **Policy `migrate("…")`** — tier-2 class/enum handlers: full migration vs full-reload fallback still evolving in harnesses.
-5. **Call-site ordinal walk** — freeze the exact pre-order in a spec comment (all keyed calls in unit vs per-callee counter); diagnostics use `pos`, not primary key.
-6. **Visible `?__hotId` ABI** — reference only for prebuilt keyed libs compiled without hot (v1: monolithic hot compile).
-7. **Line / position + session remap** for call-site ids — reference only, not v1.
+5. **Call-site ordinal walk** — frozen in [`HotIds.hx`](../hxmc/src/hxmc/esm/HotIds.hx) and [esm.md](../esm.md); diagnostics use `pos`, not primary key.
+6. **Cross-type keyed heuristics** — keyed callee detection today is same-type callers only; whole-program calls are an open improvement.
+7. **Line / position + session remap** for call-site ids — reference only, not planned for near term.
 
 ### Decisions (stable for future work)
 

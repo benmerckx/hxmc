@@ -177,7 +177,7 @@ lanes in order with a Tiers-style summary.
 | `unit` | `EsmSuites` | upstream unit with **`-D esm`**; `hxmc/test/esm/exclusions.txt` |
 | `body-swap` | `EsmHotBodySwapCheck` | in-process `applyHotPatch` body swap |
 | `watch-patch` | `EsmHotWatchPatchCheck` | file watch → rebuild → WebSocket patch |
-| `cells` | `EsmHotCellsCheck` | `@:esm.hot.cell` / scope, closures, keyed ordinals |
+| `cells` | `EsmHotCellsCheck` | implicit swappable bodies, `@:esm.hot.cell`, closures, keyed ordinals |
 | `cells-markup` | `EsmHotCellsMarkupCheck` | keyed cells lower when entry uses markup / `@:build` |
 | `layout` | `EsmHotLayoutCheck` | class / enum layout hashes and migration |
 | `heap` | `EsmHotHeapCheck` | heap serializer, transactional apply / rollback |
