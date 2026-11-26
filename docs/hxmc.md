@@ -1888,12 +1888,14 @@ its unwind codes name), the epilogue's `ldp x29, x30` is followed by
 `autiasp` (`autibsp`): hint instructions, no-ops on cores before Armv8.3,
 so one binary runs everywhere. The unwind tables describe it
 (`DW_CFA_AARCH64_negate_ra_state`, Windows' `pac_sign_lr`) and
-`Stacks.retOf` drops the signature from a frame record's return address
-(the bits above 48). On by default for arm64 on Linux, Android and
-Windows; not on Apple's platforms, which run arm64 processes with the
-keys off (only arm64e signs); `-D hxmc.pac=0` turns it off. The C
-libraries the runtime links (mbedtls, libuv) are built with
-`-mbranch-protection=pac-ret` (`hxmc/deps/deps.sh`).
+`Mem.strip` drops the signature from a frame record's return address
+(`Stacks.retOf`: `xpaclri` in the stub `hxmc_strip`, as the signature
+starts at the address space's size, 39 bits on most Android kernels).
+On by default for arm64 on Linux, Android and Windows; not on Apple's
+platforms, which run arm64 processes with the keys off (only arm64e
+signs); `-D hxmc.pac=0` turns it off. The C libraries the runtime links
+(mbedtls, libuv) are built with `-mbranch-protection=pac-ret`
+(`hxmc/deps/deps.sh`).
 
 **Source lines** flow from the typed AST: `SPos` statements
 (`FnLower.stmt`), `MIns.pos` (an inlined copy takes its call's position),

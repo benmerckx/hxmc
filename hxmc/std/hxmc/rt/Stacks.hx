@@ -140,10 +140,9 @@ class Stacks {
 	}
 
 	// the return address in frame record f, without the signature of a
-	// function that signs it (arm64 pointer authentication, hxmc's Abi.pac:
-	// in the bits above a code address's 48)
+	// function that signs it (arm64 pointer authentication, hxmc's Abi.pac)
 	@:hxmc.unsafe static inline function retOf(f:Ptr):Ptr
-		return Ptr.ofI64(Mem.getI64(f, 8) & (((1 : I64) << 48) - 1));
+		return Mem.strip(Mem.getPtr(f, 8));
 
 	// the frame record of the caller of record f's function (ret: f's return
 	// address, into the caller): the rbp f's function saved, the caller's
