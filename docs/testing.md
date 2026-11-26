@@ -182,6 +182,7 @@ lanes in order with a Tiers-style summary.
 | `heap` | `EsmHotHeapCheck` | heap serializer, transactional apply / rollback |
 | `dual-flavor` | `EsmHotDualCheck` | **`-D esm`** and **`-D esm.hot`** compile and run |
 | `std-globals` | `EsmHotStdGlobalsCheck` | cross-module std static inits via `$h` |
+| `std-registry` | `EsmHotStdRegistryCheck` | cross-module `Std.string` (shek-dom shape); entry imports `Std` |
 | `static-fn` | `EsmHotStaticFnCheck` | static methods not hot-wrapped as closures |
 | `class-static` | `EsmHotClassStaticVarCheck` | class static vars before `publishClass` |
 | `shallow-capture` | `EsmHotShallowCapCheck` | shallow outer `var` locals stay lexical |

@@ -21,6 +21,7 @@ class Esm {
 		{id: "heap", name: "hot heap serializer", harness: "EsmHotHeapCheck"},
 		{id: "dual-flavor", name: "hot dual compile", harness: "EsmHotDualCheck"},
 		{id: "std-globals", name: "hot std static inits", harness: "EsmHotStdGlobalsCheck"},
+		{id: "std-registry", name: "hot registry Std imports", harness: "EsmHotStdRegistryCheck"},
 		{id: "static-fn", name: "hot static method emit", harness: "EsmHotStaticFnCheck"},
 		{id: "class-static", name: "hot class static vars", harness: "EsmHotClassStaticVarCheck"},
 		{id: "shallow-capture", name: "hot shallow capture", harness: "EsmHotShallowCapCheck"},

@@ -13,13 +13,17 @@ class GenesmLinks {
 	public final homeId:String;
 	public final stdModule:Map<String, Bool>;
 	final collapsed:Map<String, String>;
+	final emittedModules:Map<String, Bool>;
 	final seen = new Map<String, Bool>();
 	final importLines:Array<String> = [];
+	public final importModules:Array<String> = [];
 
-	public function new(home:GlobalTypePath, stdModule:Map<String, Bool>, ?collapsedModules:Map<String, String>) {
+	public function new(home:GlobalTypePath, stdModule:Map<String, Bool>, ?collapsedModules:Map<String, String>,
+			?emittedModules:Map<String, Bool>) {
 		homeId = Globals.sTypePath(home);
 		this.stdModule = stdModule;
 		collapsed = collapsedModules ?? new Map();
+		this.emittedModules = emittedModules ?? new Map();
 	}
 
 	function resolveModuleId(id:String):String {
@@ -95,6 +99,8 @@ class GenesmLinks {
 		if (isExternRef(t)) return "$global." + ref;
 		var owner = resolveModuleId(Globals.sTypePath(Genesm.typeModule(t).mPath));
 		if (owner == homeId) return ref;
+		// Top-level std (Std, String, …): side-effect import so registry inits before use.
+		if (owner != homeId && owner.indexOf(".") < 0 && isBuiltInRootName(owner) && stdModule.exists(owner)) ensureRegistryImport(owner);
 		return Genesm.reg() + "." + ref;
 	}
 
@@ -121,12 +127,14 @@ class GenesmLinks {
 		case _: true;
 	};
 
-	public function ensureImport(ownerId:String):Void {
+	function ensureRegistryImport(ownerId:String):Void {
 		var resolved = resolveModuleId(ownerId);
 		if (resolved == null || resolved == "" || resolved == homeId || seen.exists(resolved)) return;
+		if (!emittedModules.exists(resolved) || !stdModule.exists(resolved)) return;
 		seen.set(resolved, true);
+		importModules.push(resolved);
 		var rel = Genesm.relativeModuleImport(homeId, resolved);
-		importLines.push('import * as ' + modAlias(resolved) + ' from "' + rel + '";\n');
+		importLines.push('import "' + rel + '";\n');
 	}
 
 	public function importPreamble():String {

@@ -40,10 +40,11 @@ class Genesm {
 		var symOwner = new Map<String, String>();
 		var modDeps = new Map<String, Array<String>>();
 		var emittedGroups:Array<{module:GlobalTypePath, types:Array<ModuleType>}> = [];
+		var emittedModules = buildEmittedModules(com, esVersion, groups);
 		var regCtx = allocCtx(com, esVersion);
 		for (g in groups) registerModuleSymbols(symOwner, regCtx, g.types, Globals.sTypePath(g.module));
 		for (g in groups) {
-			var links = new GenesmLinks(g.module, stdModule, collapsedModules);
+			var links = new GenesmLinks(g.module, stdModule, collapsedModules, emittedModules);
 			var modCtx = allocCtx(com, esVersion);
 			modCtx.typeAccessor = t -> links.typeAccessor(modCtx, t);
 			modulePreamble(modCtx, com, g.types);
@@ -65,11 +66,11 @@ class Genesm {
 			var body = modCtx.buf.contents();
 			var mid = Globals.sTypePath(g.module);
 			moduleExports.set(mid, GenesmLinks.exportsFromBody(body));
-			modDeps.set(mid, moduleGlobalDeps(body, symOwner, mid));
+			modDeps.set(mid, mergeModuleDeps(moduleGlobalDeps(body, symOwner, mid), links.importModules, mid));
 			emittedGroups.push(g);
 			writeModule(modDir, g.module, runtimeRel(g.module, runtimeName), g.types, body, modCtx, links);
 		}
-		writeEntry(com, emittedGroups, stdModule, moduleExports, "./" + runtimeName, modDeps, collapsedModules);
+		writeEntry(com, emittedGroups, stdModule, moduleExports, "./" + runtimeName, modDeps, collapsedModules, emittedModules);
 	}
 
 	static function moduleGroups(com:Gctx):{groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, collapsed:Map<String, String>} {
@@ -546,20 +547,46 @@ class Genesm {
 		}
 	}
 
+	static function buildEmittedModules(com:Gctx, esVersion:Int,
+			groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>):Map<String, Bool> {
+		var m = new Map<String, Bool>();
+		for (g in groups) {
+			var modCtx = allocCtx(com, esVersion);
+			modulePreamble(modCtx, com, g.types);
+			if (moduleGeneratesCode(modCtx, g.types)) m.set(Globals.sTypePath(g.module), true);
+		}
+		return m;
+	}
+
+	static function registryDepRegexes():Array<EReg> {
+		if (hotRegistry) return [~/\$h\.([A-Za-z_$][\w$]*)/, ~/\$global\.([A-Za-z_$][\w$]*)/];
+		return [~/\$global\.([A-Za-z_$][\w$]*)/];
+	}
+
+	static function mergeModuleDeps(fromBody:Array<String>, fromImports:Array<String>, homeId:String):Array<String> {
+		var dep = new Map<String, Bool>();
+		for (d in fromBody)
+			if (d != homeId) dep.set(d, true);
+		for (d in fromImports)
+			if (d != homeId) dep.set(d, true);
+		return [for (k in dep.keys()) k];
+	}
+
 	static function moduleGlobalDeps(body:String, symOwner:Map<String, String>, homeId:String):Array<String> {
 		var dep = new Map<String, Bool>();
-		var re = hotRegistry ? ~/\$h\.([A-Za-z_$][\w$]*)/ : ~/\$global\.([A-Za-z_$][\w$]*)/;
 		for (line in body.split("\n")) {
 			var t = line;
-			var pos = 0;
-			while (pos < t.length) {
-				var sub = t.substr(pos);
-				if (!re.match(sub)) break;
-				var sym = re.matched(1);
-				var owner = symOwner.get(sym);
-				if (owner != null && owner != homeId) dep.set(owner, true);
-				var mp = re.matchedPos();
-				pos += mp.pos + mp.len;
+			for (re in registryDepRegexes()) {
+				var pos = 0;
+				while (pos < t.length) {
+					var sub = t.substr(pos);
+					if (!re.match(sub)) break;
+					var sym = re.matched(1);
+					var owner = symOwner.get(sym);
+					if (owner != null && owner != homeId) dep.set(owner, true);
+					var mp = re.matchedPos();
+					pos += mp.pos + mp.len;
+				}
 			}
 		}
 		return [for (k in dep.keys()) k];
@@ -638,7 +665,7 @@ class Genesm {
 
 	static function writeEntry(com:Gctx, groups:Array<{module:GlobalTypePath, types:Array<ModuleType>}>, stdModule:Map<String, Bool>,
 			moduleExports:Map<String, Array<String>>, runtimeRel:String, modDeps:Map<String, Array<String>>,
-			collapsedModules:Map<String, String>):Void {
+			collapsedModules:Map<String, String>, emittedModules:Map<String, Bool>):Void {
 		var buf = new StringBuf();
 		buf.add("import * as $hx from \"" + runtimeRel + "\";\n");
 		if (com.includeFiles.length > 0) buf.add("import \"./__hx_includes.mjs\";\n");
@@ -650,7 +677,7 @@ class Genesm {
 			case null:
 			case e:
 				var mp:GlobalTypePath = com.main.mainPath != null ? com.main.mainPath : new GlobalTypePath([], "Main");
-				var links = new GenesmLinks(mp, stdModule, collapsedModules);
+				var links = new GenesmLinks(mp, stdModule, collapsedModules, emittedModules);
 				var entryCtx = allocCtx(com, generators.Gctx.getEsVersion(com.defines));
 				entryCtx.typeAccessor = t -> {
 					var ref = GenesmLinks.jsRef(entryCtx, t);
