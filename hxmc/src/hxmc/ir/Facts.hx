@@ -138,21 +138,33 @@ class Facts {
 		// (to a fixed point: the summaries only grow, and they are 32 bits)
 		for (f in p.funcs)
 			f.writes = own.get(f);
-		var changed = true;
-		while (changed) {
-			changed = false;
-			for (f in p.funcs) {
-				var w = f.writes;
-				if (w == hxmc.Effects.UNKNOWN) continue;
-				for (g in callees.get(f)) {
-					w |= g.writes;
-					if (w == hxmc.Effects.UNKNOWN) break;
-				}
-				if (w != f.writes) {
-					f.writes = w;
-					changed = true;
-				}
+		// (a worklist: a function whose summary grew, its callers again)
+		var callers = new Map<FuncInfo, Array<FuncInfo>>();
+		for (f => cs in callees)
+			for (g in cs) {
+				var l = callers.get(g);
+				if (l == null) callers.set(g, l = []);
+				l.push(f);
 			}
+		var work = p.funcs.copy(), queued = [for (f in p.funcs) f => true];
+		while (work.length > 0) {
+			var f = work.pop();
+			queued.remove(f);
+			var w = f.writes;
+			if (w == hxmc.Effects.UNKNOWN) continue;
+			for (g in callees.get(f)) {
+				w |= g.writes;
+				if (w == hxmc.Effects.UNKNOWN) break;
+			}
+			if (w == f.writes) continue;
+			f.writes = w;
+			var cs = callers.get(f);
+			if (cs != null)
+				for (c in cs)
+					if (!queued.exists(c)) {
+						queued.set(c, true);
+						work.push(c);
+					}
 		}
 	}
 
@@ -207,17 +219,35 @@ class Facts {
 			f.retains = f.hostCode || f.args.length > 30 ? -1 : 0;
 			if (f.retains == 0 && f.args.length > 0) todo.push(f);
 		}
-		var changed = true;
-		while (changed) {
-			changed = false;
-			for (f in todo) {
-				var r = fates(f);
-				if (r != f.retains) {
-					f.retains = r;
-					changed = true;
-				}
-			}
+		// (a worklist: a function retaining more, its callers again; fates
+		// records who calls whom on its first walk)
+		fateCallers = new Map();
+		selCallers = new Map();
+		var work = todo.copy(), queued = [for (f in todo) f => true];
+		while (work.length > 0) {
+			var f = work.shift();
+			queued.remove(f);
+			var r = fates(f);
+			if (r == f.retains) continue;
+			f.retains = r;
+			var cs = fateCallers.get(f);
+			if (f.dispatchSel >= 0 && selCallers.exists(f.dispatchSel)) cs = (cs == null ? [] : cs).concat(selCallers.get(f.dispatchSel));
+			if (cs != null)
+				for (c in cs)
+					if (!queued.exists(c) && c.retains != -1) {
+						queued.set(c, true);
+						work.push(c);
+					}
 		}
+	}
+
+	var fateCallers:Map<FuncInfo, Array<FuncInfo>> = new Map();
+	var selCallers:Map<Int, Array<FuncInfo>> = new Map();
+
+	function calls(m:Map<FuncInfo, Array<FuncInfo>>, g:FuncInfo, f:FuncInfo) {
+		var l = m.get(g);
+		if (l == null) m.set(g, l = []);
+		if (l.indexOf(f) < 0) l.push(f);
 	}
 
 	// the parameters f retains, as its callees' fates say now
@@ -251,9 +281,13 @@ class Facts {
 					use(a, false);
 					use(b, false);
 				case ECall(g, args):
+					calls(fateCallers, g, f);
 					for (k in 0...args.length)
 						use(args[k], k > 30 || g.retains & (1 << k) != 0);
 				case ECallDispatch(sel, _, args):
+					var l = selCallers.get(sel);
+					if (l == null) selCallers.set(sel, l = []);
+					if (l.indexOf(f) < 0) l.push(f);
 					var r = dispatchRetains(sel);
 					for (k in 0...args.length)
 						use(args[k], k > 30 || r & (1 << k) != 0);
