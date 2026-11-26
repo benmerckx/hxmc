@@ -1043,9 +1043,16 @@ class Lower {
 		}
 		// (TypeScript: as the function takes them; a generic enum's constructor as a function, of which TypeScript infers
 		// none of the type arguments from the other's)
+		// (an abstract's method: its `this` the abstract, as Chunk.abstractThis declares it)
+		var self = switch callee.eexpr {
+			case TField(_, FStatic({clKind: KAbstractImpl(a)}, cf)) if (ts && hasClassFieldFlag(cf, CfImpl) && !hasClassFieldFlag(cf, CfAbstractConstructor)
+				&& Casts.branded(a)):
+				TAbstract(a, Vector.fromArrayCopy([for (_ in a.aParams) tDynamic]));
+			case _: null;
+		}
 		var out = [for (i in 0...args.length) {
 			var v = expr(args[i]);
-			if (!ts) v else if (genericCtor(args[i])) any(v) else if (sig != null && i < sig.args.length && !ExtType.isRest(follow(sig.args[i].type)))
+			if (!ts) v else if (i == 0 && self != null) as(v, args[i].etype, self) else if (genericCtor(args[i])) any(v) else if (sig != null && i < sig.args.length && !ExtType.isRest(follow(sig.args[i].type)))
 				as(v, args[i].etype, sig.args[i].type) else v;
 		}];
 		var target = switch callee.eexpr {
@@ -1138,7 +1145,14 @@ class Lower {
 	function native(e:TExpr):Ex return ts && Casts.opaque(e.etype) ? any(expr(e)) : expr(e);
 
 	// x, where Haxe has it as a `from` and a `to` is expected
-	function as(x:Ex, from:T, to:T):Ex return ts && (Casts.need(from, to) || extraLiteral(x, to) || (x.def.match(EObject(_) | EArray(_)) && Casts.literalCast(to))) ? any(x) : x;
+	function as(x:Ex, from:T, to:T):Ex return ts && (Casts.need(from, to) || extraLiteral(x, to) || (literal(x) && Casts.literalCast(to))) ? any(x) : x;
+
+	// (TypeScript) a value whose type is TypeScript's own, whatever Haxe's: an object, an array, a number computed
+	static function literal(x:Ex):Bool return switch x.def {
+		case EObject(_) | EArray(_) | ENum(_) | EStr(_): true;
+		case EBinary("-" | "*" | "/" | "%" | "<<" | ">>" | ">>>" | "&" | "|" | "^", _, _) | EUnary("-" | "~", _): true;
+		case _: false;
+	}
 
 	// (an array of `Any` or `Dynamic`, which TypeScript infers as `unknown[]` from what its lib declares generic)
 	static function mentionsAny(t:T):Bool return switch follow(t) {

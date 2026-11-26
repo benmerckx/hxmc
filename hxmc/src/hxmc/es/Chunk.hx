@@ -1104,6 +1104,21 @@ class Chunk {
 		return l;
 	}
 
+	// (TypeScript) an abstract's method: its `this` taken as the abstract, as its callers have it, its code's the underlying
+	// type, as Haxe has it (`m(self: A) { let this1: V = (self as any); ... }`)
+	static function abstractThis(c:TClass, f:TClassField, l:Fn) {
+		var a = switch c.clKind {
+			case KAbstractImpl(a): a;
+			case _: return;
+		}
+		if (!hasClassFieldFlag(f, CfImpl) || hasClassFieldFlag(f, CfAbstractConstructor) || l.params.length == 0 || !Casts.branded(a)) return;
+		var p0 = l.params[0];
+		var self = new Sym(SLocal, p0.hint + "$");
+		self.type = TAbstract(a, haxe.ds.Vector.fromArrayCopy([for (p in a.aParams) p.ttpType]));
+		l.params[0] = self;
+		l.body.unshift(st(SVar(VLet, [{name: p0, init: ex(EAs(ex(EId(self))))}])));
+	}
+
 	// (TypeScript) a function of any arguments, returning anything: one of several signatures, a constructor in two
 	// steps (filters.ES6Ctors: `_hx_constructor` and the constructor that calls it, which a subclass calls without its
 	// arguments)
@@ -1162,7 +1177,9 @@ class Chunk {
 		for (f in c.clStatics) switch [f.cfKind, f.cfExpr] {
 			case [Method(_), e = {eexpr: TFunction(fn)}]:
 				lower.prepare(e);
-				member(prot(f, MMethod(fieldKey(f.cfName, sns(c)), methodFn(lower, f, fn, e), true, MkMethod)), f);
+				var l = methodFn(lower, f, fn, e);
+				if (tsOut) abstractThis(c, f, l);
+				member(prot(f, MMethod(fieldKey(f.cfName, sns(c)), l, true, MkMethod)), f);
 			// (Type.getClassFields: a variable without a value is a field too)
 			case [Var(_), null] if (u.feature("Type.getClassFields") && isPhysicalField(f)):
 				item.statics.push(f);
@@ -2135,7 +2152,8 @@ class Chunk {
 			ts.scope = scope;
 			var v = ts.type(a.aThis);
 			var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
-			var tag = "{ readonly [$brand]: " + Printer.quote(dot(a.aPath)) + " }";
+			// (the brand: of the abstract's path, and of its underlying type, which tells `A<Int>` from `A<String>`)
+			var tag = "{ readonly [$brand]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
 			var parts = values != null ? values : [if (to && from) v else if (to) (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v) + " & " + tag else tag];
 			if (values == null && !(to && from)) branded = true;
 			if (from && (values != null || !to)) parts.push(v);

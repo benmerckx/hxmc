@@ -28,7 +28,8 @@ class JsGenCheck {
 	static function build(main:String, dir:String, extra:Array<String>):{ok:Bool, out:String} {
 		rmrf(dir);
 		FileSystem.createDirectory(dir);
-		var js = dir + "/main.js";
+		// (-D hxmc.check.ts: TypeScript's output, `main.ts`, which node runs)
+		var js = dir + (extra.contains("hxmc.check.ts") ? "/main.ts" : "/main.js");
 		var c = exec([haxe, "-cp", CASES, "-cp", "hxmc/portable", "-main", main, "--js", js].concat(extra), {merge: true});
 		if (c.code != 0) return {ok: false, out: c.out};
 		// (ES modules for node: hxmc.js=es-modules)
@@ -95,11 +96,14 @@ class JsGenCheck {
 				{tag: "es-wrapped", args: ["-D", "hxmc.js=es", "-D", "hxmc.check.wrapped"]},
 				{tag: "es-modules", args: ["-D", "hxmc.js=es-modules"]}, {tag: "es-modules-debug", args: ["-D", "hxmc.js=es-modules", "--debug"]},
 				{tag: "es-full", args: ["-D", "hxmc.js=es", "--dce", "full"]}, {tag: "es-modules-full", args: ["-D", "hxmc.js=es-modules", "--dce", "full"]},
-				{tag: "es-dts", args: ["-D", "hxmc.js=es", "-D", "dts"]}
+				{tag: "es-dts", args: ["-D", "hxmc.js=es", "-D", "dts"]},
+				{tag: "es-modules-ts", args: ["-D", "hxmc.js=es-modules", "-D", "hxmc.check.ts"]}
 			]) {
 				if (v.tag == "es-wrapped" && !wrappable) continue;
 				// (-D dts: where the case says what its declarations have)
 				if (v.tag == "es-dts" && src.indexOf("// dts has: ") < 0) continue;
+				// (TypeScript: where the case says what TypeScript checks of it)
+				if (v.tag == "es-modules-ts" && src.indexOf("// ts: ") < 0) continue;
 				var dir = '$OUT/$name/${v.tag}';
 				var r = build(name, dir, v.args);
 				check('$name: ${v.tag} runs', r.ok, r.out);
@@ -109,6 +113,27 @@ class JsGenCheck {
 				// (es-modules: a split imports the modules it needs, no file of its own)
 				var want = v.tag.startsWith("es-modules") ? 0 : splitsIn(src + caseModules(name));
 				check('$name: ${v.tag} has ${want} split files', files.length == want, files.join(" "));
+				// (TypeScript's output: tsc on it and on `check.ts`, the case's `// ts: <line>`s, which `// @ts-expect-error` lines
+				// say what it rejects)
+				if (v.tag == "es-modules-ts") {
+					var lines = [], re = ~/^\/\/ ts: (.*)$/gm, pos = 0;
+					while (re.matchSub(src, pos)) {
+						lines.push(re.matched(1));
+						var m = re.matchedPos();
+						pos = m.pos + m.len;
+					}
+					File.saveContent(dir + "/check.ts", lines.join("\n") + "\n");
+					// (as the upstream suites': strict but for null checks)
+					File.saveContent(dir + "/tsconfig.json", '{"compilerOptions": {"target": "es2022", "module": "nodenext", "moduleResolution": "nodenext", "strict": true, '
+						+ '"strictNullChecks": false, "noEmit": true, "allowImportingTsExtensions": true, "erasableSyntaxOnly": true, "skipLibCheck": true, '
+						+ '"lib": ["es2022", "dom"], "types": []}}');
+					var tsc = Sys.getEnv("HXMC_TSC");
+					if (tsc == null && FileSystem.exists(TSC)) tsc = FileSystem.fullPath(TSC);
+					if (tsc != null) {
+						var t = exec([tsc, "-p", dir], {merge: true});
+						check('$name: ${v.tag} checks with tsc', t.code == 0, t.out);
+					}
+				}
 				// (-D dts: what the case says the declarations have, or lack; TypeScript reads them, with tsc: HXMC_TSC, else the
 				// upstream suites')
 				if (v.tag == "es-dts") {
