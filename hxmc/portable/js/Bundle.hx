@@ -9,7 +9,7 @@ package js;
 // microtask later, as the loaded file would.
 // With -D hxmc.js=es-modules a split is no file: its call imports the modules its
 // initializer needs (`import()`, of their paths, which a bundler follows), and `base` and
-// `importModule` are not used: what loads the modules loads these (docs/plans/esgen.md).
+// `importModule` are not used: what loads the modules loads these (docs/js.md, Modules).
 class Bundle {
 	static final p:js.lib.Promise<Int> = js.lib.Promise.resolve(42);
 

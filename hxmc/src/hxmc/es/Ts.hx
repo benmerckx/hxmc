@@ -94,7 +94,7 @@ class Ts implements Types {
 		return fam != null && !fam.keeps(fam.isGetter(f));
 	}
 
-	// (docs/plans/esgen-enums.md) A constructor's interface has the enum's type parameters and those of its own the
+	// (docs/js.md, Enums) A constructor's interface has the enum's type parameters and those of its own the
 	// result doesn't fix (`If<T>(…):Expr<T>`: the enum's `T`). A result of other arguments (a GADT's
 	// `IntLit(i:Int):Expr<Int>`) is in the union where the enum's arguments match it.
 	public function enumTypes(en:TEnum, name:String, index:String, indent:String, exported:Bool):{decl:String, after:String} {
