@@ -528,6 +528,9 @@ lets a `Null<T>` be a `T` without a check):
   { Low: 0, ... }`, in JavaScript too). A `switch` on a branded value is on it
   as `any`, which its cases compare with. Not the std's core types, a
   multi-type's (`Map`), an extern's, one over `Dynamic`, `haxe.Rest`. Its
+  constructor is `A.new(...)` (es-modules; the typer's `_hx_new` in the bundle), a
+  generic abstract's functions of its type parameters (`first<T>(this1$: Pair<T>):
+  T`), which calls pass as Haxe has them. Its
   methods take their `this` as the abstract (`next(this1$: Id)`), their code
   the underlying value (`let this1: number = (this1$ as any)`). Where Haxe
   converts without a cast (in the abstract's own code above all), the value is

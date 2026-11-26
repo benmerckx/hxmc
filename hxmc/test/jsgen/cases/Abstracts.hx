@@ -50,12 +50,14 @@
 // ts: const pf: string = Pair.first(p);
 // ts: // @ts-expect-error
 // ts: const pn: number = Pair.first(p);
-// ts: const pp: Pair<number> = Pair._hx_new(1, 2);
+// ts: const pp: Pair<number> = Pair.new(1, 2);
 // ts: export { n, f, c3, t, s, k, i2, i3, i4, red, zero, g, rn, rs, low, l0, hi, ok, okn, q, pf, pn, pp };
 // ts output has: abstracts/Units.ts: Red: 0 as unknown as { readonly [$brand]: { readonly "abstracts.Color": 0 } },
 // ts output has: abstracts/Units.ts: export type Color = { readonly [$brand]: { readonly "abstracts.Color": 0 | 1 | 2 } };
 // ts output has: abstracts/Units.ts: Low: 0 as Level & 0,
 // ts output has: abstracts/Units.ts: export type Code = number;
+// ts output has: abstracts/Units.ts: new<T>(a: T, b: T): Pair<T> {
+// ts output lacks: abstracts/Units.ts: _hx_new
 // ts output lacks: abstracts/Units.ts: Color.Red =
 import abstracts.Units;
 

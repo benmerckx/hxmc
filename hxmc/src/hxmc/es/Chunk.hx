@@ -1208,7 +1208,7 @@ class Chunk {
 				lower.prepare(e);
 				var l = methodFn(lower, f, fn, e);
 				if (tsOut) abstractThis(c, f, l);
-				member(prot(f, MMethod(fieldKey(f.cfName, sns(c)), l, true, MkMethod)), f);
+				member(prot(f, MMethod(fieldKey(Lower.staticName(modules, c, f), sns(c)), l, true, MkMethod)), f);
 			// (Type.getClassFields: a variable without a value is a field too)
 			case [Var(_), null] if (u.feature("Type.getClassFields") && isPhysicalField(f)):
 				item.statics.push(f);

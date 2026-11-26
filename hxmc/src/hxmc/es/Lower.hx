@@ -82,6 +82,8 @@ class Lower {
 	// (TypeScript) whether to cast, the class whose code it is (what it may read of others' protected fields), the
 	// return type of the function lowered
 	final ts:Bool;
+	// (es-modules: an abstract's constructor `A.new`, its implementation the abstract's object: staticName)
+	final modules:Bool;
 	public var cls:Null<TClass> = null;
 	// (TypeScript) the class whose constructor is lowered (`readonly` fields written there as they are), the functions' depth
 	public var ctorOf:Null<TClass> = null;
@@ -92,7 +94,13 @@ class Lower {
 		this.com = com;
 		this.r = r;
 		this.ts = r.ts();
+		this.modules = Gctx.definedValueSafe(com, "hxmc.js") == "es-modules";
 	}
+
+	// a static's name in the output: an abstract's constructor's `new` (es-modules: `A.new(...)`, as Haxe writes `new A(...)`;
+	// the typer's `_hx_new` elsewhere)
+	public static function staticName(modules:Bool, c:TClass, f:TClassField):String
+		return modules && c.clKind.match(KAbstractImpl(_)) && hasClassFieldFlag(f, CfAbstractConstructor) ? "new" : f.cfName;
 
 	// ------------------------------------------------------------------ entry points
 
@@ -826,7 +834,8 @@ class Lower {
 				var o = r.type(TClassDecl(c), p);
 				// (TypeScript: std's extern of a global by another name (`@:native("Error") V8Error`) has what its type does not)
 				if (ts && r.stdExtern(c) && renamed(c)) o = any(o);
-				stored(f, ts && !hasClassFieldFlag(f, CfPublic) && !visible(c, f, null) && !o.def.match(EAs(_)) ? ex(EFriend(o, f.cfName), p) : field(o, f.cfName, NStatic(c), p));
+				var n = staticName(modules, c, f);
+				stored(f, ts && !hasClassFieldFlag(f, CfPublic) && !visible(c, f, null) && !o.def.match(EAs(_)) ? ex(EFriend(o, n), p) : field(o, n, NStatic(c), p));
 			case TField(_, FEnum(en, ef)):
 				enumValue(en, ef, e.etype, p);
 			// (Genjs's field of an enum value's index, which the std reads untyped: haxe.Serializer)
