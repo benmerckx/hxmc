@@ -10,6 +10,16 @@ import hxmc.NativeSys;
 	See `sys.FileSystem` for the complementary file system API.
 **/
 class File {
+	// hxmc: in macro code (-D hxmc.macros=mir), a path relative to the macro's working
+	// directory, and a path written dropped from the compilation server's view of
+	// the files, as Eval's
+	static inline function at(path:String):String
+		return #if macro hxmc.MacroHost.resolve(path) #else path #end;
+
+	static inline function written(path:String):Void {
+		#if macro hxmc.MacroHost.invalidate(path); #end
+	}
+
 	/**
 		Retrieves the content of the file specified by `path` as a String.
 
@@ -42,7 +52,7 @@ class File {
 		If `path` is null, the result is unspecified.
 	**/
 	public static function getBytes(path:String):haxe.io.Bytes {
-		var b = NativeSys.fileContent(path);
+		var b = NativeSys.fileContent(at(path));
 		if (b == null) throw "Could not read file " + path;
 		return b;
 	}
@@ -54,11 +64,14 @@ class File {
 
 		If `path` or `bytes` are null, the result is unspecified.
 	**/
-	public static function saveBytes(path:String, bytes:haxe.io.Bytes):Void
-		if (!NativeSys.fileSave(path, bytes, false)) throw "Could not write file " + path;
+	public static function saveBytes(path:String, bytes:haxe.io.Bytes):Void {
+		if (!NativeSys.fileSave(at(path), bytes, false)) throw "Could not write file " + path;
+		written(at(path));
+	}
 
 	static function open(path:String, mode:Int):Int {
-		var fd = NativeSys.fileOpen(path, mode);
+		if (mode != 0) written(at(path));
+		var fd = NativeSys.fileOpen(at(path), mode);
 		if (fd < 0) throw "Could not open file " + path;
 		return fd;
 	}

@@ -54,6 +54,8 @@ enum DceMode {
 	public var mergeMutex:sys.thread.Mutex;
 	public var fieldMarkerMutex:sys.thread.Mutex;
 	public var usedMutex:sys.thread.Mutex;
+	// port: `unit TypeParameterTbl.t` (by identity)
+	public var markedTypeParams:haxe.ds.ObjectMap<TClass, Bool>;
 	public var featureMutex:sys.thread.Mutex;
 	public var addFeatureManager:core.ds.NowOrLater;
 	// port: `expr dce` as a closure, created once per record (clone() leaves it null).
@@ -69,7 +71,8 @@ enum DceMode {
 		}>,
 			markedFields:{value:Array<TClassField>}, features:haxe.ds.StringMap<Array<ClassFieldRef>>,
 			checkedFeatures:haxe.ds.StringMap<Bool>, mergeMutex:sys.thread.Mutex, fieldMarkerMutex:sys.thread.Mutex,
-			usedMutex:sys.thread.Mutex, featureMutex:sys.thread.Mutex, addFeatureManager:core.ds.NowOrLater) {
+			usedMutex:sys.thread.Mutex, markedTypeParams:haxe.ds.ObjectMap<TClass, Bool>, featureMutex:sys.thread.Mutex,
+			addFeatureManager:core.ds.NowOrLater) {
 		this.scom = scom;
 		this.mscom = mscom;
 		this.full = full;
@@ -84,12 +87,13 @@ enum DceMode {
 		this.mergeMutex = mergeMutex;
 		this.fieldMarkerMutex = fieldMarkerMutex;
 		this.usedMutex = usedMutex;
+		this.markedTypeParams = markedTypeParams;
 		this.featureMutex = featureMutex;
 		this.addFeatureManager = addFeatureManager;
 	}
 
 	public inline function clone():DceData return new DceData(scom, mscom, full, isStdFile, debug, followExpr, curclass, addedFields,
-		markedFields, features, checkedFeatures, mergeMutex, fieldMarkerMutex, usedMutex, featureMutex, addFeatureManager);
+		markedFields, features, checkedFeatures, mergeMutex, fieldMarkerMutex, usedMutex, markedTypeParams, featureMutex, addFeatureManager);
 }
 
 class Dce {
@@ -316,10 +320,11 @@ class Dce {
 		stack.push(t);
 		switch follow(t) {
 			case TInst(c = {clKind: KTypeParameter(ttp)}, pl):
-				if (!hasClassFlag(c, CUsed)) {
-					addClassFlag(c, CUsed);
-					for (t in getConstraints(ttp)) markTLoop(dce, p, stack, base, t);
-				}
+				dce.usedMutex.acquire();
+				var first = !dce.markedTypeParams.exists(c);
+				if (first) dce.markedTypeParams.set(c, true);
+				dce.usedMutex.release();
+				if (first) for (t in getConstraints(ttp)) markTLoop(dce, p, stack, base, t);
 				for (t in pl) markTLoop(dce, p, stack, base, t);
 			case TInst(c, pl):
 				markClass(dce, c);
@@ -987,6 +992,7 @@ class Dce {
 			mergeMutex: new sys.thread.Mutex(),
 			fieldMarkerMutex: new sys.thread.Mutex(),
 			usedMutex: new sys.thread.Mutex(),
+			markedTypeParams: new haxe.ds.ObjectMap(),
 			featureMutex: new sys.thread.Mutex(),
 			addFeatureManager: new core.ds.NowOrLater()
 		};

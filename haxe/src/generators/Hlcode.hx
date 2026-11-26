@@ -82,6 +82,20 @@ class StrPMap<V> {
 	public inline function exists(k:String):Bool return m.exists(k);
 
 	public inline function set(k:String, v:V):Void m.set(k, v);
+
+	// port: `PMap.map f m`
+	public function map<W>(f:V->W):StrPMap<W> {
+		var r = new StrPMap<W>();
+		for (k => v in m) r.set(k, f(v));
+		return r;
+	}
+
+	// port: the keys in PMap order (OCaml's string order)
+	public function sortedKeys():Array<String> {
+		var a = [for (k in m.keys()) k];
+		a.sort(core.ds.Key.compareStrings);
+		return a;
+	}
 }
 
 class ClassProto {
@@ -145,10 +159,15 @@ class FieldProto {
 }
 
 class VirtualProto {
+	static final virtualUid = new haxe.atomic.AtomicInt(0);
+
+	public final vid:Int; /* unique, so that comparing two distinct virtuals never recurses into their fields */
 	public var vfields:Vector<HField>;
 	public var vindex:StrPMap<Int>;
 
+	// port: `mk_virtual ()`
 	public function new() {
+		vid = virtualUid.add(1);
 		vfields = vector();
 		vindex = new StrPMap();
 	}
@@ -372,6 +391,9 @@ class Code {
 class Hlcode {
 	public static final nullProto:ClassProto = new ClassProto("", 0);
 
+	/* the initial value of the debug arrays */
+	public static final nullDebug:DebugInfo = {file: 0, line: 0, pos: core.Globals.nullPos};
+
 	public static inline function listIteri<T>(f:Int->T->Void, l:Array<T>):Void
 		for (i in 0...l.length) f(i, l[i]);
 
@@ -460,34 +482,50 @@ class Hlcode {
 		}
 	}
 
-	public static function tsame(t1:Ttype, t2:Ttype):Bool {
+	// port: `seen`: the pairs of virtuals being compared, (v1, v2) at 2k, 2k + 1
+	static function tsameRec(seen:Array<VirtualProto>, t1:Ttype, t2:Ttype):Bool {
 		if (t1 == t2) return true;
+		function same(a:Ttype, b:Ttype) return tsameRec(seen, a, b);
 		return switch [t1, t2] {
-			case [HFun(args1, ret1), HFun(args2, ret2)] if (args1.length == args2.length): forAll2(tsame, args1, args2) && tsame(ret2, ret1);
-			case [HMethod(args1, ret1), HMethod(args2, ret2)] if (args1.length == args2.length): forAll2(tsame, args1, args2) && tsame(ret2, ret1);
+			case [HFun(args1, ret1), HFun(args2, ret2)] if (args1.length == args2.length): forAll2(same, args1, args2) && same(ret2, ret1);
+			case [HMethod(args1, ret1), HMethod(args2, ret2)] if (args1.length == args2.length): forAll2(same, args1, args2) && same(ret2, ret1);
 			case [HObj(p1), HObj(p2)]: p1 == p2;
 			case [HEnum(e1), HEnum(e2)]: e1 == e2;
 			case [HStruct(p1), HStruct(p2)]: p1 == p2;
 			case [HAbstract(_, a1), HAbstract(_, a2)]: a1 == a2;
 			case [HVirtual(v1), HVirtual(v2)]:
 				if (v1 == v2) true else if (v1.vfields.length != v2.vfields.length) false else {
-					var i = 0;
-					var ok = true;
-					while (i < v1.vfields.length) {
-						var f1 = v1.vfields[i];
-						var f2 = v2.vfields[i];
-						if (f1.nid == f2.nid && tsame(f1.t, f2.t)) i++ else {
-							ok = false;
+					var known = false;
+					var k = 0;
+					while (k < seen.length) {
+						if (seen[k] == v1 && seen[k + 1] == v2) {
+							known = true;
 							break;
 						}
+						k += 2;
 					}
-					ok;
+					if (known) true else {
+						var seen = seen.concat([v1, v2]);
+						var i = 0;
+						var ok = true;
+						while (i < v1.vfields.length) {
+							var f1 = v1.vfields[i];
+							var f2 = v2.vfields[i];
+							if (f1.nid == f2.nid && tsameRec(seen, f1.t, f2.t)) i++ else {
+								ok = false;
+								break;
+							}
+						}
+						ok;
+					}
 				}
-			case [HNull(t1), HNull(t2)]: tsame(t1, t2);
-			case [HRef(t1), HRef(t2)]: tsame(t1, t2);
+			case [HNull(t1), HNull(t2)]: same(t1, t2);
+			case [HRef(t1), HRef(t2)]: same(t1, t2);
 			case _: false;
 		}
 	}
+
+	public static function tsame(t1:Ttype, t2:Ttype):Bool return tsameRec([], t1, t2);
 
 	public static function compatibleElementTypes(t1:Ttype, t2:Ttype):Bool {
 		if (t1 == t2) return true; /* equal types are always compatible */
@@ -641,6 +679,51 @@ class Hlcode {
 		var v = types.get(t);
 		if (v == null) return core.Globals.die("", "hlcode.ml");
 		return v;
+	}
+
+	/* The types by their shape: the same constructors, with the same class,
+		virtual and enum records (physically). Two types of the same shape are the
+		same type of the output. */
+	public static function sameShape(a:Ttype, b:Ttype):Bool {
+		if (a == b) return true;
+		return switch [a, b] {
+			case [HFun(args1, r1), HFun(args2, r2)] | [HMethod(args1, r1), HMethod(args2, r2)]:
+				// port: List.for_all2 raising Invalid_argument at the end of the shorter list
+				var n = args1.length < args2.length ? args1.length : args2.length;
+				var ok = true;
+				for (i in 0...n) if (!sameShape(args1[i], args2[i])) {
+					ok = false;
+					break;
+				}
+				ok && args1.length == args2.length && sameShape(r1, r2);
+			case [HObj(p1), HObj(p2)] | [HStruct(p1), HStruct(p2)]: p1 == p2;
+			case [HVirtual(v1), HVirtual(v2)]: v1 == v2;
+			case [HEnum(e1), HEnum(e2)]: e1 == e2;
+			case [HArray(t1), HArray(t2)] | [HRef(t1), HRef(t2)] | [HNull(t1), HNull(t2)] | [HPacked(t1), HPacked(t2)]: sameShape(t1, t2);
+			case [HAbstract(n1, s1), HAbstract(n2, s2)]: s1 == s2 && n1 == n2;
+			case _: constIndex(a) >= 0 && constIndex(a) == constIndex(b);
+		}
+	}
+
+	// port: a hash of [same_shape] (the table's order never reaches the output)
+	public static function shapeHash(depth:Int, t:Ttype):Int {
+		inline function mix(h:Int, k:Int):Int return (mul32(h, 65599) + k) | 0;
+		var c = constIndex(t);
+		if (c >= 0) return c;
+		return switch t {
+			case HObj(p): mix(1, p.pid);
+			case HStruct(p): mix(2, p.pid);
+			case _ if (depth == 0): blockTag(t);
+			case HFun(args, ret) | HMethod(args, ret):
+				var h = mix(mix(blockTag(t), args.length), shapeHash(depth - 1, ret));
+				for (i in 0...(args.length < 4 ? args.length : 4)) h = mix(h, shapeHash(depth - 1, args[i]));
+				h;
+			case HArray(t) | HRef(t) | HNull(t) | HPacked(t): mix(blockTag(t) + 20, shapeHash(depth - 1, t));
+			case HAbstract(_, s): mix(9, s);
+			case HVirtual(v): mix(10, v.vid);
+			case HEnum(e): mix(11, e.eid);
+			case _: 0;
+		}
 	}
 
 	/* --------------------------------------------------------------------------------------------------------------------- */
@@ -1085,7 +1168,8 @@ class Hlcode {
 			case [HArray(x), HArray(y)] | [HRef(x), HRef(y)] | [HNull(x), HNull(y)] | [HPacked(x), HPacked(y)]:
 				tCompare(x, y);
 			case [HVirtual(v1), HVirtual(v2)]:
-				v1 == v2 ? 0 : fieldsCmp(v1.vfields, v2.vfields);
+				// port: the records differ by their vid first
+				icmp(v1.vid, v2.vid);
 			case [HAbstract(n1, i1), HAbstract(n2, i2)]:
 				var c = strCompare(n1, n2);
 				c != 0 ? c : icmp(i1, i2);
@@ -1242,14 +1326,8 @@ private class TtypeEq {
 			case [HObj(p1), HObj(p2)] | [HStruct(p1), HStruct(p2)]: protoEq(p1, p2);
 			case [HArray(x), HArray(y)] | [HRef(x), HRef(y)] | [HNull(x), HNull(y)] | [HPacked(x), HPacked(y)]: eq(x, y);
 			case [HVirtual(v1), HVirtual(v2)]:
-				if (v1 == v2) true else if (inStack(v1, v2)) true else {
-					stack.push(v1);
-					stack.push(v2);
-					var r = fieldsEq(v1.vfields, v2.vfields);
-					stack.pop();
-					stack.pop();
-					r;
-				}
+				// port: distinct records differ by their vid
+				v1 == v2;
 			case [HAbstract(n1, i1), HAbstract(n2, i2)]: n1 == n2 && i1 == i2;
 			case [HEnum(e1), HEnum(e2)]:
 				if (e1 == e2) true else if (e1.ename != e2.ename || e1.eid != e2.eid || e1.eglobal != e2.eglobal
@@ -1340,6 +1418,14 @@ class TtypeMap<V> {
 
 	public function exists(t:Ttype):Bool return find(t) != null;
 
+	// port: the bindings in OCaml's `compare` order of their keys (PMap's order)
+	public function sortedEntries():Array<{k:Ttype, v:V}> {
+		var out = [];
+		for (b in buckets) for (e in b) out.push(e);
+		haxe.ds.ArraySort.sort(out, (a, b) -> Hlcode.tCompare(a.k, b.k));
+		return out;
+	}
+
 	public function set(t:Ttype, v:V):Void {
 		var e = find(t);
 		if (e != null) {
@@ -1355,5 +1441,40 @@ class TtypeMap<V> {
 		}
 		b.push({k: t, v: v});
 		keys.push(t);
+	}
+}
+
+// port: `ShapeTbl`, a table keyed by the shape of a type (Hlcode.sameShape)
+class ShapeMap<V> {
+	final buckets:haxe.ds.IntMap<Array<{k:Ttype, v:V}>> = new haxe.ds.IntMap();
+
+	public var length(default, null) = 0;
+
+	public function new() {}
+
+	function find(t:Ttype):Null<{k:Ttype, v:V}> {
+		var b = buckets.get(Hlcode.shapeHash(3, t));
+		if (b == null) return null;
+		for (e in b) if (Hlcode.sameShape(e.k, t)) return e;
+		return null;
+	}
+
+	public function get(t:Ttype):Null<V> {
+		var e = find(t);
+		return e == null ? null : e.v;
+	}
+
+	public function exists(t:Ttype):Bool return find(t) != null;
+
+	// port: `add` (a key added once)
+	public function add(t:Ttype, v:V):Void {
+		var h = Hlcode.shapeHash(3, t);
+		var b = buckets.get(h);
+		if (b == null) {
+			b = [];
+			buckets.set(h, b);
+		}
+		b.push({k: t, v: v});
+		length++;
 	}
 }

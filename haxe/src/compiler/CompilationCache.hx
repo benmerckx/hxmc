@@ -321,6 +321,8 @@ class Cache {
 	var contextList:Array<ContextCache> = [];
 	final haxelib:Hashtbl<HaxelibKey, Array<String>> = new Hashtbl(0);
 	final directories:OcamlHashtbl<String, Array<CachedDirectory>> = CompilationCache.stringTable();
+	// port: keyed by (key, dir) as "key\x00dir" (only looked up)
+	final packageDirectories:Map<String, Float> = new Map();
 	final nativeLibs:Hashtbl<String, CachedNativeLib> = new Hashtbl(0);
 	var tasks:PriorityQueue<ServerTask> = Empty;
 
@@ -336,6 +338,7 @@ class Cache {
 		contextList = [];
 		haxelib.clear();
 		directories.clear();
+		packageDirectories.clear();
 		nativeLibs.clear();
 		tasks = Empty;
 	}
@@ -541,6 +544,22 @@ class Cache {
 
 	public function clearDirectories(key:String):Void {
 		directories.remove(key);
+	}
+
+	/* package directories of the working directory, with their last seen modification time */
+
+	public function findPackageDirectory(key:String, dir:String):Float {
+		var t = packageDirectories.get(key + "\x00" + dir);
+		if (t == null) throw NotFound.raise();
+		return t;
+	}
+
+	public function addPackageDirectory(key:String, dir:String, mtime:Float):Void packageDirectories.set(key + "\x00" + dir, mtime);
+
+	public function removePackageDirectory(key:String, dir:String):Void packageDirectories.remove(key + "\x00" + dir);
+
+	public function clearPackageDirectories(key:String):Void {
+		for (k in [for (k in packageDirectories.keys()) k]) if (StringTools.startsWith(k, key + "\x00")) packageDirectories.remove(k);
 	}
 
 	/* native lib */

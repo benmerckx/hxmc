@@ -261,6 +261,10 @@ class TyperEntry {
 				a;
 			},
 			delayedMinIndex: 0,
+			typerShuffle: switch Sys.getEnv("HAXE_TYPER_SHUFFLE") {
+				case null | "": null;
+				case seed: new core.ds.TyperShuffle(seed);
+			},
 			debugDelayed: [],
 			retainMeta: Common.defined(com, Define.RetainUntypedMeta),
 			globalUsing: [],

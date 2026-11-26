@@ -76,29 +76,38 @@ class Compiler {
 		return f();
 	}
 
-	static function runCommandImpl(com:CommonContext, cmd:String):Int {
-		var io = com.requestScope.io;
+	public static function expandCommand(com:CommonContext, cmd:String):String {
 		// TODO: this is a hack
-		var cmd = if (com.sctx.isServer) {
+		return if (com.sctx.isServer) {
 			var h = ["__file__" => com.file, "__platform__" => platformName(com.platform)];
 			Helper.expandEnv(cmd, h);
 		} else cmd;
-		var len = cmd.length;
-		var result = if (len > 3 && cmd.substr(0, 3) == "cd ") {
-			Sys.setCwd(cmd.substr(3));
-			0;
-		} else if (!com.sctx.isServer)
+	}
+
+	public static function runExpandedCommand(com:CommonContext, cmd:String, ?cwd:String):Int {
+		return if (!com.sctx.isServer)
 			// In non-server mode, inherit stdin/stdout/stderr so that interactive commands work
-			Sys.command(cmd);
+			macros.eval.EvalProcess.command(cmd, cwd);
 		else
 			// In server mode, capture stdout/stderr through the output target and
 			// forward the client's stdin from request_scope.
-			PipeThings.runCommand(io, cmd);
-		return result;
+			PipeThings.runCommand(com.requestScope.io, cmd, cwd);
 	}
 
-	public static function runCommand(com:CommonContext,
-			cmd:String):Int return Timer.time(com.timerCtx, ["command", cmd], function(cmd) return runCommandImpl(com, cmd), cmd);
+	public static function runCommand(com:CommonContext, cmd:String, ?cwd:String):Int
+		return Timer.time(com.timerCtx, ["command", cmd], function(cmd) return runExpandedCommand(com, expandCommand(com, cmd), cwd), cmd);
+
+	/* Runs a --cmd command, or changes the working directory if the command is
+		"cd dir": each command runs in its own shell, so this is how a "cd" applies
+		to the following ones. */
+	public static function runCommandOrChdir(com:CommonContext, cmd:String):Int {
+		var expanded = expandCommand(com, cmd);
+		var len = expanded.length;
+		return if (len > 3 && expanded.substr(0, 3) == "cd ") {
+			Sys.setCwd(expanded.substr(3));
+			0;
+		} else Timer.time(com.timerCtx, ["command", cmd], function(cmd) return runExpandedCommand(com, cmd), expanded);
+	}
 
 	public static function checkDefines(com:CommonContext):Void {
 		if (Common.defined(com, Define.DisableParallelism)) Parallel.enable = false;
@@ -181,6 +190,7 @@ class Compiler {
 		com.main.mainFile = output.main.path;
 		com.types = output.types;
 		com.modules = output.modules;
+		RefCheck.check(com);
 	}
 
 	public static function finalizeTyping(com:CommonContext, tctx:Typer):Void Timer.time(com.timerCtx, ["finalize"], function(tctx) {
@@ -268,10 +278,11 @@ class Compiler {
 		// port: the Haxe host owns signal handling; there is no Sys.catch_break.
 		com.callbacks.run(com.errorExt, com.callbacks.getAfterGeneration());
 		if (!actx.noOutput) {
+			if (actx.cmds.length != 0) ServerCache.resolveClassPaths(sctx, com);
 			var commands = actx.cmds.copy();
 			commands.reverse();
 			for (cmd in commands) {
-				var result = runCommand(com, cmd);
+				var result = runCommandOrChdir(com, cmd);
 				if (result != 0) throw new Failure("Command failed with error " + result);
 			}
 		}
@@ -396,11 +407,16 @@ class Compiler {
 			com:CommonContext):Int return catchCompletionAndExit(com, sctx, function(com) {
 			ServerCache.beforeAnything(sctx, com);
 			Setup.setupCommonContext(com);
-			compileSafe(com, function() {
+			// port: Std.finally (fun () -> ServerCache.resolve_class_paths sctx com)
+			try compileSafe(com, function() {
 				var actx = Args.processArgs(com);
 				processActx(com, actx);
 				compile(com, actx, sctx);
-			});
+			}) catch (e:Dynamic) {
+				ServerCache.resolveClassPaths(sctx, com);
+				throw e;
+			}
+			ServerCache.resolveClassPaths(sctx, com);
 			ContextFlush.flushContext(com);
 			finalize(com);
 		});
@@ -604,7 +620,7 @@ class Setup {
 			messages.reverse();
 			com.partScope.messages = messages;
 		};
-		com.runCommand = function(cmd) return Compiler.runCommand(com, cmd);
+		com.runCommand = function(cmd, ?cwd) return Compiler.runCommand(com, cmd, cwd);
 		initStdClassPaths(com);
 	}
 }

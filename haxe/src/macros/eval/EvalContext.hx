@@ -666,8 +666,9 @@ class EvalContext {
 		};
 	}
 
-	// port: Array.make n vnull: one allocation instead of growing a comprehension.
+	// port: evalValue.ml's `make_null_array` (an array of [n] nulls), here for ValueSlots
 	static function makeNullArray(n:Int):ValueSlots {
+		if (n == 0) return emptyVector;
 		var a = new ValueSlots(n);
 		for (i in 0...n) a[i] = VNull;
 		return a;
@@ -680,7 +681,7 @@ class EvalContext {
 		var timer = if (ctx.detailTimes) core.Timer.startTimer(ctx.timerCtx,
 			["macro", "execution", kindName(eval, info.kind)]) else noTimer;
 		var debug = if (ctx.debug.supportDebugger || ctx.detailTimes) new EnvDebug(timer, [], 0, noExpr, Globals.nullPos) else noDebug;
-		var locals = info.numLocals == 0 ? emptyVector : makeNullArray(info.numLocals);
+		var locals = makeNullArray(info.numLocals);
 		var captures = info.numCaptures == 0 ? emptyVector : makeNullArray(info.numCaptures);
 		var stackDepth = eval.env == null ? 1 : eval.env.envStackDepth + 1;
 		var env = new Env(info, debug, locals, captures, GlobalsIntMap.empty(), info.kind == EKEntrypoint ? null : eval.env, stackDepth,

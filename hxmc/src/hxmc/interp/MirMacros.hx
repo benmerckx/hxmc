@@ -307,7 +307,71 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		return io() == null ? Sys.args() : self.args.copy();
 
 	@:hxmc.export("hxmc_mir_macro_command") static function command(cmd:String):Int
-		return io() == null ? Sys.command(cmd) : self.api.getCom().runCommand(cmd);
+		return io() == null ? Sys.command(cmd) : self.api.getCom().runCommand(cmd, core.Vfs.macroCwd);
+
+	// a macro's working directory, Eval's (EvalStdLibB.StdSys.getCwd and setCwd,
+	// EvalStdLibA's paths: core.Vfs); the process's own when another engine runs
+	// the macro code
+	@:hxmc.export("hxmc_mir_macro_get_cwd") static function getCwd():String {
+		if (io() == null) return Sys.getCwd();
+		var dir = core.Vfs.getcwd();
+		var l = dir.length;
+		return if (l == 0) "./" else switch dir.charAt(l - 1) {
+			case "/" | "\\": dir;
+			case _: dir + "/";
+		}
+	}
+
+	@:hxmc.export("hxmc_mir_macro_set_cwd") static function setCwd(dir:String):Void {
+		if (io() == null) {
+			Sys.setCwd(dir);
+			return;
+		}
+		// (Eval's catch_unix_error: the error's message, a string)
+		try core.Vfs.setcwd(dir) catch (e:haxe.Exception) throw e.message;
+	}
+
+	@:hxmc.export("hxmc_mir_macro_resolve") static function resolve(path:String):String
+		return io() == null ? path : core.Vfs.resolve(path);
+
+	@:hxmc.export("hxmc_mir_macro_invalidate") static function invalidate(path:String):Void
+		if (io() != null) core.Vfs.invalidate(path);
+
+	// sys.io.Process, Eval's (EvalStdLibB.StdNativeProcess): a failure of process_catch
+	// thrown as its message, a string; a read's as Eval's
+	static function processCatch<T>(f:() -> T):T
+		return try f() catch (e:core.ds.Failure) throw e.message;
+
+	static function processCatchVoid(f:() -> Void):Void
+		try f() catch (e:core.ds.Failure) throw e.message;
+
+	@:hxmc.export("hxmc_mir_macro_process") static function process(cmd:String, args:Null<Array<String>>):Dynamic
+		return processCatch(() -> macros.eval.EvalProcess.run(cmd, args, io() == null ? null : core.Vfs.macroCwd));
+
+	@:hxmc.export("hxmc_mir_macro_process_read") static function processRead(p:Dynamic, stdout:Bool, bytes:haxe.io.Bytes, pos:Int,
+			len:Int):Int {
+		var p:macros.eval.EvalProcess = p;
+		return try stdout ? p.readStdout(bytes, pos, len) : p.readStderr(bytes, pos, len)
+		catch (_:Dynamic) throw stdout ? "Could not read stdout" : "Could not read stderr";
+	}
+
+	@:hxmc.export("hxmc_mir_macro_process_write") static function processWrite(p:Dynamic, bytes:haxe.io.Bytes, pos:Int, len:Int):Int
+		return (p : macros.eval.EvalProcess).writeStdin(bytes, pos, len);
+
+	@:hxmc.export("hxmc_mir_macro_process_close_stdin") static function processCloseStdin(p:Dynamic):Void
+		processCatchVoid(() -> (p : macros.eval.EvalProcess).closeStdin());
+
+	@:hxmc.export("hxmc_mir_macro_process_exit") static function processExit(p:Dynamic):Int
+		return (p : macros.eval.EvalProcess).exit();
+
+	@:hxmc.export("hxmc_mir_macro_process_pid") static function processPid(p:Dynamic):Int
+		return processCatch(() -> (p : macros.eval.EvalProcess).pid());
+
+	@:hxmc.export("hxmc_mir_macro_process_close") static function processClose(p:Dynamic):Void
+		processCatchVoid(() -> (p : macros.eval.EvalProcess).close());
+
+	@:hxmc.export("hxmc_mir_macro_process_kill") static function processKill(p:Dynamic):Void
+		processCatchVoid(() -> (p : macros.eval.EvalProcess).kill());
 
 	@:hxmc.export("hxmc_mir_macro_exit") static function exit(code:Int):Void {
 		if (io() == null) Sys.exit(code);
@@ -419,6 +483,7 @@ class MirMacros implements macros.MacroEngine.IMacroEngine {
 		native = new Map();
 		entries = new Map();
 		scanned = new Map();
+		hxmc.ir.Lower.spanSupport = null;
 		lastPrep = null;
 		stdRoots = [];
 		plainInits = [];

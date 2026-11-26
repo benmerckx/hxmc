@@ -278,7 +278,6 @@ class Server {
 		var proj = miscProject();
 		var r = startServer("reference", ref, '$gen/misc-reference.log');
 		var p = startServer("port", port, '$gen/misc-port.log');
-		var version:Null<ServerOut> = null;
 		for (q in MISC_REQUESTS) {
 			var args = ["-D", "disable-parallelism"].concat(extra).concat(q.args);
 			var a = client(ref, r.port, args, proj, q.input, 300);
@@ -288,22 +287,20 @@ class Server {
 			if (detail == null) detail = 'exit ${a.code}, ${a.out.length} bytes stdout, ${a.err.length} bytes stderr identical';
 			Sys.println(pad(status, 6) + " " + pad("misc:" + q.name, 44) + " " + detail);
 			results.push({name: "misc:" + q.name, status: status, detail: detail, seconds: 0.0});
-			if (q.name == "version") version = a;
 		}
 		// a client that connects and closes without a request (a probe of the
-		// port): the port's server goes on serving. The reference's stops
-		// (upstream's wait_loop lets the read's Failure end its loop; 4.3 went
-		// on): a divergence, compiler.server.Server.waitLoop.
+		// port): both servers go on serving
 		for (s in [r, p]) {
 			var probe = new sys.net.Socket();
 			probe.connect(new sys.net.Host("127.0.0.1"), s.port);
 			probe.close();
 		}
 		Sys.sleep(0.5);
+		var a = alive(r.proc) ? client(ref, r.port, ["--version"], proj, "", 60) : null;
 		var b = alive(p.proc) ? client(port, p.port, ["--version"], proj, "", 60) : null;
-		var detail = b == null ? "the port's server stopped" : compareOutputs(version, b, null, null, proj);
+		var detail = if (a == null) "the reference's server stopped" else if (b == null) "the port's server stopped" else compareOutputs(a, b, null, null, proj);
 		var status = detail == null ? "PASS" : "FAIL";
-		if (detail == null) detail = "the port's server answers after it; the reference's " + (alive(r.proc) ? "too" : "stopped");
+		if (detail == null) detail = "both servers answer after it";
 		Sys.println(pad(status, 6) + " " + pad("misc:empty-connection", 44) + " " + detail);
 		results.push({name: "misc:empty-connection", status: status, detail: detail, seconds: 0.0});
 		stopServer(r);

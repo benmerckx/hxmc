@@ -963,6 +963,8 @@ class MacroContext {
 		return {select: init, mint: mint};
 	}
 
+	public static var onMacroContextCreated:CommonContext->Void = _ -> {};
+
 	public static function createMacroContext(com:CommonContext):TyperContext {
 		var com2 = Common.clone(com, true);
 		Common.enterStage(com2, CInitMacrosDone);
@@ -1005,6 +1007,7 @@ class MacroContext {
 		var mctx:TyperContext = Typecore.createContextRef(com2, null);
 		mctx.m.isDisplayFile = false;
 		context.CommonCache.lockSignature(com2, "get_macro_context");
+		onMacroContextCreated(com2);
 		return mctx;
 	}
 

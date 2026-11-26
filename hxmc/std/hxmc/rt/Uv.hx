@@ -1020,6 +1020,19 @@ class Uv {
 	@:hxmc.unsafe(gc) public static function processPid(id:Int):Int
 		return U.uv_process_get_pid(uvh(id));
 
+	@:hxmc.unsafe(gc) public static function processKill(id:Int, sig:Int):Int
+		return U.uv_process_kill(uvh(id), sig);
+
+	// luv's Pipe.pipe: an anonymous pipe; its read end goes in out[0], its write end in out[1]
+	@:hxmc.unsafe(gc) public static function pipe(readFlags:Int, writeFlags:Int, out:Array<Int>):Int {
+		var fds = Mem.stack(8);
+		var r = U.uv_pipe(fds, readFlags, writeFlags);
+		if (r < 0) return r;
+		out[0] = Mem.getI32(fds, 0);
+		out[1] = Mem.getI32(fds, 4);
+		return 0;
+	}
+
 	// ---- DNS
 
 	@:hxmc.unsafe(gc) @:hxmc.callback static function gaiCb(req:Ptr, status:Int, res:Ptr):Void {
@@ -1679,7 +1692,9 @@ class Uv {
 	static function uv_spawn(l:Ptr, h:Ptr, options:Ptr):Int;
 	static function uv_disable_stdio_inheritance():Void;
 	static function uv_kill(pid:Int, sig:Int):Int;
+	static function uv_process_kill(h:Ptr, sig:Int):Int;
 	static function uv_process_get_pid(h:Ptr):Int;
+	static function uv_pipe(fds:Ptr, readFlags:Int, writeFlags:Int):Int;
 	static function uv_getaddrinfo(l:Ptr, req:Ptr, cb:Ptr, node:CString, service:CString, hints:Ptr):Int;
 	static function uv_getnameinfo(l:Ptr, req:Ptr, cb:Ptr, addr:Ptr, flags:Int):Int;
 	static function uv_fs_event_start(h:Ptr, cb:Ptr, path:CString, flags:Int):Int;

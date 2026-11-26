@@ -120,15 +120,20 @@ class PosixNet {
 		return Str.ofUtf8(s, LibC.strlen(s).toInt());
 	}
 
-	// haxe/src/compiler/haxe.ml ignores SIGPIPE for the whole process; the
-	// port's entry point does not, so the first socket does it
+	// a write to a socket or pipe whose reader is gone fails (EPIPE) instead of
+	// ending the process; the first socket does it (haxe/src/compiler/haxe.ml
+	// ignores SIGPIPE for the whole process, the port's entry point calls this)
 	static var sigpipeIgnored:Bool;
 
-	@:hxmc.unsafe public static function socket():Int {
+	@:hxmc.unsafe public static function ignoreSigpipe():Void {
 		if (!sigpipeIgnored) {
 			Posix.signal(13, Ptr.ofI64(1)); // SIGPIPE, SIG_IGN
 			sigpipeIgnored = true;
 		}
+	}
+
+	@:hxmc.unsafe public static function socket():Int {
+		ignoreSigpipe();
 		// close-on-exec from the start (PosixSys.pipes): SOCK_CLOEXEC on Linux,
 		// FD_CLOEXEC under the descriptor lock on macOS
 		if (!mac()) return ret(Posix.socket(2, 1 | 0x80000, 0)); // PF_INET, SOCK_STREAM | SOCK_CLOEXEC

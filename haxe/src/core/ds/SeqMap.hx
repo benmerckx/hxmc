@@ -76,6 +76,17 @@ final class SeqMap<V> {
 		return new SeqMap(byName.add(name, value), nk, nv);
 	}
 
+	// port: `PMap.add name value m` beside a new list `order` (upstream assigns both
+	// fields, the list made from the old one, here the sequence as an Array)
+	public function addOrdered(name:String, value:V, order:Array<V>, nameOf:V->String):SeqMap<V> {
+		var n = order.length, nk = new Vector<String>(n), nv = new Vector<V>(n);
+		for (i in 0...n) {
+			nk[i] = nameOf(order[i]);
+			nv[i] = order[i];
+		}
+		return new SeqMap(byName.add(name, value), nk, nv);
+	}
+
 	// port: `List.filter keep l`, with `PMap.remove` of each dropped one's name; keep runs
 	// in sequence order. Upstream removes from the PMap inside keep's callback, as it goes,
 	// and assigns the list once the filter is done: `dropped`, after each drop, gets that

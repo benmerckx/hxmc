@@ -220,14 +220,14 @@ class EvalSsl {
 				name: "parse_file",
 				value: EvalEncode.vifun1((self, path) -> {
 					var crt = asX509Crt(self);
-					VInt(NativeSsl.x509CrtParseFile(crt, EvalDecode.decodeString(path)));
+					VInt(NativeSsl.x509CrtParseFile(crt, core.Vfs.resolve(EvalDecode.decodeString(path))));
 				})
 			},
 			{
 				name: "parse_path",
 				value: EvalEncode.vifun1((self, path) -> {
 					var crt = asX509Crt(self);
-					VInt(NativeSsl.x509CrtParsePath(crt, EvalDecode.decodeString(path)));
+					VInt(NativeSsl.x509CrtParsePath(crt, core.Vfs.resolve(EvalDecode.decodeString(path))));
 				})
 			},
 		]);
@@ -312,7 +312,7 @@ class EvalSsl {
 				name: "parse_keyfile",
 				value: EvalEncode.vifun3((self, path, password, rng) -> {
 					var pk = asPkContext(self);
-					var path = EvalDecode.decodeString(path);
+					var path = core.Vfs.resolve(EvalDecode.decodeString(path));
 					var password = decodePassword(password);
 					VInt(NativeSsl.pkParseKeyfile(pk, path, password, asCtrDrbg(rng)));
 				})
@@ -328,7 +328,7 @@ class EvalSsl {
 				name: "parse_public_keyfile",
 				value: EvalEncode.vifun1((self, path) -> {
 					var pk = asPkContext(self);
-					VInt(NativeSsl.pkParsePublicKeyfile(pk, EvalDecode.decodeString(path)));
+					VInt(NativeSsl.pkParsePublicKeyfile(pk, core.Vfs.resolve(EvalDecode.decodeString(path))));
 				})
 			},
 		]);

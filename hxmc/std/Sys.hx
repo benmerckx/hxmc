@@ -86,15 +86,21 @@ class Sys {
 		Gets the current working directory (usually the one in which the program was started).
 	**/
 	public static function getCwd():String
-		return NativeSys.getCwd();
+		return #if macro hxmc.MacroHost.getCwd() #else NativeSys.getCwd() #end;
 
 	/**
 		Changes the current working directory.
 
 		(java) This functionality is not available on Java; calling this function will throw.
 	**/
-	public static function setCwd(s:String):Void
+	public static function setCwd(s:String):Void {
+		#if macro
+		// (the macro's own working directory, as Eval's: the compiler's stays)
+		hxmc.MacroHost.setCwd(s);
+		#else
 		if (!NativeSys.setCwd(s)) throw "Could not change directory to " + s;
+		#end
+	}
 
 	/**
 		Returns the type of the current system. Possible values are:

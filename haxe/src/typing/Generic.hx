@@ -428,6 +428,23 @@ class Generic {
 		return haxe.ds.Vector.fromArrayCopy(params);
 	}
 
+	/* Places instance [cf2] of generic method [cf] in a field list: after [cf]
+		and the instances that sort before it by name. Without [cf] in the list,
+		the list is kept sorted by name. */
+	public static function insertInstance(cf:TClassField, cf2:TClassField, fields:Array<TClassField>):Array<TClassField> {
+		inline function isInstance(f:TClassField) return core.Meta.has(MetaTag.GenericInstance, f.cfMeta);
+		var k = fields.indexOf(cf);
+		if (k >= 0) {
+			var j = k + 1;
+			while (j < fields.length && isInstance(fields[j]) && core.ds.Key.compareStrings(fields[j].cfName, cf2.cfName) < 0) j++;
+			return fields.slice(0, j).concat([cf2]).concat(fields.slice(j));
+		}
+		// port: List.merge with [cf2]: before the first field whose name it does not sort after
+		var j = 0;
+		while (j < fields.length && core.ds.Key.compareStrings(cf2.cfName, fields[j].cfName) > 0) j++;
+		return fields.slice(0, j).concat([cf2]).concat(fields.slice(j));
+	}
+
 	public static function typeGenericFunction(ctx:Typer, fa:context.Typecore.FieldAccess, fcc:FieldCallCandidateData<Void->TExpr>,
 			withType:WithTypeValue, p:Pos):TExpr {
 		var c:TClass;
@@ -538,23 +555,27 @@ class Generic {
 				if (field != null) unifyExisting(field.cfType, field.cfPos);
 				else {
 					field = makeField(cf.cfName);
-					container.clStatics = container.clStatics.cons(field.cfName, field);
+					container.clStatics = container.clStatics.addOrdered(field.cfName, field, container.clStatics.toArray(), f -> f.cfName);
 					finalize(container, field);
+					container.clStatics = container.clStatics.addOrdered(field.cfName, field, insertInstance(cf, field, container.clStatics.toArray()),
+						f -> f.cfName);
 				}
 				fa = core.ds.Record.withFields(fa,
 					{faHost: FHStatic(container), faField: field, faOn: Texpr.Builder.makeStaticThis(container, p)});
 			} else if (stat) {
 				setTypeParameterDependencies(c.clModule, monos);
 				var field = makeField(name);
-				c.clStatics = c.clStatics.cons(field.cfName, field);
+				c.clStatics = c.clStatics.addOrdered(field.cfName, field, c.clStatics.toArray(), f -> f.cfName);
 				finalize(c, field);
+				c.clStatics = c.clStatics.addOrdered(field.cfName, field, insertInstance(cf, field, c.clStatics.toArray()), f -> f.cfName);
 				fa = core.ds.Record.withFields(fa, {faField: field});
 			} else {
 				setTypeParameterDependencies(c.clModule, monos);
 				var field = makeField(name);
 				if (hasClassFieldFlag(cf, CfOverride)) addClassFieldFlag(field, CfOverride);
-				c.clFields = c.clFields.cons(field.cfName, field);
+				c.clFields = c.clFields.addOrdered(field.cfName, field, c.clFields.toArray(), f -> f.cfName);
 				finalize(c, field);
+				c.clFields = c.clFields.addOrdered(field.cfName, field, insertInstance(cf, field, c.clFields.toArray()), f -> f.cfName);
 				fa = core.ds.Record.withFields(fa, {faField: field});
 			}
 		}

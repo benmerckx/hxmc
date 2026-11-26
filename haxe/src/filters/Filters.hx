@@ -575,6 +575,8 @@ class Filters {
 			com.callbacks.run(com.errorExt, com.callbacks.getAfterSave());
 		});
 		beforeDestruction();
-		destruction(com, scom, ectx, detailTimes, rename, com.types, allTypesArray);
+		/* Sort again: cached types hold the expressions saved above, new types held unfiltered ones during the first sort. */
+		com.types = Finalization.sortTypes(com, com.moduleLut, false).types;
+		destruction(com, scom, ectx, detailTimes, rename, com.types, com.types.copy());
 	}
 }

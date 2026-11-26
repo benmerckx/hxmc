@@ -44,10 +44,18 @@ class ContinuationClassBuilder {
 				name = mangled + "_" + cf.cfName;
 				result = tf.tfType;
 			case LocalFunc(tf, v):
-				var id = Coro.nextClosureId.get(mangled);
-				if (id == null) id = 0;
-				Coro.nextClosureId.set(mangled, id + 1);
-				name = mangled + '_AnonFunc$id';
+				var prefix = mangled + "_" + ctx.typer.f.curfield.cfName + "_AnonFunc";
+				inline function exists(n:String):Bool {
+					var found = false;
+					for (mt in ctx.typer.m.curmod.mTypes) if (tInfos(mt).mtPath.name == n) {
+						found = true;
+						break;
+					}
+					return found;
+				}
+				var i = 0;
+				while (exists(prefix + i)) i++;
+				name = prefix + i;
 				result = tf.tfType;
 		}
 		var p = ctx.classNamePos;
@@ -200,8 +208,6 @@ class ContinuationClassBuilder {
 }
 
 class Coro {
-	public static var nextClosureId:Map<String, Int> = [];
-
 	public static function substituteTypeParams(subst:Array<{param:TypedTypeParam, t:T}>, t:T):T {
 		function loop(t:T):T return switch t {
 			case TInst({clKind: KTypeParameter(ttp)}, []):
@@ -231,7 +237,19 @@ class Coro {
 		if (captured != null) core.TOther.TClassTools.addField(cc.cls, captured);
 		cc.cls.clConstructor = ctor;
 		if (ctx.config.debug) Sys.println(Printer.sTclass("\t", cc.cls));
-		ctx.typer.m.curmod.mTypes = ctx.typer.m.curmod.mTypes.concat([TClassDecl(cc.cls)]);
+		/* The continuation classes of a module are kept sorted by name after its
+			other types, whatever the order in which its functions are typed. */
+		inline function isContinuationClass(mt:ModuleType):Bool {
+			return switch mt {
+				case TClassDecl({clSuper: s}) if (s != null): s.cls == cc.continuationApi.baseContinuationClass;
+				case _: false;
+			}
+		}
+		var name = cc.cls.clPath.name;
+		var types = ctx.typer.m.curmod.mTypes;
+		var k = 0;
+		while (k < types.length && !(isContinuationClass(types[k]) && core.ds.Key.compareStrings(tInfos(types[k]).mtPath.name, name) > 0)) k++;
+		ctx.typer.m.curmod.mTypes = types.slice(0, k).concat([TClassDecl(cc.cls)]).concat(types.slice(k));
 		}
 
 	public static function checkAssertions(config:Null<coro.CoroConfig.CoroAssert>, states:Int, hoisted:Int, p:Pos):Void {

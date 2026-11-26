@@ -191,6 +191,7 @@ class Define {
 		"times.hxb",
 		"hxb_times",
 		"hxb.stats",
+		"incremental_check_refs",
 		"times.macro",
 		"macro_times",
 		"no_compilation",
@@ -281,6 +282,7 @@ class Define {
 	public static final HxcppLinuxArm64:String = "HXCPP_LINUX_ARM64";
 	public static final HxcppSmartStrings:String = "hxcpp_smart_strings";
 	public static final IncludePrefix:String = "include_prefix";
+	public static final IncrementalCheckRefs:String = "incremental_check_refs";
 	public static final Interp:String = "interp";
 	public static final JsClassic:String = "js_classic";
 	public static final JsEs:String = "js_es";

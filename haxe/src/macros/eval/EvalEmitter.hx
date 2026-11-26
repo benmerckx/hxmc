@@ -39,8 +39,8 @@ using macros.eval.EvalValue.EvalValueTools;
 // arguments and returns an `Emitter` (`env -> value`).
 typedef Emitter = Env->Value;
 
-// port: `env -> value -> unit` argument setters of `process_arguments`.
-typedef ArgSetter = Env->Value->Void;
+// port: the closures of the conditions (`env -> bool`).
+typedef Cond = Env->Bool;
 
 // port: one `catch` of `emit_try`: `(exec, path, varacc)`.
 class TryCatch {
@@ -73,8 +73,8 @@ class MethodCache {
 //   compile-time arguments returning an `Emitter` closure. Emitters that upstream
 //   uses unapplied (`emit_null`, `emit_new_array`, `emit_return_null`,
 //   `emit_break`, `emit_continue`) are static `Emitter` values.
-// - `Std.finally (pop_environment)` pops the environment on normal return only
-//   (see createFunctionNoret).
+// - A function pops its environment on normal return only (see
+//   createFunctionNoret).
 // - `emit_closure`/`create_closure`: the `(slot, value) array` of captured
 //   references is split into a slot array (computed once at JIT time) and a value
 //   array (filled per closure creation), which avoids one tuple per capture.
@@ -83,7 +83,7 @@ class MethodCache {
 //   `Invalid_argument "index out of bounds"` (OCaml's checked-access error), as
 //   does the checked `ev.eargs.(i)` of `emit_enum_parameter_read`.
 // - `Array.make`'s `Invalid_argument` for sizes above `Sys.max_array_length`
-//   cannot happen for 32-bit sizes, so that branch of `emit_new_vector_int` is
+//   cannot happen for 32-bit sizes, so that branch of `new_vector` is
 //   not reproduced.
 class EvalEmitter {
 	// Helper
@@ -143,8 +143,8 @@ class EvalEmitter {
 		}
 	}
 
-	public static inline function checkStackDepth(env:Env):Void {
-		if (env.envStackDepth > EvalContext.getCtx().maxStackDepth) EvalContext.excString("Stack overflow");
+	public static inline function checkStackDepth(maxDepth:Int, env:Env):Void {
+		if (env.envStackDepth > maxDepth) EvalContext.excString("Stack overflow");
 	}
 
 	// port: an argument array allocated at its size (pushing grows it several times on HashLink).
@@ -158,8 +158,9 @@ class EvalEmitter {
 		#end
 	}
 
-	// port: evaluates [execs] in order (`List.map (apply env) execs`); up to
-	// three arguments as an array literal (one allocation at its size).
+	// port: `emit_args` (the arguments of a call, evaluated from left to right),
+	// applied per call: up to three arguments as an array literal (one allocation
+	// at its size).
 	static inline function applyAll(execs:Array<Emitter>, env:Env):Array<Value> {
 		#if !hl
 		return switch execs.length {
@@ -185,7 +186,8 @@ class EvalEmitter {
 		return vl;
 	}
 
-	// port: `Array.map (apply env) execs` (in order): the value array itself
+	// The values of [execs], evaluated in order.
+	// port: `eval_array`
 	static inline function applyAllArray(execs:Vector<Emitter>, env:Env):Vector<Value> {
 		var vl = new Vector<Value>(execs.length);
 		for (i in 0...execs.length)
@@ -269,20 +271,29 @@ class EvalEmitter {
 		}
 	}
 
+	public static function emitLocalNullCheck(slot:Int, p:Pos):Emitter {
+		return function(env:Env):Value {
+			return switch env.envLocals[slot] {
+				case VNull: EvalMisc.throwString("Null Access", p);
+				case v: v;
+			}
+		}
+	}
+
 	public static final emitNewArray:Emitter = _ -> EvalEncode.encodeArrayInstance(EvalArray.create(new Vector(0)));
 
-	public static function emitNewVectorIntRaw(i:Int, p:Pos):Value {
+	public static function newVector(i:Int, p:Pos):Value {
 		if (i < 0) EvalContext.excStringP("Vector size must be >= 0", p);
 		var a = new Vector<Value>(i, VNull);
 		return EvalEncode.encodeVectorInstance(a);
 	}
 
-	public static function emitNewVectorInt(i:Int, p:Pos):Emitter return _ -> emitNewVectorIntRaw(i, p);
+	public static function emitNewVectorInt(i:Int, p:Pos):Emitter return _ -> newVector(i, p);
 
 	public static function emitNewVector(exec:Emitter, p:Pos):Emitter {
 		return function(env:Env):Value {
 			var i = decodeIntP(exec(env), p);
-			return emitNewVectorIntRaw(i, p);
+			return newVector(i, p);
 		}
 	}
 
@@ -325,15 +336,6 @@ class EvalEmitter {
 	}
 
 	// Branching
-
-	public static function emitIf(execCond:Emitter, execThen:Emitter, execElse:Emitter):Emitter {
-		return function(env:Env):Value {
-			return switch execCond(env) {
-				case VTrue: execThen(env);
-				case _: execElse(env);
-			}
-		}
-	}
 
 	public static function emitSwitch(exec:Emitter, execs:Vector<Emitter>, patterns:Vector<Array<Emitter>>, execDef:Emitter):Emitter {
 		return function(env:Env):Value {
@@ -391,66 +393,17 @@ class EvalEmitter {
 		}
 	}
 
-	// port: the tail recursion on `Continue` is a loop.
-	public static function runWhileContinue(execCond:Emitter, execBody:Emitter, env:Env):Void {
-		while (true) {
-			try {
-				while (EvalMisc.isTrue(execCond(env))) {
-					execBody(env);
-					core.ds.GcPolicy.tick(); // port: loops allocate without calls or typing
-					EvalLock.tick();
-				}
-				return;
-			} catch (_:Continue) {}
-		}
-	}
-
-	public static function runWhile(execCond:Emitter, execBody:Emitter, env:Env):Void {
-		while (EvalMisc.isTrue(execCond(env))) {
-			execBody(env);
-			core.ds.GcPolicy.tick();
-			EvalLock.tick();
-		}
-	}
-
-	public static function emitWhileBreak(execCond:Emitter, execBody:Emitter):Emitter {
-		return function(env:Env):Value {
-			try runWhileContinue(execCond, execBody, env)
-			catch (_:Break) {}
-			return VNull;
-		}
-	}
-
-	public static function emitWhileBreakContinue(execCond:Emitter, execBody:Emitter):Emitter {
-		return function(env:Env):Value {
-			try runWhileContinue(execCond, execBody, env)
-			catch (_:Break) {}
-			return VNull;
-		}
-	}
-
-	public static function emitDoWhileBreakContinue(execCond:Emitter, execBody:Emitter):Emitter {
-		return function(env:Env):Value {
-			try {
-				execBody(env);
-				runWhileContinue(execCond, execBody, env);
-			} catch (_:Break) {} catch (_:Continue) {
-				try runWhileContinue(execCond, execBody, env)
-				catch (_:Break) {}
-			}
-			return VNull;
-		}
-	}
-
 	public static function emitTry(exec:Emitter, catches:Array<TryCatch>):Emitter {
 		return function(env:Env):Value {
 			var ctx = EvalContext.getCtx();
 			var eval = env.envEval;
-			if (ctx.debug.supportDebugger) {
+			// the caught types are only registered for the debugger
+			var debugger = ctx.debug.supportDebugger;
+			if (debugger) {
 				for (c in catches) eval.caughtTypes.set(c.path, true);
 			}
 			inline function restore() {
-				for (c in catches) eval.caughtTypes.remove(c.path);
+				if (debugger) for (c in catches) eval.caughtTypes.remove(c.path);
 			}
 			var v = try {
 				var v = EvalExceptions.handleStackOverflow(eval, () -> exec(env));
@@ -540,9 +493,9 @@ class EvalEmitter {
 	// Calls
 	// super.call() - immediate
 
-	public static function emitSuperFieldCall(slot:Int, proto:Vprototype, i:Int, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitSuperFieldCall(maxDepth:Int, slot:Int, proto:Vprototype, i:Int, execs:Array<Emitter>, p:Pos):Emitter {
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var vthis = env.envLocals[slot];
 			var vf = proto.pfields[i];
 			var vl = applyAllOn(vthis, vf, execs, env);
@@ -552,12 +505,12 @@ class EvalEmitter {
 
 	// Type.call() - immediate
 
-	public static function emitProtoFieldCall(v:AtomicLazy<Vfunc>, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitProtoFieldCall(maxDepth:Int, v:AtomicLazy<Vfunc>, execs:Array<Emitter>, p:Pos):Emitter {
 		// port: forced once per call site: reading the generic AtomicLazy's value back as a
 		// function is a dynamic cast on HashLink.
 		var forced:Null<Vfunc> = null;
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var f = forced;
 			if (f == null) f = forced = v.force();
 			var vl = applyAll(execs, env);
@@ -595,10 +548,10 @@ class EvalEmitter {
 		}
 	}
 
-	public static function emitMethodCall(exec:Emitter, name:Int, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitMethodCall(maxDepth:Int, exec:Emitter, name:Int, execs:Array<Emitter>, p:Pos):Emitter {
 		var cache:Null<MethodCache> = null;
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var vthis = exec(env);
 			var proto = getPrototype(vthis, p);
 			var c = cache;
@@ -613,9 +566,9 @@ class EvalEmitter {
 
 	// instance.call() where call is not a method - lookup + this-binding
 
-	public static function emitFieldCall(exec:Emitter, name:Int, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitFieldCall(maxDepth:Int, exec:Emitter, name:Int, execs:Array<Emitter>, p:Pos):Emitter {
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var vthis = exec(env);
 			var vf = EvalField.field(vthis, name);
 			env.envLeavePmin = p.pmin;
@@ -626,12 +579,12 @@ class EvalEmitter {
 
 	// new() - immediate + this-binding
 
-	public static function emitConstructorCall(proto:Vprototype, v:AtomicLazy<Vfunc>, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitConstructorCall(maxDepth:Int, proto:Vprototype, v:AtomicLazy<Vfunc>, execs:Array<Emitter>, p:Pos):Emitter {
 		// port: forced once per call site: reading the generic AtomicLazy's value back as a
 		// function is a dynamic cast on HashLink.
 		var forced:Null<Vfunc> = null;
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var f = forced;
 			if (f == null) f = forced = v.force();
 			var vthis = EvalEncode.createInstanceDirect(proto, INormal);
@@ -645,9 +598,9 @@ class EvalEmitter {
 
 	// super() - immediate + this-binding
 
-	public static function emitSpecialSuperCall(fnew:Array<Value>->Value, execs:Array<Emitter>):Emitter {
+	public static function emitSpecialSuperCall(maxDepth:Int, fnew:Array<Value>->Value, execs:Array<Emitter>):Emitter {
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var vl = applyAll(execs, env);
 			var vi2 = fnew(vl);
 			var vthis = env.envLocals[0];
@@ -662,12 +615,12 @@ class EvalEmitter {
 		}
 	}
 
-	public static function emitSuperCall(v:AtomicLazy<Vfunc>, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitSuperCall(maxDepth:Int, v:AtomicLazy<Vfunc>, execs:Array<Emitter>, p:Pos):Emitter {
 		// port: forced once per call site: reading the generic AtomicLazy's value back as a
 		// function is a dynamic cast on HashLink.
 		var forced:Null<Vfunc> = null;
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var f = forced;
 			if (f == null) f = forced = v.force();
 			var vthis = env.envLocals[0];
@@ -681,9 +634,9 @@ class EvalEmitter {
 
 	// unknown call - full lookup
 
-	public static function emitCall(exec:Emitter, execs:Array<Emitter>, p:Pos):Emitter {
+	public static function emitCall(maxDepth:Int, exec:Emitter, execs:Array<Emitter>, p:Pos):Emitter {
 		return function(env:Env):Value {
-			checkStackDepth(env);
+			checkStackDepth(maxDepth, env);
 			var v1 = exec(env);
 			env.envLeavePmin = p.pmin;
 			env.envLeavePmax = p.pmax;
@@ -705,6 +658,9 @@ class EvalEmitter {
 	public static function emitArrayLengthRead(exec:Emitter,
 			p:Pos):Emitter return env -> EvalValueTools.vint32(asArray(p, exec(env)).alength);
 
+	public static function emitLocalArrayLengthRead(slot:Int,
+			p:Pos):Emitter return env -> EvalValueTools.vint32(asArray(p, env.envLocals[slot]).alength);
+
 	public static function emitVectorLengthRead(exec:Emitter,
 			p:Pos):Emitter return env -> EvalValueTools.vint32(asVector(p, exec(env)).length);
 
@@ -716,6 +672,17 @@ class EvalEmitter {
 	public static function emitInstanceFieldRead(exec:Emitter, p:Pos, i:Int):Emitter {
 		return function(env:Env):Value {
 			return switch exec(env) {
+				case VInstance(vi): vi.ifields[i];
+				case VString(s): EvalValueTools.vint32(s.slength);
+				case VNull: EvalMisc.throwString("field access on null", p);
+				case v: unexpectedValueP(v, "instance", p);
+			}
+		}
+	}
+
+	public static function emitLocalInstanceFieldRead(slot:Int, p:Pos, i:Int):Emitter {
+		return function(env:Env):Value {
+			return switch env.envLocals[slot] {
 				case VInstance(vi): vi.ifields[i];
 				case VString(s): EvalValueTools.vint32(s.slength);
 				case VNull: EvalMisc.throwString("field access on null", p);
@@ -740,20 +707,26 @@ class EvalEmitter {
 		}
 	}
 
-	public static function emitAnonFieldRead(exec:Emitter, proto:Vprototype, i:Int, name:Int, p:Pos):Emitter {
-		return function(env:Env):Value {
-			return switch EvalValueTools.vresolve(exec(env)) {
-				case VObject(o):
-					switch o.oproto {
-						case OProto(proto2) if (proto2 == proto):
-							o.ofields[i];
-						case _:
-							EvalField.objectField(o, name);
-					}
-				case VNull: EvalMisc.throwString("field access on null", p);
-				case v: EvalField.field(v, name);
-			}
+	static inline function anonFieldRead(proto:Vprototype, i:Int, name:Int, p:Pos, v:Value):Value {
+		return switch EvalValueTools.vresolve(v) {
+			case VObject(o):
+				switch o.oproto {
+					case OProto(proto2) if (proto2 == proto):
+						o.ofields[i];
+					case _:
+						EvalField.objectField(o, name);
+				}
+			case VNull: EvalMisc.throwString("field access on null", p);
+			case v: EvalField.field(v, name);
 		}
+	}
+
+	public static function emitAnonFieldRead(exec:Emitter, proto:Vprototype, i:Int, name:Int, p:Pos):Emitter {
+		return env -> anonFieldRead(proto, i, name, p, exec(env));
+	}
+
+	public static function emitLocalAnonFieldRead(slot:Int, proto:Vprototype, i:Int, name:Int, p:Pos):Emitter {
+		return env -> anonFieldRead(proto, i, name, p, env.envLocals[slot]);
 	}
 
 	public static function emitFieldRead(exec:Emitter, name:Int, p:Pos):Emitter {
@@ -768,6 +741,24 @@ class EvalEmitter {
 	public static function emitArrayRead(exec1:Emitter, p1:Pos, exec2:Emitter, p2:Pos):Emitter {
 		return function(env:Env):Value {
 			var a = asArray(p1, exec1(env));
+			var i = asInt(p2, exec2(env));
+			if (i < 0) return VNull;
+			else return EvalArray.get(a, i);
+		}
+	}
+
+	public static function emitArrayReadLl(slot1:Int, p1:Pos, slot2:Int, p2:Pos):Emitter {
+		return function(env:Env):Value {
+			var a = asArray(p1, env.envLocals[slot1]);
+			var i = asInt(p2, env.envLocals[slot2]);
+			if (i < 0) return VNull;
+			else return EvalArray.get(a, i);
+		}
+	}
+
+	public static function emitArrayReadLe(slot1:Int, p1:Pos, exec2:Emitter, p2:Pos):Emitter {
+		return function(env:Env):Value {
+			var a = asArray(p1, env.envLocals[slot1]);
 			var i = asInt(p2, exec2(env));
 			if (i < 0) return VNull;
 			else return EvalArray.get(a, i);
@@ -789,6 +780,17 @@ class EvalEmitter {
 	public static function emitEnumParameterRead(exec:Emitter, i:Int):Emitter {
 		return function(env:Env):Value {
 			return switch exec(env) {
+				case VEnumValue(ev): if (i < 0 || i >= ev.eargs.length) outOfBounds() else ev.eargs[i];
+				case v1: EvalExceptions.unexpectedValue(v1, "enum value");
+			}
+		}
+	}
+
+	public static function emitLocalEnumIndex(slot:Int, p:Pos):Emitter return env -> EvalValueTools.vint32(asEnumValue(p, env.envLocals[slot]).eindex);
+
+	public static function emitLocalEnumParameterRead(slot:Int, i:Int):Emitter {
+		return function(env:Env):Value {
+			return switch env.envLocals[slot] {
 				case VEnumValue(ev): if (i < 0 || i >= ev.eargs.length) outOfBounds() else ev.eargs[i];
 				case v1: EvalExceptions.unexpectedValue(v1, "enum value");
 			}
@@ -850,6 +852,18 @@ class EvalEmitter {
 	public static function emitInstanceFieldWrite(exec1:Emitter, p:Pos, i:Int, exec2:Emitter):Emitter {
 		return function(env:Env):Value {
 			return switch exec1(env) {
+				case VInstance(vi):
+					var v = exec2(env);
+					vi.ifields[i] = v;
+					v;
+				case v: unexpectedValueP(v, "instance", p);
+			}
+		}
+	}
+
+	public static function emitLocalInstanceFieldWrite(slot:Int, p:Pos, i:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			return switch env.envLocals[slot] {
 				case VInstance(vi):
 					var v = exec2(env);
 					vi.ifields[i] = v;
@@ -1070,27 +1084,54 @@ class EvalEmitter {
 		}
 	}
 
+	// Arithmetic, with the same operand variants as the conditions (below).
+
+	static inline function arithAdd(p:Pos, v1:Value, v2:Value):Value {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: EvalValueTools.vint32(a + b);
+			case [VFloat(a), VFloat(b)]: VFloat(a + b);
+			case _: EvalMisc.opAdd(p, v1, v2);
+		}
+	}
+
 	public static function emitOpAdd(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			return EvalMisc.opAdd(p, v1, v2);
+			return arithAdd(p, v1, v2);
 		}
 	}
 
-	public static function emitOpMult(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+	public static function emitOpAddLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
 		return function(env:Env):Value {
-			var v1 = exec1(env);
+			var v1 = env.envLocals[slot];
 			var v2 = exec2(env);
-			return EvalMisc.opMult(p, v1, v2);
+			return arithAdd(p, v1, v2);
 		}
 	}
 
-	public static function emitOpDiv(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+	public static function emitOpAddLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithAdd(p, env.envLocals[slot], v2);
+
+	public static function emitOpAddLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithAdd(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpAddEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithAdd(p, exec1(env), v2);
+
+	// [local op= exec]
+	public static function emitLocalAssignAdd(p:Pos, slot:Int, exec:Emitter):Emitter {
 		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opDiv(p, v1, v2);
+			var v1 = env.envLocals[slot];
+			var v2 = exec(env);
+			var v = arithAdd(p, v1, v2);
+			env.envLocals[slot] = v;
+			return v;
+		}
+	}
+
+	static inline function arithSub(p:Pos, v1:Value, v2:Value):Value {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: EvalValueTools.vint32(a - b);
+			case [VFloat(a), VFloat(b)]: VFloat(a - b);
+			case _: EvalMisc.opSub(p, v1, v2);
 		}
 	}
 
@@ -1098,15 +1139,334 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			return EvalMisc.opSub(p, v1, v2);
+			return arithSub(p, v1, v2);
 		}
 	}
+
+	public static function emitOpSubLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithSub(p, v1, v2);
+		}
+	}
+
+	public static function emitOpSubLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithSub(p, env.envLocals[slot], v2);
+
+	public static function emitOpSubLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithSub(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpSubEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithSub(p, exec1(env), v2);
+
+	// [local op= exec]
+	public static function emitLocalAssignSub(p:Pos, slot:Int, exec:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec(env);
+			var v = arithSub(p, v1, v2);
+			env.envLocals[slot] = v;
+			return v;
+		}
+	}
+
+	static inline function arithMult(p:Pos, v1:Value, v2:Value):Value {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: EvalValueTools.vint32(a * b);
+			case [VFloat(a), VFloat(b)]: VFloat(a * b);
+			case _: EvalMisc.opMult(p, v1, v2);
+		}
+	}
+
+	public static function emitOpMult(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithMult(p, v1, v2);
+		}
+	}
+
+	public static function emitOpMultLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithMult(p, v1, v2);
+		}
+	}
+
+	public static function emitOpMultLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithMult(p, env.envLocals[slot], v2);
+
+	public static function emitOpMultLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithMult(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpMultEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithMult(p, exec1(env), v2);
+
+	// [local op= exec]
+	public static function emitLocalAssignMult(p:Pos, slot:Int, exec:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec(env);
+			var v = arithMult(p, v1, v2);
+			env.envLocals[slot] = v;
+			return v;
+		}
+	}
+
+	static inline function arithDiv(p:Pos, v1:Value, v2:Value):Value {
+		return EvalMisc.opDiv(p, v1, v2);
+	}
+
+	public static function emitOpDiv(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithDiv(p, v1, v2);
+		}
+	}
+
+	public static function emitOpDivLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithDiv(p, v1, v2);
+		}
+	}
+
+	public static function emitOpDivLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithDiv(p, env.envLocals[slot], v2);
+
+	public static function emitOpDivLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithDiv(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpDivEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithDiv(p, exec1(env), v2);
+
+	static inline function arithAnd(p:Pos, v1:Value, v2:Value):Value {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: VInt(a & b);
+			case _: EvalMisc.opAnd(p, v1, v2);
+		}
+	}
+
+	public static function emitOpAnd(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithAnd(p, v1, v2);
+		}
+	}
+
+	public static function emitOpAndLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithAnd(p, v1, v2);
+		}
+	}
+
+	public static function emitOpAndLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithAnd(p, env.envLocals[slot], v2);
+
+	public static function emitOpAndLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithAnd(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpAndEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithAnd(p, exec1(env), v2);
+
+	// [local op= exec]
+	public static function emitLocalAssignAnd(p:Pos, slot:Int, exec:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec(env);
+			var v = arithAnd(p, v1, v2);
+			env.envLocals[slot] = v;
+			return v;
+		}
+	}
+
+	static inline function arithOr(p:Pos, v1:Value, v2:Value):Value {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: VInt(a | b);
+			case _: EvalMisc.opOr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpOr(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithOr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpOrLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithOr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpOrLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithOr(p, env.envLocals[slot], v2);
+
+	public static function emitOpOrLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithOr(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpOrEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithOr(p, exec1(env), v2);
+
+	// [local op= exec]
+	public static function emitLocalAssignOr(p:Pos, slot:Int, exec:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec(env);
+			var v = arithOr(p, v1, v2);
+			env.envLocals[slot] = v;
+			return v;
+		}
+	}
+
+	static inline function arithXor(p:Pos, v1:Value, v2:Value):Value {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: VInt(a ^ b);
+			case _: EvalMisc.opXor(p, v1, v2);
+		}
+	}
+
+	public static function emitOpXor(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithXor(p, v1, v2);
+		}
+	}
+
+	public static function emitOpXorLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithXor(p, v1, v2);
+		}
+	}
+
+	public static function emitOpXorLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithXor(p, env.envLocals[slot], v2);
+
+	public static function emitOpXorLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithXor(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpXorEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithXor(p, exec1(env), v2);
+
+	// [local op= exec]
+	public static function emitLocalAssignXor(p:Pos, slot:Int, exec:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec(env);
+			var v = arithXor(p, v1, v2);
+			env.envLocals[slot] = v;
+			return v;
+		}
+	}
+
+	static inline function arithShl(p:Pos, v1:Value, v2:Value):Value {
+		return EvalMisc.opShl(p, v1, v2);
+	}
+
+	public static function emitOpShl(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithShl(p, v1, v2);
+		}
+	}
+
+	public static function emitOpShlLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithShl(p, v1, v2);
+		}
+	}
+
+	public static function emitOpShlLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithShl(p, env.envLocals[slot], v2);
+
+	public static function emitOpShlLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithShl(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpShlEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithShl(p, exec1(env), v2);
+
+	static inline function arithShr(p:Pos, v1:Value, v2:Value):Value {
+		return EvalMisc.opShr(p, v1, v2);
+	}
+
+	public static function emitOpShr(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithShr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpShrLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithShr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpShrLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithShr(p, env.envLocals[slot], v2);
+
+	public static function emitOpShrLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithShr(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpShrEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithShr(p, exec1(env), v2);
+
+	static inline function arithUshr(p:Pos, v1:Value, v2:Value):Value {
+		return EvalMisc.opUshr(p, v1, v2);
+	}
+
+	public static function emitOpUshr(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithUshr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpUshrLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithUshr(p, v1, v2);
+		}
+	}
+
+	public static function emitOpUshrLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithUshr(p, env.envLocals[slot], v2);
+
+	public static function emitOpUshrLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithUshr(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpUshrEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithUshr(p, exec1(env), v2);
+
+	static inline function arithMod(p:Pos, v1:Value, v2:Value):Value {
+		return EvalMisc.opMod(p, v1, v2);
+	}
+
+	public static function emitOpMod(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return arithMod(p, v1, v2);
+		}
+	}
+
+	public static function emitOpModLe(p:Pos, slot:Int, exec2:Emitter):Emitter {
+		return function(env:Env):Value {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return arithMod(p, v1, v2);
+		}
+	}
+
+	public static function emitOpModLc(p:Pos, slot:Int, v2:Value):Emitter return env -> arithMod(p, env.envLocals[slot], v2);
+
+	public static function emitOpModLl(p:Pos, slot1:Int, slot2:Int):Emitter return env -> arithMod(p, env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitOpModEc(p:Pos, exec1:Emitter, v2:Value):Emitter return env -> arithMod(p, exec1(env), v2);
 
 	public static function emitOpEq(exec1:Emitter, exec2:Emitter):Emitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			return EvalValueTools.vbool(EvalValueTools.equals(v1, v2));
+			return switch [v1, v2] {
+				case [VInt(a), VInt(b)]: EvalValueTools.vbool(a == b);
+				case _: EvalValueTools.vbool(EvalValueTools.equals(v1, v2));
+			}
 		}
 	}
 
@@ -1114,7 +1474,10 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			return EvalValueTools.vbool(!EvalValueTools.equals(v1, v2));
+			return switch [v1, v2] {
+				case [VInt(a), VInt(b)]: EvalValueTools.vbool(a != b);
+				case _: EvalValueTools.vbool(!EvalValueTools.equals(v1, v2));
+			}
 		}
 	}
 
@@ -1122,9 +1485,9 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 > i2);
+				case [VInt(a), VInt(b)]: EvalValueTools.vbool(a > b);
+				case [VFloat(a), VFloat(b)]: EvalValueTools.vbool(a > b);
 				case _: EvalValueTools.vbool(EvalMisc.compare(v1, v2) == CSup);
 			}
 		}
@@ -1134,9 +1497,9 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 >= i2);
+				case [VInt(a), VInt(b)]: EvalValueTools.vbool(a >= b);
+				case [VFloat(a), VFloat(b)]: EvalValueTools.vbool(a >= b);
 				case _: EvalValueTools.vbool(switch EvalMisc.compare(v1, v2) {
 						case CSup | CEq: true;
 						case _: false;
@@ -1149,9 +1512,9 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 < i2);
+				case [VInt(a), VInt(b)]: EvalValueTools.vbool(a < b);
+				case [VFloat(a), VFloat(b)]: EvalValueTools.vbool(a < b);
 				case _: EvalValueTools.vbool(EvalMisc.compare(v1, v2) == CInf);
 			}
 		}
@@ -1161,70 +1524,14 @@ class EvalEmitter {
 		return function(env:Env):Value {
 			var v1 = exec1(env);
 			var v2 = exec2(env);
-			// port: compare on two Int32s, inline
 			return switch [v1, v2] {
-				case [VInt(i1), VInt(i2)]: EvalValueTools.vbool(i1 <= i2);
+				case [VInt(a), VInt(b)]: EvalValueTools.vbool(a <= b);
+				case [VFloat(a), VFloat(b)]: EvalValueTools.vbool(a <= b);
 				case _: EvalValueTools.vbool(switch EvalMisc.compare(v1, v2) {
 						case CInf | CEq: true;
 						case _: false;
 					});
 			}
-		}
-	}
-
-	public static function emitOpAnd(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opAnd(p, v1, v2);
-		}
-	}
-
-	public static function emitOpOr(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opOr(p, v1, v2);
-		}
-	}
-
-	public static function emitOpXor(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opXor(p, v1, v2);
-		}
-	}
-
-	public static function emitOpShl(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opShl(p, v1, v2);
-		}
-	}
-
-	public static function emitOpShr(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opShr(p, v1, v2);
-		}
-	}
-
-	public static function emitOpUshr(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opUshr(p, v1, v2);
-		}
-	}
-
-	public static function emitOpMod(p:Pos, exec1:Emitter, exec2:Emitter):Emitter {
-		return function(env:Env):Value {
-			var v1 = exec1(env);
-			var v2 = exec2(env);
-			return EvalMisc.opMod(p, v1, v2);
 		}
 	}
 
@@ -1262,28 +1569,293 @@ class EvalEmitter {
 		}
 	}
 
+	/* Conditions
+
+		A condition is compiled to a closure giving a bool: [cond e] is
+		[is_true (exec e)], with the same evaluation, without building and matching
+		a Bool value. Comparisons have variants for a local operand ([l]) and a
+		constant one ([c]), read without calling a closure. */
+
+	public static function emitCondValue(exec:Emitter):Cond return env -> EvalMisc.isTrue(exec(env));
+
+	public static function emitCondNot(exec:Emitter):Cond {
+		return function(env:Env):Bool {
+			return switch exec(env) {
+				case VNull | VFalse: true;
+				case _: false;
+			}
+		}
+	}
+
+	public static function emitCondNotCond(cond:Cond):Cond return env -> !cond(env);
+
+	public static function emitCondAnd(cond1:Cond, cond2:Cond):Cond return env -> cond1(env) && cond2(env);
+
+	public static function emitCondOr(cond1:Cond, cond2:Cond):Cond return env -> cond1(env) || cond2(env);
+
+	public static function emitCondEqNull(exec:Emitter):Cond return env -> exec(env).match(VNull);
+
+	public static function emitCondNotEqNull(exec:Emitter):Cond return env -> !exec(env).match(VNull);
+
+	public static function emitCondLocalEqNull(slot:Int):Cond return env -> env.envLocals[slot].match(VNull);
+
+	public static function emitCondLocalNotEqNull(slot:Int):Cond return env -> !env.envLocals[slot].match(VNull);
+
+	static inline function condLt(v1:Value, v2:Value):Bool {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: a < b;
+			case [VFloat(a), VFloat(b)]: a < b;
+			case _: EvalMisc.compare(v1, v2) == CInf;
+		}
+	}
+
+	public static function emitCondLt(exec1:Emitter, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return condLt(v1, v2);
+		}
+	}
+
+	public static function emitCondLtLe(slot:Int, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return condLt(v1, v2);
+		}
+	}
+
+	public static function emitCondLtLc(slot:Int, v2:Value):Cond return env -> condLt(env.envLocals[slot], v2);
+
+	public static function emitCondLtLl(slot1:Int, slot2:Int):Cond return env -> condLt(env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitCondLtEc(exec1:Emitter, v2:Value):Cond return env -> condLt(exec1(env), v2);
+
+	static inline function condLte(v1:Value, v2:Value):Bool {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: a <= b;
+			case [VFloat(a), VFloat(b)]: a <= b;
+			case _: switch EvalMisc.compare(v1, v2) {
+					case CInf | CEq: true;
+					case _: false;
+				};
+		}
+	}
+
+	public static function emitCondLte(exec1:Emitter, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return condLte(v1, v2);
+		}
+	}
+
+	public static function emitCondLteLe(slot:Int, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return condLte(v1, v2);
+		}
+	}
+
+	public static function emitCondLteLc(slot:Int, v2:Value):Cond return env -> condLte(env.envLocals[slot], v2);
+
+	public static function emitCondLteLl(slot1:Int, slot2:Int):Cond return env -> condLte(env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitCondLteEc(exec1:Emitter, v2:Value):Cond return env -> condLte(exec1(env), v2);
+
+	static inline function condGt(v1:Value, v2:Value):Bool {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: a > b;
+			case [VFloat(a), VFloat(b)]: a > b;
+			case _: EvalMisc.compare(v1, v2) == CSup;
+		}
+	}
+
+	public static function emitCondGt(exec1:Emitter, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return condGt(v1, v2);
+		}
+	}
+
+	public static function emitCondGtLe(slot:Int, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return condGt(v1, v2);
+		}
+	}
+
+	public static function emitCondGtLc(slot:Int, v2:Value):Cond return env -> condGt(env.envLocals[slot], v2);
+
+	public static function emitCondGtLl(slot1:Int, slot2:Int):Cond return env -> condGt(env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitCondGtEc(exec1:Emitter, v2:Value):Cond return env -> condGt(exec1(env), v2);
+
+	static inline function condGte(v1:Value, v2:Value):Bool {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: a >= b;
+			case [VFloat(a), VFloat(b)]: a >= b;
+			case _: switch EvalMisc.compare(v1, v2) {
+					case CSup | CEq: true;
+					case _: false;
+				};
+		}
+	}
+
+	public static function emitCondGte(exec1:Emitter, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return condGte(v1, v2);
+		}
+	}
+
+	public static function emitCondGteLe(slot:Int, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return condGte(v1, v2);
+		}
+	}
+
+	public static function emitCondGteLc(slot:Int, v2:Value):Cond return env -> condGte(env.envLocals[slot], v2);
+
+	public static function emitCondGteLl(slot1:Int, slot2:Int):Cond return env -> condGte(env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitCondGteEc(exec1:Emitter, v2:Value):Cond return env -> condGte(exec1(env), v2);
+
+	static inline function condEq(v1:Value, v2:Value):Bool {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: a == b;
+			case _: EvalValueTools.equals(v1, v2);
+		}
+	}
+
+	public static function emitCondEq(exec1:Emitter, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return condEq(v1, v2);
+		}
+	}
+
+	public static function emitCondEqLe(slot:Int, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return condEq(v1, v2);
+		}
+	}
+
+	public static function emitCondEqLc(slot:Int, v2:Value):Cond return env -> condEq(env.envLocals[slot], v2);
+
+	public static function emitCondEqLl(slot1:Int, slot2:Int):Cond return env -> condEq(env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitCondEqEc(exec1:Emitter, v2:Value):Cond return env -> condEq(exec1(env), v2);
+
+	static inline function condNeq(v1:Value, v2:Value):Bool {
+		return switch [v1, v2] {
+			case [VInt(a), VInt(b)]: a != b;
+			case _: !EvalValueTools.equals(v1, v2);
+		}
+	}
+
+	public static function emitCondNeq(exec1:Emitter, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = exec1(env);
+			var v2 = exec2(env);
+			return condNeq(v1, v2);
+		}
+	}
+
+	public static function emitCondNeqLe(slot:Int, exec2:Emitter):Cond {
+		return function(env:Env):Bool {
+			var v1 = env.envLocals[slot];
+			var v2 = exec2(env);
+			return condNeq(v1, v2);
+		}
+	}
+
+	public static function emitCondNeqLc(slot:Int, v2:Value):Cond return env -> condNeq(env.envLocals[slot], v2);
+
+	public static function emitCondNeqLl(slot1:Int, slot2:Int):Cond return env -> condNeq(env.envLocals[slot1], env.envLocals[slot2]);
+
+	public static function emitCondNeqEc(exec1:Emitter, v2:Value):Cond return env -> condNeq(exec1(env), v2);
+
+	public static function emitIfCond(cond:Cond, execThen:Emitter, execElse:Emitter):Emitter {
+		return env -> if (cond(env)) execThen(env) else execElse(env);
+	}
+
+	// port: the tail recursion on `Continue` is a loop.
+	public static function runWhileCondContinue(cond:Cond, execBody:Emitter, env:Env):Void {
+		while (true) {
+			try {
+				while (cond(env)) {
+					execBody(env);
+					core.ds.GcPolicy.tick(); // port: loops allocate without calls or typing
+					EvalLock.tick();
+				}
+				return;
+			} catch (_:Continue) {}
+		}
+	}
+
+	public static function emitWhileCond(cond:Cond, execBody:Emitter):Emitter {
+		return function(env:Env):Value {
+			try runWhileCondContinue(cond, execBody, env)
+			catch (_:Break) {}
+			return VNull;
+		}
+	}
+
+	public static function emitDoWhileCond(cond:Cond, execBody:Emitter):Emitter {
+		return function(env:Env):Value {
+			try {
+				execBody(env);
+				runWhileCondContinue(cond, execBody, env);
+			} catch (_:Break) {} catch (_:Continue) {
+				try runWhileCondContinue(cond, execBody, env)
+				catch (_:Break) {}
+			}
+			return VNull;
+		}
+	}
+
 	// Function
 
-	public static function executeSetLocal(i:Int):ArgSetter return (env, v) -> env.envLocals[i] = v;
+	/* The parameters of a function are the slots of its arguments: a local slot,
+		or [-1 - slot] for a captured one. */
+	public static inline function paramLocal(slot:Int):Int return slot;
 
-	public static function executeSetCapture(i:Int):ArgSetter return (env, v) -> env.envCaptures[i] = v;
+	public static inline function paramCapture(slot:Int):Int return -1 - slot;
 
-	public static inline function processArguments(fl:Array<ArgSetter>, vl:Array<Value>, env:Env):Void {
-		var nf = fl.length;
+	static inline function setArgument(params:Vector<Int>, k:Int, env:Env, v:Value):Void {
+		var slot = params[k];
+		if (slot >= 0) env.envLocals[slot] = v else env.envCaptures[-1 - slot] = v;
+	}
+
+	// port: `set_arguments` over the argument array
+	public static inline function processArguments(params:Vector<Int>, vl:Array<Value>, env:Env):Void {
+		var nf = params.length;
 		var nv = vl.length;
 		var k = 0;
 		while (k < nf) {
-			fl[k](env, k < nv ? vl[k] : VNull);
+			setArgument(params, k, env, k < nv ? vl[k] : VNull);
 			k++;
 		}
 		if (nv > nf) EvalContext.excString('Bad number of arguments: 0 vs. ${nv - nf}');
 	}
 
-	// port: upstream wraps each call in `Std.finally (pop_environment)`. A try is a setjmp
-	// on HashLink/C, so the environment is popped on normal return only; after an
-	// exception, frames are popped where it is caught (emit_try, catch_exceptions)
-	// before anything reads eval.env, which is the state upstream's finally leaves.
-	public static function createFunctionNoret(ctx:Context, eci:EnvInfo, exec:Emitter, fl:Array<ArgSetter>):Vfunc {
+	/* The functions run their body in an environment of their own, popped however
+		the body ends. */
+	// port: a try is a setjmp on HashLink/C, so the environment is popped on normal
+	// return only; after an exception, frames are popped where it is caught
+	// (emit_try, catch_exceptions) before anything reads eval.env, which is the
+	// state upstream's handlers leave.
+	public static function createFunctionNoret(ctx:Context, eci:EnvInfo, exec:Emitter, fl:Vector<Int>):Vfunc {
 		return function(vl:Array<Value>):Value {
 			var env = EvalContext.pushEnvironment(ctx, eci);
 			processArguments(fl, vl, env);
@@ -1293,7 +1865,7 @@ class EvalEmitter {
 		}
 	}
 
-	public static function createFunction(ctx:Context, eci:EnvInfo, exec:Emitter, fl:Array<ArgSetter>):Vfunc {
+	public static function createFunction(ctx:Context, eci:EnvInfo, exec:Emitter, fl:Vector<Int>):Vfunc {
 		return function(vl:Array<Value>):Value {
 			var env = EvalContext.pushEnvironment(ctx, eci);
 			processArguments(fl, vl, env);
@@ -1304,7 +1876,7 @@ class EvalEmitter {
 	}
 
 	public static function createClosureNoret(ctx:Context, eci:EnvInfo, refSlots:Vector<Int>, refValues:Vector<Value>, exec:Emitter,
-			fl:Array<ArgSetter>):Vfunc {
+			fl:Vector<Int>):Vfunc {
 		return function(vl:Array<Value>):Value {
 			var env = EvalContext.pushEnvironment(ctx, eci);
 			for (k in 0...refSlots.length) env.envCaptures[refSlots[k]] = refValues[k];
@@ -1316,7 +1888,7 @@ class EvalEmitter {
 	}
 
 	public static function createClosure(refSlots:Vector<Int>, refValues:Vector<Value>, ctx:Context, eci:EnvInfo, exec:Emitter,
-			fl:Array<ArgSetter>):Vfunc {
+			fl:Vector<Int>):Vfunc {
 		return function(vl:Array<Value>):Value {
 			var env = EvalContext.pushEnvironment(ctx, eci);
 			for (k in 0...refSlots.length) env.envCaptures[refSlots[k]] = refValues[k];
@@ -1330,7 +1902,7 @@ class EvalEmitter {
 	// port: [mapping] is upstream's `(i, slot) array`, as two parallel arrays: the
 	// closure's capture slots [mappingI] and the outer capture slots [mappingSlot].
 	public static function emitClosure(ctx:Context, mappingI:Vector<Int>, mappingSlot:Vector<Int>, eci:EnvInfo, hasret:Bool, exec:Emitter,
-			fl:Array<ArgSetter>):Emitter {
+			fl:Vector<Int>):Emitter {
 		return function(env:Env):Value {
 			var refValues = new Vector<Value>(mappingSlot.length);
 			for (k in 0...mappingSlot.length) refValues[k] = env.envCaptures[mappingSlot[k]];

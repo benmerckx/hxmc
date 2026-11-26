@@ -436,7 +436,8 @@ typedef CommonContext = {
 	var scopedWarningOptions:Array<core.Warning.ScopedWarningOption>;
 	var getMessages:Void->Array<CompilerMessage>;
 	var filterMessages:(CompilerMessage->Bool)->Void;
-	var runCommand:String->Int;
+	/* [cwd]: the directory to run the command in, if not the current one */
+	var runCommand:(cmd:String, ?cwd:String) -> Int;
 	var runCommandArgs:String->Array<String>->Int;
 	// typing setup
 	var loadExternType:Array<ExternTypeLoader>; // allow finding types which are not in sources
@@ -487,7 +488,7 @@ class Common {
 		defines: com.defines,
 		basic: com.basic,
 		classPaths: com.classPaths,
-		runCommand: com.runCommand,
+		runCommand: cmd -> com.runCommand(cmd),
 		runCommandArgs: com.runCommandArgs,
 		warning: com.warning,
 		error: com.error,
@@ -843,7 +844,7 @@ class Common {
 			platform: Cross,
 			config: defaultConfig,
 			customExt: null,
-			runCommand: function(cmd) return Sys.command(cmd),
+			runCommand: function(cmd, ?cwd) return macros.eval.EvalProcess.command(cmd, cwd),
 			runCommandArgs: function(s, args) return com.runCommand(s + " " + args.join(" ")),
 			emptyClassPath: new core.ClassPath.DirectoryClassPath("", User),
 			classPaths: new core.ClassPaths(),
@@ -998,18 +999,10 @@ class Common {
 		return out;
 	}
 
-	// port: Extc.filetime returns zero when stat fails (including absent import.hx).
-	// port: Extc.filetime: full precision (st_mtim, macOS st_mtimespec; GetFileTime's 100 ns units on Windows)
+	// port: Vfs.mtime: zero when stat fails (including absent import.hx), full
+	// precision (core.Vfs.statInfo)
 	public static function fileTime(file:String):Float {
-		#if (target.name == "hxmc")
-		// port: on POSIX, tv_sec + tv_nsec / 1e9 as Extc computes it: a Date's
-		// milliseconds / 1000 rounds differently in the last digit (server/files)
-		if (!isWindows) {
-			final t = hxmc.NativeSys.statTimes(file);
-			return t == null ? 0. : t[2] + t[3] / 1e9;
-		}
-		#end
-		return try sys.FileSystem.stat(file).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.;
+		return core.Vfs.mtime(file);
 	}
 
 	/* Writes [content] to [file] unless the file already has exactly this content. */
@@ -1018,7 +1011,10 @@ class Common {
 			var old = sys.io.File.getBytes(file);
 			old.length == content.length && old.compare(content) == 0;
 		} catch (_:Dynamic) false;
-		if (!same) sys.io.File.saveBytes(file, content);
+		if (!same) {
+			sys.io.File.saveBytes(file, content);
+			core.Vfs.invalidate(file);
+		}
 	}
 
 	public static final flashVersions = [
