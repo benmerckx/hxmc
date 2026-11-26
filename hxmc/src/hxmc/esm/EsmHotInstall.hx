@@ -139,13 +139,8 @@ class EsmHotInstall {
 
 	static function tryEmitClassStatic(ctx:JsCtx, c:TClass, _clPath:GlobalTypePath, f:TClassField):Bool {
 		if (!core.Define.rawDefined(ctx.com.defines, "esm.hot")) return false;
-		if (f.cfExpr == null || !hxmc.esm.EsmHotMeta.isSwappable(f, c)) return false;
-		return switch f.cfExpr.eexpr {
-			case TFunction(_):
-				hxmc.genesm.GenesmHot.emitClassStatic(ctx, c, f);
-				true;
-			default:
-				false;
-		};
+		if (!hxmc.esm.EsmHotMeta.isSwappable(f, c)) return false;
+		hxmc.genesm.GenesmHot.emitSwappable(ctx, c, f);
+		return true;
 	}
 }

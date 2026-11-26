@@ -61,11 +61,6 @@ class GenesmHot {
 
 	static function jsQuote(s:String):String return '"' + jsEscape(s) + '"';
 
-	public static function emitClassStatic(ctx:JsCtx, c:TClass, f:TClassField):Void emitSwappable(ctx, c, f);
-
-	public static function emitSwappableStatic(ctx:JsCtx, s:{c:TClass, f:TClassField, e:TExpr}):Void
-		emitSwappable(ctx, s.c, s.f);
-
 	public static function emitHotClosure(ctx:JsCtx, id:String, capHash:String, caps:Array<String>, f:TFunc, pos:Pos):Void {
 		var params = new Map<String, Bool>();
 		for (a in f.tfArgs) params.set(a.variable.vName, true);
@@ -116,7 +111,7 @@ class GenesmHot {
 		}
 	}
 
-	static function emitSwappable(ctx:JsCtx, c:TClass, f:TClassField):Void {
+	public static function emitSwappable(ctx:JsCtx, c:TClass, f:TClassField):Void {
 		if (f.cfExpr != null)
 			hxmc.esm.HotLowering.prepareFieldCells(ctx.com, c, f);
 		var e = f.cfExpr;

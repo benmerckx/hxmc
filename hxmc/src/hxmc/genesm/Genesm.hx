@@ -218,15 +218,11 @@ class Genesm {
 			if (hotRegistry && generators.EsmHotEmit.tryEmitClassStatic != null
 				&& generators.EsmHotEmit.tryEmitClassStatic(ctx, s.c, clPath, s.f))
 				continue;
-			if (hotRegistry && hxmc.esm.EsmHotMeta.isSwappable(s.f, s.c))
-				GenesmHot.emitSwappableStatic(ctx, s);
-			else {
-				if (hotRegistry) {
-					hxmc.esm.HotLowering.prepareFieldCells(ctx.com, s.c, s.f);
-					s = {c: s.c, f: s.f, e: s.f.cfExpr};
-				}
-				Genjs.generateStatic(ctx, s);
+			if (hotRegistry) {
+				hxmc.esm.HotLowering.prepareFieldCells(ctx.com, s.c, s.f);
+				s = {c: s.c, f: s.f, e: s.f.cfExpr};
 			}
+			Genjs.generateStatic(ctx, s);
 		}
 	}
 

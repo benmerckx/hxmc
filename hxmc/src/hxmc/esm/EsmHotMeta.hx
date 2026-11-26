@@ -25,11 +25,6 @@ class EsmHotMeta {
 		return false;
 	}
 
-	public static function isHotMeta(entry:MetadataEntry):Bool {
-		var k = metaKey(entry);
-		return k == PREFIX || StringTools.startsWith(k, PREFIX + ".");
-	}
-
 	// Keyed callee: hot cells plus another method in the same type calls this field.
 	public static function isKeyed(c:TClass, cf:TClassField):Bool {
 		if (cf.cfExpr == null) return false;
@@ -100,7 +95,7 @@ class EsmHotMeta {
 
 	static function cellMetaEntry(m:MetadataEntry):Bool {
 		var k = metaKey(m);
-		if (k != "" && (hotLeaf(k, "cell") || StringTools.endsWith(k, ".cell") || StringTools.contains(k, "hot.cell"))) return true;
+		if (hotLeaf(k, "cell")) return true;
 		if (k == PREFIX || k == "esm.hot")
 			for (a in m.exprs) switch a.expr {
 				case EConst(Ident("cell")): return true;
@@ -122,12 +117,6 @@ class EsmHotMeta {
 		if (!cellMetaEntry(m)) return null;
 		for (a in m.exprs) switch a.expr {
 			case EConst(String(s, _)): return s;
-			default:
-		}
-		var sawCell = false;
-		for (a in m.exprs) switch a.expr {
-			case EConst(Ident("cell")): sawCell = true;
-			case EConst(String(s, _)) if (sawCell): return s;
 			default:
 		}
 		return null;

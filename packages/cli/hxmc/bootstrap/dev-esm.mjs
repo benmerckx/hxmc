@@ -9,6 +9,7 @@ import {
 	createCompilationServer,
 	esmHotBuildExtra,
 	invalidateHx,
+	jsEntry,
 	parsePathsFromAll,
 	resolveHxmcStd,
 	setupSourceWatch,
@@ -18,11 +19,7 @@ import { createHotWsServer, wsEncode } from './ws.mjs';
 
 export async function runDevEsm(compiler, { port, host, quiet, cwd, args, browser = false }) {
 	const all = words(args);
-	const entryRel = (() => {
-		for (let i = 0; i < all.length; i++)
-			if ((all[i] === '-js' || all[i] === '--js') && all[i + 1]) return all[i + 1];
-		return null;
-	})();
+	const entryRel = jsEntry(all);
 	if (!entryRel) {
 		console.error('esm dev: missing -js output path');
 		process.exit(2);

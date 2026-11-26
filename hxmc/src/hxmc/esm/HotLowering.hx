@@ -143,7 +143,7 @@ class HotLowering {
 		if (EsmHotMeta.isKeyed(c, cf)) ensureSyntheticHotId(com.basic, cf);
 		var uid = HotIds.unitId(c, cf.cfName);
 		var keyed = EsmHotMeta.isKeyed(c, cf);
-		var st = {lambdaN: 0, skipRootFn: false, fieldLocals: (null : Null<Map<String, Bool>>)};
+		var st = {lambdaN: 0, fieldLocals: (null : Null<Map<String, Bool>>)};
 		switch cf.cfExpr.eexpr {
 			case TFunction(f):
 				st.fieldLocals = collectShallowVarNames(f);
@@ -206,7 +206,7 @@ class HotLowering {
 	}
 
 	static function mapUnitEarly(com:CommonContext, uid:String, keyed:Bool, hotId:Null<TVar>,
-			st:{lambdaN:Int, skipRootFn:Bool, fieldLocals:Null<Map<String, Bool>>}, expr:TExpr):TExpr {
+			st:{lambdaN:Int, fieldLocals:Null<Map<String, Bool>>}, expr:TExpr):TExpr {
 		return HotExprMap.mapTransform(function(cur:TExpr):TExpr {
 			switch cur.eexpr {
 				case TMeta(m, {eexpr: TVar(v, eo)}) if (EsmHotMeta.isCellMetaEntry(m) && eo != null):
@@ -214,10 +214,6 @@ class HotLowering {
 				case TVar(v, eo) if (EsmHotMeta.isCell(v.vMeta) && eo != null):
 					return markCellPending(v, eo, cur, cellMetaSource(v));
 				case TFunction(f):
-					if (st.skipRootFn) {
-						st.skipRootFn = false;
-						return cur;
-					}
 					// Resident-server rebuilds re-run early lowering; skip lambdas already env-wrapped.
 					if (f.tfArgs.length > 0 && f.tfArgs[0].variable.vName == "$env") return cur;
 					st.lambdaN++;
@@ -286,11 +282,7 @@ class HotLowering {
 		return {eexpr: TMeta(meta, inner), etype: orig.etype, epos: orig.epos};
 	}
 
-	static function isParamVar(f:TFunc, v:TVar):Bool {
-		for (a in f.tfArgs)
-			if (a.variable == v || a.variable.vName == v.vName) return true;
-		return false;
-	}
+	static function isParamVar(f:TFunc, v:TVar):Bool return isParamName(f, v.vName);
 
 	static function isParamName(f:TFunc, name:String):Bool {
 		for (a in f.tfArgs)
