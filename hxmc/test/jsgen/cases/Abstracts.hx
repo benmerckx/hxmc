@@ -46,7 +46,12 @@
 // ts: declare const p: Pair<string>;
 // ts: // @ts-expect-error
 // ts: const q: Pair<number> = p;
-// ts: export { n, f, c3, t, s, k, i2, i3, i4, red, zero, g, rn, rs, low, l0, hi, ok, okn, q };
+// ts: // (its functions of its type parameters)
+// ts: const pf: string = Pair.first(p);
+// ts: // @ts-expect-error
+// ts: const pn: number = Pair.first(p);
+// ts: const pp: Pair<number> = Pair._hx_new(1, 2);
+// ts: export { n, f, c3, t, s, k, i2, i3, i4, red, zero, g, rn, rs, low, l0, hi, ok, okn, q, pf, pn, pp };
 // ts output has: abstracts/Units.ts: Red: 0 as unknown as { readonly [$brand]: { readonly "abstracts.Color": 0 } },
 // ts output has: abstracts/Units.ts: export type Color = { readonly [$brand]: { readonly "abstracts.Color": 0 | 1 | 2 } };
 // ts output has: abstracts/Units.ts: Low: 0 as Level & 0,

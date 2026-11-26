@@ -1134,6 +1134,12 @@ class Chunk {
 			case KAbstractImpl(a): a;
 			case _: return;
 		}
+		// (a generic abstract's: its type parameters, a function's own, which its implementation's statics name)
+		if (a.aParams.length > 0) {
+			var own = l.tparams == null ? [] : l.tparams.toArray();
+			var all = [for (p in a.aParams) if (!Lambda.exists(own, x -> x.ttpName == p.ttpName)) p].concat(own);
+			l.tparams = haxe.ds.Vector.fromArrayCopy(all);
+		}
 		if (!hasClassFieldFlag(f, CfImpl) || hasClassFieldFlag(f, CfAbstractConstructor) || l.params.length == 0 || !Casts.branded(a)) return;
 		var p0 = l.params[0];
 		var self = new Sym(SLocal, p0.hint + "$");

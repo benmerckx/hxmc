@@ -872,7 +872,7 @@ class Lower {
 			case TCall(callee, args): call(e, callee, args);
 			case TNew({clPath: {pack: [], name: "Array"}}, _, args) if (args.length == 0): mkx(EArray([]));
 			// (a Haxe String is a primitive: `new String(s)` would be an object, not `===` to s, its type not `string`)
-			case TNew(c = {clPath: {pack: [], name: "String"}}, _, [a]): mkx(ECall(r.type(TClassDecl(c), p), [expr(a)]));
+			case TNew(c = {clPath: {pack: [], name: "String"}}, _, [a]): as(mkx(ECall(r.type(TClassDecl(c), p), [expr(a)])), TInst(c, haxe.ds.Vector.fromArrayCopy([])), e.etype);
 			case TNew(c, _, args):
 				var ctor = r.type(TClassDecl(c), p);
 				// (TypeScript: a generic class's type arguments, which it may not infer from the arguments)
@@ -894,9 +894,10 @@ class Lower {
 					sig != null && i < sig.args.length && !ExtType.isRest(follow(sig.args[i].type)) ? as(v, args[i].etype, sig.args[i].type) : v;
 				}], args, hasClassFlag(c, CExtern) ? null : c.clConstructor);
 				var made = if (c.clConstructor != null && Meta.has(Meta.SelfCall, c.clConstructor.cfMeta)) mkx(ECall(ctor, a)) else mkx(ENew(ctor, a));
-				// (TypeScript: of its class, its type arguments', where Haxe has it as another type: a structure of an abstract)
+				// (TypeScript: of its class, its type arguments', where Haxe has it as another type: a structure of an abstract,
+				// an abstract @:forward.new makes of it)
 				switch e.eexpr {
-					case TNew(_, params, _) if (ts && ctor.def.match(ETypeArgs(_))): as(made, TInst(c, params), e.etype);
+					case TNew(_, params, _) if (ts && (ctor.def.match(ETypeArgs(_)) || follow(e.etype).match(TAbstract(_)))): as(made, TInst(c, params), e.etype);
 					case _: made;
 				}
 			case TUnop(Spread, _, x): mkx(ESpread(native(x)));
@@ -1294,9 +1295,9 @@ class Lower {
 		}
 		if (anyOn(f)) return f;
 		return switch callee.eexpr {
-			case TField(o, FStatic(c, cf) | FInstance(c, _, cf)) if (cf.cfParams.length > 0 && !hasClassFlag(c, CExtern)
+			case TField(o, FStatic(c, cf) | FInstance(c, _, cf)) if (paramsOf(c, cf).length > 0 && !hasClassFlag(c, CExtern)
 				&& f.def.match(EMember(_) | EField(_) | EIndex(_) | EId(_) | ERef(_) | EFriend(_)) && (o.eexpr.match(TTypeExpr(_)) || follow(o.etype).match(TInst(_, _))) && typed(o)):
-				var args = instantiation(cf, callee.etype);
+				var args = instantiation(paramsOf(c, cf), cf.cfType, callee.etype);
 				args == null ? f : ex(ETypeArgs(f, args), f.pos);
 			case _: f;
 		}
@@ -1313,9 +1314,9 @@ class Lower {
 
 	static function declaredAny(f:TExpr):Bool return switch Texpr.skip(f).eexpr {
 		// (a static's of a type parameter not its own, an abstract's: out of scope, `any`)
-		case TField(_, FStatic(_, cf)): switch follow(cf.cfType) {
+		case TField(_, FStatic(c, cf)): switch follow(cf.cfType) {
 				case TFun(s): Casts.tsAny(s.ret) || switch follow(s.ret) {
-						case TInst({clKind: KTypeParameter(p)}, _): !cf.cfParams.exists(x -> x.ttpName == p.ttpName);
+						case TInst({clKind: KTypeParameter(p)}, _): !Lambda.exists(paramsOf(c, cf), x -> x.ttpName == p.ttpName);
 						case _: false;
 					}
 				case _: false;
@@ -1327,13 +1328,24 @@ class Lower {
 		case _: false;
 	}
 
-	// the type arguments of cf's type parameters in t, its type where it is used (null: one not found)
-	static function instantiation(cf:TClassField, t:T):Null<Array<T>> {
+	// (TypeScript) a function's type parameters: its own; an abstract's implementation's, the abstract's first (abstractThis)
+	static function paramsOf(c:TClass, cf:TClassField):Array<TypedTypeParam> {
+		var own = cf.cfParams.toArray();
+		return switch c.clKind {
+			case KAbstractImpl(a) if (a.aParams.length > 0):
+				[for (p in a.aParams) if (!Lambda.exists(own, x -> x.ttpName == p.ttpName)) p].concat(own);
+			case _: own;
+		}
+	}
+
+	// the type arguments of type parameters (params) of a field's type (ft) in t, its type where it is used (null: one not
+	// found)
+	static function instantiation(params:Array<TypedTypeParam>, ft:T, t:T):Null<Array<T>> {
 		var found = new Map<String, T>();
 		function walk(d:T, a:T, depth:Int) {
 			if (depth > 20) return;
 			switch [d, a] {
-				case [TInst({clKind: KTypeParameter(p)}, _), _] if (cf.cfParams.exists(x -> x.ttpName == p.ttpName) && !found.exists(p.ttpName)):
+				case [TInst({clKind: KTypeParameter(p)}, _), _] if (Lambda.exists(params, x -> x.ttpName == p.ttpName) && !found.exists(p.ttpName)):
 					found.set(p.ttpName, a);
 				case [TMono(m), _] if (m.tmType != null): walk(m.tmType, a, depth + 1);
 				case [_, TMono(m)] if (m.tmType != null): walk(d, m.tmType, depth + 1);
@@ -1353,9 +1365,9 @@ class Lower {
 				case _:
 			}
 		}
-		walk(cf.cfType, t, 0);
+		walk(ft, t, 0);
 		var out = [];
-		for (p in cf.cfParams) {
+		for (p in params) {
 			var a = found.get(p.ttpName);
 			if (a == null) return null;
 			out.push(a);
