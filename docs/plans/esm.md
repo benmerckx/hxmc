@@ -42,7 +42,7 @@ Technical plan for the unified **`haxe --dev`** entry and resident server:
 | | |
 | --- | --- |
 | **Reuse** | Js platform, typer, filters, `#if js`, compilation server |
-| **Branch out** | `Genesm` / `GenesmHot` / prod Genesm, `hxmc/std/esm`, ESM patch protocol, closure-aware heap serializer |
+| **Branch out** | `GenesmProd` / `GenesmHot`, `hxmc/std/esm`, ESM patch protocol, closure-aware heap serializer |
 | **Framework layer (out of repo)** | signals, JSX, `component` / `computation` kind handlers built on generic primitives |
 
 Generic rule: Genesm must not branch on framework types. External frameworks
@@ -51,21 +51,22 @@ register **pluggable kinds** on `esm.hot`; this repo ships **`function`**,
 
 ## Production ESM (`-D esm`, release builds)
 
-**Not implemented as the default backend yet.** Today **`-D esm`** without
-**`-D esm.hot`** still uses the dev **`Genesm`** layout (`$global` publish
-table). The planned **release** backend (formerly sketched as **`esm.prod`** /
-`GenesmProd`):
+**Implemented.** **`-D esm`** without **`-D esm.hot`** uses **`GenesmProd`**
+(static `import` / `export` between user modules). Users pass **`-D esm`**
+only — not **`-D esm.prod`**.
 
-| Topic | Decision |
+| Topic | Status |
 | --- | --- |
-| User flag | **`-D esm`** only (with `--js`); no **`-D esm.prod`** |
-| Linking | Static `import` / `export` between Haxe user modules (genes-style); no `$global` / `$h` for ordinary cross-module types |
-| Cycles | Deferred super/statics + explicit static imports (genes-style) |
-| Consumption | Modules importable on their explicit graph; entry optional; bundler tree-shaking |
-| Tests | Re-run `make esm` on prod emit + bundler smoke; separate exclusions from dev/hot layout |
+| User flag | **`-D esm`** only (with `--js`); **`-D esm.prod`** is internal / not for hxml |
+| Linking | Static `import` / `export` between Haxe user modules; hot **`$h`** publish table is separate |
+| Cycles | Deferred super/statics + explicit static imports (`GenesmProd.isModuleCyclic`) |
+| Consumption | Bundler-visible graph; entry `.mjs` optional for libraries |
+| Tests | `make esm` lane **`genesm`**: `prod-static-imports`, **`prod-bundler`** (esbuild bundle + run) |
 
 *Example:* a library published to npm is built with **`haxe -D esm -js …`**;
 the same project uses **`haxe --dev -D esm -js …`** locally for hot reload.
+
+Authoritative behavior: [esm.md](../esm.md).
 
 ## Hygiene and CI (open)
 
@@ -136,6 +137,6 @@ orchestration, and reload backends (patch vs hxmc snapshot).
 
 ## Optional later
 
-- **`docs/esm.md` quick start** — rewrite examples around **`haxe --dev`** and
-  **`-D esm`**; drop user-facing **`-D esm.hot`** / **`-D esm.prod`**.
+- **`docs/esm.md` quick start** — prefer **`haxe --dev`** over manual
+  **`-D esm.hot`** in examples (prod row documents **`-D esm`** → `GenesmProd`).
 - Upstreaming ESM to OCaml Haxe — **out of scope** for hxmc.
