@@ -1,0 +1,3 @@
+v1: hello bob 1 | hello bob 2 | X | true
+v2: hi bob 3 | hi bob 4 | x! | true
+v2: unchanged: hi bob 5 | hi bob 6 | x! | true

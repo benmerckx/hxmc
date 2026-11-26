@@ -316,6 +316,11 @@ class Chunk {
 	// TypeScript (es-modules, an output named `.ts`): the files are `.ts`, with types (Ts)
 	final tsOut:Bool;
 	final ext:String;
+	// -D hxmc.js.hot (es-modules): the build compared with the program running, a patch of its classes (Hot); the
+	// declarations of the files as they were assembled (body), the patch's file
+	final hot:Null<Hot>;
+	final hotItems:Array<{file:OutFile, item:Item, pieces:Array<Piece>, decl:Null<ClassDecl>}> = [];
+	var hotFile:Null<OutFile> = null;
 
 	public function new(com:Gctx) {
 		this.com = com;
@@ -327,6 +332,13 @@ class Chunk {
 		// (the fields' names: the program's whole, which modules others may import are not)
 		if (modules && Gctx.rawDefined(com, "hxmc.js.minify.fields"))
 			Error.abort("hxmc.js.minify.fields: the bundled output's (hxmc.js=es), not es-modules's: what imports a module reads its fields by their names", core.Globals.nullPos);
+		hot = if (!Gctx.rawDefined(com, "hxmc.js.hot")) null else {
+			if (!modules || tsOut)
+				Error.abort("hxmc.js.hot: es-modules's, to JavaScript (-D hxmc.js=es-modules, an output named .js)", core.Globals.nullPos);
+			if (Gctx.definedValueSafe(com, "hxmc.js.minify") != "")
+				Error.abort("hxmc.js.hot: not minified (a patch names what the running program has by its names)", core.Globals.nullPos);
+			new Hot(Path.directory(com.file));
+		}
 		for (c in splits.chunks) files.push(new OutFile(files.length, c));
 		// (modules: the entry is the main module's file, when they have one path)
 		if (modules) files[0].path = Path.withoutDirectory(com.file);
@@ -771,6 +783,7 @@ class Chunk {
 		p.accessor = accessorEx;
 		p.backed = backedEx;
 		p.smap = smap != null ? smap : f.smap;
+		p.hot = hot != null;
 		return p;
 	}
 
@@ -2024,6 +2037,7 @@ class Chunk {
 		current = 0;
 		aliases();
 		newMaps();
+		if (hot != null) hotPatch(docs);
 		var decls = printAll(docs);
 		// (what the printing found the files use (class heads' interfaces): imported too)
 		for (f in files) for (s => from in f.needs) if (from >= 0 && from != f.id && !f.deps.contains(from) && hasValue(files[from])) f.deps.push(from);
@@ -2033,6 +2047,7 @@ class Chunk {
 			rtUsed.set("loadModule", true);
 		}
 		var registered = new Map<Int, Bool>();
+		var rtValues = hot == null ? null : ["bind" => Runtime.HOT_BIND];
 		var rtSource = Runtime.source(rtUsed, n -> {
 			var item = byPath.get(n);
 			if (item == null) return null;
@@ -2040,7 +2055,7 @@ class Chunk {
 			rtFiles.set(item.file, true);
 			rtUsed.set("types", true);
 			"$hx.types." + item.sym.name;
-		});
+		}, rtValues);
 		var hasStringRec = byPath.exists("js.Boot") && byPath.get("js.Boot").cls.clStatics.exists("__string_rec");
 		// (EnumValue's toString, below: js.Boot's __string_rec, registered as the runtime's `{js.Boot}`)
 		if (hasStringRec) {
@@ -2053,7 +2068,7 @@ class Chunk {
 		rtSource = Runtime.source(rtUsed, n -> {
 			var item = byPath.get(n);
 			item == null ? null : "$hx.types." + item.sym.name;
-		});
+		}, rtValues);
 		if (hasStringRec)
 			rtSource = rtSource.replace("EnumValue: class EnumValue {}",
 				"EnumValue: class EnumValue {\n\t\ttoString() {\n\t\t\treturn $hx.types." + byPath.get("js.Boot").sym.name + "." + fieldName("__string_rec", NStaticPath("js.Boot")) + "(this, \"\");\n\t\t}\n\t}");
@@ -2114,6 +2129,130 @@ class Chunk {
 		b.add(p.toString());
 		save(com.file, b.toString(), files[0].smap);
 		if (splits.hasSplits()) prune(dir, written);
+		if (hot != null) {
+			hot.runtime([for (k in Runtime.closure(rtUsed).keys()) k]);
+			hot.compare(hotFile != null);
+			var patch = hotFile != null && hot.reload == null ? hotFile.path : null;
+			if (patch != null) {
+				sys.FileSystem.createDirectory(Path.join([dir, Hot.DIR]));
+				var b = new StringBuf();
+				b.add(header());
+				b.add(imports(hotFile, patch));
+				b.add("\n");
+				b.add(decls[hotFile.id]);
+				save(Path.join([dir, patch]), b.toString(), hotFile.smap);
+			}
+			hot.save(patch);
+		}
+	}
+
+	// (-D hxmc.js.hot) the build's declarations compared with those of the program running (Hot): where only classes'
+	// methods differ, a patch's file, which imports the running classes and replaces those methods, each class's
+	// changed ones of a class of its own (`$hx.hotPatch(C, class C$hot extends S { ... }, [removed])`, Runtime)
+	function hotPatch(docs:Array<Doc>) {
+		rtUsed.set("hotPatch", true);
+		// (the bindings the files export, by their files)
+		var owner = new Map<Sym, Int>();
+		for (f in files) for (item in f.items) owner.set(item.sym, f.id);
+		for (k => s in moduleFields) {
+			var o = moduleFieldOwner.get(k);
+			if (o != null) owner.set(s, o.file);
+		}
+		for (a => x in abstractTypes) owner.set(x.sym, x.file);
+		for (r in requires) owner.set(r.sym, -1);
+		for (f in files) if (f.path != null) hot.file(f.path, [for (s => file in owner) if (file == f.id) s.name]);
+		var patch = new OutFile(files.length, null);
+		var code:Array<St> = [];
+		// (the bindings the patch's code names, the files it is of)
+		var used = new Map<Sym, Bool>();
+		var from = new Map<Int, Bool>();
+		var was = current;
+		current = patch.id;
+		for (h in hotItems) {
+			var names = new Map<Sym, Bool>();
+			var p = printer(h.file);
+			p.bind = s -> {
+				names.set(s, true);
+				s.name;
+			};
+			var d = h.decl;
+			if (d == null) {
+				for (piece in h.pieces) switch piece {
+					case POne(s): p.statement(s);
+					case PMany(l): p.statements(l);
+					case PBlank:
+				}
+				hot.other(h.item.path, p.toString());
+				continue;
+			}
+			var methods:Array<Hot.HotMethod> = [];
+			var bySlot = new Map<String, {m:Member, names:Map<Sym, Bool>}>();
+			var shape:Array<Member> = [];
+			for (m in d.members) switch m {
+				case MMethod(k, _, isStatic, kind) if (kind != MkConstructor):
+					names = new Map();
+					var text = p.classDecl({name: d.name, superClass: null, members: [m]});
+					var key = switch k {
+						case KName(n) | KField(n, _): n;
+						case KString(n): Printer.quote(n);
+						case KPrivate(n): "#" + n;
+						case KComputed(e): "[" + p.expr(e, 0) + "]";
+					}
+					var slot = (isStatic ? "s" : "i") + (switch kind {
+						case MkGet: "g";
+						case MkSet: "s";
+						case _: "m";
+					}) + ":" + key;
+					methods.push({slot: slot, hash: Hot.hash(text)});
+					bySlot.set(slot, {m: m, names: names});
+				// (a static's value: the running class's is kept; its `__init__`: run once)
+				case MField(k, _, true, t):
+					shape.push(MField(k, null, true, t));
+				case MStaticBlock(_) | MComment(_):
+				case _:
+					shape.push(m);
+			}
+			names = new Map();
+			var r = hot.cls(h.item.path, p.classDecl({name: d.name, superClass: d.superClass, members: shape}), methods);
+			if (r == null) continue;
+			for (s in names.keys()) used.set(s, true);
+			used.set(h.item.sym, true);
+			// (an accessor with the other of its pair: a property is defined with both)
+			var slots = r.changed.copy();
+			for (slot in r.changed) if (slot.charAt(1) == "g" || slot.charAt(1) == "s") {
+				var other = slot.charAt(0) + (slot.charAt(1) == "g" ? "s" : "g") + slot.substr(2);
+				if (bySlot.exists(other) && !slots.contains(other)) slots.push(other);
+			}
+			var members = [];
+			for (slot in slots) {
+				var x = bySlot.get(slot);
+				members.push(x.m);
+				for (s in x.names.keys()) used.set(s, true);
+			}
+			from.set(h.file.id, true);
+			code.push(st(SExpr(ex(ECall(rt("hotPatch"), [
+				ex(EId(h.item.sym)),
+				ex(EClass({name: new Sym(SLocal, d.name.name + "$hot"), superClass: d.superClass, members: members})),
+				ex(EArray([for (x in r.removed) ex(EStr(x))]))
+			])))));
+		}
+		current = was;
+		if (code.length == 0 || hot.first) return;
+		patch.path = hot.patchPath();
+		for (s in used.keys()) {
+			var f = owner.get(s);
+			if (f == null) continue;
+			patch.needs.set(s, f);
+			if (f >= 0 && !patch.deps.contains(f)) patch.deps.push(f);
+		}
+		patch.deps.sort(Reflect.compare);
+		// (its locals' names: those of the files its code is of)
+		for (f in from.keys()) for (n in localsOf(f).keys()) localsOf(patch.id).set(n, true);
+		files.push(patch);
+		var doc = new Doc();
+		for (s in code) doc.statement(s);
+		docs.push(doc);
+		hotFile = patch;
 	}
 
 	// the output's flags, from what the code refers to
@@ -2823,6 +2962,8 @@ class Chunk {
 		}
 		if (anyInterface) body.blank();
 		for (item in file.items) {
+			var from = body.pieces.length;
+			var hotDecl:Null<ClassDecl> = null;
 			switch item.t {
 				case TClassDecl(c) if (fieldsModule(c) != null):
 					moduleFieldsDecl(body, item, c, deferredStatics);
@@ -2920,14 +3061,15 @@ class Chunk {
 						}, p.value)))));
 					} else {
 						if (tsOut && staticClash(c)) body.statement(st(SRaw("// @ts-ignore")));
-						body.statement(exp(st(SClass({
+						hotDecl = {
 							name: d.name,
 							superClass: d.superClass,
 							members: members,
 							tparams: d.tparams,
 							superArgs: d.superArgs,
 							isAbstract: d.isAbstract
-						}))));
+						};
+						body.statement(exp(st(SClass(hotDecl))));
 					}
 					// (Type.getInstanceFields: the variables on the prototype, `null` until an instance has its own, as Genjs has them)
 					if (instanceFields) {
@@ -2946,6 +3088,7 @@ class Chunk {
 					if (resolveEnum) body.statement(st(SExpr(ex(EAssign("=", ex(EIndex(rt("enums"), ex(EStr(item.path)))), ex(EId(item.sym)))))));
 				case _:
 			}
+			if (hot != null) hotItems.push({file: file, item: item, pieces: body.pieces.slice(from), decl: hotDecl});
 			body.blank();
 		}
 		// (modules: the values of the file's enum abstracts of no implementation, `export const A = { X: ..., Y: ... } as const`)

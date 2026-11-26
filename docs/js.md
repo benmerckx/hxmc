@@ -34,6 +34,7 @@ generator writes ([Reflection](#reflection)).
 | `hxmc.js.order_report` | prints the statics and `__init__`s that run after the types, the modules the entry runs first, the lazy statics and the classes moved to files of their own |
 | `hxmc.js.properties=off` | properties stay their accessor methods ([Properties](#properties)) |
 | `hxmc.js.properties_report` | prints what became of each property |
+| `hxmc.js.hot` | (`es-modules`, JavaScript, not minified) each build can patch the program already running from the previous one ([Hot reload](#hot-reload)) |
 | `dts` | (`es`) `<output>.d.ts`, declaring what `@:expose` puts on the global object ([Modules](#modules)) |
 | `js-source-map`, `source-map`, `--debug` | a source map beside each file ([Source maps](#source-maps)) |
 | `source-map=inline` | the source map in the file, as a `data:` URL |
@@ -574,6 +575,85 @@ names by the paths they are exposed at, an abstract as its type (branded, as in
 TypeScript's output) under `HxTypes` at its path (`HxTypes.pack.A`), the others
 `any`. Not in `es-modules`
 (TypeScript's output is its declarations).
+
+## Hot reload
+
+With `-D hxmc.js.hot` (es-modules, JavaScript, not minified), a build can patch
+a program that is already running from the previous build, instead of having to
+restart it. This is for development; a release build leaves the define out.
+
+It works because the output keeps each class as a real ES class, with one
+identity for the life of the program. A patch replaces methods on the running
+classes. Their instances, their statics and the objects that refer to them stay
+as they are, and the next call to a patched method runs the new code.
+
+Each build writes `_hx_hot.json` next to the entry. It records, for each class,
+a hash of every method and a hash of the class's *shape*: its super class, its
+constructor, its instance fields with their initial values, and the names of
+its static fields. For each other declaration (enums, interfaces, abstracts'
+implementations, module-level fields) it records a hash of its code. It also
+records which names each file exports and which parts the runtime has.
+
+The next build compares itself with that record:
+
+- If only methods changed (added, edited or removed; static or not; getters and
+  setters too), the build writes a patch, `_hx_hot/<n>.js`, and names it in
+  `_hx_hot.json` as `patch`. Importing that file applies it.
+- If anything else changed, there is no patch. `_hx_hot.json` gives the reason
+  as `reload`, and the program has to be started again from the new output.
+  That covers a class's shape, an enum or another declaration, what a file
+  exports (a class added to an existing module), and a runtime part the
+  running program does not have.
+- If nothing changed, there is neither.
+
+A patch is an ordinary module. It imports the running classes from their
+modules, and for each class it defines a new class holding only the changed
+methods, then copies them onto the running class:
+
+```js
+import { $hx } from "../_hx.js";
+import { Greeter } from "../Greeter.js";
+
+$hx.hotPatch(Greeter, class Greeter$hot {
+	greet() {
+		Greeter.count++;
+		return "hi " + this.name + " " + Greeter.count;
+	}
+}, []);
+```
+
+The new class extends the running class's super class, so `super` in a copied
+method still reaches the running super class, and patches to it later.
+
+Hot mode changes the output in two ways, both so that patches work:
+
+- The generator's own `#private` fields (lazy statics, a property's storage)
+  become fields keyed by `Symbol.for("hxmc.private.<name>")`. A `#private` name
+  belongs to one class body, and a method copied from a patch's class could
+  not use it.
+- A method taken as a value (`$hx.bind`) calls the method its object's
+  prototypes have *when it is called*, so a listener added before a patch runs
+  the new code, and it is the same function before and after the patch. A
+  function the object itself has (a dynamic method assigned to it) is bound as
+  usual.
+
+What a patch does not do:
+
+- **Old closures keep old code.** A function created by the old code (a
+  lambda passed as a callback, say) still runs the code it was created with.
+- **No constructors, fields or statics' values.** These are the shape; a
+  change means a restart. A static keeps its running value even when its
+  initializer changes, and `__init__` does not run again.
+- **Only classes.** A change to an enum, an abstract's implementation or a
+  module-level function means a restart.
+
+The record describes the program as it is running: after a patch, its files
+and runtime are kept as the program loaded them. If the program is restarted,
+the next build should be compared against a fresh record; delete
+`_hx_hot.json` or build once more.
+
+The cases in `hxmc/test/jsgen/hot` (`make jsgen-check CASES=hot`) each run a
+program through several versions in one node process (`hot/run.mjs`).
 
 ## Differences from Genjs at run time
 

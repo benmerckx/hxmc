@@ -108,6 +108,9 @@ class Printer {
 	public var backed:Null<(TClassField, Ex)->Ex> = null;
 	// (-D js-source-map) the map the printed text is marked for (SourceMap)
 	public var smap:Null<SourceMap> = null;
+	// (-D hxmc.js.hot) the generator's #private fields as fields of symbols: a patch's methods are of a class of their
+	// own, which a #private name is not of (Hot)
+	public var hot = false;
 
 	inline function fname(n:String, ns:Ns):String return fieldName == null ? n : fieldName(n, ns);
 
@@ -131,6 +134,7 @@ class Printer {
 		p.accessor = accessor;
 		p.backed = backed;
 		p.smap = smap;
+		p.hot = hot;
 		return p;
 	}
 
@@ -536,7 +540,7 @@ class Printer {
 				var n = fname(name, ns);
 				object(o) + "." + (n != name ? mark(e.pos, name) : "") + n;
 			case EFieldName(name, ns): quote(fname(name, ns));
-			case EPrivate(o, name): object(o) + ".#" + name;
+			case EPrivate(o, name): object(o) + (hot ? "[" + privateSymbol(name) + "]" : ".#" + name);
 			case EFriend(o, name): types == null && EsTools.validIdent(name) ? object(o) + "." + name : object(o) + "[" + quote(name) + "]";
 			case EIndex(o, k): object(o) + "[" + expr(k, SEQ) + "]";
 			case ECall(f, args): callee(f) + "(" + [for (a in args) expr(a, ASSIGN)].join(sp(", ")) + ")";
@@ -648,10 +652,13 @@ class Printer {
 				var n = fname(s, ns);
 				(n != s ? mark(pos, s) : "") + n;
 			case KString(s): quote(s);
-			case KPrivate(s): "#" + s;
+			case KPrivate(s): hot ? "[" + privateSymbol(s) + "]" : "#" + s;
 			case KComputed(e): "[" + expr(e, ASSIGN) + "]";
 		}
 	}
+
+	// (hot) a #private field's symbol: one of its name, which a class's own and its patches' share
+	static function privateSymbol(name:String):String return "Symbol.for(" + quote("hxmc.private." + name) + ")";
 
 	// (TypeScript) f's type parameters in scope while it prints
 	function withParams<R>(tparams:Null<core.TType.TypeParams>, print:Void->R):R {

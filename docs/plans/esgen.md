@@ -405,5 +405,10 @@ and fields map to their own).
 
 ## Open
 
-1. **Hot reload**: later. Its constraint for now: classes keep their
-   identity, so a reload can patch prototypes and statics in place.
+1. **Hot reload**: method patches (`-D hxmc.js.hot`, docs/js.md, "Hot
+   reload"). Open, roughly in order: constructors (built through
+   `_hx_constructor`, as `filters.ES6Ctors` does, so a patch can replace
+   them); fields added to a class (set on its instances, which it would track
+   with `WeakRef`s); enums' constructors added; abstracts' implementations and
+   module-level functions; state kept across a restart (#206's cells); a
+   driver (`haxe --dev`: watch, build, push the patch over a WebSocket).

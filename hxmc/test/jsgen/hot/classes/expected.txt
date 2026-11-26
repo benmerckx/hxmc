@@ -1,0 +1,6 @@
+v1: Derived(Base 7) | 10 | a.Thing+b.Thing | red | true
+v2: Derived(BASE#7) | 10100 | a.Thing+b.Thing v2 | red | false
+v3: reload: Base: its shape (super class, constructor, fields)
+v1: Derived(Base 7) | 10 | a.Thing+b.Thing | red | true
+v2: Derived(BASE#7) | 10100 | a.Thing+b.Thing v2 | red | false
+v4: reload: Color: changed (only classes' methods are patched)

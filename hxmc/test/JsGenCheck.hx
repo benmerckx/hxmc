@@ -8,11 +8,15 @@ using StringTools;
 // hxmc/test/jsgen/cases, built by the port's generator (where js.Bundle.split
 // runs its initializer itself) and by hxmc's in each mode, run under node,
 // prints the same; a case that splits makes a file per split.
+// And -D hxmc.js.hot's cases (hxmc/test/jsgen/hot: versions of a program, a
+// running one patched).
 //   make jsgen-check (the compiler: bin/jsgen/haxe, make jsgen; the outputs
-//   in bin/test/jsgen; CASES="Basic Features" for some)
+//   in bin/test/jsgen; CASES="Basic Features" for some, CASES=hot for the hot
+//   cases, CASES=hot/methods for one)
 class JsGenCheck {
 	static final CASES = "hxmc/test/jsgen/cases";
 	static final OUT = "bin/test/jsgen";
+	static final HOT = "hxmc/test/jsgen/hot";
 	static final TSC = "bin/test/upstream-suites/typescript-5.9.3/node_modules/.bin/tsc";
 	static var failures = 0;
 	static var haxe:String;
@@ -194,6 +198,18 @@ class JsGenCheck {
 			var c = exec([haxe, "-cp", CASES, "-cp", "hxmc/portable", "-main", "Basic", "--js", dir + "/basic.js", "-D", "hxmc.js=es-modules"], {merge: true});
 			check("Basic: es-modules to basic.js fails, at Basic", c.code != 0 && c.out.indexOf("Basic.hx:3: characters 7-12") >= 0
 				&& c.out.indexOf("but for case") >= 0, c.out);
+		}
+		// (-D hxmc.js.hot: each case of hot/, through its versions in one process, prints what it expects: hot/run.mjs)
+		for (name in FileSystem.readDirectory(HOT)) {
+			var dir = '$HOT/$name';
+			if (!FileSystem.isDirectory(dir) || (only.length > 0 && !only.contains("hot") && !only.contains("hot/" + name))) continue;
+			var out = new StringBuf(), i = 0;
+			for (steps in File.getContent('$dir/steps').trim().split("\n")) {
+				var r = exec(["node", '$HOT/run.mjs', haxe, dir, '$OUT/hot/$name/${i++}', "hxmc/portable"].concat(steps.trim().split(" ")), {merge: true});
+				out.add(r.out);
+			}
+			var want = File.getContent('$dir/expected.txt');
+			check('hot/$name: prints expected.txt', out.toString() == want, "expected:\n" + want + "\nprinted:\n" + out);
 		}
 		Sys.println(failures == 0 ? "all passed" : '$failures failed');
 		Sys.exit(failures == 0 ? 0 : 1);
