@@ -71,6 +71,12 @@ case $T in
 	android-*) CFLAGS="$CFLAGS -fPIC -ffunction-sections -fdata-sections -isystem $OUT/include" ;;
 	linux-*) CFLAGS="$CFLAGS -fno-pie -fno-pic -ffunction-sections -fdata-sections" ;;
 esac
+# (arm64 but Apple's: return addresses signed, as hxmc's own functions whose
+# frames C writes are (Abi.pac); Windows with key B, its unwind codes' key)
+case $T in
+	linux-arm64 | linux-arm64-glibc | android-arm64) CFLAGS="$CFLAGS -mbranch-protection=pac-ret" ;;
+	windows-arm64) CFLAGS="$CFLAGS -mbranch-protection=pac-ret+b-key" ;;
+esac
 CC="$ZIG cc -target $TRIPLE"
 AR="$ZIG ar"
 TOOLCHAIN="zig $("$ZIG" version) -target $TRIPLE"
