@@ -450,6 +450,13 @@ static get reporter() {
 }
 ```
 
+An abstract's implementation is an object of its functions, not a class
+(`export const A = { toKm(this1) {...}, ... }`), its statics' values but
+constants assigned after it, in order, as a class's static initializers run;
+TypeScript's output has the abstract as a type of the same name beside it
+([TypeScript](#typescript)). One an object cannot hold (#private storage, lazy
+statics, a static block) stays a class, its type `A.Self`.
+
 So statics run as their modules load, in the order of the modules, rather than
 all of them after all `__init__`s as in a single file; where Haxe's order puts
 one after another it reaches, the module order does too. `-D
@@ -490,7 +497,20 @@ lets a `Null<T>` be a `T` without a check):
   GADT's type parameter, a structure's extra fields, dynamic access, an
   extern's signature), the value is `(e as any)`; raw code (`js.Syntax.code`)
   is unchecked, a `// @ts-ignore` per line, its value `any`;
-- a class itself as a value (its statics, an abstract's) is `typeof` it;
+- an abstract is a type of its own, its module's (`export type A`), beside its
+  implementation of the same name: one `import { A }` brings both. It is
+  branded by a symbol only TypeScript has (`declare const $brand: unique
+  symbol`, the brand the abstract's path), as Haxe lets values go:
+  `A(V) from V to V` is `V`; `A(V) to V` is `V & { readonly [$brand]: "A" }` (an
+  A is a V, no V an A); `A(V) from V` is `{ readonly [$brand]: "A" } | V` (a V
+  is an A, no A a V); `A(V)` the brand alone (neither); its other `from` types'
+  values are A's too. An enum abstract is the union of its values' literals
+  (`0 | 1 | 2`), which TypeScript compares and narrows. Not the std's core
+  types, a multi-type's (`Map`), an extern's, one over `Dynamic`, `haxe.Rest`.
+  Where Haxe converts without a cast (in the abstract's own code above all),
+  the value is `(e as any)`, and what JavaScript does with an opaque abstract's
+  value (index it, call it, compute with it) is of it as `any`;
+- a class itself as a value (its statics) is `typeof` it;
 - a class still constructed in two steps (`_hx_constructor`) takes its
   constructors' arguments as optional `any`.
 

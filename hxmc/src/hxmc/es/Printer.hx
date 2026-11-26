@@ -627,6 +627,8 @@ class Printer {
 
 	function prop(p:Prop):String {
 		return switch [p.key, p.value.def] {
+			case [k, EFn(f)] if (p.kind == MkGet || p.kind == MkSet):
+				(p.kind == MkGet ? "get " : "set ") + key(k, f.pos) + withParams(f.tparams, () -> signature(f, p.kind == MkGet) + sp(" ") + blockString(f.body));
 			case [KName(n), EId(s)] if (s.name == n): n;
 			case [k, EFn(f)] if (!f.arrow && f.ctor != true): key(k, f.pos) + withParams(f.tparams, () -> signature(f, true) + sp(" ") + blockString(f.body));
 			case [k, _]: key(k, p.value.pos) + sp(": ") + expr(p.value, ASSIGN);

@@ -59,15 +59,12 @@ private class Item {
 private class TypeNames {
 	public final needs = new Map<Sym, Int>();
 	public var enumValue = false;
-	// the abstracts it names (their brands: _abstracts.d.ts)
-	public final abstracts = new haxe.ds.ObjectMap<TAbstract, Bool>();
 
 	public function new() {}
 
 	public function addTo(n:TypeNames) {
 		for (s => from in needs) n.needs.set(s, from);
 		if (enumValue) n.enumValue = true;
-		for (a in abstracts.keys()) n.abstracts.set(a, true);
 	}
 }
 
@@ -341,7 +338,10 @@ class Chunk {
 		}
 		phase("collect", () -> {
 			c.collect();
-			if (c.modules) c.breakCycles();
+			if (c.modules) {
+				c.breakCycles();
+				c.collectAbstracts();
+			}
 		});
 		phase("lower", () -> c.lowerAll());
 		phase("place", () -> {
@@ -809,10 +809,12 @@ class Chunk {
 				return p.pack.length == 0 && TS_LIB.contains(p.name) && StringTools.startsWith(dot(c.clModule.mPath), "js.lib.") ? p.name + "<ArrayBuffer>" : null;
 			case TAbstractDecl({aPath: {pack: [], name: "EnumValue"}}):
 				return enumValueRef(names);
-			// (an abstract: its brand, global)
+			// (an abstract: its type, its module's, imported as a type where it is another's)
 			case TAbstractDecl(a) if (Casts.branded(a)):
-				names.abstracts.set(a, true);
-				return brandName(a);
+				var x = abstractTypes.get(a);
+				if (x == null) return null;
+				if (x.file != f.id) names.needs.set(x.sym, x.file);
+				return x.sym.name + (abstractClasses.exists(a) ? ".Self" : "");
 			case TClassDecl({clKind: KAbstractImpl(_) | KModuleFields(_)}) | TAbstractDecl(_) | TTypeDecl(_):
 				return null;
 			case _:
@@ -1933,10 +1935,7 @@ class Chunk {
 			if (rtUsed.exists("index")) rt.add("export const index: typeof Hx.index = $hx.index;\n");
 		} else rt.add("export " + rtSource);
 		sys.io.File.saveContent(Path.join([dir, RUNTIME]), rt.toString());
-		if (tsOut) {
-			externDeclarations(dir);
-			abstractDeclarations(dir);
-		}
+		if (tsOut) externDeclarations(dir);
 		// (the entry: the included files first, as they are, a module the entry imports before anything else)
 		var entry = Path.withoutDirectory(com.file);
 		var b = new StringBuf();
@@ -2099,58 +2098,82 @@ class Chunk {
 		sys.io.File.saveContent(Path.withoutExtension(com.file) + ".d.ts", b.toString());
 	}
 
-	// ------------------------------------------------------------------ TypeScript: abstracts
+	// ------------------------------------------------------------------ abstracts (modules)
+	//
+	// An abstract's implementation is an object of its functions (`export const A = { f(this1, ...) {...}, ... }`), not a
+	// class: its module has, beside it, the abstract as a type of its own of the same name (TypeScript: `export type A`,
+	// abstractTypesOf), one import bringing both. A type of no implementation (its functions inline) is its module's still.
+	// An implementation an object cannot have (#private statics, a static block: lazy statics, @:isVar's) stays a class,
+	// its type `A.Self` (a namespace TypeScript merges with the class).
 
-	// an abstract's brand's name (global: _abstracts.d.ts)
-	static function brandName(a:TAbstract):String return "HxAbstract." + core.Path.flatPath(a.aPath);
+	// the branded abstracts' types: their names' bindings, their files
+	final abstractTypes = new haxe.ds.ObjectMap<TAbstract, {sym:Sym, file:Int}>();
+	final typeOnly:Array<Sym> = [];
 
-	// _abstracts.d.ts: the abstracts the output names, each a type of its own (`declare namespace HxAbstract`), branded
-	// by a symbol of its own, which exists only to TypeScript: `A(V) from V to V` is V (as Haxe has them, TypeScript
-	// cannot tell them apart); `A(V) to V` V and the brand (a V, no V an A); `A(V) from V` the brand, or V (a V an A, no A
-	// a V); `A(V)` the brand alone, of V (neither). Its other `from` types' values are A's too. The program's types it
-	// names by their modules (`import("./pack/A.ts").A`), the abstracts by their brands, which it declares too.
-	function abstractDeclarations(dir:String) {
-		var todo:Array<TAbstract> = [], seen = new haxe.ds.ObjectMap<TAbstract, Bool>();
-		function want(a:TAbstract) if (!seen.exists(a)) {
-			seen.set(a, true);
-			todo.push(a);
+	function collectAbstracts() {
+		for (t in com.types) switch t {
+			case TAbstractDecl(a) if (Casts.branded(a)):
+				var item = a.aImpl == null ? null : byPath.get(dot(a.aImpl.clPath));
+				if (item != null) abstractTypes.set(a, {sym: item.sym, file: item.file}) else if (tsOut) {
+					var s = new Sym(SType(t), a.aPath.name);
+					typeOnly.push(s);
+					abstractTypes.set(a, {sym: s, file: moduleFile(a.aModule.mPath)});
+				}
+			case _:
 		}
-		for (f in files) for (a in f.names.abstracts.keys()) want(a);
-		function ref(t:ModuleType):Null<String> {
-			switch t {
-				case TAbstractDecl({aPath: {pack: [], name: "EnumValue"}}): return "import(\"./" + RUNTIME + "\").EnumValue";
-				case TAbstractDecl(a) if (Casts.branded(a)):
-					want(a);
-					return brandName(a);
-				case TClassDecl({clKind: KAbstractImpl(_) | KModuleFields(_)}) | TAbstractDecl(_) | TTypeDecl(_): return null;
-				case _:
-			}
-			var item = byPath.get(dot(tPath(t)));
-			if (item == null || files[item.file].path == null) return null;
-			return "import(" + Printer.quote("./" + files[item.file].path) + ")." + item.sym.name;
-		}
-		var b = new StringBuf();
-		b.add("declare namespace HxAbstract {\n");
-		var i = 0;
-		while (i < todo.length) {
-			var a = todo[i++];
-			var n = core.Path.flatPath(a.aPath);
+	}
+
+	// (TypeScript) a file's abstracts' types: `declare const $brand: unique symbol;` and `export type A<T> = ...;` each
+	// (Casts: `A(V) from V to V` V; `A(V) to V` V and the brand; `A(V) from V` the brand or V; `A(V)` the brand; other
+	// `from` types' values too; an enum abstract its values' literals), the brand of the abstract's path
+	function abstractTypesOf(file:OutFile):Array<St> {
+		var out:Array<St> = [];
+		var ts = new Ts(t -> typeRef(file, file.names, t), () -> enumValueRef(file.names), props);
+		var branded = false;
+		for (a => x in abstractTypes) if (x.file == file.id) {
 			var scope = [for (p in a.aParams) p.ttpName];
-			var v = Dts.type(a.aThis, ref, scope);
+			ts.scope = scope;
+			var v = ts.type(a.aThis);
 			var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
-			// (an enum abstract: its values, TypeScript's literals, which it compares and narrows)
-			var parts = values != null ? values : [
-				if (to && from) v else if (to) "(" + v + ") & { readonly [" + n + "$]: true }" else "{ readonly [" + n + "$]: " + v + " }"
-			];
+			var tag = "{ readonly [$brand]: " + Printer.quote(dot(a.aPath)) + " }";
+			var parts = values != null ? values : [if (to && from) v else if (to) (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v) + " & " + tag else tag];
+			if (values == null && !(to && from)) branded = true;
 			if (from && (values != null || !to)) parts.push(v);
-			for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(Dts.type(f, ref, scope));
-			b.add("\t// " + dot(a.aPath) + "\n");
-			if (!(to && from) && values == null) b.add("\tconst " + n + "$: unique symbol;\n");
-			// (a function type in a union in parentheses, as TypeScript requires)
-			b.add("\ttype " + n + Dts.typeParams(a.aParams, ref, scope) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";\n");
+			for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(ts.type(f));
+			var decl = ts.params(a.aParams) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";";
+			// (an implementation that stays a class: of its namespace, `A.Self`, which TypeScript merges with it)
+			out.push(st(SRaw(abstractClasses.exists(a) ? "export declare namespace " + x.sym.name + " { type Self" + decl + " }" : "export type " + x.sym.name + decl)));
 		}
-		b.add("}\n");
-		sys.io.File.saveContent(Path.join([dir, "_abstracts.d.ts"]), b.toString());
+		if (branded) out.unshift(st(SRaw("declare const $brand: unique symbol;")));
+		return out;
+	}
+
+	// the abstracts whose implementations stay classes (their types `A.Self`)
+	final abstractClasses = new haxe.ds.ObjectMap<TAbstract, Bool>();
+
+	// an implementation's members as an object's properties, or null: one an object cannot have; its statics' values but
+	// constants assigned after it (`after`: a value may call its functions, as a class's static initializer may), in order
+	static function objectOf(members:Array<Member>, after:Array<Prop>):Null<Array<Prop>> {
+		var out:Array<Prop> = [];
+		for (m in members) {
+			while (m.match(MProtected(_) | MReadonly(_))) m = switch m {
+				case MProtected(x) | MReadonly(x): x;
+				case _: m;
+			}
+			switch m {
+				case MComment(_):
+				case MMethod(KPrivate(_), _, _, _) | MField(KPrivate(_), _, _, _): return null;
+				case MMethod(k, f, true, MkMethod): out.push({key: k, value: ex(EFn(f))});
+				case MMethod(k, f, true, kind = MkGet | MkSet): out.push({key: k, value: ex(EFn(f)), kind: kind});
+				case MField(k, v, true, _) if (v != null && v.def.match(ENum(_) | EStr(_) | EBool(_))): out.push({key: k, value: v});
+				case MField(k, v, true, _):
+					out.push({key: k, value: ex(EAs(ex(EUndefined)))});
+					if (v != null) after.push({key: k, value: v});
+				case MDeclare(k, _, true): out.push({key: k, value: ex(EAs(ex(EUndefined)))});
+				case _: return null;
+			}
+		}
+		return out;
 	}
 
 	// ------------------------------------------------------------------ names
@@ -2184,6 +2207,8 @@ class Chunk {
 			pick(enumValueType, "EnumValue$");
 		}
 		for (r in requires) pick(r.sym, r.sym.hint + "$");
+		// (TypeScript: the abstracts' types of no implementation, their modules')
+		for (s in typeOnly) pick(s, s.hint + "$");
 		for (item in items) if (!named.exists(item.index)) pick(item.sym, core.Path.flatPath(tPath(item.t)));
 		for (k => s in moduleFields) pick(s, k.split(".").join("_"));
 	}
@@ -2531,15 +2556,36 @@ class Chunk {
 						for (s in initStatements(init)) after.push(s);
 					}
 					// (TypeScript: a static of an ancestor's name, which Haxe lets differ and TypeScript's class checks as its own)
-					if (tsOut && staticClash(c)) body.statement(st(SRaw("// @ts-ignore")));
-					body.statement(exp(st(SClass({
+					var members = head.concat(later).concat(accessorMembers(item, c, d.members));
+					var after:Array<Prop> = [];
+					// (modules: an abstract's implementation an object of its functions, where it can be: abstracts)
+					var object = switch c.clKind {
+						case KAbstractImpl(a) if (modules && abstractTypes.exists(a)):
+							var o = objectOf(members, after);
+							if (o == null) abstractClasses.set(a, true);
+							o;
+						case _: null;
+					}
+					if (object != null) {
+						body.statement(exp(st(SVar(VConst, [{name: d.name, init: ex(EObject(object))}]))));
+						for (p in after) body.statement(st(SExpr(ex(EAssign("=", switch p.key {
+							case KField(n, ns): Lower.field(ex(EId(d.name)), n, ns);
+							case KName(n): Lower.member(ex(EId(d.name)), n);
+							case KString(n): ex(EIndex(ex(EId(d.name)), ex(EStr(n))));
+							case KComputed(k): ex(EIndex(ex(EId(d.name)), k));
+							case KPrivate(_): throw "assert";
+						}, p.value)))));
+					} else {
+						if (tsOut && staticClash(c)) body.statement(st(SRaw("// @ts-ignore")));
+						body.statement(exp(st(SClass({
 							name: d.name,
 							superClass: d.superClass,
-							members: head.concat(later).concat(accessorMembers(item, c, d.members)),
+							members: members,
 							tparams: d.tparams,
 							superArgs: d.superArgs,
 							isAbstract: d.isAbstract
 						}))));
+					}
 					// (Type.getInstanceFields: the variables on the prototype, `null` until an instance has its own, as Genjs has them)
 					if (instanceFields) {
 						var vars:Array<Prop> = [
@@ -2564,6 +2610,11 @@ class Chunk {
 			body.statements(deferredStatics);
 			body.statements(exposed);
 			body.blank();
+		}
+		// (TypeScript: the file's abstracts' types, first)
+		if (tsOut) {
+			var types = abstractTypesOf(file);
+			for (i in 0...types.length) body.pieces.insert(i, POne(types[i]));
 		}
 		return body;
 	}

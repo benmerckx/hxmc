@@ -137,6 +137,8 @@ enum RawPart {
 @:structInit class Prop {
 	public var key:Key;
 	public var value:Ex;
+	// (an accessor: `get key() {...}`, `set key(v) {...}`, value its function)
+	@:optional public var kind:Null<MethodKind>;
 }
 
 enum Key {
