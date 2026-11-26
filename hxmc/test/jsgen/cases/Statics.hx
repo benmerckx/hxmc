@@ -7,8 +7,13 @@
 // ts output lacks: statics/Celsius.ts: #freezing
 // ts output has: statics/Ping.ts: static #x_ready = false;
 // ts output lacks: statics/Holder.ts: #NULL
-// ts output has: statics/Holder.ts: Holder.NULL = new NullNamed();
+// ts output has: statics/Holder.ts: static readonly NULL: Named;
+// ts output has: statics/Holder.ts: (Holder as any).NULL = new NullNamed();
+// ts: // (readonly, though assigned after its class)
+// ts: // @ts-expect-error
+// ts: Holder.NULL = null;
 // ts: import { Scale } from "./statics/Scale.ts";
+// ts: import { Holder } from "./statics/Holder.ts";
 // ts: const c: number = Scale.room();
 class Statics {
 	static function main() {

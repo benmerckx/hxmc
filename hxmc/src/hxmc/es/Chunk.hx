@@ -2770,10 +2770,15 @@ class Chunk {
 						if (!item.inBody.get(f) && modules && !item.atEnd.exists(f)) {
 							for (m in lazy(item, f, v)) later.push(m);
 						} else if (!item.inBody.get(f)) {
-							head.push(prot(f, MField(fieldKey(f.cfName, sns(c)), null, true, f.cfType)));
-							// (TypeScript: assigned from outside the class, past `protected`; modules: after the file's classes)
+							head.push(prot(f, readonly(f, MField(fieldKey(f.cfName, sns(c)), null, true, f.cfType))));
+							// (TypeScript: assigned from outside the class, past `protected` and `readonly`; modules: after the file's
+							// classes)
 							var self = ex(EId(item.sym));
-							(modules ? after : deferredStatics).push(st(SExpr(ex(EAssign("=", tsOut && !hasClassFieldFlag(f, CfPublic) ? ex(EFriend(self, f.cfName)) : Lower.field(self, f.cfName, sns(c)), v)))));
+							var target = !tsOut ? Lower.field(self, f.cfName, sns(c))
+								: Properties.readonlyVar(f) ? Lower.field(ex(EAs(self)), f.cfName, sns(c))
+								: !hasClassFieldFlag(f, CfPublic) ? ex(EFriend(self, f.cfName))
+								: Lower.field(self, f.cfName, sns(c));
+							(modules ? after : deferredStatics).push(st(SExpr(ex(EAssign("=", target, v)))));
 						} else if (f.cfExpr == null || f.cfExpr.eexpr.match(TFunction(_))) head.push(staticMember(c, f, v));
 						else later.push(staticMember(c, f, v));
 					}
