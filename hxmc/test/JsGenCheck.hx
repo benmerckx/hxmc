@@ -123,6 +123,14 @@ class JsGenCheck {
 						pos = m.pos + m.len;
 					}
 					File.saveContent(dir + "/check.ts", lines.join("\n") + "\n");
+					// (what the case says its module has, or lacks: `// ts output has: <text>`, in <case>.ts)
+					var main = dir + "/" + name + ".ts", code = FileSystem.exists(main) ? File.getContent(main) : "", re = ~/^\/\/ ts output (has|lacks): (.*)$/gm;
+					pos = 0;
+					while (re.matchSub(src, pos)) {
+						check('$name: ${v.tag} ' + re.matched(1) + " `" + re.matched(2) + "`", (code.indexOf(re.matched(2)) >= 0) == (re.matched(1) == "has"), code);
+						var m = re.matchedPos();
+						pos = m.pos + m.len;
+					}
 					// (as the upstream suites': strict but for null checks)
 					File.saveContent(dir + "/tsconfig.json", '{"compilerOptions": {"target": "es2022", "module": "nodenext", "moduleResolution": "nodenext", "strict": true, '
 						+ '"strictNullChecks": false, "noEmit": true, "allowImportingTsExtensions": true, "erasableSyntaxOnly": true, "skipLibCheck": true, '

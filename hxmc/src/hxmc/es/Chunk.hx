@@ -882,11 +882,11 @@ class Chunk {
 	// are of a cycle (which one runs first decides which defines its classes first); at once otherwise
 	function splitImport(current:Int, id:Int):{load:String, pattern:String} {
 		var f = files[id], caller = files[current];
-		var names = new Map<Int, Array<String>>();
+		var names = new Map<Int, Array<Sym>>();
 		for (s => from in f.needs) if (from > 0 && from != current && caller.needs.get(s) != from) {
 			var l = names.get(from);
 			if (l == null) names.set(from, l = []);
-			l.push(s.name);
+			l.push(s);
 		}
 		// (what has run when a split runs: what the entry imports, what the calling module does)
 		var before = reach([0, current]);
@@ -923,12 +923,16 @@ class Chunk {
 		for (a in fresh) for (b in fresh) if (a != b && reaches[a].exists(b) && reaches[b].exists(a)) chain = true;
 		var comma = "," + sp(" ");
 		var arrow = sp(" ") + "=>" + sp(" ");
-		// (`[{ A, B }, , { C }]`: a module of none of them a hole)
+		// (`[{ A, B }, , { C }]`: a module of none of them a hole; one the file names otherwise `{ A: A$1 }`)
 		function partsOf(l:Array<Int>):Array<String> return [for (i in l) {
 			var n = names.get(i);
 			if (n == null) "" else {
-				n.sort(Reflect.compare);
-				"{" + sp(" ") + n.join(comma) + sp(" ") + "}";
+				var b = [for (s in n) {
+					var a = caller.alias.get(s);
+					a == null ? s.name : s.name + ":" + sp(" ") + a;
+				}];
+				b.sort(Reflect.compare);
+				"{" + sp(" ") + b.join(comma) + sp(" ") + "}";
 			}
 		}];
 		function pattern(parts:Array<String>):String {
@@ -2334,6 +2338,12 @@ class Chunk {
 				if (owner != null && owner.file == f.id) used.set(s.name, true);
 			}
 			var imported = [for (s => from in f.needs) if (from >= 0 && from != f.id) s];
+			// (and those a split's code takes of the modules it loads, which the file's code names: a split has no file)
+			var seen = [for (s in imported) s => true];
+			for (g in files) if (g.path == null && g.id != f.id) for (s => from in g.needs) if (from > 0 && from != f.id && !seen.exists(s)) {
+				seen.set(s, true);
+				imported.push(s);
+			}
 			imported.sort((a, b) -> Reflect.compare(a.name, b.name));
 			for (s in imported) {
 				// (its own name where untyped code has it: the binding the code names, Genjs's name for it)
