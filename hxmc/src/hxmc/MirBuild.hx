@@ -1282,6 +1282,8 @@ class MirBuild extends MirWriter {
 				i.sig = sig;
 				var c = obj(VirtualCall, mty(sig.ret), i);
 				c.args = xs;
+				c.kills = p.e.dispatchWrites(sel);
+				c.retains = p.e.dispatchRetains(sel);
 				c.id;
 			case ECallClos(s, clos, args):
 				var c = ex(clos);

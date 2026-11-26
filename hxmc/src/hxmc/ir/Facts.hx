@@ -81,9 +81,17 @@ class Facts {
 	function findEffects() {
 		var own = new Map<FuncInfo, Int>();
 		var callees = new Map<FuncInfo, Array<FuncInfo>>();
+		// (a virtual or interface call: the implementations its selector's row holds)
+		var impls = dispatchImpls();
 		for (f in p.funcs) {
 			var w = 0, cs:Array<FuncInfo> = [];
 			if (f.hostCode) w = hxmc.Effects.UNKNOWN;
+			var declared = hxmc.Effects.declared(symbol(f));
+			if (declared != null) {
+				own.set(f, declared);
+				callees.set(f, cs);
+				continue;
+			}
 			function callee(g:FuncInfo)
 				if (cs.indexOf(g) < 0) cs.push(g);
 			function ex(e:Ex) {
@@ -93,7 +101,12 @@ class Facts {
 					case ECallHost(n, _, _):
 						var g = bySymbol.get(n);
 						if (g != null) callee(g) else w |= hxmc.Effects.host(n);
-					case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): w = hxmc.Effects.UNKNOWN;
+						// (StringBuf.addChar: inline, its slow path a call)
+						if (n == "StringBuf_addChar" && bySymbol.exists("StringBuf_addChar_slow")) callee(bySymbol.get("StringBuf_addChar_slow"));
+					case ECallDispatch(sel, _, _):
+						var l = impls.get(sel);
+						if (l == null) w = hxmc.Effects.UNKNOWN else for (g in l) callee(g);
+					case ECallClos(_) | ECallAnon(_): w = hxmc.Effects.UNKNOWN;
 					// (a structural read's slow path: the inline caches, what only calls change)
 					case EAnonGet(_): w |= 1 << hxmc.Opt.MCallOnly;
 					case _:
@@ -143,6 +156,44 @@ class Facts {
 		}
 	}
 
+	// per selector, the functions its dispatch row holds (DataGen.dispatch:
+	// the live implementations; a dynamic method is called through its field)
+	var implsMemo:Null<Map<Int, Array<FuncInfo>>> = null;
+
+	function dispatchImpls():Map<Int, Array<FuncInfo>> {
+		if (implsMemo != null) return implsMemo;
+		var m = new Map<Int, Array<FuncInfo>>();
+		for (f in p.funcs)
+			if (f.dispatchSel >= 0 && p.isLive(f)) {
+				var l = m.get(f.dispatchSel);
+				if (l == null) m.set(f.dispatchSel, l = []);
+				l.push(f);
+			}
+		return implsMemo = m;
+	}
+
+	// what a virtual or interface call of the selector may write (the union
+	// of its implementations' summaries; Effects.UNKNOWN: none known)
+	public function dispatchWrites(sel:Int):Int {
+		var l = dispatchImpls().get(sel);
+		if (l == null) return hxmc.Effects.UNKNOWN;
+		var w = 0;
+		for (g in l)
+			w |= g.writes;
+		return w;
+	}
+
+	// the arguments a virtual or interface call of the selector may retain
+	public function dispatchRetains(sel:Int):Int {
+		var l = dispatchImpls().get(sel);
+		if (l == null) return -1;
+		var r = 0;
+		for (g in l)
+			r |= g.retains;
+		return r;
+	}
+
+
 	// Which parameters each function may retain (FuncInfo.retains): a
 	// parameter's value, and the locals it is copied into, may be read
 	// through (fields, tests, lengths, comparisons) and passed to a callee's
@@ -170,7 +221,7 @@ class Facts {
 	}
 
 	// the parameters f retains, as its callees' fates say now
-	static function fates(f:FuncInfo):Int {
+	function fates(f:FuncInfo):Int {
 		// per local: the parameters it may hold
 		var taint = new Map<Int, Int>();
 		for (k in 0...f.args.length)
@@ -202,6 +253,10 @@ class Facts {
 				case ECall(g, args):
 					for (k in 0...args.length)
 						use(args[k], k > 30 || g.retains & (1 << k) != 0);
+				case ECallDispatch(sel, _, args):
+					var r = dispatchRetains(sel);
+					for (k in 0...args.length)
+						use(args[k], k > 30 || r & (1 << k) != 0);
 				case ECallHost(n, args, _):
 					var pure = FnLower.isPure(n);
 					for (a in args)

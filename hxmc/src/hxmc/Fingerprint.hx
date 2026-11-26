@@ -502,6 +502,9 @@ class Fingerprint {
 				}
 			case ECallDispatch(sel, sig, xs):
 				word(E_CALLDISPATCH);
+				// (its implementations' summaries, Effects)
+				word(prep.e.dispatchWrites(sel));
+				word(prep.e.dispatchRetains(sel));
 				str(prep.selectorSym(sel));
 				str(sig.key);
 				args(xs);

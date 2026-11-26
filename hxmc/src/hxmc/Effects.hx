@@ -67,7 +67,11 @@ class Effects {
 		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_set")) return RAW_STORE;
 		if (StringTools.startsWith(n, "hxmc_narray_set_")) return NARRAY_STORE;
 		// (allocations: memory nothing reads before; a collection apart)
-		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") || n == "hxmc_narray_new") return 0;
+		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") || n == "hxmc_narray_new" || n == "hxmc_narray_lit") return 0;
+		// (reads: a header's type index, a NativeArray seen as Dynamic, boxed)
+		if (n == "hxmc_unsafe_Mem_typeIndexOf" || n == "hxmc_narray_dget") return 0;
+		if (n == "hxmc_narray_dset") return NARRAY_STORE;
+		if (n == "StringBuf_addChar") return RAW_STORE;
 		var c = C.get(n);
 		if (c != null) return c;
 		return UNKNOWN;
@@ -77,9 +81,19 @@ class Effects {
 	// program reads (malloc's own state is not; locks and atomics are
 	// unknown: they make other threads' writes visible)
 	static var C = [
-		"strlen" => 0, "strcmp" => 0, "strncmp" => 0, "memcmp" => 0, "getenv" => 0, "sysconf" => 0, "malloc" => 0, "calloc" => 0, "realloc" => 0, "free" => 0,
+		"strlen" => 0, "strcmp" => 0, "strncmp" => 0, "memcmp" => 0, "getenv" => 0, "clock_gettime" => 0, "sysconf" => 0, "malloc" => 0, "calloc" => 0, "realloc" => 0, "free" => 0,
 		"memcpy" => RAW_STORE, "memmove" => RAW_STORE, "memset" => RAW_STORE
 	];
+
+	// program functions whose summaries are declared, not computed: the
+	// safepoint poll (Safepoints) stops for another thread's collection;
+	// the statics are taken as changed there (a loop that waits on one), the
+	// objects' fields and arrays not (a collection writes none)
+	public static function declared(sym:String):Null<Int>
+		return switch sym {
+			case "rt_poll": (1 << Opt.MGlobal) | (1 << Opt.MScalar) | (1 << Opt.MTls);
+			case _: null;
+		};
 
 	// the classes a call writes (i.kills known: its callee's summary)
 	public static inline function call(i:MIns):Int
@@ -117,6 +131,8 @@ class Effects {
 			case NArraySet | ArrayInit | NArrayInit: NARRAY_STORE;
 			case ArraySet | ArrayPush: ARRAY_STORE;
 			case RefStore: RAW_STORE;
+			// (its selector's implementations' summaries, MirBuild)
+			case VirtualCall if (i.kills != UNKNOWN): i.kills | CALL_KILL;
 			case _: Opt.ALL;
 		};
 }
