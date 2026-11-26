@@ -113,6 +113,7 @@ class Runtime {
 		e[n] = nullary ? new f() : f;
 	});
 	e[$hx.constructs] = names ?? Object.keys(spec);
+	Object.defineProperty(e, Symbol.hasInstance, { value: (o) => o != null && o[$hx.enumOf] === e });
 	if (Object.hasOwn(spec, $hx.name)) e[$hx.name] = spec[$hx.name];
 	if (meta != null) e.__meta__ = meta;
 	return e;
@@ -187,7 +188,8 @@ class Runtime {
 	}
 	const EnumValue: abstract new () => EnumValue;
 	type EnumInit<S> = S extends abstract new (...a: infer A) => any ? (this: any, ...a: A) => void : null;
-	function declareEnum<D>(spec: { [K in keyof D]: EnumInit<D[K]> } & { [name]?: string }, meta?: any, names?: string[]): D;
+	type EnumOf<D> = { [K in keyof D]: D[K] extends abstract new (...a: any) => infer R ? R : D[K] }[keyof D];
+	function declareEnum<D>(spec: { [K in keyof D]: EnumInit<D[K]> } & { [name]?: string }, meta?: any, names?: string[]): D & { [Symbol.hasInstance](v: unknown): v is EnumOf<D> };
 }
 export type EnumValue = Hx.EnumValue;
 ";

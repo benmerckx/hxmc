@@ -302,6 +302,8 @@ const Color = $hx.declareEnum({
   `createEnumIndex` go by index, so they hold when the keys are renamed
   ([Fields' names](#fields-names));
 - `Type.enumParameters` is `Object.values(v)`, `enumIndex` `v[$hx.index]`;
+- `v instanceof Color` is whether `v` is a value of it (its `Symbol.hasInstance`:
+  `v[$hx.enumOf]`), which TypeScript narrows `v` by, to the enum's union;
 - an enum value's `toString` is `Std.string`'s.
 
 In TypeScript ([TypeScript](#typescript)) a constructor is a declared class of

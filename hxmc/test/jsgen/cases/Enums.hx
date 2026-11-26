@@ -1,5 +1,13 @@
 // enums as classes ($hx.declareEnum): constructors with and without arguments, a generic and recursive enum, a
-// GADT, matching, constructors as functions, reflection (Type, Reflect, Std), equality, serialization
+// GADT, matching, constructors as functions, reflection (Type, Reflect, Std), equality, serialization; `instanceof` an enum
+// (its values: Symbol.hasInstance), which TypeScript narrows by
+// ts: import { Color, Tree } from "./Enums.ts";
+// ts: declare const v: unknown;
+// ts: const c: Color | null = v instanceof Color ? v : null;
+// ts: const t: Tree<unknown> | null = v instanceof Tree ? v : null;
+// ts: // @ts-expect-error
+// ts: const n: Tree<unknown> | null = v instanceof Color ? v : null;
+// ts: export { c, t, n };
 enum Color {
 	Red;
 	Green;
