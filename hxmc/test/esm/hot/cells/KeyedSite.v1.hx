@@ -1,11 +1,9 @@
 class KeyedSite {
-	@:esm.hot.keyed
-	public static function bump(?__hotId:String):Int {
+	public static function bump():Int {
 		@:esm.hot.cell var n = 0;
 		return ++n;
 	}
 
-	@:esm.hot.function
 	public static function run():Int {
 		var a = bump();
 		var b = bump();

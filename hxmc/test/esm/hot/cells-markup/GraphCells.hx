@@ -1,6 +1,5 @@
 class GraphCells {
-	@:esm.hot.keyed
-	public static function bump(?__hotId:String):Int {
+	public static function bump():Int {
 		@:esm.hot.cell var n = 0;
 		return ++n;
 	}
