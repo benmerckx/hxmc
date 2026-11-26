@@ -198,12 +198,21 @@ class Start {
 	@:hxmc.unsafe(gc) @:hxmc.export("rt_throw") static function throwValue(v:Dynamic):Void {
 		Gc.exn = Mem.addr(v);
 		var h = Gc.hcur;
+		// (the value of the last record thrown again while the frame that
+		// caught it is live, `catch (e) { ...; throw e; }`: its stack goes on
+		// from that throw's, as a catch setting Stacks.rethrowing passes it on)
+		var m = Threads.self;
+		if (!m.isNull() && !m.value.thrown.isNull() && m.value.thrown == Gc.exn && Stacks.caughtLive(h)) Stacks.rethrowing = true;
 		// (the thrower's stack up to the catch, when exception stacks are read: Stacks)
+		Stacks.recorded = false;
 		Stacks.recordThrow(h);
+		var recorded = Stacks.recorded;
+		if (recorded && !m.isNull()) m.value.thrown = Gc.exn;
 		if (h.isNull()) {
 			Gc.uncaught("Uncaught exception: ", v);
-			// (where it was thrown, when the program has its table of lines)
-			Stacks.report();
+			// (where it was thrown, and thrown again from, when the program
+			// records its throws and has its table of lines; else where it is now)
+			if (recorded) Stacks.reportThrow() else Stacks.report();
 			Os.exit(1);
 		}
 		// the C library's longjmp without the signal mask (as the try's setjmp:

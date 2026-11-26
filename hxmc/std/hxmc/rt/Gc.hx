@@ -992,6 +992,7 @@ class Gc {
 		while (!t.isNull()) {
 			if (!t.value.job.isNull()) t.value.job = fwdAs(t.value.job, root);
 			if (!t.value.tls.isNull()) t.value.tls = fwdAs(t.value.tls, root);
+			if (!t.value.thrown.isNull()) t.value.thrown = fwdAs(t.value.thrown, root);
 			if (t != me && t.value.started != 0) {
 				scanStack(t.value.base, t.value.sp, root);
 				if (!t.value.exn.isNull()) t.value.exn = fwdAs(t.value.exn, root);
