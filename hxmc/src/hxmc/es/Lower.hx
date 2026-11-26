@@ -554,6 +554,8 @@ class Lower {
 		if (v != null && set == null && !dead.exists(v.vId)) return knowing(v, null, () -> switchStatement(sw));
 		inline function knowingCase<R>(vals:Array<Int>, f:Void->R):R return v == null || dead.exists(v.vId) ? f() : knowing(v, vals, f);
 		var on = expr(sw.switchSubject);
+		// (TypeScript: on a branded abstract's value, whose cases are its literals: as `any`, which they compare with)
+		if (ts && Casts.literalCast(sw.switchSubject.etype) && !on.def.match(EAs(_))) on = ex(EAs(on));
 		// (on an enum's index: the constructors' names beside their indexes)
 		var names:Null<Array<String>> = switch Texpr.skip(sw.switchSubject).eexpr {
 			case TEnumIndex(x):
@@ -1284,6 +1286,7 @@ class Lower {
 		// (a receiver TypeScript has as `any`, a cast's on the way)
 		function anyOn(e:Ex):Bool return switch e.def {
 			case EAs(_): true;
+			case EAsType(o, _): anyOn(o);
 			case EMember(o, _) | EField(o, _, _) | EIndex(o, _) | ECall(o, _) | ETypeArgs(o, _) | EFriend(o, _): anyOn(o);
 			case EAccessor(_, c, _): anyOn(c);
 			case EBacked(_, x): anyOn(x);

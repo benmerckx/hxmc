@@ -223,7 +223,7 @@ class Printer {
 				case EFriend(o, _): walk(o);
 				case EAccessor(_, c, _): walk(c);
 				case EBacked(_, x): walk(x);
-				case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | EUnary(_, o) | EUpdate(_, _, o) | ESpread(o) | EImport(o) | EAs(o) | ETypeArgs(o, _): walk(o);
+				case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | EUnary(_, o) | EUpdate(_, _, o) | ESpread(o) | EImport(o) | EAs(o) | EAsType(o, _) | ETypeArgs(o, _): walk(o);
 				case EIndex(a, b) | EBinary(_, a, b) | EAssign(_, a, b): walk(a); walk(b);
 				case ECall(f, args) | ENew(f, args): walk(f); for (x in args) walk(x);
 				case ECond(c, a, b): walk(c); walk(a); walk(b);
@@ -407,7 +407,7 @@ class Printer {
 		return switch e.def {
 			case EObject(_) | EClass(_): true;
 			case EFn(f): !f.arrow;
-			case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | EIndex(o, _) | ECall(o, _) | EAs(o) | ETypeArgs(o, _): startsAmbiguous(o);
+			case EMember(o, _) | EField(o, _, _) | EPrivate(o, _) | EIndex(o, _) | ECall(o, _) | EAs(o) | EAsType(o, _) | ETypeArgs(o, _): startsAmbiguous(o);
 			case EFriend(o, _): startsAmbiguous(o);
 			case EAccessor(_, c, _): startsAmbiguous(c);
 			case EBacked(_, x): startsAmbiguous(x);
@@ -439,6 +439,7 @@ class Printer {
 	function precOf(e:Ex):Int {
 		return switch e.def {
 			case EAs(x): types == null ? precOf(x) : PRIMARY;
+			case EAsType(x, _): types == null ? precOf(x) : REL;
 			case ETypeArgs(x, _): types == null ? precOf(x) : CALL;
 			case ESeq(_): SEQ;
 			case EAssign(_) | ESpread(_): ASSIGN;
@@ -567,6 +568,7 @@ class Printer {
 			case ESeq(items): [for (i in items) paren(i, ASSIGN)].join(sp(", "));
 			case ESpread(x): "..." + paren(x, ASSIGN);
 			case EAs(x): types == null ? exprRaw(x) : "(" + paren(x, UNARY) + " as any)";
+			case EAsType(x, t): types == null ? exprRaw(x) : paren(x, REL) + " as " + t;
 			case ETypeArgs(x, a): types == null ? exprRaw(x) : paren(x, CALL) + "<" + [for (t in a) types.type(t)].join(", ") + ">";
 			case EImport(p): "import(" + expr(p, ASSIGN) + ")";
 			case ESplit(file, f):

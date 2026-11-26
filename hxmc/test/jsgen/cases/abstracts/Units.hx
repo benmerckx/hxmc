@@ -38,6 +38,17 @@ enum abstract Color(Int) {
 	}
 }
 
+enum abstract Level(Int) to Int {
+	var Low;
+	var Mid;
+	var High;
+}
+
+enum abstract Code(Int) from Int to Int {
+	var Ok = 0;
+	var Fail = 1;
+}
+
 abstract Pair<T>(Array<T>) {
 	public function new(a:T, b:T) this = [a, b];
 

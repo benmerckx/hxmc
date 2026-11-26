@@ -113,6 +113,8 @@ enum ExDef {
 	ESpread(x:Ex);
 	// (TypeScript) the value as `any`, where Haxe accepted what TypeScript would not
 	EAs(x:Ex);
+	// (TypeScript) `x as <type>`, of a type as its text (`const`: `as const`); x in JavaScript
+	EAsType(x:Ex, type:String);
 	// (TypeScript) a generic function or class with its type arguments, as Haxe inferred them (`f<A>`)
 	ETypeArgs(f:Ex, args:Array<T>);
 	EImport(path:Ex);

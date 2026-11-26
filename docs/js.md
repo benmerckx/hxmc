@@ -518,8 +518,15 @@ lets a `Null<T>` be a `T` without a check):
   from `A<String>`), as Haxe lets values go: `A(V) from V to V` is `V`;
   `A(V) to V` is `V & B` (an A is a V, no V an A); `A(V) from V` is `B | V` (a
   V is an A, no A a V); `A(V)` is `B` (neither); its other `from` types' values
-  are A's too. An enum abstract is the union of its values' literals (`0 | 1 |
-  2`), which TypeScript compares and narrows. Not the std's core types, a
+  are A's too. An enum abstract is branded as well, of the union of its
+  values' literals (`U`, `0 | 1 | 2`): `U & B` where it is `to` V (V's brand,
+  which TypeScript narrows by the literals), `B` of U (or `B | V`) where not,
+  `V` where it is `from` and `to` it; each value a type of its own, a
+  constant of its object (`Red: 0 as Color & 0`, `Red: 0 as unknown as { ...:
+  0 }`), which is `as const` where nothing assigns its statics. One whose
+  functions are all inline has its values' object still (`export const Level =
+  { Low: 0, ... }`, in JavaScript too). A `switch` on a branded value is on it
+  as `any`, which its cases compare with. Not the std's core types, a
   multi-type's (`Map`), an extern's, one over `Dynamic`, `haxe.Rest`. Its
   methods take their `this` as the abstract (`next(this1$: Id)`), their code
   the underlying value (`let this1: number = (this1$ as any)`). Where Haxe

@@ -20,7 +20,7 @@ class Casts {
 			// (an abstract: another's only by a cast; its underlying type where it is `to` it, a `from` type's value where it is
 			// `from` it, as the brand has them)
 			case [KAbstract(x), KAbstract(y)]: x != y;
-			case [KAbstract(x), _]: !(toThis(x) || enumValues(x) != null) || need(underlying(from), to, depth + 1);
+			case [KAbstract(x), _]: !toThis(x) || need(underlying(from), to, depth + 1);
 			case [_, KAbstract(y)]: !Lambda.exists(froms(to), f -> !need(from, f, depth + 1));
 			// (a structure with a field the other has not: TypeScript checks an object literal's, Haxe let it)
 			case [KOther, KOther]: extraFields(from, to) || ((mentionsBranded(from, 0) || mentionsBranded(to, 0)) && fieldsNeed(from, to, depth));
@@ -61,7 +61,7 @@ class Casts {
 	// whether a value of t is an abstract's TypeScript has as no value of its underlying type (it is not `to` it): what
 	// JavaScript does with the value (index it, call it, compute with it, iterate it), only cast
 	public static function opaque(t:T):Bool return switch kind(t) {
-		case KAbstract(a): !toThis(a) && enumValues(a) == null;
+		case KAbstract(a): !toThis(a);
 		case _: false;
 	}
 
@@ -70,36 +70,67 @@ class Casts {
 	public static function enumValues(a:TAbstract):Null<Array<String>> return enums.get(a);
 
 	static final enums = new haxe.ds.ObjectMap<TAbstract, Array<String>>();
+	static var named:Array<{name:String, c:TConstant}> = [];
 
 	// (after typing) the enum abstracts' values
 	public static function recordEnums(types:Array<ModuleType>) {
 		enums.clear();
+		literals.clear();
+		fields.clear();
 		for (t in types) switch t {
 			case TAbstractDecl(a) if (a.aEnum && a.aImpl != null):
+				named = [];
 				var v = valuesOf(a.aImpl);
-				if (v != null) enums.set(a, v);
+				if (v != null) {
+					enums.set(a, v);
+					fields.set(a, named);
+				}
 			case _:
 		}
 	}
 
+	// (an enum abstract) its values' names and constants, in order, as recordEnums had them
+	public static function enumFields(a:TAbstract):Array<{name:String, c:TConstant}> return fields.get(a) ?? [];
+
+	static final fields = new haxe.ds.ObjectMap<TAbstract, Array<{name:String, c:TConstant}>>();
+
 	static function valuesOf(impl:TClass):Null<Array<String>> {
 		var out = [];
 		for (f in impl.clStatics) if (core.Meta.has(core.Meta.Enum, f.cfMeta) && f.cfKind.match(Var(_))) {
-			var e = f.cfExpr;
-			while (e != null && e.eexpr.match(TCast(_, _) | TParenthesis(_) | TMeta(_, _))) e = switch e.eexpr {
-				case TCast(x, _) | TParenthesis(x) | TMeta(_, x): x;
-				case _: e;
-			}
-			switch e == null ? null : e.eexpr {
-				case TConst(TInt(i)): out.push(Std.string(i));
-				case TConst(TFloat(s)): out.push(s);
-				case TConst(TString(s)): out.push(Printer.quote(s));
-				case TConst(TBool(b)): out.push(b ? "true" : "false");
-				case TConst(TNull): out.push("null");
-				case _: return null;
-			}
+			var c = constOf(f.cfExpr);
+			var l = c == null ? null : literalOf(c);
+			if (l == null) return null;
+			out.push(l);
+			literals.set(f, c);
+			named.push({name: f.cfName, c: c});
 		}
 		return out.length == 0 ? null : out;
+	}
+
+	// (an enum abstract's value) its constant, as recordEnums had it
+	public static function enumConst(f:TClassField):Null<TConstant> return literals.get(f);
+
+	static final literals = new haxe.ds.ObjectMap<TClassField, TConstant>();
+
+	static function constOf(e:Null<TExpr>):Null<TConstant> {
+		while (e != null && e.eexpr.match(TCast(_, _) | TParenthesis(_) | TMeta(_, _))) e = switch e.eexpr {
+			case TCast(x, _) | TParenthesis(x) | TMeta(_, x): x;
+			case _: e;
+		}
+		return switch e == null ? null : e.eexpr {
+			case TConst(c): c;
+			case _: null;
+		}
+	}
+
+	// a constant as TypeScript's literal type (`0`, `"a"`)
+	public static function literalOf(c:TConstant):Null<String> return switch c {
+		case TInt(i): Std.string(i);
+		case TFloat(s): s;
+		case TString(s): Printer.quote(s);
+		case TBool(b): b ? "true" : "false";
+		case TNull: "null";
+		case _: null;
 	}
 
 	// whether an abstract is `to` its underlying type, `from` it (directly: not through a function, @:to, @:from)
@@ -150,10 +181,10 @@ class Casts {
 		}
 	}
 
-	// whether a literal (a number, a string, an object, an array) of type t needs a cast: t a branded abstract's, but an
-	// enum abstract's (its literals) and one `from` its underlying type
+	// whether a literal (a number, a string, an object, an array) of type t needs a cast: t a branded abstract's, but one
+	// `from` its underlying type
 	public static function literalCast(t:T):Bool return switch kind(t) {
-		case KAbstract(a): enumValues(a) == null && !fromThis(a);
+		case KAbstract(a): !fromThis(a);
 		case _: false;
 	}
 

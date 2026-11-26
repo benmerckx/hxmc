@@ -2261,15 +2261,20 @@ class Chunk {
 	// the branded abstracts' types: their names' bindings, their files
 	final abstractTypes = new haxe.ds.ObjectMap<TAbstract, {sym:Sym, file:Int}>();
 	final typeOnly:Array<Sym> = [];
+	// (modules) the enum abstracts of no implementation, whose files have their values' objects
+	final enumObjects:Array<TAbstract> = [];
 
 	function collectAbstracts() {
 		for (t in com.types) switch t {
 			case TAbstractDecl(a) if (Casts.branded(a)):
 				var item = a.aImpl == null ? null : byPath.get(dot(a.aImpl.clPath));
-				if (item != null) abstractTypes.set(a, {sym: item.sym, file: item.file}) else if (tsOut) {
+				// (an enum abstract of no implementation, its functions inline: its values' object, of its type's name)
+				var values = Casts.enumValues(a) != null;
+				if (item != null) abstractTypes.set(a, {sym: item.sym, file: item.file}) else if (tsOut || values) {
 					var s = new Sym(SType(t), a.aPath.name);
 					typeOnly.push(s);
 					abstractTypes.set(a, {sym: s, file: moduleFile(a.aModule.mPath)});
+					if (values) enumObjects.push(a);
 				}
 			case _:
 		}
@@ -2302,14 +2307,40 @@ class Chunk {
 		var scope = [for (p in a.aParams) p.ttpName];
 		var v = type(a.aThis, scope);
 		var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
-		var tag = "{ readonly [" + brand + "]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
-		var parts = values != null ? values : [if (to && from) v else if (to) (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v) + " & " + tag else tag];
-		if (from && (values != null || !to)) parts.push(v);
+		// (an enum abstract: of its values' literals, `(0 | 1) & B` where it is `to` its type, else `B` of them)
+		var tag = enumTag(a, brand, values != null && !to ? values.join(" | ") : v);
+		var self = values != null ? (values.length > 1 ? "(" + values.join(" | ") + ")" : values[0]) : (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v);
+		var parts = [if (to && from) v else if (to) self + " & " + tag else tag];
+		if (from && !to) parts.push(v);
 		for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(type(f, scope));
 		return {
 			decl: params(a.aParams) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";",
-			branded: values == null && !(to && from)
+			branded: !(to && from)
 		};
+	}
+
+	static function enumTag(a:TAbstract, brand:String, v:String):String
+		return "{ readonly [" + brand + "]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
+
+	// (TypeScript, modules) an enum abstract's value in its object: its literal as a value of its own of the abstract's type
+	// (`0 as A & 0` where it is `to` its type; `0 as unknown as { [$brand]: { "a.A": 0 } }`), or itself where it is `from` and
+	// `to` it; null where it is no enum abstract's value
+	static function enumValueEx(a:TAbstract, f:TClassField, name:String):Null<Ex> {
+		var c = Casts.enumConst(f);
+		return c == null ? null : enumConstEx(a, c, name);
+	}
+
+	static function enumConstEx(a:TAbstract, c:TConstant, name:String):Ex {
+		var l = Casts.literalOf(c);
+		var to = Casts.toThis(a), from = Casts.fromThis(a);
+		var lit = ex(switch c {
+			case TInt(i): ENum(Std.string(i));
+			case TFloat(s): ENum(s);
+			case TString(s): EStr(s);
+			case TBool(b): EBool(b);
+			case _: ENull;
+		});
+		return to && from ? lit : to ? ex(EAsType(lit, name + " & " + l)) : ex(EAsType(ex(EAsType(lit, "unknown")), enumTag(a, "$brand", l)));
 	}
 
 	// the abstracts whose implementations stay classes (their types `A.Self`)
@@ -2317,7 +2348,7 @@ class Chunk {
 
 	// an implementation's members as an object's properties, or null: one an object cannot have; its statics' values but
 	// constants assigned after it (`after`: a value may call its functions, as a class's static initializer may), in order
-	static function objectOf(members:Array<Member>, after:Array<Prop>):Null<Array<Prop>> {
+	static function objectOf(members:Array<Member>, after:Array<Prop>, ?consts:Map<String, Ex>):Null<Array<Prop>> {
 		var out:Array<Prop> = [];
 		for (m in members) {
 			while (m.match(MProtected(_) | MReadonly(_))) m = switch m {
@@ -2329,6 +2360,7 @@ class Chunk {
 				case MMethod(KPrivate(_), _, _, _) | MField(KPrivate(_), _, _, _): return null;
 				case MMethod(k, f, true, MkMethod): out.push({key: k, value: ex(EFn(f))});
 				case MMethod(k, f, true, kind = MkGet | MkSet): out.push({key: k, value: ex(EFn(f)), kind: kind});
+				case MField(k = KField(n, _) | KName(n), _, true, _) if (consts != null && consts.exists(n)): out.push({key: k, value: consts.get(n)});
 				case MField(k, v, true, _) if (v != null && v.def.match(ENum(_) | EStr(_) | EBool(_))): out.push({key: k, value: v});
 				case MField(k, v, true, _):
 					out.push({key: k, value: ex(EAs(ex(EUndefined)))});
@@ -2811,15 +2843,30 @@ class Chunk {
 					var members = head.concat(later).concat(accessorMembers(item, c, d.members));
 					var after:Array<Prop> = [];
 					// (modules: an abstract's implementation an object of its functions, where it can be: abstracts)
+					var asConst = false;
 					var object = switch c.clKind {
 						case KAbstractImpl(a) if (modules && abstractTypes.exists(a)):
-							var o = objectOf(members, after);
+							// (TypeScript: an enum abstract's values, constants of their own types)
+							var consts = new Map<String, Ex>();
+							if (tsOut) for (f in c.clStatics) {
+								var e = enumValueEx(a, f, d.name.name);
+								if (e != null) consts.set(f.cfName, e);
+							}
+							var o = objectOf(members, after, consts);
 							if (o == null) abstractClasses.set(a, true);
+							// (`as const`: where nothing assigns its statics, an enum abstract's: its values' types as they are)
+							if (o != null && tsOut && consts.iterator().hasNext() && after.length == 0 && !Lambda.exists(members, m -> switch m {
+								case MProtected(MField(KField(n, _) | KName(n), _, true, _)) | MField(KField(n, _) | KName(n), _, true, _): !consts.exists(n);
+								case _: false;
+							}))
+								asConst = true;
 							o;
 						case _: null;
 					}
 					if (object != null) {
-						body.statement(exp(st(SVar(VConst, [{name: d.name, init: ex(EObject(object))}]))));
+						var init = ex(EObject(object));
+						if (asConst) init = ex(EAsType(init, "const"));
+						body.statement(exp(st(SVar(VConst, [{name: d.name, init: init}]))));
 						for (p in after) body.statement(st(SExpr(ex(EAssign("=", switch p.key {
 							case KField(n, ns): Lower.field(ex(EId(d.name)), n, ns);
 							case KName(n): Lower.member(ex(EId(d.name)), n);
@@ -2855,6 +2902,14 @@ class Chunk {
 					if (resolveEnum) body.statement(st(SExpr(ex(EAssign("=", ex(EIndex(rt("enums"), ex(EStr(item.path)))), ex(EId(item.sym)))))));
 				case _:
 			}
+			body.blank();
+		}
+		// (modules: the values of the file's enum abstracts of no implementation, `export const A = { X: ..., Y: ... } as const`)
+		for (a in enumObjects) {
+			var x = abstractTypes.get(a);
+			if (x.file != file.id) continue;
+			var o = ex(EObject([for (v in Casts.enumFields(a)) ({key: KName(v.name), value: enumConstEx(a, v.c, x.sym.name)} : Prop)]));
+			body.statement(exp(st(SVar(VConst, [{name: x.sym, init: ex(EAsType(o, "const"))}]))));
 			body.blank();
 		}
 		if (after.length > 0 || deferredStatics.length > 0 || exposed.length > 0) {
