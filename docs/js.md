@@ -435,8 +435,15 @@ simulates the order the modules run in, and makes it work:
   a cycle moves to a file of its own, `<module>.<Class>.js` (`Left.LeftChild.js`),
   which the code that uses it imports, until no cycle is left; a module's
   secondary classes move first;
-- a static whose types have not run when its module does is lazy: initialized
-  when first read, or when set, its value in a `#private` field.
+- a module whose statics or `__init__` reach a module that would run after it
+  is imported by the entry first: what it imports runs before it (`Celsius`'s
+  `freezing = Scale.zero()`, where `Scale` imports `Celsius`);
+- a static that reaches a class its file declares later, or its own class
+  through another class's code (which has the class's binding only once its
+  body has run), is assigned after its file's classes;
+- a static no order makes ready (statics of two modules, each calling the
+  other's module) is lazy: initialized when first read, or when set, its value
+  in a `#private` field.
 
 ```js
 static #reporter;
@@ -460,7 +467,8 @@ statics, a static block) stays a class, its type `A.Self`.
 So statics run as their modules load, in the order of the modules, rather than
 all of them after all `__init__`s as in a single file; where Haxe's order puts
 one after another it reaches, the module order does too. `-D
-hxmc.js.order_report` prints the modules the entry runs first, the lazy statics
+hxmc.js.order_report` prints the modules the entry runs first, the statics
+assigned after their file's classes and the lazy ones (with what they wait for),
 and the classes moved.
 
 Included files (`--macro includeFile`) run first, as they are, in `_hx_include.js`,

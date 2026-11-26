@@ -123,11 +123,13 @@ class JsGenCheck {
 						pos = m.pos + m.len;
 					}
 					File.saveContent(dir + "/check.ts", lines.join("\n") + "\n");
-					// (what the case says its module has, or lacks: `// ts output has: <text>`, in <case>.ts)
-					var main = dir + "/" + name + ".ts", code = FileSystem.exists(main) ? File.getContent(main) : "", re = ~/^\/\/ ts output (has|lacks): (.*)$/gm;
+					// (what the case says its module has, or lacks: `// ts output has: [<file>.ts: ]<text>`, in <case>.ts but
+					// where it names another)
+					var re = ~/^\/\/ ts output (has|lacks): (?:([A-Za-z0-9_\/]+\.ts): )?(.*)$/gm;
 					pos = 0;
 					while (re.matchSub(src, pos)) {
-						check('$name: ${v.tag} ' + re.matched(1) + " `" + re.matched(2) + "`", (code.indexOf(re.matched(2)) >= 0) == (re.matched(1) == "has"), code);
+						var file = dir + "/" + (re.matched(2) ?? name + ".ts"), code = FileSystem.exists(file) ? File.getContent(file) : "";
+						check('$name: ${v.tag} ' + re.matched(1) + " `" + re.matched(3) + "`", (code.indexOf(re.matched(3)) >= 0) == (re.matched(1) == "has"), code);
 						var m = re.matchedPos();
 						pos = m.pos + m.len;
 					}

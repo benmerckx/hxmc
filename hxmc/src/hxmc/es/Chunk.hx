@@ -29,6 +29,8 @@ private class Item {
 	public final statics:Array<TClassField> = [];
 	// where each static goes: its class's body (true) or after every class of its file (false)
 	public final inBody = new Map<TClassField, Bool>();
+	// (modules) those not in the body assigned after its file's classes (the others lazy)
+	public final atEnd = new Map<TClassField, Bool>();
 	public var initInBody = true;
 	// (modules) its `__init__` runs in the entry
 	public var initLate = false;
@@ -1409,31 +1411,37 @@ class Chunk {
 
 	// the types (indexes of items) e reaches as it runs: those it names, and through the code of the statics,
 	// constructors and methods it calls (all the implementations of an instance's method); a function literal
-	// only where it is called or passed on (it may run then)
+	// only where it is called or passed on (it may run then); each true where another class's code reaches it
 	function reaches(e:TExpr):Map<Int, Bool> {
 		var out = new Map<Int, Bool>(), seen = new Map<TClassField, Bool>();
+		// (the classes whose code it walks: the code of a class's own fields names it as its body has it, another's
+		// as the binding that is the class once its body has run)
+		var owners:Array<String> = [];
 		function need(t:ModuleType) {
-			var i = byPath.get(dot(tPath(t)));
-			if (i != null) out.set(i.index, true);
+			var path = dot(tPath(t));
+			var i = byPath.get(path);
+			if (i != null) out.set(i.index, (owners.length > 0 && owners[owners.length - 1] != path) || out.get(i.index) == true);
 		}
 		var walk:(TExpr, Bool) -> Void = null;
-		function field(cf:TClassField) {
+		function field(cf:TClassField, c:TClass) {
 			if (seen.exists(cf)) return;
 			seen.set(cf, true);
+			owners.push(dot(c.clPath));
 			switch cf.cfExpr {
 				case null:
 				case {eexpr: TFunction(f)}: walk(f.tfExpr, true);
 				case e: walk(e, true);
 			}
+			owners.pop();
 		}
 		function ctor(c:TClass) {
 			while (c != null) {
 				need(TClassDecl(c));
-				if (c.clConstructor != null) field(c.clConstructor);
+				if (c.clConstructor != null) field(c.clConstructor, c);
 				// (filters.ES6Ctors: the constructor's code in a method, which it calls untyped)
 				var moved = Lambda.find(c.clFields, x -> x.cfName == "_hx_constructor");
-				if (moved != null) field(moved);
-				for (f in c.clFields) if (f.cfExpr != null && !f.cfKind.match(Method(_))) field(f);
+				if (moved != null) field(moved, c);
+				for (f in c.clFields) if (f.cfExpr != null && !f.cfKind.match(Method(_))) field(f, c);
 				c = c.clSuper == null ? null : c.clSuper.cls;
 			}
 		}
@@ -1442,7 +1450,7 @@ class Chunk {
 			while (up != null) {
 				var f = Lambda.find(up.clFields, x -> x.cfName == name);
 				if (f != null) {
-					field(f);
+					field(f, up);
 					break;
 				}
 				up = up.clSuper == null ? null : up.clSuper.cls;
@@ -1453,7 +1461,7 @@ class Chunk {
 				if (visited.exists(k)) continue;
 				visited.set(k, true);
 				var f = Lambda.find(k.clFields, x -> x.cfName == name);
-				if (f != null) field(f);
+				if (f != null) field(f, k);
 				var l = kids.get(k);
 				if (l != null) for (x in l) stack.push(x);
 			}
@@ -1484,7 +1492,7 @@ class Chunk {
 				case TTypeExpr(t): need(t);
 				case TField(_, FStatic(c, cf)):
 					need(TClassDecl(c));
-					field(cf);
+					field(cf, c);
 				case TField(_, FInstance(c, _, cf)) | TField(_, FClosure({cls: c}, cf)):
 					method(c, cf.cfName);
 				case TField(_, FEnum(en, _)): need(TEnumDecl(en));
@@ -1496,11 +1504,16 @@ class Chunk {
 		return out;
 	}
 
-	// whether what e reaches is declared and initialized before `item` (or is item); another file's types are
-	// those of files loaded before (main, a split's parents), all initialized
+	// whether what e reaches is declared and initialized before `item` (or is item, but where code outside e reaches
+	// it: a class's binding is the class once its body has run); another file's types are those of files loaded before
+	// (main, a split's parents), all initialized
 	function ready(item:Item, e:TExpr):Bool {
-		for (i in reached.get(e).keys()) {
-			if (i == item.index) continue;
+		var r = reached.get(e);
+		for (i in r.keys()) {
+			if (i == item.index) {
+				if (r.get(i)) return false;
+				continue;
+			}
 			var other = items[i];
 			// (modules: another file's, which runs before; bundled: a file loaded before)
 			if (other.file != item.file) {
@@ -1516,10 +1529,41 @@ class Chunk {
 		return true;
 	}
 
+	// (modules, the report) what keeps a static from its class's body: the classes it reaches that are not ready
+	function waitsFor(item:Item, e:TExpr):String {
+		var out = [];
+		for (i in reached.get(e).keys()) if (i != item.index) {
+			var other = items[i];
+			var a = finished.get(other.file), b = finished.get(item.file);
+			if (other.file != item.file ? (a == null || b == null || a >= b) : (i > item.index || !other.initInBody || Lambda.exists(other.statics, f -> !other.inBody.get(f))))
+				out.push(other.path + (other.file != item.file ? (a == null ? " (not run)" : " (runs after)") : (i > item.index ? " (declared after)" : " (not ready)")));
+		}
+		out.sort(Reflect.compare);
+		return out.join(", ");
+	}
+
+	// (modules) whether what e reaches is initialized once item's file's classes are: another file's that has run, one of
+	// its own file's whose statics are in its body, or after it at the end
+	function readyAtEnd(item:Item, e:TExpr):Bool {
+		for (i in reached.get(e).keys()) {
+			if (i == item.index) continue;
+			var other = items[i];
+			if (other.file != item.file) {
+				var a = finished.get(other.file), b = finished.get(item.file);
+				if (a == null || b == null || a >= b) return false;
+				continue;
+			}
+			if (!other.initInBody) return false;
+			for (f in other.statics) if (!other.inBody.get(f) && !(other.atEnd.exists(f) && i < item.index)) return false;
+		}
+		return true;
+	}
+
 	// what each `__init__` and static's value reaches (place asks again as it goes): computed once, in parallel
 	final reached = new haxe.ds.ObjectMap<TExpr, Map<Int, Bool>>();
 
 	function reachAll() {
+		if (reached.iterator().hasNext()) return;
 		var l:Array<TExpr> = [];
 		for (item in items) {
 			var c = item.cls;
@@ -1568,6 +1612,10 @@ class Chunk {
 				}
 			}
 		}
+		// (modules: a static that waits only for its file's classes (a class after its own) assigned after them, in order;
+		// lazy otherwise)
+		if (modules) for (item in items) for (f in item.statics) if (!item.inBody.get(f) && readyAtEnd(item, f.cfExpr))
+			item.atEnd.set(f, true);
 		// (modules: the `__init__`s that run in the entry, lowered as its code)
 		if (modules) for (item in items) if (item.initLate) {
 			current = 0;
@@ -1583,7 +1631,8 @@ class Chunk {
 		if (Gctx.rawDefined(com, "hxmc.js.order_report")) {
 			for (item in items) {
 				if (!item.initInBody) Sys.println("es: " + item.path + ".__init__ after the types");
-				for (f in item.statics) if (!item.inBody.get(f)) Sys.println("es: " + item.path + "." + f.cfName + " after the types");
+				for (f in item.statics) if (!item.inBody.get(f))
+					Sys.println("es: " + item.path + "." + f.cfName + (!modules ? " after the types" : (item.atEnd.exists(f) ? " after its file's classes" : " lazy") + " (" + waitsFor(item, f.cfExpr) + ")"));
 			}
 		}
 	}
@@ -1761,19 +1810,21 @@ class Chunk {
 		}
 		var own = files[0].deps;
 		var fixes:Array<Int> = [];
+		reachAll();
 		for (round in 0...20) {
 			var l = [];
 			for (i in fixes.concat(always).concat(unreached).concat(own)) if (!l.contains(i) && i != 0) l.push(i);
 			files[0].deps = l;
 			simulate();
 			var late = lateFiles();
+			for (i in lateStatics()) if (!late.contains(i)) late.push(i);
 			var added = false;
 			for (i in late) if (!fixes.contains(i)) {
 				fixes.push(i);
 				added = true;
 			}
 			if (!added) {
-				for (i in late) Sys.println("es-modules: " + files[i].path + " defines a class before its super class's module runs (a cycle)");
+				for (i in lateFiles()) Sys.println("es-modules: " + files[i].path + " defines a class before its super class's module runs (a cycle)");
 				break;
 			}
 		}
@@ -1821,6 +1872,29 @@ class Chunk {
 				var a = finished.get(other.file), b = finished.get(item.file);
 				if (b != null && (a == null || a > b) && !out.contains(item.file)) out.push(item.file);
 			case _:
+		}
+		return out;
+	}
+
+	// the files of the statics and `__init__`s that reach a class of a file that has not run when theirs does: imported
+	// first by the entry, theirs run before (a cycle of what they reach, which no order has, makes them lazy: place)
+	function lateStatics():Array<Int> {
+		var out = [];
+		for (item in items) {
+			var b = finished.get(item.file);
+			if (b == null || out.contains(item.file)) continue;
+			var c = item.cls;
+			var l = [for (f in item.statics) if (f.cfExpr != null && !f.cfExpr.eexpr.match(TFunction(_))) f.cfExpr];
+			if (c != null && c.clInit != null && c.clInit.cfExpr != null) l.push(c.clInit.cfExpr);
+			var late = false;
+			for (e in l) if (!late) for (i in reached.get(e).keys()) {
+				var a = finished.get(items[i].file);
+				if (items[i].file != item.file && a != null && a > b) {
+					late = true;
+					break;
+				}
+			}
+			if (late) out.push(item.file);
 		}
 		return out;
 	}
@@ -2693,13 +2767,13 @@ class Chunk {
 					var later:Array<Member> = [];
 					for (f in item.statics) {
 						var v = item.values.get(f);
-						if (!item.inBody.get(f) && modules) {
+						if (!item.inBody.get(f) && modules && !item.atEnd.exists(f)) {
 							for (m in lazy(item, f, v)) later.push(m);
 						} else if (!item.inBody.get(f)) {
 							head.push(prot(f, MField(fieldKey(f.cfName, sns(c)), null, true, f.cfType)));
-							// (TypeScript: assigned from outside the class, past `protected`)
+							// (TypeScript: assigned from outside the class, past `protected`; modules: after the file's classes)
 							var self = ex(EId(item.sym));
-							deferredStatics.push(st(SExpr(ex(EAssign("=", tsOut && !hasClassFieldFlag(f, CfPublic) ? ex(EFriend(self, f.cfName)) : Lower.field(self, f.cfName, sns(c)), v)))));
+							(modules ? after : deferredStatics).push(st(SExpr(ex(EAssign("=", tsOut && !hasClassFieldFlag(f, CfPublic) ? ex(EFriend(self, f.cfName)) : Lower.field(self, f.cfName, sns(c)), v)))));
 						} else if (f.cfExpr == null || f.cfExpr.eexpr.match(TFunction(_))) head.push(staticMember(c, f, v));
 						else later.push(staticMember(c, f, v));
 					}
