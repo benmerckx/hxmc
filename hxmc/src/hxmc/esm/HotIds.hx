@@ -8,15 +8,14 @@ import core.TFunctions.*;
 import core.Texpr;
 import haxe.crypto.Md5;
 
-// Hot-ID filter: stable unit and call-site IDs for -D esm.hot (esm.md §4.1, §13.11).
+// Hot-ID filter: stable unit and call-site IDs for -D esm.hot (docs/esm.md).
 //
-// Ordinal walk (frozen M0.3): depth-first over the enclosing unit's expression tree;
-// one counter per enclosing unit for every call to an @:esm.hot.keyed callee (all
-// keyed calls share the counter, not per-callee-name).
+// Ordinal walk: depth-first over the enclosing unit's expression tree; one counter
+// per enclosing unit for every keyed callee call (all keyed calls share the counter).
 //
 // Call-site ID: enclosingUnitId#<ordinal> (ordinal starts at 1).
-// Magic inject param name (frozen M0.4): __hotId (last argument at emit; JS extra arg).
-// Unit ID (frozen M0.3): pack.Type#field for methods/statics; pack.Type#λ<n> for lambdas in unit.
+// Synthetic callee ABI at emit: __hotId (compiler-only; docs/esm.md).
+// Unit ID: pack.Type#field for methods/statics; pack.Type#λ<n> for lambdas in unit.
 class HotIds {
 	public static var units = new Map<String, HotUnit>();
 
@@ -115,22 +114,21 @@ class HotIds {
 
 	static function visitField(com:CommonContext, c:TClass, cf:TClassField, isStatic:Bool):Void {
 		var uid = unitId(c, cf.cfName);
-		if (EsmHotMeta.isSwappable(cf) && cf.cfExpr != null) {
+		if (EsmHotMeta.isSwappable(cf, c) && cf.cfExpr != null) {
 			var hash = bodyHash(cf.cfExpr);
 			units.set(uid, {id: uid, kind: "function", codeHash: hash, policy: EsmHotMeta.policy(cf.cfMeta)});
 		}
-		if (cf.cfExpr != null) cf.cfExpr = injectKeyedCalls(com.basic, uid, cf.cfExpr);
 	}
 
 	public static function unitId(c:TClass, fieldName:String):String
 		return Globals.sTypePath(c.clPath) + "#" + fieldName;
 
-	// Ordinal walk (frozen M0.3): see class doc.
-	static function injectKeyedCalls(basic:BasicTypes, enclosingId:String, expr:TExpr):TExpr {
+	// Ordinal walk: see class doc.
+	public static function injectKeyedCalls(basic:BasicTypes, owner:TClass, enclosingId:String, expr:TExpr):TExpr {
 		var ordinal = 0;
 		return HotExprMap.mapTransform(function(cur:TExpr):TExpr {
 			switch cur.eexpr {
-				case TCall(callee, args) if (keyedCallee(callee)):
+				case TCall(callee, args) if (keyedCallee(owner, callee)):
 					ordinal++;
 					var siteId = enclosingId + "#" + ordinal;
 					var hotArg:TExpr = {eexpr: TConst(TString(siteId)), etype: basic.tstring, epos: cur.epos};
@@ -142,16 +140,24 @@ class HotIds {
 		}, expr);
 	}
 
-	static function keyedCallee(e:TExpr):Bool switch e.eexpr {
-		case TField(_, access):
-			switch access {
-				case FStatic(_, cf) | FInstance(_, _, cf):
-					return EsmHotMeta.isKeyed(cf.cfMeta);
-				default:
-					return false;
-			}
+	static function keyedCallee(owner:TClass, e:TExpr):Bool {
+		var cf = staticCalleeField(owner, e);
+		return cf != null && EsmHotMeta.isKeyed(owner, cf);
+	}
+
+	static function staticCalleeField(owner:TClass, e:TExpr):Null<TClassField> switch e.eexpr {
+		case TField(_, FStatic(c, cf)):
+			return cf;
+		case TField(_, FInstance(c, _, cf)):
+			return cf;
+		case TIdent(name):
+			for (scf in owner.clStatics)
+				if (scf.cfName == name) return scf;
+			for (icf in owner.clFields)
+				if (icf.cfName == name) return icf;
+			return null;
 		default:
-			return false;
+			return null;
 	}
 
 	public static function bodyHash(e:TExpr):String {

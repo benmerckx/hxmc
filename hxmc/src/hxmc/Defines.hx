@@ -33,7 +33,7 @@ class Defines {
 	public static function addEsmDefine():Void {
 		core.DefineRegistry.all.push({
 			key: "esm",
-			doc: "Emit idiomatic ECMAScript modules with --js (hxmc Genesm). Defines js. Phase 2 hot reload uses -D esm.hot.",
+			doc: "Emit idiomatic ECMAScript modules with --js (hxmc Genesm). Defines js. -D esm.hot enables hot dev (implicit swappable bodies; docs/esm.md).",
 			flags: []
 		});
 		core.DefineRegistry.all.push({

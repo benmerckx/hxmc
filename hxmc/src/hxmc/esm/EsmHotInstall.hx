@@ -122,7 +122,9 @@ class EsmHotInstall {
 
 	static function registerHotMetas(com:context.Common.CommonContext):Void {
 		var um:core.Meta.UserMeta = {doc: null, flags: [], source: null};
-		for (leaf in ["cell", "scope", "keyed", "function"]) {
+		core.Meta.registerUserMeta(com.userMetas, ":esm.hot", um);
+		core.Meta.registerUserMeta(com.userMetas, "esm.hot", um);
+		for (leaf in ["cell", "scope"]) {
 			core.Meta.registerUserMeta(com.userMetas, ":esm.hot." + leaf, um);
 			core.Meta.registerUserMeta(com.userMetas, "esm.hot." + leaf, um);
 		}
@@ -130,7 +132,7 @@ class EsmHotInstall {
 
 	static function tryEmitClassStatic(ctx:JsCtx, c:TClass, _clPath:GlobalTypePath, f:TClassField):Bool {
 		if (!core.Define.rawDefined(ctx.com.defines, "esm.hot")) return false;
-		if (f.cfExpr == null) return false;
+		if (f.cfExpr == null || !hxmc.esm.EsmHotMeta.isSwappable(f, c)) return false;
 		return switch f.cfExpr.eexpr {
 			case TFunction(_):
 				hxmc.genesm.GenesmHot.emitClassStatic(ctx, c, f);

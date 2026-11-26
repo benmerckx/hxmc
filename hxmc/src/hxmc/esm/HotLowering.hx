@@ -16,7 +16,7 @@ import core.ds.VectorTools;
 import haxe.crypto.Md5;
 import haxe.ds.Vector;
 
-// M2: lower @:esm.hot.cell / scope; assign closure IDs and env-lowering (esm.md §4–§6).
+// Lower @:esm.hot.cell / scope; closure IDs and env-lowering (docs/esm.md).
 class HotLowering {
 	static var scopeClass:TClass;
 	static var lateTypes:Array<ModuleType>;
@@ -36,8 +36,9 @@ class HotLowering {
 	// Per swappable field at ESM emit.
 	public static function prepareFieldCells(g:generators.Gctx, c:TClass, f:TClassField):Void {
 		if (f.cfExpr == null) return;
+		if (EsmHotMeta.isKeyed(c, f)) ensureSyntheticHotId(g.basic, f);
 		var uid = HotIds.unitId(c, f.cfName);
-		var keyed = EsmHotMeta.isKeyed(f.cfMeta);
+		var keyed = EsmHotMeta.isKeyed(c, f);
 		// Emit can run after runLate was skipped on a false-negative work scan (markup/JSX entry graphs).
 		f.cfExpr = mapCellMark(uid, keyed, hotIdVar(f), f.cfExpr);
 		visitFieldLate(g.basic, c, f);
@@ -132,8 +133,9 @@ class HotLowering {
 
 	static function visitFieldEarly(com:CommonContext, c:TClass, cf:TClassField):Void {
 		if (cf.cfExpr == null) return;
+		if (EsmHotMeta.isKeyed(c, cf)) ensureSyntheticHotId(com.basic, cf);
 		var uid = HotIds.unitId(c, cf.cfName);
-		var keyed = EsmHotMeta.isKeyed(cf.cfMeta);
+		var keyed = EsmHotMeta.isKeyed(c, cf);
 		var st = {lambdaN: 0, skipRootFn: false, fieldLocals: (null : Null<Map<String, Bool>>)};
 		switch cf.cfExpr.eexpr {
 			case TFunction(f):
@@ -142,6 +144,8 @@ class HotLowering {
 			default:
 				cf.cfExpr = mapUnitEarly(com, uid, keyed, hotIdVar(cf), st, cf.cfExpr);
 		}
+		if (EsmHotMeta.isSwappable(cf, c))
+			cf.cfExpr = HotIds.injectKeyedCalls(com.basic, c, uid, cf.cfExpr);
 	}
 
 	static function collectShallowVarNames(f:TFunc):Map<String, Bool> {
@@ -159,7 +163,7 @@ class HotLowering {
 		if (cf.cfExpr == null) return;
 		cellIdByVar = new Map();
 		var uid = HotIds.unitId(c, cf.cfName);
-		var keyed = EsmHotMeta.isKeyed(cf.cfMeta);
+		var keyed = EsmHotMeta.isKeyed(c, cf);
 		var e = mapUnitLate(basic, uid, keyed, hotIdVar(cf), cf.cfExpr);
 		e = rewriteCellIncrements(basic, e);
 		if (EsmHotMeta.isScope(cf.cfMeta)) e = wrapScope(basic, uid, e, cf.cfExpr.epos);
@@ -174,6 +178,23 @@ class HotLowering {
 				return null;
 			default:
 				null;
+		}
+	}
+
+	// Emit-only ABI; not part of user signatures (docs/esm.md).
+	static function ensureSyntheticHotId(basic:BasicTypes, cf:TClassField):Void {
+		switch cf.cfExpr.eexpr {
+			case TFunction(f):
+				if (hotIdVar(cf) != null) return;
+				var pos = cf.cfExpr.epos;
+				var hotMeta:MetadataEntry = {
+					meta: StrictMeta.Custom(EsmHotMeta.SYNTHETIC_HOT_ID),
+					exprs: vector(),
+					pos: pos,
+				};
+				var v = new TVar(-1, "__hotId", basic.tstring, VGenerated, null, VectorTools.vector(hotMeta), 0, pos);
+				f.tfArgs = VectorTools.snoc(f.tfArgs, {variable: v, defaultValue: Builder.makeNull(basic.tstring, pos)});
+			default:
 		}
 	}
 

@@ -218,7 +218,7 @@ class Genesm {
 			if (hotRegistry && generators.EsmHotEmit.tryEmitClassStatic != null
 				&& generators.EsmHotEmit.tryEmitClassStatic(ctx, s.c, clPath, s.f))
 				continue;
-			if (hotRegistry && hxmc.esm.EsmHotMeta.isSwappable(s.f))
+			if (hotRegistry && hxmc.esm.EsmHotMeta.isSwappable(s.f, s.c))
 				GenesmHot.emitSwappableStatic(ctx, s);
 			else {
 				if (hotRegistry) {
