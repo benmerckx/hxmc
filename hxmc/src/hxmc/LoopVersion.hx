@@ -24,10 +24,11 @@ using core.ds.VectorTools;
 //    the loop and of counter + 1 from the one block that goes back to it,
 //    and the loop's only exit, a branch on counter < limit (or >=), the
 //    limit computed before the loop;
-//  - nothing in the loop that may collect, call or change an array's
-//    length or kind: arithmetic, comparisons, field reads and writes
+//  - nothing in the loop that may collect, call unknown code or change an
+//    array's length or kind: arithmetic, comparisons, field reads and writes
 //    (not of a field an array the loop reads is in), Array and NativeArray
-//    reads, NativeArray writes, null tests, the inline conversions;
+//    reads, NativeArray writes, null tests, the inline conversions, calls
+//    whose summaries (Effects) write no array's header and do not collect;
 //  - Array reads at the counter, after the exit test (not in the header),
 //    or at a value from before the loop; of an array from before the loop
 //    or read from a field of an object from before the loop (the copy reads
@@ -109,7 +110,7 @@ class LoopVersion {
 	function arrayOf(id:Int, inLoop:Null<MBlock>->Bool, fieldsWritten:Map<Int, Bool>):Null<Arr> {
 		var a = v(id);
 		if (!inLoop(a.block)) return {key: "v" + id, a: id, obj: -1, field: null};
-		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && a.info.t.match(TRef(_)))
+		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && !fieldsWritten.exists(-1 - ((fieldKey(a.info) >> 3) & 7)) && a.info.t.match(TRef(_)))
 			return {key: "f" + a.a + ":" + fieldKey(a.info), a: id, obj: a.a, field: a};
 		return null;
 	}
@@ -159,6 +160,10 @@ class LoopVersion {
 						fieldsWritten.set(fieldKey(i.info), true);
 					case ArrayGet:
 						gets.push(i);
+					case Call if (calm(i)):
+						var m = Effects.call(i);
+						for (k in 0...8)
+							if (m & ((1 << (Opt.MFieldAt + k)) | (1 << Opt.MField)) != 0) fieldsWritten.set(-1 - k, true);
 					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
 					case _:
 						return false;
@@ -282,6 +287,12 @@ class LoopVersion {
 		version(h, members, inLoop, cfg, pre, -1, -1, null, [], [], strs, widths);
 		return true;
 	}
+
+	// a call the loop may keep (its callee's summary, Effects): it does not
+	// collect and writes no array's header (length, kind, storage); the
+	// fields it may write are those no array the copy reads may be in
+	static function calm(i:MIns):Bool
+		return !i.returnsTwice && !i.noReturn && i.kills != Effects.UNKNOWN && i.keepsFrame && Effects.call(i) & (1 << Opt.MHdr) == 0;
 
 	static function fieldKey(o:OInfo):Int
 		return Opt.fieldOff(o);
@@ -471,6 +482,7 @@ class LoopVersion {
 				x.noReturn = i.noReturn;
 				x.returnsTwice = i.returnsTwice;
 				x.keepsFrame = i.keepsFrame;
+				x.kills = i.kills;
 				x.variadic = i.variadic;
 				x.argTys = i.argTys;
 				x.cCall = i.cCall;

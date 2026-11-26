@@ -476,6 +476,7 @@ class Fingerprint {
 				str(prep.funcSym(f));
 				word(f.noGc ? (f.blocks ? 2 : 1) : 0);
 				word(f.writesStatics ? 1 : 0);
+				word(f.writes);
 				word(f.args.length);
 				for (a in f.args)
 					ty(a.ty);
@@ -517,6 +518,9 @@ class Fingerprint {
 			case ECallHost(n, xs, r):
 				word(E_CALLHOST);
 				str(n);
+				// (a runtime function of the program: its summary, Effects)
+				var g = prep.e.bySymbol.get(n);
+				word(g != null ? g.writes : 0);
 				ty(r);
 				// (a C function: how MirBuild.cCall converts and whether it blocks)
 				var cs = hxmc.ir.CInterop.SIGS.get(n);

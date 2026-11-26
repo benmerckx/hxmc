@@ -64,6 +64,82 @@ class Facts {
 		assignTypes();
 		collectNames();
 		assignNames();
+		findEffects();
+	}
+
+	// ---- effects
+
+	// What each function may write (FuncInfo.writes, in Opt's memory classes:
+	// hxmc.Effects): its own stores (fields, arrays, statics, raw memory),
+	// the runtime functions it calls by name, and its callees' summaries, to
+	// a fixed point over the call graph (callees first: a strongly connected
+	// component's functions end with the union of theirs). Calls of unknown
+	// code (virtual, closure, structural) and functions without a body here
+	// write every class. Collections are not writes: Effects.call adds them
+	// where the callee may collect (noGc).
+	function findEffects() {
+		var own = new Map<FuncInfo, Int>();
+		var callees = new Map<FuncInfo, Array<FuncInfo>>();
+		for (f in p.funcs) {
+			var w = 0, cs:Array<FuncInfo> = [];
+			if (f.hostCode) w = hxmc.Effects.UNKNOWN;
+			function callee(g:FuncInfo)
+				if (cs.indexOf(g) < 0) cs.push(g);
+			function ex(e:Ex) {
+				if (w == hxmc.Effects.UNKNOWN) return;
+				switch e {
+					case ECall(g, _): callee(g);
+					case ECallHost(n, _, _):
+						var g = bySymbol.get(n);
+						if (g != null) callee(g) else w |= hxmc.Effects.host(n);
+					case ECallDispatch(_) | ECallClos(_) | ECallAnon(_): w = hxmc.Effects.UNKNOWN;
+					// (a structural read's slow path: the inline caches, what only calls change)
+					case EAnonGet(_): w |= 1 << hxmc.Opt.MCallOnly;
+					case _:
+				}
+				if (w != hxmc.Effects.UNKNOWN) iterEx(ex, e);
+			}
+			function st(s:Stmt) {
+				if (w == hxmc.Effects.UNKNOWN) return;
+				switch s {
+					case SSetField(c, idx, _, _):
+						var loc = c.locs[idx];
+						w |= hxmc.Effects.fieldStore(c.fields[idx].ty, loc & ~COMPACT, loc & COMPACT != 0);
+					case SBoxSet(t, _, _): w |= hxmc.Effects.fieldStore(t, 0, false);
+					case SAnonSet(_): w |= hxmc.Effects.ANY_FIELD | (1 << hxmc.Opt.MCallOnly);
+					case SArrSet(_) | SArrPush(_): w |= hxmc.Effects.ARRAY_STORE;
+					case SSetGlobal(g, _):
+						var gl = p.globals[g];
+						w |= (1 << hxmc.Opt.MOther) | (Ir.isRef(gl.ty) ? 1 << hxmc.Opt.MGlobal : 1 << hxmc.Opt.MScalar)
+							| (gl.tls != null ? 1 << hxmc.Opt.MTls : 0);
+					case _:
+				}
+				if (w != hxmc.Effects.UNKNOWN) iterStmt(st, ex, s);
+			}
+			for (s in f.body)
+				st(s);
+			own.set(f, w);
+			callees.set(f, cs);
+		}
+		// (to a fixed point: the summaries only grow, and they are 32 bits)
+		for (f in p.funcs)
+			f.writes = own.get(f);
+		var changed = true;
+		while (changed) {
+			changed = false;
+			for (f in p.funcs) {
+				var w = f.writes;
+				if (w == hxmc.Effects.UNKNOWN) continue;
+				for (g in callees.get(f)) {
+					w |= g.writes;
+					if (w == hxmc.Effects.UNKNOWN) break;
+				}
+				if (w != f.writes) {
+					f.writes = w;
+					changed = true;
+				}
+			}
+		}
 	}
 
 	// ---- names

@@ -53,12 +53,12 @@ class Opt {
 	public static inline var MFrame = 6; // shadow-stack slots (calls may move what they hold)
 	public static inline var MConst = 7; // never written (type tables, string and NativeArray lengths, object type indices)
 	public static inline var MInit = 8; // stores initializing a fresh object (no load can see it before)
-	static inline var MTls = 9; // thread-local variables (TlsLoad)
+	public static inline var MTls = 9; // thread-local variables (TlsLoad)
 	// object fields by displacement (8 buckets): a field store at one
 	// offset leaves loads at other offsets alone (objects do not overlap; a
 	// type-correct program reads a field at its own offset); MField's own
 	// version is that of fields at dynamic offsets (anonymous objects)
-	static inline var MFieldAt = 10;
+	public static inline var MFieldAt = 10;
 	// the runtime's thread-locals the code uses most, apart (distinct
 	// variables: a store to one leaves loads of the others alone)
 	static inline var MTlsSp = 18; // rt_sp
@@ -68,15 +68,16 @@ class Opt {
 	// shadow-stack slots by displacement (8 buckets), as fields: a store to
 	// one slot leaves the loads of the others alone (MFrame's own version:
 	// accesses at dynamic offsets)
-	static inline var MFrameAt = 22;
+	public static inline var MFrameAt = 22;
 	// scalar global variables (an Int, Float, Bool, I64 or Ptr static, at
 	// its own symbol), apart from the reference ones (slots of rt_globals,
 	// MGlobal's own version): raw memory writes them only through a
 	// symbol's address (killMask)
-	static inline var MScalar = 31;
-	static inline var NCLS = 32;
-	static inline var EVERY = -1; // (every class: 32 bits)
-	static inline var TLS_BITS = (1 << MTls) | (1 << MTlsSp) | (1 << MTlsHw) | (1 << MTlsYp) | (1 << MTlsYl);
+	public static inline var MScalar = 31;
+	public static inline var NCLS = 32;
+	static inline var NV = 2 * NCLS; // (versions: a second one per class for references, Opt.versions)
+	public static inline var EVERY = -1; // (every class: 32 bits)
+	public static inline var TLS_BITS = (1 << MTls) | (1 << MTlsSp) | (1 << MTlsHw) | (1 << MTlsYp) | (1 << MTlsYl);
 
 	static function tlsClass(sym:String):Int
 		return switch sym {
@@ -86,8 +87,8 @@ class Opt {
 			case "rt_young_limit" | "rt_young_rlimit": MTlsYl;
 			case _: MTls;
 		};
-	static inline var FIELD_BITS = ((1 << 8) - 1) << MFieldAt;
-	static inline var FRAME_BITS = ((1 << 8) - 1) << MFrameAt;
+	public static inline var FIELD_BITS = ((1 << 8) - 1) << MFieldAt;
+	public static inline var FRAME_BITS = ((1 << 8) - 1) << MFrameAt;
 
 	// runtime functions that write no memory the code reads and do not collect
 	static var readOnly = [
@@ -470,16 +471,18 @@ class Opt {
 					nOut++;
 				}
 			if (nOut != 1 || outside.mark != inOrder) continue;
-			// what the loop may write; a loop with calls is left alone (what
-			// would leave it is cheap to compute again, and would stay live
-			// across the calls: a callee-saved register or a reload)
+			// what the loop may write; a loop with calls of unknown code is left
+			// alone (they write everything; calls with summaries write what
+			// Effects says, and what moves out of their loop lives across them)
 			var kills = 0;
 			var calls = false;
+			var gcs = false; // (a point that may collect: no reference load leaves the loop, Effects)
 			for (b in members)
 				for (i in b.ins)
 					if (!i.dead) {
 						kills |= killMask(i);
-						if ((i.op == Call || objCall(i.op)) && !b.cold) calls = true;
+						if (Effects.collects(i)) gcs = true;
+						if (!b.cold && (i.op == Call ? i.returnsTwice || i.kills == Effects.UNKNOWN : objCall(i.op) && objKill(i) == ALL)) calls = true;
 					}
 			if (calls) continue;
 			// A guard (LLVM's loop-rotate, then LICM into the guarded
@@ -553,18 +556,19 @@ class Opt {
 						// (object-level: as the loads of fields, headers and immutable memory below)
 						case GetField | ArrayLength | NArrayLength:
 							var c = objLoadClass(i);
-							c >= 0 && kills & (1 << c) == 0 && nonNullIn(i);
+							c >= 0 && kills & (1 << c) == 0 && !(gcs && refLoad(i, c) != c) && nonNullIn(i);
 						case EnumTag: nonNullIn(i);
 						case TypeTest | FieldAddr: true;
 						case _ if (i.isObj()): false;
 						case Load | TlsLoad:
 							safeLoad(i, vals) && kills & (1 << (i.op == TlsLoad ? tlsClass(i.sym) : memClass(i))) == 0
+							&& !(gcs && i.op == Load && refLoad(i, memClass(i)) != memClass(i))
 							// (a field, an array's header or immutable memory of an object the
 							// loop does not write there, dereferenced before it: not null, so
-							// the load cannot fault before the loop; a loop that may collect
-							// writes them all: no reference leaves it to live across a GC point)
+							// the load cannot fault before the loop; in a loop that may collect
+							// no reference leaves it to live across a GC point: gcs)
 							|| i.op == Load && i.b < 0 && (i.mem == MField || i.mem == MHdr || i.mem == MConst)
-							&& kills & (1 << memClass(i)) == 0 && nonNullIn(i);
+							&& kills & (1 << memClass(i)) == 0 && !(gcs && refLoad(i, memClass(i)) != memClass(i)) && nonNullIn(i);
 						case op: pure(op);
 					};
 					if (!can || !invariant(i.a) || !invariant(i.b) || !invariant(i.c)) continue;
@@ -2595,6 +2599,8 @@ class Opt {
 					case _: (1 << memClass(i)) | (1 << MOther);
 				}
 			case TlsStore: 1 << tlsClass(i.sym);
+			// (a call whose callee is known: its summary, Effects.call)
+			case Call if (!i.returnsTwice && i.kills != Effects.UNKNOWN): Effects.call(i);
 			// (one during which nothing collects leaves the shadow-stack slots as they are)
 			// (a kernel that writes no static: scalar and thread-local statics
 			// as they were, FuncInfo.writesStatics)
@@ -2608,7 +2614,7 @@ class Opt {
 	// ---- object-level operations
 
 	// every class but immutable memory (what a call may write)
-	static inline var ALL = EVERY & ~(1 << MConst);
+	public static inline var ALL = EVERY & ~(1 << MConst);
 
 	// a field's byte offset (OInfo.loc: an Int's or Bool's is a 4-byte index; MemLower.access)
 	public static inline function fieldOff(o:OInfo):Int
@@ -2670,18 +2676,9 @@ class Opt {
 			case _: 0;
 		};
 
-	// the classes an object-level operation writes
+	// the classes an object-level operation writes (Effects), a collection's with them
 	function objKill(i:MIns):Int
-		return switch i.op {
-			case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | InitField | Tag: 0;
-			case Untag if (!i.info.t.match(TRef(_))): 0;
-			case ArrayGet: ptrElem(i.info.t) && !i.info.prechecked ? ALL : 0;
-			case SetField: i.info.t.match(TVoid) ? 0 : (1 << fieldCls(i.info)) | (1 << MField) | (1 << MOther);
-			case AnonStore: FIELD_BITS | (1 << MField) | (1 << MOther);
-			case NArraySet | ArrayInit | NArrayInit: (1 << MElem) | (1 << MOther);
-			case RefStore: EVERY & ~(1 << MConst) & ~(1 << MCallOnly) & ~TLS_BITS;
-			case _: ALL;
-		};
+		return Effects.obj(i) | (Effects.collects(i) ? Effects.GC_KILL : 0);
 
 	// whether v is not null: just allocated, or known on the way here
 	// (condProp's facts: a null test of it, a branch on its comparison with null)
@@ -2862,7 +2859,7 @@ class Opt {
 					i.info.fresh = true;
 					freshStores++;
 				}
-				if (i.isObj() ? objKill(i) == ALL : i.op == Call && (!i.keepsFrame || i.returnsTwice)) last = -1;
+				if (Effects.collects(i)) last = -1;
 				if (i.op == New && i.info.n <= YOUNG_SLOTS) last = i.id;
 			}
 			outs[k] = last;
@@ -3346,18 +3343,30 @@ class Opt {
 	// the memory versions: per block in reverse postorder, from its
 	// predecessors' (a loop header: new versions of what the loop writes),
 	// through its instructions; recorded per load
+	// Each class has two versions: its loads of Ints, Floats and vectors read
+	// the first, its loads that may yield a reference (I64) the second, which
+	// a point that may collect renews too (Effects: a reference read before a
+	// collection is not valid after it unless rooted)
+	inline function refLoad(i:MIns, c:Int):Int
+		return i.ty == I64 && c != MConst ? c + NCLS : c;
+
 	function versions(cfg:Cfg<MBlock>) {
 		var order = cfg.rpo;
 		var n = order.length;
 		cfg.loops();
 		var inOrder = number(order);
-		// per block: the classes it writes
+		// per block: the classes it writes, whether it may collect
 		var kill = new Vector<Int>(n);
+		var gc = new Vector<Bool>(n);
 		for (k in 0...n) {
-			var m = 0;
+			var m = 0, g = false;
 			for (i in order[k].ins)
-				if (!i.dead) m |= killMask(i);
+				if (!i.dead) {
+					m |= killMask(i);
+					if (!g && Effects.collects(i)) g = true;
+				}
 			kill[k] = m;
+			gc[k] = g;
 		}
 		// per loop header: the classes its loop writes (Cfg's loops: the
 		// blocks that reach a back edge without passing the header, the inner
@@ -3366,59 +3375,84 @@ class Opt {
 		// latch and the calls in it)
 		var head = cfg.loopHead, parent = cfg.loopParent;
 		var loopKill = MFunc.ints(n, 0);
+		var loopGc = new Vector<Bool>(n);
 		for (k in 0...n)
-			if (head[k] >= 0) loopKill[head[k]] |= kill[k];
+			if (head[k] >= 0) {
+				loopKill[head[k]] |= kill[k];
+				if (gc[k]) loopGc[head[k]] = true;
+			}
 		var h = n;
 		while (h-- > 0)
-			if (head[h] == h && parent[h] >= 0) loopKill[parent[h]] |= loopKill[h];
+			if (head[h] == h && parent[h] >= 0) {
+				loopKill[parent[h]] |= loopKill[h];
+				if (loopGc[h]) loopGc[parent[h]] = true;
+			}
 		var outs = new Vector<Vector<Int>>(n);
 		for (k in 0...n) {
 			var b = order[k];
 			var v:Vector<Int> = null;
 			var loop = false;
 			var entered = false;
-			var mixed = 0; // classes the forward predecessors disagree on, or the loop writes
+			// classes the forward predecessors disagree on, or the loop writes
+			// (mixed: first versions, with the second; mixedRef: second ones only)
+			var mixed = 0, mixedRef = 0;
 			for (p in b.preds) {
 				if (p.mark != inOrder) continue;
 				var pk = p.tmp;
 				if (pk >= k) {
 					loop = true;
-					// (an edge back from a block the header does not dominate: a
-					// way into the cycle other than this block)
+					// (a way into the cycle other than this block)
 					if (!cfg.dominates(k, pk)) entered = true;
 					continue;
 				}
 				var o = outs[pk];
 				if (v == null) v = o.copy() else
-					for (c in 0...NCLS)
+					for (c in 0...NCLS) {
 						if (v[c] != o[c]) mixed |= 1 << c;
+						if (v[c + NCLS] != o[c + NCLS]) mixedRef |= 1 << c;
+					}
 			}
 			// (a way into the loop other than its header: every class)
-			if (loop) mixed |= entered ? -1 : loopKill[k];
+			if (loop) {
+				mixed |= entered ? -1 : loopKill[k];
+				if (entered || loopGc[k]) mixedRef = -1;
+			}
 			if (v == null || b.handler) {
-				v = new Vector<Int>(NCLS);
-				for (c in 0...NCLS)
+				v = new Vector<Int>(NV);
+				for (c in 0...NV)
 					v[c] = next++;
 			} else {
-				for (c in 0...NCLS)
+				for (c in 0...NCLS) {
 					if (mixed & (1 << c) != 0) v[c] = next++;
+					if ((mixed | mixedRef) & (1 << c) != 0) v[c + NCLS] = next++;
+				}
 			}
 			for (i in b.ins) {
 				if (i.dead) continue;
-				if (i.op == Load) ver[i.id] = v[memClass(i)] else if (i.op == TlsLoad) ver[i.id] = v[tlsClass(i.sym)] else if (i.isObj()) {
+				if (i.op == Load) ver[i.id] = v[refLoad(i, memClass(i))] else if (i.op == TlsLoad) ver[i.id] = v[tlsClass(i.sym)] else if (i.isObj()) {
 					var c = objLoadClass(i);
-					if (c >= 0) ver[i.id] = v[c];
+					if (c >= 0) ver[i.id] = v[refLoad(i, c)];
 				}
 				var m = killMask(i);
 				if (m != 0)
 					for (c in 0...NCLS)
-						if (m & (1 << c) != 0) v[c] = next++;
+						if (m & (1 << c) != 0) {
+							v[c] = next++;
+							v[c + NCLS] = next++;
+						}
+				if (Effects.collects(i))
+					for (c in 0...NCLS)
+						if (c != MConst) v[c + NCLS] = next++;
 				// (a store: the version it leaves its memory in, that of the loads it can answer)
-				if (i.op == Store) ver[i.id] = v[memClass(i)] else if (objStore(i)) ver[i.id] = v[storeCls(i)];
+				if (i.op == Store) ver[i.id] = v[refStore(i, memClass(i), i.c)] else if (objStore(i)) ver[i.id] = v[refStore(i, storeCls(i), storedValue(i))];
 			}
 			outs[k] = v;
 		}
 	}
+
+	// (a store's version: that of the loads of its value's type)
+	inline function refStore(i:MIns, c:Int, x:Int):Int
+		return x >= 0 && f.vals[res(x)].ty == I64 && c != MConst ? c + NCLS : c;
 
 	// operands compared as values: constants and addresses of the same thing are equal
 	var canon:Vector<Int>;
