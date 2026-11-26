@@ -421,6 +421,11 @@ The entry (the output's file) imports the modules that always run first (the
 std's runtime), those nothing imports (an `__init__`'s, reflection's), the main
 class's, and runs the main expression.
 
+The entry may be a module's file (`--js out/Main.js`, of `Main`): one file. A
+name that is a module's file's but for case (`--js out/main.js`, of `Main`) is
+an error, wherever file names are case-insensitive or not: at the module's type
+of its name, else at `main`.
+
 Modules run in their imports' order: a module after those it imports, but those
 already running (a cycle). What runs as a module loads must find what it needs:
 a class its super class, a static's initialization and an `__init__` the types

@@ -344,6 +344,7 @@ class Chunk {
 		phase("collect", () -> {
 			c.collect();
 			if (c.modules) {
+				c.entryClash();
 				c.breakCycles();
 				c.collectAbstracts();
 			}
@@ -1711,6 +1712,24 @@ class Chunk {
 
 	// (a module's own type: of its name)
 	function isModuleType(item:Item):Bool return tPath(item.t).name == tInfos(item.t).mtModule.mPath.name;
+
+	// (modules) a module's file of the entry's name but for case (`main.js`, `Main`'s `Main.js`): one file where file
+	// names are case-insensitive, two where they are not; an error either way, at the module's type of its name, else
+	// at `main`
+	public function entryClash() {
+		var entry = files[0].path.toLowerCase();
+		for (f in files) if (f.id != 0 && f.path != null && f.path.toLowerCase() == entry) {
+			var pos = core.Globals.nullPos;
+			var own = Lambda.find(f.items, isModuleType);
+			if (own != null) pos = tInfos(own.t).mtNamePos else {
+				var m = com.main.mainPath == null ? null : byPath.get(dot(com.main.mainPath));
+				var main = m == null || m.cls == null ? null : m.cls.clStatics.get("main");
+				if (main != null) pos = main.cfNamePos else if (com.main.mainExpr != null) pos = com.main.mainExpr.epos;
+			}
+			Error.abort("hxmc.js=es-modules: the output's name, " + files[0].path + ", is this module's file's (" + f.path
+				+ ") but for case: name the output otherwise", pos);
+		}
+	}
 
 	// the file of a Haxe module (modules)
 	function moduleFile(p:GlobalTypePath):Int {

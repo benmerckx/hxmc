@@ -185,6 +185,16 @@ class JsGenCheck {
 				}
 			}
 		}
+		// (es-modules: an output named as a module's file but for case, `basic.js` of Basic's `Basic.js`, which one file
+		// is where file names are case-insensitive: an error, at the module's class)
+		if (only.length == 0 || only.contains("Basic")) {
+			var dir = '$OUT/Basic/es-modules-case';
+			rmrf(dir);
+			FileSystem.createDirectory(dir);
+			var c = exec([haxe, "-cp", CASES, "-cp", "hxmc/portable", "-main", "Basic", "--js", dir + "/basic.js", "-D", "hxmc.js=es-modules"], {merge: true});
+			check("Basic: es-modules to basic.js fails, at Basic", c.code != 0 && c.out.indexOf("Basic.hx:3: characters 7-12") >= 0
+				&& c.out.indexOf("but for case") >= 0, c.out);
+		}
 		Sys.println(failures == 0 ? "all passed" : '$failures failed');
 		Sys.exit(failures == 0 ? 0 : 1);
 	}
