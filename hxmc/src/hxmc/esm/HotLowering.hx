@@ -44,18 +44,25 @@ class HotLowering {
 		visitFieldLate(g.basic, c, f);
 	}
 
+	static function cellMetaSource(v:TVar, ?outer:Null<MetadataEntry>):Null<MetadataEntry> {
+		if (outer != null && EsmHotMeta.isCellMetaEntry(outer)) return outer;
+		for (m in v.vMeta)
+			if (EsmHotMeta.isCellMetaEntry(m)) return m;
+		return null;
+	}
+
 	static function mapCellMark(uid:String, keyed:Bool, hotId:Null<TVar>, expr:TExpr):TExpr {
 		var root = expr;
 		return HotExprMap.mapTransform(function(cur:TExpr):TExpr {
 			switch cur.eexpr {
 				case TMeta(m, {eexpr: TVar(v, eo)}) if (EsmHotMeta.isCellMetaEntry(m) && eo != null):
-					return markCellPending(v, eo, cur);
+					return markCellPending(v, eo, cur, m);
 				case TVar(v, eo) if (EsmHotMeta.isCell(v.vMeta) && eo != null):
-					return markCellPending(v, eo, cur);
+					return markCellPending(v, eo, cur, cellMetaSource(v));
 				case TVar(v, eo) if (eo != null && isM2CellInit(v, eo, root)):
-					return markCellPending(v, eo, cur);
+					return markCellPending(v, eo, cur, cellMetaSource(v));
 				case TVar(v, eo) if (keyed && eo != null && zeroLiteral(eo)):
-					return markCellPending(v, eo, cur);
+					return markCellPending(v, eo, cur, cellMetaSource(v));
 				default:
 					return cur;
 			}
@@ -203,9 +210,9 @@ class HotLowering {
 		return HotExprMap.mapTransform(function(cur:TExpr):TExpr {
 			switch cur.eexpr {
 				case TMeta(m, {eexpr: TVar(v, eo)}) if (EsmHotMeta.isCellMetaEntry(m) && eo != null):
-					return markCellPending(v, eo, cur);
+					return markCellPending(v, eo, cur, m);
 				case TVar(v, eo) if (EsmHotMeta.isCell(v.vMeta) && eo != null):
-					return markCellPending(v, eo, cur);
+					return markCellPending(v, eo, cur, cellMetaSource(v));
 				case TFunction(f):
 					if (st.skipRootFn) {
 						st.skipRootFn = false;
@@ -226,20 +233,25 @@ class HotLowering {
 		return HotExprMap.mapTransform(function(cur:TExpr):TExpr {
 			switch cur.eexpr {
 				case TMeta(m, {eexpr: TVar(v, eo)}) if (EsmHotMeta.isCellPending(m) && eo != null):
-					return lowerCell(basic, uid, keyed, hotId, v, eo, cur);
+					return lowerCell(basic, uid, keyed, hotId, v, eo, cur, m);
 				case TMeta(m, {eexpr: TVar(v, eo)}) if (EsmHotMeta.isCellMetaEntry(m) && eo != null):
-					return lowerCell(basic, uid, keyed, hotId, v, eo, cur);
+					return lowerCell(basic, uid, keyed, hotId, v, eo, cur, m);
 				case TVar(v, eo) if (EsmHotMeta.isCell(v.vMeta) && eo != null):
-					return lowerCell(basic, uid, keyed, hotId, v, eo, cur);
+					return lowerCell(basic, uid, keyed, hotId, v, eo, cur, cellMetaSource(v));
 				default:
 					return cur;
 			}
 		}, expr);
 	}
 
-	static function markCellPending(v:TVar, eo:TExpr, cur:TExpr):TExpr {
+	static function markCellPending(v:TVar, eo:TExpr, cur:TExpr, ?source:Null<MetadataEntry>):TExpr {
 		var inner:TExpr = {eexpr: TVar(v, eo), etype: cur.etype, epos: cur.epos};
-		var meta:MetadataEntry = {meta: StrictMeta.Custom(EsmHotMeta.CELL_PENDING), exprs: vector(), pos: cur.epos};
+		var src = source != null ? source : cellMetaSource(v);
+		var fixed = src != null ? EsmHotMeta.cellFixedIdFromEntry(src) : null;
+		if (fixed == null) fixed = EsmHotMeta.cellFixedIdFromMeta(v.vMeta);
+		var exprs:Vector<Expr> = new Vector(fixed != null ? 1 : 0);
+		if (fixed != null) exprs.set(0, {expr: EConst(String(fixed, SDoubleQuotes)), pos: cur.epos});
+		var meta:MetadataEntry = {meta: StrictMeta.Custom(EsmHotMeta.CELL_PENDING), exprs: exprs, pos: cur.epos};
 		return {eexpr: TMeta(meta, inner), etype: cur.etype, epos: cur.epos};
 	}
 
@@ -351,8 +363,16 @@ class HotLowering {
 		return {tfArgs: args, tfType: f.tfType, tfExpr: body};
 	}
 
-	static function lowerCell(basic:BasicTypes, uid:String, keyed:Bool, hotId:Null<TVar>, v:TVar, eo:TExpr, cur:TExpr):TExpr {
-		var idExpr = cellIdExpr(basic, uid, keyed, hotId, v.vName, v.vPos);
+	static function lowerCell(basic:BasicTypes, uid:String, keyed:Bool, hotId:Null<TVar>, v:TVar, eo:TExpr, cur:TExpr,
+			?cellMeta:Null<MetadataEntry>):TExpr {
+		var fixed = cellMeta != null ? EsmHotMeta.cellFixedIdFromPending(cellMeta) : null;
+		if (fixed == null && cellMeta != null) fixed = EsmHotMeta.cellFixedIdFromEntry(cellMeta);
+		if (fixed == null) {
+			var src = cellMetaSource(v, cellMeta);
+			if (src != null) fixed = EsmHotMeta.cellFixedIdFromEntry(src);
+		}
+		if (fixed == null) fixed = EsmHotMeta.cellFixedIdFromMeta(v.vMeta);
+		var idExpr = cellIdExpr(basic, uid, keyed, hotId, v.vName, v.vPos, fixed);
 		cellIdByVar.set(v.vName, idExpr);
 		var initHash = HotIds.bodyHash(eo);
 		var init = mkThunk(basic, eo);
@@ -367,7 +387,11 @@ class HotLowering {
 		return {eexpr: TCall(callee, args), etype: basic.tany, epos: pos};
 	}
 
-	static function cellIdExpr(basic:BasicTypes, uid:String, keyed:Bool, hotId:Null<TVar>, name:String, pos:Pos):TExpr {
+	// Keyed: (hotId ?? unitId) + "#cell." + name; never persist hotId alone (docs/esm.md).
+	static function cellIdExpr(basic:BasicTypes, uid:String, keyed:Bool, hotId:Null<TVar>, name:String, pos:Pos,
+			?fixedId:Null<String>):TExpr {
+		if (fixedId != null && fixedId != "")
+			return Builder.makeString(basic, fixedId, pos);
 		var tail = "#cell." + name;
 		if (keyed && hotId != null) {
 			var base:TExpr = {

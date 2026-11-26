@@ -19,6 +19,7 @@ class EsmHotCellsCheck {
 		mkdirs(OUT);
 		prepareKeyedSiteV1();
 		if (!compile(haxe, "v1")) Sys.exit(1);
+		assertCellEmitIds();
 		snapshotKeyedSiteV1();
 		writeRunner('$OUT/run-v1.mjs');
 		prepareKeyedSiteV2();
@@ -32,6 +33,18 @@ class EsmHotCellsCheck {
 			Sys.exit(1);
 		}
 		Sys.println('$TAG: ok');
+	}
+
+	static function assertCellEmitIds():Void {
+		var keyed = readText(root + "/" + OUT + "/hx/KeyedSite.mjs");
+		if (keyed.indexOf("#cell.n") < 0) fail("KeyedSite emit missing #cell.n suffix:\n" + keyed);
+		if (keyed.indexOf("??") < 0 && keyed.indexOf("__hotId") < 0)
+			fail("KeyedSite keyed cell id should use hotId ?? unitId:\n" + keyed);
+		var multi = readText(root + "/" + OUT + "/hx/KeyedMultiCell.mjs");
+		if (multi.indexOf("#cell.n") < 0 || multi.indexOf("#cell.m") < 0)
+			fail("KeyedMultiCell emit missing per-var #cell.* ids:\n" + multi);
+		var fixed = readText(root + "/" + OUT + "/hx/HotCellFixed.mjs");
+		if (fixed.indexOf("app.counter") < 0) fail("HotCellFixed emit missing explicit cell id:\n" + fixed);
 	}
 
 	static function prepareKeyedSiteV1():Void {

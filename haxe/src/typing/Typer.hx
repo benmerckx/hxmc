@@ -1641,7 +1641,13 @@ class Typer {
 				print(ctx.m.importResolution.getList());
 				expression();
 			// port: hxmc esm.hot — keep @:esm.hot.* on locals as TMeta for hot lowering
-			case MetaTag.Custom(s) if (StringTools.startsWith(s, ":esm.hot.") || StringTools.startsWith(s, "esm.hot.")): preserve();
+			case MetaTag.Custom(s) if (StringTools.startsWith(s, ":esm.hot") || StringTools.startsWith(s, "esm.hot")):
+				var e = expression();
+				switch e.eexpr {
+					case TVar(v, _): v.vMeta = VectorTools.cons(m, v.vMeta);
+					default:
+				}
+				mk(TMeta(m, e), e.etype, e.epos);
 			case _: ctx.g.retainMeta ? preserve() : expression();
 		};
 		ctx.f.meta = old;

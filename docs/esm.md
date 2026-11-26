@@ -6,10 +6,15 @@ targeting bundlers or Node, and for anyone building on the hot-reload
 primitives. Open design and unimplemented work:
 [plans/esm.md](plans/esm.md).
 
-This is **not** upstream Haxe. Stock `--js` without **`-D esm`** stays
-byte-identical to the reference port for fixpoint and `UpstreamTargets`. ESM
-is a **separate dev workflow** from [hxmc dev](dev.md) (native/Wasm snapshot
-reload).
+This is **not** upstream Haxe. Stock **`--js`** without **`-D esm`** uses the
+usual single-bundle backend (**`Genjs`**) and must stay byte-identical to the
+reference OCaml compiler on the **fixpoint** (hxmc rebuilds itself to match the
+reference) and **`UpstreamTargets`** (multi-target parity suite in
+[testing.md](testing.md)). **`-D esm`** switches to multi-file emit (**`Genesm`**
+/ **`GenesmHot`**) instead.
+
+ESM hot reload is a **separate dev workflow** from [hxmc dev](dev.md) (native /
+Wasm snapshot reload over TCP or WebSocket).
 
 ## Quick start
 
@@ -35,6 +40,10 @@ Smoke sample: `hxmc/test/esm/hello.hxml` after `make hxmc`.
 | `-D esm` + `-D esm.hot` | `GenesmHot` | `$h` registry | yes (dev) |
 | `-D esm.prod` | *(not implemented)* | static `import` between user modules | no |
 
+**`Genesm`** / **`GenesmHot`** are the multi-file JavaScript backends for **`-D esm`**
+and **`-D esm.hot`** (replacing single-bundle **`Genjs`**). Registries **`$global`**
+and **`$h`** are defined under [Linking](#linking).
+
 **`-D esm`** sets **`js`** as well. Use the usual Js platform (`-js` /
 `--js <entry.mjs>`). **`esm.hot`** implies **`esm`**; **`esm.prod`** must not
 be combined with **`esm.hot`**. The reference compiler **rejects** all
@@ -46,8 +55,8 @@ be combined with **`esm.hot`**. The reference compiler **rejects** all
 
 | Path | Role |
 | --- | --- |
-| `<entry>.mjs` | DCE-kept module graph loaded by side-effect `import`s (topo-sorted) |
-| `hx/<module path>.mjs` | one file per Haxe module (packed groups) |
+| `<entry>.mjs` | Modules kept after dead-code elimination (DCE), imported for side effects in dependency order |
+| `hx/<module path>.mjs` | One emitted file per Haxe module (small modules may be merged into one file) |
 | `__hx_esm_runtime.mjs` | shared runtime (`$global` / `$h`, hot helpers when enabled) |
 | `__hx_includes.mjs` | only when the build lists `--include` files |
 | `__hx_hot_patch.mjs` | hot only: patch units + manifest hook |
@@ -65,16 +74,27 @@ entry graph is unsupported.
 
 **Externs** (`@:jsRequire`, npm packages): normal ESM `import` / `export`.
 
-**User Haxe types** in dev link through a publish table, not peer imports:
+**User Haxe types** in dev use the **publish table** (below), not
+`import { MyType }` between your own modules:
 
-- **`-D esm`:** after each definition, emit publishes onto **`$global`**
-  (`globalThis`). The entry side-effect-imports every module in the main
-  module's `modDeps` closure.
-- **`-D esm.hot`:** user types publish on **`$h`** instead (`Genesm.reg()`).
-  Runtime helpers on `$global` stay on the runtime module even in hot mode.
+- **`-D esm`:** **`Genesm`** writes types to **`$global`** as each `hx/*.mjs` loads.
+- **`-D esm.hot`:** **`GenesmHot`** writes types and swappable bodies to **`$h`**
+  (`Genesm.reg()`).
 
 **`-D esm.prod`** (not implemented): static `import`/`export` between Haxe user
 modules for bundler-visible graphs — see [plans/esm.md](plans/esm.md).
+
+### Publish table (dev linking)
+
+| Symbol | Meaning |
+| --- | --- |
+| **`$global`** | Object on `globalThis` where **`-D esm`** (non-hot) publishes class constructors and enum tables after each module loads |
+| **`$h`** | Hot-reload registry (same role as `$global`, plus function bodies and patch helpers) when **`-D esm.hot`** is on |
+| **Publish table** | Pattern where modules write types onto `$global` or `$h` instead of `import { MyType }` from sibling files |
+| **`modDeps`** | Transitive Haxe **module** dependencies of the compilation's main module — the entry `.mjs` side-effect-imports this closure |
+
+Runtime helpers (exceptions, reflection, hot runtime) live in **`__hx_esm_runtime.mjs`**
+and still use `$global` even in hot mode.
 
 ## Hot reload under `-D esm.hot` (default dev behavior)
 
@@ -83,36 +103,54 @@ With **`-D esm.hot`** (injected by **`haxe --dev`** on ESM Js builds — see
 **body replacement**. Users write normal methods; the compiler registers hot
 units and emits the `$h` registry ([`GenesmHot`](hxmc/src/hxmc/genesm/GenesmHot.hx)).
 
+### Patch tiers and hot units
+
+A **hot unit** is the smallest piece the compiler can swap on its own. Each
+unit has a **kind** — `function`, `class`, or `enum` — that selects the swap
+handler. When a unit changes, the manifest records a **patch tier**: how
+invasive that change is for live objects.
+
+| Tier | Also called | Typical trigger | What the runtime does |
+| --- | --- | --- | --- |
+| **1** | Body swap | Method, constructor, or `static function` body edits only | Replace the function in `$h`; instances and locals stay unless you use **cells** (named `$h` slots that survive body swaps) |
+| **2** | Append-only layout | Class fields or enum constructors change but class layout only **grows** at the end | Migrate instances / enum tables; static `var` bodies may refresh |
+| **3** | Breaking layout | Class fields removed, reordered, or otherwise not append-only | Snapshot heap, run layout migration, or request **full reload** if unsafe |
+| **4** | Rolled back | Patch application failed while a snapshot was active | Restore pre-patch heap; user keeps running the old code |
+
+For one type **T**, tier **2+** on **T** wins over tier-**1** body swaps on **T**
+in the same manifest. Frameworks may register extra **kinds** on `esm.hot`; this
+repo ships **`function`**, **`class`**, and **`enum`** only ([plans/esm.md](plans/esm.md)).
+
 ### What the compiler does automatically
 
 | Mechanism | Rule |
 | --- | --- |
-| **Swappable methods** | Every method, `static function`, and constructor with a body becomes a tier-1 **`function`** unit (`pack.Type#fieldName`), unless opted out. Static `var` / property initializers are not swappable units. |
-| **Class / enum units** | Non-extern types get tier-2 **`class`** / **`enum`** units from layout (field names + coarse types, enum constructors). |
-| **Keyed callees** | When a method contains **`@:esm.hot.cell`** (or lowered cell markers) **and** another method on the **same type** calls it, the compiler treats it as **keyed**: call sites receive a synthetic id; emit adds a compiler-only `__hotId` parameter (never shown in user source). |
+| **Swappable methods** | Every method, `static function`, and constructor with a body becomes a **`function`** hot unit (tier **1**, id `pack.Type#fieldName`), unless opted out. Static `var` / property initializers are not swappable units. |
+| **Class / enum units** | Non-extern types get **`class`** / **`enum`** hot units (tier **2** or **3** when layout changes) from layout metadata (field names + coarse types, enum constructors). |
+| **Keyed callees** | A **keyed** callee is a method that holds **`@:esm.hot.cell`** state **and** is called from another method on the **same type**. Callers pass a synthetic **`__hotId`** (compiler-only, not in your source) so each call site keeps distinct cell storage. |
 | **Call-site ids** | `enclosingUnitId#ordinal` — depth-first ordinal of keyed calls inside the **caller** unit (all keyed calls share one counter per caller). |
 | **Body change detection** | `codeHash` / `emitHash` from structural hashes of the lowered body (not a user-visible type signature key). |
 
 **Opt out:** `@:esm.hot(false)` on a type or field (for drivers, stable
 entrypoints, or code that must not go through `$h.invoke`).
 
-**Typical app:** edit any method body → patch swaps that **`function`** unit.
-**Locals** inside a method are **not** preserved across body swap unless you use
-**cells** (below). **Instance and static fields** follow tier-2 class policy when
-layout changes.
+**Typical app:** edit any method body → tier-**1** patch swaps that **`function`**
+unit. **Locals** inside a method are **not** preserved across a body swap unless
+you use **cells** (below). **Instance and static fields** use tier-**2** / **3**
+class migration when layout metadata changes.
 
 ### When users add metadata (power user / state)
 
 | Metadata | Role |
 | --- | --- |
 | `@:esm.hot(false)` | Opt out of implicit swappable-body hot units on the annotated type or field |
-| `@:esm.hot.cell` | Preserve a local or field across patches (`$h.cell`); id `unit#cell.name` or call-site–scoped when the callee is keyed |
+| `@:esm.hot.cell` | Preserve a local or field across patches (`$h.cell`); id `unit#cell.name`, or `(hotId ?? unit)#cell.name` when the callee is keyed (`hotId` is the synthetic call-site id, not stored alone) |
+| `@:esm.hot.cell("fixedId")` | Same as above but the string id is **canonical** (wins over call-site ids; safe when keyed call ordinals shift) |
 | `@:esm.hot.scope` | Scope boundary for nested keyed state |
 | `@:esm.hot(keep)` / `reset` / `migrate("…")` | Policy when structure hashes change |
 | `@:esm.hot.was("OldName")` | Rename mapping across patches |
 
-Explicit **`esm.hot.cell("fixedId", …)`** (when implemented in stdlib macros)
-pins a cell id when call ordinals would be fragile.
+Use **`@:esm.hot.cell("fixedId")`** (compiler metadata) or **`esm.hot.cell("fixedId", …)`** (stdlib macro when present) when call ordinals would be fragile.
 
 **Keyed-call caveat:** inserting or reordering keyed calls in a caller shifts
 ordinals and **resets** affected cells unless a **fixed string id** is used.
@@ -121,8 +159,8 @@ ordinals and **resets** affected cells unless a **fixed string id** is used.
 with **`-D esm.hot`** together (no prebuilt non-hot lib called from a hot app).
 
 **Dev API** (`esm.hot.Hot` on `hxmc/std/esm`): `applyPatch`, `esmSerialize` /
-`esmUnserialize`, `trackInstance`. Patches use tiers **1–4** and builtin kinds
-**`function`**, **`class`**, **`enum`**. Framework kinds stay external — see
+`esmUnserialize`, `trackInstance`. Manifest entries carry the **patch tier** and
+**kind** described above; framework-specific kinds stay out of tree — see
 [plans/esm.md](plans/esm.md).
 
 ## Patches and dev workflow
@@ -157,7 +195,8 @@ emit hashes** to drive incremental patch manifests (harnessed in
 (same last-`-cp`-wins pattern as `hxmc/std` on the native target).
 
 Add **`esm.*`** std shadows only when tests or hot behavior require them; most
-`js.*` externs work unchanged if they do not assume Genjs's single-file layout.
+`js.*` externs work unchanged if they do not assume **`Genjs`**'s single-file
+bundle layout.
 
 ## Tests
 
@@ -165,12 +204,13 @@ Add **`esm.*`** std shadows only when tests or hot behavior require them; most
 | --- | --- |
 | `esm` | `Esm.hx`: Genesm layout, upstream unit (**`-D esm`**), hot-reload harnesses; `ESM_ARGS` narrows lanes |
 
-Details: [testing.md](testing.md#esm-tests). Hot harnesses are **outside**
-fixpoint and reference `LANES=targets`. A future upstream unit lane with
-**`-D esm.hot`** would use `hxmc/test/esm/hot/exclusions.txt`.
+Details: [testing.md](testing.md#esm-tests). Hot harnesses are **outside** the
+**fixpoint** gate and the reference **`LANES=targets`** job. A future **upstream
+unit** lane with **`-D esm.hot`** would use `hxmc/test/esm/hot/exclusions.txt`.
 
-**Upstream unit (`make esm`, lane `unit`):** **1620** tests pass with an empty
-exclusion list today (semantic parity with Haxe-on-JS, not Genjs layout).
+**Upstream unit (`make esm`, lane `unit`):** runs upstream Haxe's `tests/unit`
+suite through **`-D esm`**; **1620** tests pass with an empty exclusion list
+today (same semantics as Haxe-on-JS, different file layout than **`Genjs`**).
 
 ## Versus hxmc dev
 

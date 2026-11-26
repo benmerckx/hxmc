@@ -117,6 +117,30 @@ class EsmHotMeta {
 
 	public static function isCellMetaEntry(m:MetadataEntry):Bool return cellMetaEntry(m);
 
+	// Explicit @:esm.hot.cell("fixedId") — canonical over keyed call-site ids (docs/esm.md).
+	public static function cellFixedIdFromEntry(m:MetadataEntry):Null<String> {
+		if (!cellMetaEntry(m)) return null;
+		for (a in m.exprs) switch a.expr {
+			case EConst(String(s, _)): return s;
+			default:
+		}
+		var sawCell = false;
+		for (a in m.exprs) switch a.expr {
+			case EConst(Ident("cell")): sawCell = true;
+			case EConst(String(s, _)) if (sawCell): return s;
+			default:
+		}
+		return null;
+	}
+
+	public static function cellFixedIdFromMeta(meta:Metadata):Null<String> {
+		for (m in meta) {
+			var id = cellFixedIdFromEntry(m);
+			if (id != null) return id;
+		}
+		return null;
+	}
+
 	public static function isScope(meta:Metadata):Bool {
 		for (m in meta) {
 			if (hotLeaf(metaKey(m), "scope")) return true;
@@ -133,6 +157,15 @@ class EsmHotMeta {
 	public static final CELL_PENDING = ":hxmc.esm.hot.cell";
 
 	public static function isCellPending(m:MetadataEntry):Bool return metaKey(m) == CELL_PENDING;
+
+	public static function cellFixedIdFromPending(m:MetadataEntry):Null<String> {
+		if (!isCellPending(m)) return null;
+		for (a in m.exprs) switch a.expr {
+			case EConst(String(s, _)): return s;
+			default:
+		}
+		return null;
+	}
 
 	public static function closureIdFromEntry(m:MetadataEntry):Null<String> {
 		for (a in m.exprs) switch a.expr {

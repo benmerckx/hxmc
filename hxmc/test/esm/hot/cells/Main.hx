@@ -6,6 +6,8 @@ class Main {
 		// Keep cell fixtures in the emit graph (hot uses -dce no; explicit refs for smoke compiles).
 		Reflect.field(HotClosure, "make");
 		Reflect.field(HotCell, "tick");
+		Reflect.field(HotCellFixed, "tick");
+		Reflect.field(KeyedMultiCell, "run");
 		Reflect.field(KeyedSite, "run");
 	}
 }

@@ -124,7 +124,14 @@ class EsmHotInstall {
 		var um:core.Meta.UserMeta = {doc: null, flags: [], source: null};
 		core.Meta.registerUserMeta(com.userMetas, ":esm.hot", um);
 		core.Meta.registerUserMeta(com.userMetas, "esm.hot", um);
-		for (leaf in ["cell", "scope"]) {
+		var cellUm:core.Meta.UserMeta = {
+			doc: "Optional fixed cell id (canonical over keyed call-site ids).",
+			flags: [core.MetaList.MetaParameter.HasParam("id")],
+			source: null,
+		};
+		core.Meta.registerUserMeta(com.userMetas, ":esm.hot.cell", cellUm);
+		core.Meta.registerUserMeta(com.userMetas, "esm.hot.cell", cellUm);
+		for (leaf in ["scope"]) {
 			core.Meta.registerUserMeta(com.userMetas, ":esm.hot." + leaf, um);
 			core.Meta.registerUserMeta(com.userMetas, "esm.hot." + leaf, um);
 		}
