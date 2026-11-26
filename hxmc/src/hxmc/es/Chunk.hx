@@ -130,6 +130,7 @@ private enum Use {
 	UFnName(fn:Fn, m:ModuleDef, f:TClassField, file:Int);
 	URt(name:String, file:Int);
 	UIndex(file:Int);
+	UAbstract(a:TAbstract, file:Int);
 	URaw(text:String, file:Int);
 	URefer(path:String);
 	// (modules) a split's code lowered where it is called, back in the caller's file
@@ -186,6 +187,11 @@ private class Lowering implements Lower.Resolve {
 	public function moduleField(m:ModuleDef, f:TClassField, p:Pos):Ex {
 		uses.push(UModuleField(m, f, file));
 		return ex(ERef(RModuleField(m, f)), p);
+	}
+
+	public function abstractValue(a:TAbstract, p:Pos):Ex {
+		uses.push(UAbstract(a, file));
+		return ex(ERef(RAbstract(a)), p);
 	}
 
 	public function rt(name:String):Ex {
@@ -634,6 +640,7 @@ class Chunk {
 		case RModuleField(m, f): ex(EId(moduleFields.get(moduleFieldKey(m, f))), p);
 		case RSplitKey(name): ex(EId(splitKeys.get(name)));
 		case RIndex: ex(EId(enumIndex));
+		case RAbstract(a): ex(EId(abstractTypes.get(a).sym), p);
 	}
 
 	// what a lowering used, as if it happened now (the file being lowered: its file's)
@@ -667,6 +674,10 @@ class Chunk {
 			case UIndex(file):
 				current = file;
 				index();
+			case UAbstract(a, file):
+				current = file;
+				var x = abstractTypes.get(a);
+				use(x.sym, x.file);
 			case URaw(text, file):
 				current = file;
 				rawUses(text);
@@ -1761,6 +1772,8 @@ class Chunk {
 			case TClassDecl(c) if (hasClassFlag(c, CInterface) && !runtimeInterfaces):
 			case _: return true;
 		}
+		// (an enum abstract's values' object)
+		for (a in enumObjects) if (abstractTypes.get(a).file == f.id) return true;
 		return false;
 	}
 
@@ -2246,10 +2259,10 @@ class Chunk {
 		var i = 0, branded = false, types = new StringBuf();
 		while (i < abstracts.length) {
 			var a = abstracts[i++];
-			var d = abstractDecl(a, (t, scope) -> Dts.type(t, ref, scope), ps -> Dts.typeParams(ps, ref, [for (p in ps) p.ttpName]), "HxTypes.brand");
+			var d = abstractDecl(a, a.aPath.name, (t, scope) -> Dts.type(t, ref, scope), ps -> Dts.typeParams(ps, ref, [for (p in ps) p.ttpName]), "HxTypes.brand");
 			if (d.branded) branded = true;
 			var parts = a.aPath.pack.copy();
-			types.add("declare namespace HxTypes" + [for (p in parts) "." + p].join("") + " {\n\ttype " + a.aPath.name + d.decl + "\n}\n");
+			types.add("declare namespace HxTypes" + [for (p in parts) "." + p].join("") + " {\n" + (d.values == null ? "" : "\t" + d.values + "\n") + "\ttype " + a.aPath.name + d.decl + "\n}\n");
 		}
 		if (branded) b.add("declare namespace HxTypes {\n\tconst brand: unique symbol;\n}\n");
 		b.add(types.toString());
@@ -2294,11 +2307,12 @@ class Chunk {
 		var ts = new Ts(t -> typeRef(file, file.names, t), () -> enumValueRef(file.names), props);
 		var branded = false;
 		for (a => x in abstractTypes) if (x.file == file.id) {
-			var d = abstractDecl(a, (t, scope) -> {
+			var d = abstractDecl(a, x.sym.name, (t, scope) -> {
 				ts.scope = scope;
 				ts.type(t);
 			}, ps -> ts.params(ps), "$brand");
 			if (d.branded) branded = true;
+			if (d.values != null) out.push(st(SRaw("declare " + d.values)));
 			// (an implementation that stays a class: of its namespace, `A.Self`, which TypeScript merges with it)
 			out.push(st(SRaw(abstractClasses.exists(a) ? "export declare namespace " + x.sym.name + " { type Self" + d.decl + " }" : "export type " + x.sym.name + d.decl)));
 		}
@@ -2308,37 +2322,48 @@ class Chunk {
 
 	// an abstract as TypeScript has it (Casts): its type parameters and what it is (`<T> = V & { ... };`), whether it is
 	// branded; the brand of the abstract's path and of its underlying type, which tells `A<Int>` from `A<String>` (type: a
-	// type's text, of the type parameters in scope; params: the type parameters'; brand: the brand symbol's name)
-	static function abstractDecl(a:TAbstract, type:(T, Array<String>) -> String, params:TypeParams->String, brand:String):{decl:String, branded:Bool} {
+	// type's text, of the type parameters in scope; params: the type parameters'; brand: the brand symbol's name). An enum
+	// abstract (Casts.enumRep): the union of its values' types, declared before it (`decl`'s `values`, ambient: of no code),
+	// `$A` of its name (name)
+	static function abstractDecl(a:TAbstract, name:String, type:(T, Array<String>) -> String, params:TypeParams->String,
+			brand:String):{decl:String, branded:Bool, values:Null<String>} {
 		var scope = [for (p in a.aParams) p.ttpName];
 		var v = type(a.aThis, scope);
-		var to = Casts.toThis(a), from = Casts.fromThis(a), values = Casts.enumValues(a);
-		// (an enum abstract: of its values' literals, `(0 | 1) & B` where it is `to` its type, else `B` of them)
-		var tag = enumTag(a, brand, values != null && !to ? values.join(" | ") : v);
-		var self = values != null ? (values.length > 1 ? "(" + values.join(" | ") + ")" : values[0]) : (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v);
-		var parts = [if (to && from) v else if (to) self + " & " + tag else tag];
-		if (from && !to) parts.push(v);
+		var to = Casts.toThis(a), from = Casts.fromThis(a), rep = Casts.enumRep(a);
+		var values:Null<String> = null, parts;
+		switch rep {
+			case null | ELiterals:
+				var lits = Casts.enumValues(a);
+				var self = lits != null ? (lits.length > 1 ? "(" + lits.join(" | ") + ")" : lits[0]) : (v.indexOf("|") >= 0 || v.indexOf("=>") >= 0 ? "(" + v + ")" : v);
+				var tag = "{ readonly [" + brand + "]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
+				parts = [if (to && from) v else if (to) self + " & " + tag else tag];
+				if (from && !to) parts.push(v);
+			case EEnum:
+				values = "enum $" + name + " { " + [for (f in Casts.enumFields(a)) f.name + " = " + Casts.literalOf(f.c)].join(", ") + " }";
+				parts = ["$" + name];
+				if (from) parts.push(v);
+			case ESymbols:
+				values = "const $" + name + ": { " + [for (f in Casts.enumFields(a)) "readonly " + f.name + ": unique symbol;"].join(" ") + " };";
+				parts = [[for (f in Casts.enumFields(a)) "typeof $" + name + "." + f.name].join(" | ")];
+				if (from) parts.push(v);
+		}
 		for (f in a.aFrom) if (!Casts.isThis(a, f)) parts.push(type(f, scope));
 		return {
 			decl: params(a.aParams) + " = " + [for (p in parts) parts.length > 1 && p.indexOf("=>") >= 0 ? "(" + p + ")" : p].join(" | ") + ";",
-			branded: !(to && from)
+			branded: rep == null && !(to && from) || rep == ELiterals && !(to && from),
+			values: values
 		};
 	}
 
-	static function enumTag(a:TAbstract, brand:String, v:String):String
-		return "{ readonly [" + brand + "]: { readonly " + Printer.quote(dot(a.aPath)) + ": " + v + " } }";
-
-	// (TypeScript, modules) an enum abstract's value in its object: its literal as a value of its own of the abstract's type
-	// (`0 as A & 0` where it is `to` its type; `0 as unknown as { [$brand]: { "a.A": 0 } }`), or itself where it is `from` and
-	// `to` it; null where it is no enum abstract's value
+	// (TypeScript, modules) an enum abstract's value in its object: its literal as its own type (`0 as $A.X`, a declared enum's
+	// member; `0 as unknown as typeof $A.X`, a unique symbol), or itself (Casts.ELiterals); null where it is no enum abstract's
+	// value (name: the abstract's, field: the value's)
 	static function enumValueEx(a:TAbstract, f:TClassField, name:String):Null<Ex> {
 		var c = Casts.enumConst(f);
-		return c == null ? null : enumConstEx(a, c, name);
+		return c == null ? null : enumConstEx(a, c, name, f.cfName);
 	}
 
-	static function enumConstEx(a:TAbstract, c:TConstant, name:String):Ex {
-		var l = Casts.literalOf(c);
-		var to = Casts.toThis(a), from = Casts.fromThis(a);
+	static function enumConstEx(a:TAbstract, c:TConstant, name:String, field:String):Ex {
 		var lit = ex(switch c {
 			case TInt(i): ENum(Std.string(i));
 			case TFloat(s): ENum(s);
@@ -2346,7 +2371,11 @@ class Chunk {
 			case TBool(b): EBool(b);
 			case _: ENull;
 		});
-		return to && from ? lit : to ? ex(EAsType(lit, name + " & " + l)) : ex(EAsType(ex(EAsType(lit, "unknown")), enumTag(a, "$brand", l)));
+		return switch Casts.enumRep(a) {
+			case EEnum: ex(EAsType(lit, "$" + name + "." + field));
+			case ESymbols: ex(EAsType(ex(EAsType(lit, "unknown")), "typeof $" + name + "." + field));
+			case _: lit;
+		}
 	}
 
 	// the abstracts whose implementations stay classes (their types `A.Self`)
@@ -2860,6 +2889,15 @@ class Chunk {
 							}
 							var o = objectOf(members, after, consts);
 							if (o == null) abstractClasses.set(a, true);
+							// (an enum abstract's values the program has inline only: its object's still, first)
+							if (o != null) {
+								var missing = [
+									for (v in Casts.enumFields(a))
+										if (!Lambda.exists(o, p -> p.key.match(KName(_ == v.name => true) | KField(_ == v.name => true, _))))
+											({key: KName(v.name), value: enumConstEx(a, v.c, d.name.name, v.name)} : Prop)
+								];
+								o = missing.concat(o);
+							}
 							// (`as const`: where nothing assigns its statics, an enum abstract's: its values' types as they are)
 							if (o != null && tsOut && consts.iterator().hasNext() && after.length == 0 && !Lambda.exists(members, m -> switch m {
 								case MProtected(MField(KField(n, _) | KName(n), _, true, _)) | MField(KField(n, _) | KName(n), _, true, _): !consts.exists(n);
@@ -2914,7 +2952,7 @@ class Chunk {
 		for (a in enumObjects) {
 			var x = abstractTypes.get(a);
 			if (x.file != file.id) continue;
-			var o = ex(EObject([for (v in Casts.enumFields(a)) ({key: KName(v.name), value: enumConstEx(a, v.c, x.sym.name)} : Prop)]));
+			var o = ex(EObject([for (v in Casts.enumFields(a)) ({key: KName(v.name), value: enumConstEx(a, v.c, x.sym.name, v.name)} : Prop)]));
 			body.statement(exp(st(SVar(VConst, [{name: x.sym, init: ex(EAsType(o, "const"))}]))));
 			body.blank();
 		}

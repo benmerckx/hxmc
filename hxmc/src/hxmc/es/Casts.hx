@@ -181,6 +181,32 @@ class Casts {
 		}
 	}
 
+	// (TypeScript) how an enum abstract's values are typed, each a unit type, which a switch over them tells apart (exhaustive):
+	// a declared enum's members where it is `to` its type (of numbers and strings: as its type, as TypeScript has an enum), else
+	// unique symbols (no number); ELiterals: `from` and `to` its type, or `to` it of other literals; null: no enum abstract's
+	public static function enumRep(a:TAbstract):Null<EnumRep> {
+		if (enumValues(a) == null) return null;
+		var to = toThis(a);
+		if (to && fromThis(a)) return ELiterals;
+		if (!to) return ESymbols;
+		return Lambda.foreach(enumFields(a), v -> v.c.match(TInt(_) | TFloat(_) | TString(_))) ? EEnum : ELiterals;
+	}
+
+	// (TypeScript) the enum abstract a switch over a value of t names the values of in its cases (`case A.X:`)
+	public static function enumCases(t:T):Null<TAbstract> return switch kind(t) {
+		case KAbstract(a) if (enumRep(a) != null && enumRep(a) != ELiterals): a;
+		case _: null;
+	}
+
+	// the name of the enum abstract's value a case's pattern is, if it is one
+	public static function enumName(a:TAbstract, p:TExpr):Null<String> {
+		var c = constOf(p);
+		var l = c == null ? null : literalOf(c);
+		if (l == null) return null;
+		for (v in enumFields(a)) if (literalOf(v.c) == l) return v.name;
+		return null;
+	}
+
 	// whether a literal (a number, a string, an object, an array) of type t needs a cast: t a branded abstract's, but one
 	// `from` its underlying type
 	public static function literalCast(t:T):Bool return switch kind(t) {
@@ -296,6 +322,12 @@ class Casts {
 			case TAnon(_) | TFun(_): KOther;
 		}
 	}
+}
+
+enum EnumRep {
+	EEnum;
+	ESymbols;
+	ELiterals;
 }
 
 private enum Kind {

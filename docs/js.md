@@ -518,15 +518,21 @@ lets a `Null<T>` be a `T` without a check):
   from `A<String>`), as Haxe lets values go: `A(V) from V to V` is `V`;
   `A(V) to V` is `V & B` (an A is a V, no V an A); `A(V) from V` is `B | V` (a
   V is an A, no A a V); `A(V)` is `B` (neither); its other `from` types' values
-  are A's too. An enum abstract is branded as well, of the union of its
-  values' literals (`U`, `0 | 1 | 2`): `U & B` where it is `to` V (V's brand,
-  which TypeScript narrows by the literals), `B` of U (or `B | V`) where not,
-  `V` where it is `from` and `to` it; each value a type of its own, a
-  constant of its object (`Red: 0 as Color & 0`, `Red: 0 as unknown as { ...:
-  0 }`), which is `as const` where nothing assigns its statics. One whose
-  functions are all inline has its values' object still (`export const Level =
-  { Low: 0, ... }`, in JavaScript too). A `switch` on a branded value is on it
-  as `any`, which its cases compare with. Not the std's core types, a
+  are A's too. An enum abstract is the union of its values' types, each a unit
+  type, so that a `switch` over them (`case Color.Red:`) is exhaustive, in
+  authored code as in Haxe's: where it is `to` V, a declared enum's members
+  (`declare enum $Level { Low = 0, ... }`, ambient: no code; a number as
+  TypeScript's enums are, which takes any `number` too, but no other literal);
+  where not, unique symbols (`declare const $Color: { readonly Red: unique
+  symbol; ... }`, `typeof $Color.Red | ...`: nothing else, though the values
+  are numbers); `| V` where it is `from` V; `V` where it is `from` and `to` it;
+  `U & B`, of its literals, where it is `to` V of values an enum cannot have
+  (`Bool`'s). Its values are constants of its object of those types (`Low: 0 as
+  $Level.Low`, `Red: 0 as unknown as typeof $Color.Red`), all of them, the
+  ones Haxe has inline only too; `as const` where nothing assigns its
+  statics. One whose functions are all inline has its values' object still
+  (`export const Level = { ... }`, in JavaScript too). A `switch` on another
+  branded value is on it as `any`, which its cases (literals) compare with. Not the std's core types, a
   multi-type's (`Map`), an extern's, one over `Dynamic`, `haxe.Rest`. Its
   constructor is `A.new(...)` (es-modules; the typer's `_hx_new` in the bundle), a
   generic abstract's functions of its type parameters (`first<T>(this1$: Pair<T>):

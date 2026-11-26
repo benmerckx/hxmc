@@ -61,6 +61,8 @@ enum Ref {
 	RSplitKey(name:String);
 	// (TypeScript) the binding of `$hx.index`
 	RIndex;
+	// (TypeScript) an abstract's object of its implementation
+	RAbstract(a:TAbstract);
 }
 
 // the namespace a field's name is renamed in (FieldNames, -D hxmc.js.minify.fields): a class family's instances', its

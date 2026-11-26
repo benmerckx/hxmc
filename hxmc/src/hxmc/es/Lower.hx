@@ -52,6 +52,8 @@ interface Resolve {
 	function declare(s:Sym):Void;
 	// whether the output is TypeScript (casts where Haxe accepted what TypeScript would not)
 	function ts():Bool;
+	// (TypeScript) an abstract's object of its implementation, as a value (an enum abstract's values: `A.X`)
+	function abstractValue(a:TAbstract, p:Pos):Ex;
 	// (Properties) a call of a method of an accessor's name (args: its arguments; discarded: its value used for nothing), one
 	// taken as a value; a field's name read dynamically; a string constant
 	function accessorCall(a:TClassField, args:Int, discarded:Bool):Void;
@@ -562,8 +564,14 @@ class Lower {
 		if (v != null && set == null && !dead.exists(v.vId)) return knowing(v, null, () -> switchStatement(sw));
 		inline function knowingCase<R>(vals:Array<Int>, f:Void->R):R return v == null || dead.exists(v.vId) ? f() : knowing(v, vals, f);
 		var on = expr(sw.switchSubject);
-		// (TypeScript: on a branded abstract's value, whose cases are its literals: as `any`, which they compare with)
-		if (ts && Casts.literalCast(sw.switchSubject.etype) && !on.def.match(EAs(_))) on = ex(EAs(on));
+		// (TypeScript: on an enum abstract's value, its cases its values by name, `case A.X:`, each of a type of its own)
+		var enumOf = ts ? Casts.enumCases(sw.switchSubject.etype) : null;
+		if (enumOf != null && !Lambda.foreach(sw.switchCases.toArray(), c -> Lambda.foreach(c.casePatterns.toArray(), p -> Casts.enumName(enumOf, p) != null)))
+			enumOf = null;
+		function test(p:TExpr):Ex return if (p.eexpr.match(TConst(TNull))) ex(ENull) else if (enumOf != null)
+			member(r.abstractValue(enumOf, p.epos), Casts.enumName(enumOf, p)) else expr(p);
+		// (on another branded abstract's value, whose cases are its literals: as `any`, which they compare with)
+		if (ts && enumOf == null && Casts.literalCast(sw.switchSubject.etype) && !on.def.match(EAs(_))) on = ex(EAs(on));
 		// (on an enum's index: the constructors' names beside their indexes)
 		var names:Null<Array<String>> = switch Texpr.skip(sw.switchSubject).eexpr {
 			case TEnumIndex(x):
@@ -593,7 +601,7 @@ class Lower {
 					case _: "?";
 				}
 			];
-			cases.push({tests: [for (p in c.casePatterns) p.eexpr.match(TConst(TNull)) ? ex(ENull) : expr(p)], body: scoped(body), comments: comments});
+			cases.push({tests: [for (p in c.casePatterns) test(p)], body: scoped(body), comments: comments});
 		}
 		if (sw.switchDefault != null) {
 			var rest = set == null ? null : [for (i in set) if (!Lambda.exists(sw.switchCases.toArray(), c -> Lambda.exists(c.casePatterns.toArray(), p -> value(p) == i))) i];

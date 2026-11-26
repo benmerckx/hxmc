@@ -24,7 +24,7 @@
 // ts: const i3: Id = Id.next(i);
 // ts: // @ts-expect-error
 // ts: const i4: Id = c;
-// ts: // (an enum abstract, neither: its values, each a type of its own, no number)
+// ts: // (an enum abstract, neither: its values, each a type of its own (unique symbols), no number; a switch over them exhaustive)
 // ts: const red: Color = Color.Red;
 // ts: // @ts-expect-error
 // ts: const zero: Color = 0;
@@ -33,12 +33,18 @@
 // ts: // @ts-expect-error
 // ts: const rn: number = Color.Red;
 // ts: const rs: string = Color.name(Color.Blue);
-// ts: // (to Int: a number, its own; a value of it narrowed by its literal)
+// ts: function cname(c: Color): string { switch (c) { case Color.Red: return "r"; case Color.Green: return "g"; case Color.Blue: return "b"; default: const x: never = c; return x; } }
+// ts: // @ts-expect-error
+// ts: function cpart(c: Color): string { switch (c) { case Color.Red: return "r"; case Color.Green: return "g"; default: const x: never = c; return x; } }
+// ts: // (to Int: a number, a declared enum's members; a switch over them exhaustive)
 // ts: const low: number = Level.Low;
 // ts: // @ts-expect-error
-// ts: const l0: Level = 0;
+// ts: const l0: Level = 5;
 // ts: declare const lv: Level;
-// ts: const hi: 2 = lv === 2 ? lv : 2;
+// ts: const hi: typeof Level.High = lv === Level.High ? lv : Level.High;
+// ts: function lname(l: Level): string { switch (l) { case Level.Low: return "l"; case Level.Mid: return "m"; case Level.High: return "h"; default: const x: never = l; return x; } }
+// ts: // @ts-expect-error
+// ts: function lpart(l: Level): string { switch (l) { case Level.Low: return "l"; default: const x: never = l; return x; } }
 // ts: // (from Int to Int: a number)
 // ts: const ok: Code = 7;
 // ts: const okn: number = Code.Ok;
@@ -51,10 +57,14 @@
 // ts: // @ts-expect-error
 // ts: const pn: number = Pair.first(p);
 // ts: const pp: Pair<number> = Pair.new(1, 2);
-// ts: export { n, f, c3, t, s, k, i2, i3, i4, red, zero, g, rn, rs, low, l0, hi, ok, okn, q, pf, pn, pp };
-// ts output has: abstracts/Units.ts: Red: 0 as unknown as { readonly [$brand]: { readonly "abstracts.Color": 0 } },
-// ts output has: abstracts/Units.ts: export type Color = { readonly [$brand]: { readonly "abstracts.Color": 0 | 1 | 2 } };
-// ts output has: abstracts/Units.ts: Low: 0 as Level & 0,
+// ts: export { n, f, c3, t, s, k, i2, i3, i4, red, zero, g, rn, rs, cname, cpart, low, l0, hi, lname, lpart, ok, okn, q, pf, pn, pp };
+// ts output has: abstracts/Units.ts: declare const $Color: { readonly Red: unique symbol; readonly Green: unique symbol; readonly Blue: unique symbol; };
+// ts output has: abstracts/Units.ts: export type Color = typeof $Color.Red | typeof $Color.Green | typeof $Color.Blue;
+// ts output has: abstracts/Units.ts: Red: 0 as unknown as typeof $Color.Red,
+// ts output has: abstracts/Units.ts: case Color.Red:
+// ts output has: abstracts/Units.ts: declare enum $Level { Low = 0, Mid = 1, High = 2 }
+// ts output has: abstracts/Units.ts: export type Level = $Level;
+// ts output has: abstracts/Units.ts: Low: 0 as $Level.Low,
 // ts output has: abstracts/Units.ts: export type Code = number;
 // ts output has: abstracts/Units.ts: new<T>(a: T, b: T): Pair<T> {
 // ts output lacks: abstracts/Units.ts: _hx_new
