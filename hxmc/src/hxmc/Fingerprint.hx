@@ -477,7 +477,6 @@ class Fingerprint {
 				word(f.noGc ? (f.blocks ? 2 : 1) : 0);
 				word(f.writesStatics ? 1 : 0);
 				word(f.writes);
-				word(f.retains);
 				word(f.args.length);
 				for (a in f.args)
 					ty(a.ty);
@@ -504,7 +503,6 @@ class Fingerprint {
 				word(E_CALLDISPATCH);
 				// (its implementations' summaries, Effects)
 				word(prep.e.dispatchWrites(sel));
-				word(prep.e.dispatchRetains(sel));
 				str(prep.selectorSym(sel));
 				str(sig.key);
 				args(xs);

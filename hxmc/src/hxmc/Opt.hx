@@ -2893,7 +2893,7 @@ class Opt {
 					freshStores++;
 				}
 				if (Effects.collects(i)) set = [];
-				if (i.op == New && i.info.n <= YOUNG_SLOTS && !i.info.frame) set.push(i.id);
+				if (i.op == New && i.info.n <= YOUNG_SLOTS) set.push(i.id);
 				else if (i.op == Copy && young(set, i.a)) set.push(i.id);
 			}
 			return set;
