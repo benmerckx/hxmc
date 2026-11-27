@@ -11,6 +11,7 @@ class RootFactsCheck {
 	}
 
 	static function main() {
+		A64BranchCheck.run();
 		MirCompactCheck.run();
 		var ref = TRef(RAny);
 		var cond = new Local(0, "cond", TI32);
