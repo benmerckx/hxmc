@@ -1296,8 +1296,8 @@ class MirBuild extends MirWriter {
 				i.sig = s;
 				var call = obj(ClosureCall, mty(s.ret), i);
 				call.args = xs;
-				call.kills = p.e.closureWrites(s, clos);
-				call.retains = p.e.closureRetains(s, clos);
+				call.kills = p.e.closureWrites(clos);
+				call.retains = p.e.closureRetains(clos);
 				call.id;
 			case ECallAnon(name, s, obj, args): callAnon(name, s, obj, args);
 			case ECallHost(name, args, ret): host(name, args, ret);

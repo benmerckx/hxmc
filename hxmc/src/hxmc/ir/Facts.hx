@@ -108,8 +108,8 @@ class Facts {
 					case ECallDispatch(sel, _, _):
 						var l = impls.get(sel);
 						if (l == null) w = hxmc.Effects.UNKNOWN else for (g in l) callee(g);
-					case ECallClos(sig, c, _):
-						var l = closures.callees(c, sig);
+					case ECallClos(_, c, _):
+						var l = closures.callees(c);
 						if (l == null) w = hxmc.Effects.UNKNOWN else for (x in l) callee(x.fn);
 					case ECallAnon(_): w = hxmc.Effects.UNKNOWN;
 					// (a structural read's slow path: the inline caches, what only calls change)
@@ -218,8 +218,8 @@ class Facts {
 
 	// what a closure call through c may write (the union of its functions'
 	// summaries; Effects.UNKNOWN: not known)
-	public function closureWrites(sig:SigInfo, c:Ex):Int {
-		var l = closures == null ? null : closures.callees(c, sig);
+	public function closureWrites(c:Ex):Int {
+		var l = closures == null ? null : closures.callees(c);
 		if (l == null) return hxmc.Effects.UNKNOWN;
 		var w = 0;
 		for (x in l)
@@ -228,8 +228,8 @@ class Facts {
 	}
 
 	// the arguments (the closure first) a closure call through c may retain
-	public function closureRetains(sig:SigInfo, c:Ex):Int {
-		var l = closures == null ? null : closures.callees(c, sig);
+	public function closureRetains(c:Ex):Int {
+		var l = closures == null ? null : closures.callees(c);
 		if (l == null) return -1;
 		var r = 0;
 		for (x in l)
@@ -353,9 +353,9 @@ class Facts {
 					calls(fateCallers, g, f);
 					for (k in 0...args.length)
 						use(args[k], !exits.exists(g) && (k > 30 || g.retains & (1 << k) != 0));
-				case ECallClos(sig, c, args):
+				case ECallClos(_, c, args):
 					// (the closure is its functions' first parameter)
-					var l = closures.callees(c, sig);
+					var l = closures.callees(c);
 					var r = 0;
 					if (l == null) r = -1 else for (x in l) {
 						calls(fateCallers, x.fn, f);
