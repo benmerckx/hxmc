@@ -660,6 +660,9 @@ class Typer {
 						throw exc;
 					}
 					e = AbstractCast.castOrUnify(ctx, t, e, p);
+					// port: hxmc chooses a local's storage from its inferred type. Bind a
+					// Dynamic initializer now so a later use cannot unbox it at the declaration.
+					if (ev.evType == null && ctx.com.platform.match(CustomTarget("hxmc")) && follow(e.etype).match(TDynamic(_))) linkDynamic(t, e.etype);
 				}
 				var v = Meta.has(MetaTag.This,
 					ev.evMeta) ? addLocal(ctx, VAbstractThis, name, t, pv) : addLocalWithOrigin(ctx, TVOLocalVariable, name, t, pv);
