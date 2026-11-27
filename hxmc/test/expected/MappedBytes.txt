@@ -1,0 +1,21 @@
+exit 0
+outside the heap: true
+3145728 true 0 0
+after collections: true
+true
+true
+true true 0
+true
+OutsideBounds OutsideBounds OutsideBounds
+OutsideBounds OutsideBounds OutsideBounds OutsideBounds
+OutsideBounds OutsideBounds OutsideBounds OutsideBounds OutsideBounds
+none none
+7 12345678 9 true true
+file unchanged: true true
+7 0
+true
+6 héllo OutsideBounds
+0
+Could not read file mappedbytes-small.tmp
+through a pipe
+deleted: true

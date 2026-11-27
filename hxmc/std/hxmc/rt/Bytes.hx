@@ -42,6 +42,14 @@ class Bytes {
 	static inline function alloc(n:Int):Dynamic
 		return NArray.alloc(AK_BYTE, n);
 
+	// storage of the n bytes at p, outside the heap (a mapped file's,
+	// Os.mapFile), its header written in the 8 bytes before p: the collector
+	// neither scans, moves nor counts it, as the image's static objects
+	@:hxmc.unsafe(gc) static function external(p:Ptr, n:Int):Dynamic {
+		Mem.setI64(p, -8, Types.arrayHdr(Types.arrWord(Types.T_BYTES, (n + 7) >>> 3), n));
+		return Mem.obj(p);
+	}
+
 	@:hxmc.host("hxmc_NativeBytes_blit") static function blit(b:Dynamic, pos:Int, src:Dynamic, srcpos:Int, n:Int):Void {
 		if (pos < 0 || srcpos < 0 || n < 0 || pos > len(b) - n || srcpos > len(src) - n) outside();
 		Repr.bytesMove(b, pos, src, srcpos, n);

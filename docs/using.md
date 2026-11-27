@@ -500,6 +500,49 @@ var fds = [Poll.socketFd(a), Poll.socketFd(b)], events = [Poll.IN, Poll.IN], rev
 while (Poll.wait(fds, events, revents, 2, -1) > 0) ...   // no allocation per call
 ```
 
+## Mapped files
+
+`hxmc.MappedFile.bytes(path):haxe.io.Bytes` returns a file's bytes like
+`sys.io.File.getBytes`, but the Bytes reads a memory mapping of the file
+instead of a copy in the heap. Only the pages the program reads become
+resident. Those pages are clean and backed by the file, so the system can
+drop them, and they count neither in `GcStats.liveBytes` nor in the
+process's footprint. This suits large files that are read in a few places,
+such as fonts (a font parser reads the table directory, `cmap`, `hmtx` and
+a few glyphs).
+
+```haxe
+var font = hxmc.MappedFile.bytes("/System/Library/Fonts/Apple Color Emoji.ttc");
+font.getUInt16(4);   // an ordinary Bytes: get, sub, getString, blit, ...
+```
+
+- **It is an ordinary Bytes.** Every access has the same range tests
+  (`OutsideBounds`), and other code needs no changes. `getData`, `sub`,
+  `compare` and `Bytes.ofData` work as usual.
+- **Writes stay in the program.** The mapping is private and copy-on-write
+  (`MAP_PRIVATE`; `FILE_MAP_COPY` on Windows). `set`, `blit` and `fill`
+  work, a written page becomes the program's own memory, and the file is
+  never written.
+- **It is never unmapped.** The mapping lasts as long as the program, so
+  map a file once and keep the Bytes. `getData()` hands out the storage
+  itself, and the collector does not follow pointers outside its heap, so
+  nothing can tell when the storage becomes unreachable.
+- **Do not truncate a mapped file**, nor a file while it is being mapped.
+  The Bytes keeps the length the file had when it was mapped. On Linux and
+  macOS, reading a page that is no longer in the file kills the program
+  (`SIGBUS`), and other changes to the file may show in pages the program
+  has not written. Windows refuses to truncate a mapped file. A mapped file
+  can be deleted on every system.
+- **Where it reads instead.** In some cases the file is read into the heap,
+  as `getBytes` does, and the result behaves the same: on wasm32-wasi
+  (no mmap), in macro code, in a program with compressed references
+  (`@:hxmc.compact`: their fields reach only addresses below 32 GB, and the
+  heap takes that range), for files under 64 KB (a mapping's pages are
+  never freed, a copy in the heap is) or of 2 GB or more, and for what is
+  not a regular file (pipes, `/proc`'s files).
+- **On Windows**, the view counts in the commit charge, not in the working
+  set.
+
 ## Debugging
 
 - **Backtraces and breakpoints.** Build with `-debug` for DWARF lines and a

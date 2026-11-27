@@ -385,7 +385,11 @@ class PosixSys {
 		var p = cstr(path);
 		var fd = Posix.open(p, oCloexec(), 0);
 		LibC.free(p);
-		if (fd < 0) return null;
+		return fd < 0 ? null : readAll(fd);
+	}
+
+	// the bytes of fd from where it is to its end, then fd closed; null on an error
+	@:hxmc.unsafe(gc) static function readAll(fd:Int):Dynamic {
 		// read into malloc'ed memory first: the size may not be known (pipes)
 		var cap = 65536, n = 0;
 		var st = Mem.stack(256);
@@ -411,6 +415,26 @@ class PosixSys {
 		LibC.memcpy(Bytes.bytes(b), buf, n);
 		LibC.free(buf);
 		return b;
+	}
+
+	// hxmc.MappedFile's: a regular file's bytes mapped (Os.mapFile), else
+	// read from the descriptor it opened (readAll: a pipe, whose data would
+	// be lost by opening it again, a small or empty file, as /proc's report
+	// themselves, one mmap refuses), or read from the start with compressed
+	// references, whose fields reach no address above 32 GB, and the heap
+	// takes what is below
+	@:hxmc.unsafe(gc) public static function fileMap(path:String):Dynamic {
+		if (Gc.compactRefs()) return fileContent(path);
+		var p = cstr(path);
+		var fd = Posix.open(p, oCloexec(), 0);
+		LibC.free(p);
+		if (fd < 0) return null;
+		var st = Mem.stack(256);
+		var n:I64 = doFstat(fd, Span.unsafeOf((st : Ptr<UInt8>), 256)) == 0 && isReg(stMode(st)) ? stSize(st) : 0;
+		var d = Os.mappable(n) ? Os.mapFile(fd, n) : Ptr.nil();
+		if (d.isNull()) return readAll(fd);
+		Posix.close(fd);
+		return Bytes.external(d, n.toInt());
 	}
 
 	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
