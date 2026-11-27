@@ -1,5 +1,0 @@
-exit 0
-rounds: 4313 -9441
-down: 6802
-early: 3 28
-floats: 7.0625

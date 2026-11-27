@@ -116,7 +116,6 @@ class Driver {
 	var escRemoved = 0;
 	var escAgain = 0; // (of them, after the optimizer answered reads of zeroed fields)
 	var frameObjects = 0; // (FrameAlloc)
-	var loopsUnrolled = 0; // (Unroll)
 	var escFolds = 0;
 	var loopsVersioned = 0; // (LoopVersion)
 	var allocsFolded = 0; // (Fold)
@@ -279,15 +278,6 @@ class Driver {
 			// lowering only allocation folding, the CFG's cleanup and
 			// dead code
 			if (o.opt) new Sroa(mf).run();
-			// (loops of a few constant rounds: their copies in a row)
-			if (o.opt && (interp == null || !interp.wants(fn))) {
-				var u = Unroll.run(mf);
-				if (u > 0) {
-					lock.acquire();
-					loopsUnrolled += u;
-					lock.release();
-				}
-			}
 			// (Array reads in counted loops tested once before them)
 			if (o.opt && (interp == null || !interp.wants(fn))) {
 				var lv = new LoopVersion(mf);
@@ -519,7 +509,6 @@ class Driver {
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced ($escAgain after reads of zeroed fields folded), $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $frameObjects objects in their frames (FrameAlloc)');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
-		Sys.println('hxmc: $loopsUnrolled loops unrolled (Unroll)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed, $framesMerged inlined frames merged; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');

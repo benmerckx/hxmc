@@ -755,7 +755,7 @@ class LoopVersion {
 	}
 
 	// a terminator's target from -> to
-	public static function retargetTerm(b:MBlock, from:MBlock, to:MBlock) {
+	static function retargetTerm(b:MBlock, from:MBlock, to:MBlock) {
 		var t = b.term();
 		if (t == null) throw "hxmc: LoopVersion: a block without a terminator";
 		var ts = t.targets.copy();
