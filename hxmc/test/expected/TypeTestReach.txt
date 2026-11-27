@@ -1,0 +1,4 @@
+exit 0
+made 1
+false
+true
