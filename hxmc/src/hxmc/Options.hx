@@ -91,8 +91,9 @@ class Options {
 
 	// the variable of a flag (HXMC_STATS for hxmc.stats), or null
 	// -D hxmc.paths' pairs (dir=label, by commas), the longest dir first: a
-	// relative dir is the working directory's too, and each with either
-	// separator (a class path may be given any of these ways)
+	// relative dir is the working directory's too, an absolute one under it
+	// relative too, and each with either separator (a class path may be
+	// given any of these ways)
 	public static function parsePaths(v:String):Array<{dir:String, label:String}> {
 		var out = [];
 		for (pair in v.split(",")) {
@@ -100,7 +101,9 @@ class Options {
 			if (eq <= 0 || eq == pair.length - 1) throw "hxmc: -D hxmc.paths=" + v + ": <dir>=<label>, by commas";
 			var dir = haxe.io.Path.removeTrailingSlashes(pair.substr(0, eq)), label = pair.substr(eq + 1);
 			var dirs = [dir];
+			var cwd = haxe.io.Path.removeTrailingSlashes(Sys.getCwd());
 			if (!haxe.io.Path.isAbsolute(dir)) dirs.push(haxe.io.Path.removeTrailingSlashes(sys.FileSystem.absolutePath(dir)));
+			else if (StringTools.startsWith(dir, cwd + "/")) dirs.push(dir.substr(cwd.length + 1));
 			// (Windows: a path written with either separator)
 			for (d in dirs.copy())
 				for (other in [d.split("\\").join("/"), d.split("/").join("\\")])

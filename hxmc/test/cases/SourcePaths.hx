@@ -1,4 +1,4 @@
-// define: hxmc.paths=hxmc/test/cases=<cases>
+// define: hxmc.paths=$CASE_DIR=<cases>
 // define: hxmc.native-array-outofbounds=throws
 // With -D hxmc.paths, the program's strings name its sources by a label,
 // not where they were built: a macro's string of a position (helder's live

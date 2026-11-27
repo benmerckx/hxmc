@@ -77,6 +77,8 @@ class MirRun {
 		hxmc.ir.Lower.targetMin = abi.os == "macos" ? o.minos(abi) : 0;
 		hxmc.ir.Lower.mirHost = 0; // (a bundle: code loaded, not a loader)
 		hxmc.ir.Lower.bounds = o.bounds;
+		// (the program's -D hxmc.paths, as Main: the macros' start left none)
+		hxmc.ir.Lower.paths = o.paths;
 		hxmc.ir.Lower.lines = o.debugLines || o.stacks; // (as Main: hxmc.rt.Stacks names an interpreted frame by its lines)
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		var t0 = haxe.Timer.stamp();
