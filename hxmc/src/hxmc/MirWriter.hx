@@ -345,6 +345,7 @@ class MirWriter {
 		var i = mk(Call, ret);
 		i.sym = sym;
 		i.keepsFrame = keepsFrameOf(sym, g);
+		i.kills = g != null ? g.writes : Effects.host(sym);
 		i.args = args;
 		i.argTys = args.map(tyOfVal);
 		i.noReturn = noReturn;

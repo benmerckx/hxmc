@@ -64,6 +64,175 @@ class Facts {
 		assignTypes();
 		collectNames();
 		assignNames();
+		findExits();
+		findEffects();
+	}
+
+	// ---- effects
+
+	// What each function may write (FuncInfo.writes, in Opt's memory classes:
+	// hxmc.Effects): its own stores (fields, arrays, statics, raw memory),
+	// the runtime functions it calls by name, and its callees' summaries, to
+	// a fixed point over the call graph (callees first: a strongly connected
+	// component's functions end with the union of theirs). Calls of unknown
+	// code (virtual, closure, structural) and functions without a body here
+	// write every class. Collections are not writes: Effects.call adds them
+	// where the callee may collect (noGc).
+	function findEffects() {
+		var own = new Map<FuncInfo, Int>();
+		var callees = new Map<FuncInfo, Array<FuncInfo>>();
+		// (a virtual or interface call: the implementations its selector's row holds)
+		var impls = dispatchImpls();
+		for (f in p.funcs) {
+			var w = 0, cs:Array<FuncInfo> = [];
+			if (f.hostCode) w = hxmc.Effects.UNKNOWN;
+			var declared = hxmc.Effects.declared(symbol(f));
+			if (declared != null) {
+				own.set(f, declared);
+				callees.set(f, cs);
+				continue;
+			}
+			function callee(g:FuncInfo)
+				if (!exits.exists(g) && cs.indexOf(g) < 0) cs.push(g);
+			function ex(e:Ex) {
+				if (w == hxmc.Effects.UNKNOWN) return;
+				switch e {
+					case ECall(g, _): callee(g);
+					case ECallHost(n, _, _):
+						var g = bySymbol.get(n);
+						if (g != null) callee(g) else w |= hxmc.Effects.host(n);
+						// (StringBuf.addChar: inline, its slow path a call)
+						if (n == "StringBuf_addChar" && bySymbol.exists("StringBuf_addChar_slow")) callee(bySymbol.get("StringBuf_addChar_slow"));
+					case ECallDispatch(sel, _, _):
+						var l = impls.get(sel);
+						if (l == null) w = hxmc.Effects.UNKNOWN else for (g in l) callee(g);
+					case ECallClos(_) | ECallAnon(_): w = hxmc.Effects.UNKNOWN;
+					// (a structural read's slow path: the inline caches, what only calls change)
+					case EAnonGet(_): w |= 1 << hxmc.Opt.MCallOnly;
+					case _:
+				}
+				if (w != hxmc.Effects.UNKNOWN) iterEx(ex, e);
+			}
+			function st(s:Stmt) {
+				if (w == hxmc.Effects.UNKNOWN) return;
+				switch s {
+					case SSetField(c, idx, _, _):
+						var loc = c.locs[idx];
+						w |= hxmc.Effects.fieldStore(c.fields[idx].ty, loc & ~COMPACT, loc & COMPACT != 0);
+					case SBoxSet(t, _, _): w |= hxmc.Effects.fieldStore(t, 0, false);
+					case SAnonSet(_): w |= hxmc.Effects.ANY_FIELD | (1 << hxmc.Opt.MCallOnly);
+					case SArrSet(_) | SArrPush(_): w |= hxmc.Effects.ARRAY_STORE;
+					case SSetGlobal(g, _):
+						var gl = p.globals[g];
+						w |= (1 << hxmc.Opt.MOther) | (Ir.isRef(gl.ty) ? 1 << hxmc.Opt.MGlobal : 1 << hxmc.Opt.MScalar)
+							| (gl.tls != null ? 1 << hxmc.Opt.MTls : 0);
+					case _:
+				}
+				if (w != hxmc.Effects.UNKNOWN) iterStmt(st, ex, s);
+			}
+			for (s in f.body)
+				st(s);
+			own.set(f, w);
+			callees.set(f, cs);
+		}
+		// (to a fixed point: the summaries only grow, and they are 32 bits)
+		for (f in p.funcs)
+			f.writes = own.get(f);
+		// (a worklist: a function whose summary grew, its callers again)
+		var callers = new Map<FuncInfo, Array<FuncInfo>>();
+		for (f => cs in callees)
+			for (g in cs) {
+				var l = callers.get(g);
+				if (l == null) callers.set(g, l = []);
+				l.push(f);
+			}
+		var work = p.funcs.copy(), queued = [for (f in p.funcs) f => true];
+		while (work.length > 0) {
+			var f = work.pop();
+			queued.remove(f);
+			var w = f.writes;
+			if (w == hxmc.Effects.UNKNOWN) continue;
+			for (g in callees.get(f)) {
+				w |= g.writes;
+				if (w == hxmc.Effects.UNKNOWN) break;
+			}
+			if (w == f.writes) continue;
+			f.writes = w;
+			var cs = callers.get(f);
+			if (cs != null)
+				for (c in cs)
+					if (!queued.exists(c)) {
+						queued.set(c, true);
+						work.push(c);
+					}
+		}
+	}
+
+	// Functions that end the program on every way through them (an exit at
+	// the end of each, or a call of one), and never throw (no GC point: no
+	// exception is made): nothing after a call of one runs, so what they
+	// write is no caller's effect (a failed span check's report, Os.exit)
+	var exits = new Map<FuncInfo, Bool>();
+
+	function findExits() {
+		var cands = [];
+		for (f in p.funcs) {
+			if (!f.noGc || f.blocks || f.body.length == 0) continue;
+			var ret = false;
+			function st(s:Stmt) {
+				if (s.match(SReturn(_))) ret = true;
+				if (!ret) iterStmt(st, _ -> {}, s);
+			}
+			for (s in f.body)
+				st(s);
+			if (!ret) cands.push(f);
+		}
+		function ends(ss:haxe.ds.Vector<Stmt>):Bool {
+			for (s in ss)
+				switch s {
+					case SExpr(ECall(g, _)) if (exits.exists(g)): return true;
+					case SExpr(ECallHost("exit" | "_exit" | "_Exit" | "abort", _, _)): return true;
+					case SIf(_, a, b) if (ends(a) && ends(b)): return true;
+					case _:
+				}
+			return false;
+		}
+		var grew = true;
+		while (grew) {
+			grew = false;
+			for (f in cands)
+				if (!exits.exists(f) && ends(f.body)) {
+					exits.set(f, true);
+					grew = true;
+				}
+		}
+	}
+
+	// per selector, the functions its dispatch row holds (DataGen.dispatch:
+	// the live implementations; a dynamic method is called through its field)
+	var implsMemo:Null<Map<Int, Array<FuncInfo>>> = null;
+
+	function dispatchImpls():Map<Int, Array<FuncInfo>> {
+		if (implsMemo != null) return implsMemo;
+		var m = new Map<Int, Array<FuncInfo>>();
+		for (f in p.funcs)
+			if (f.dispatchSel >= 0 && p.isLive(f)) {
+				var l = m.get(f.dispatchSel);
+				if (l == null) m.set(f.dispatchSel, l = []);
+				l.push(f);
+			}
+		return implsMemo = m;
+	}
+
+	// what a virtual or interface call of the selector may write (the union
+	// of its implementations' summaries; Effects.UNKNOWN: none known)
+	public function dispatchWrites(sel:Int):Int {
+		var l = dispatchImpls().get(sel);
+		if (l == null) return hxmc.Effects.UNKNOWN;
+		var w = 0;
+		for (g in l)
+			w |= g.writes;
+		return w;
 	}
 
 	// ---- names

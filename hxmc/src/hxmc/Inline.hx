@@ -423,6 +423,7 @@ class Inline {
 					x.noReturn = i.noReturn;
 					x.returnsTwice = i.returnsTwice;
 					x.keepsFrame = i.keepsFrame && !f.blocksHere;
+					x.kills = i.kills;
 					// (a poll, hxmc.ir.Safepoints, into a function without: dropped, its flag's test left to Opt)
 					if (x.op == Call && x.sym == "rt_poll" && !f.polls) x.dead = true;
 					x.variadic = i.variadic;

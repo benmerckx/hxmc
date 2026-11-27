@@ -469,6 +469,13 @@ class Driver {
 	function stats(t0:Float, t1:Float, t2:Float) {
 		if (!o.stats) return;
 		Sys.println('hxmc: ${prep.p.funcs.length} functions');
+		var known = 0, quiet = 0;
+		for (f in prep.p.funcs)
+			if (f.writes != Effects.UNKNOWN) {
+				known++;
+				if (f.writes & ~(1 << Opt.MCallOnly) == 0) quiet++;
+			}
+		Sys.println('hxmc: effects: $known functions with a summary, $quiet of them writing nothing');
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');

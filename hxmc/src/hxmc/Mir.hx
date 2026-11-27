@@ -284,6 +284,9 @@ enum abstract Cond(Int) to Int from Int {
 	public var returnsTwice(get, set):Bool; // Call (setjmp)
 	public var keepsFrame(get, set):Bool; // Call: nothing collects meanwhile (Opt: the frame's shadow-stack slots keep their values)
 	public var keepsStatics(get, set):Bool; // Call of a kernel that writes no static (FuncInfo.writesStatics: Opt keeps scalar statics' loads)
+	// Call: the classes its callee writes (its summary, FuncInfo.writes; Effects.call
+	// adds what any call changes and a collection's); -1: unknown, every class
+	public var kills = -1;
 	public var variadic = -1; // Call: the first variadic argument of a C function (-1: none)
 	public var argTys:Vector<MTy> = vector(); // Call: the C types of the arguments (I32 stays 32-bit in the ABI)
 	// Call of a C function (MirBuild.cCall), not of the runtime or a Haxe function

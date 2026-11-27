@@ -8,10 +8,12 @@ import core.ds.VectorTools.vector;
 
 using core.ds.VectorTools;
 
-// Loop versioning of Array reads (object-level Mir, before Opt): a counted
-// loop whose Array reads are of arrays it cannot change, at its counter or
-// at a value it does not change, gets a copy where they read the element
-// directly (OInfo.prechecked: no kind or bounds test, no slow path), entered
+// Loop versioning of Array reads and stores (object-level Mir, before Opt): a
+// counted loop whose Array reads, and stores of numbers, are of arrays whose
+// length and kind it cannot change, at its counter or at a value it does not
+// change, gets a copy where they read or write the element directly
+// (OInfo.prechecked: no kind or bounds test, no slow path: a store neither
+// grows the array nor collects), entered
 // when a test before the loop finds every such array not null, of the kind
 // its reads expect, and long enough for the counter's range; else the loop
 // as it was runs. In the copy an Array read writes no memory (Opt.objKill:
@@ -24,15 +26,16 @@ using core.ds.VectorTools;
 //    the loop and of counter + 1 from the one block that goes back to it,
 //    and the loop's only exit, a branch on counter < limit (or >=), the
 //    limit computed before the loop;
-//  - nothing in the loop that may collect, call or change an array's
-//    length or kind: arithmetic, comparisons, field reads and writes
+//  - nothing in the loop that may collect, call unknown code or change an
+//    array's length or kind: arithmetic, comparisons, field reads and writes
 //    (not of a field an array the loop reads is in), Array and NativeArray
-//    reads, NativeArray writes, null tests, the inline conversions;
+//    reads, NativeArray writes, null tests, the inline conversions, calls
+//    whose summaries (Effects) write no array's header and do not collect;
 //  - Array reads at the counter, after the exit test (not in the header),
 //    or at a value from before the loop; of an array from before the loop
 //    or read from a field of an object from before the loop (the copy reads
 //    it in the test before the loop).
-typedef Arr = {key:String, a:Int, obj:Int, field:Null<MIns>};
+typedef Arr = {key:String, a:Int, obj:Int, field:Null<MIns>, ?load:MIns};
 
 class LoopVersion {
 	// at most this many instructions in a loop copied
@@ -105,11 +108,34 @@ class LoopVersion {
 
 	// an array the copy reads (or whose length is the limit): a value from
 	// before the loop, or read from a field of an object from before the loop
-	// that the loop does not write (the copy reads it before the loop)
-	function arrayOf(id:Int, inLoop:Null<MBlock>->Bool, fieldsWritten:Map<Int, Bool>):Null<Arr> {
+	// that the loop does not write (the copy reads it before the loop); or
+	// what the loop reads again from a shadow-stack slot (a rooted local, after
+	// a GC point: none in the copy, so it is the value before the loop) or
+	// from a static the loop does not write (the loop stores into neither:
+	// try1), and the same past a cold site's continuation (a phi of one value)
+	function arrayOf(id:Int, inLoop:Null<MBlock>->Bool, fieldsWritten:Map<Int, Bool>, depth = 0, ?on:Array<Int>):Null<Arr> {
 		var a = v(id);
 		if (!inLoop(a.block)) return {key: "v" + id, a: id, obj: -1, field: null};
-		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && a.info.t.match(TRef(_)))
+		if (a.op == Copy && depth < 16) return arrayOf(a.a, inLoop, fieldsWritten, depth + 1, on);
+		// (a phi of the same array on every way: the cold sites' continuations,
+		// their joins, the loop's header; a phi already on the way: the same)
+		if (a.op == Phi && depth < 16) {
+			if (on == null) on = [];
+			on.push(id);
+			var one:Null<Arr> = null;
+			for (x in a.args) {
+				if (on.indexOf(x) >= 0) continue;
+				var e = arrayOf(x, inLoop, fieldsWritten, depth + 1, on);
+				if (e == CYCLE) continue;
+				if (e == null || one != null && e.key != one.key) return null;
+				if (one == null) one = e;
+			}
+			return one != null ? one : depth == 0 ? null : CYCLE;
+		}
+		if (a.op == Load && a.b < 0 && a.ty == I64 && a.size == 8 && a.a >= 0 && !inLoop(v(a.a).block)
+			&& (a.mem == Opt.MFrame || a.mem == Opt.MGlobal && !fieldsWritten.exists(GLOBALS)))
+			return {key: "m" + a.mem + ":" + a.a + ":" + a.imm, a: id, obj: -1, field: null, load: a};
+		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && !fieldsWritten.exists(-1 - ((fieldKey(a.info) >> 3) & 7)) && a.info.t.match(TRef(_)))
 			return {key: "f" + a.a + ":" + fieldKey(a.info), a: id, obj: a.a, field: a};
 		return null;
 	}
@@ -146,12 +172,15 @@ class LoopVersion {
 		// what the loop does
 		var size = 0;
 		var gets:Array<MIns> = [];
+		var sets:Array<MIns> = [];
+		var checks:Array<MIns> = []; // (span element checks, MIns.SPAN_CHECK)
 		var fieldsWritten = new Map<Int, Bool>();
 		for (b in members)
 			for (i in b.ins) {
 				if (i.dead) continue;
 				size++;
-				if (i.info != null && i.info.cold) return false;
+				// (an Array store of numbers: its cold slow path gone in the copy, or no copy)
+				if (i.info != null && i.info.cold && !(i.op == ArraySet && !Opt.ptrElem(i.info.t))) return false;
 				switch i.op {
 					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
 					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet:
@@ -159,12 +188,22 @@ class LoopVersion {
 						fieldsWritten.set(fieldKey(i.info), true);
 					case ArrayGet:
 						gets.push(i);
+					case ArraySet if (!Opt.ptrElem(i.info.t)):
+						sets.push(i);
+					case Call if (calm(i)):
+						var m = Effects.call(i);
+						for (k in 0...8)
+							if (m & ((1 << (Opt.MFieldAt + k)) | (1 << Opt.MField)) != 0) fieldsWritten.set(-1 - k, true);
+						if (m & (1 << Opt.MGlobal) != 0) fieldsWritten.set(GLOBALS, true);
 					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
 					case _:
 						return false;
 				}
 			}
-		if (size > MAX_SIZE || gets.length == 0) return false;
+		for (b in members)
+			for (i in b.ins)
+				if (!i.dead && i.op == Cmp && i.imm2 == MIns.SPAN_CHECK && i.imm == (CULt : Int)) checks.push(i);
+		if (size > MAX_SIZE || gets.length + sets.length + checks.length == 0) return false;
 		// the test: counter < limit to stay (cmp lt), counter >= limit to leave (cmp ge)
 		var c = v(t.a);
 		if (c.op != Cmp || c.block != h) return false;
@@ -192,7 +231,9 @@ class LoopVersion {
 		if (phi.op != Phi || phi.block != h || phi.ty != I32 || phi.args.length != 2 || v(limit).ty != I32) return false;
 		// the limit: from before the loop, or an array's length the loop cannot change
 		var limitArr:Null<Arr> = null;
-		if (!outside(limit)) {
+		// (a constant made in the loop: made again before it)
+		var limitK = outside(limit) ? null : constOf(limit);
+		if (!outside(limit) && limitK == null) {
 			var l = v(limit);
 			if (l.op != ArrayLength) return false;
 			limitArr = arrayOf(l.a, inLoop, fieldsWritten);
@@ -201,38 +242,58 @@ class LoopVersion {
 		var start = phi.args[pre], next = v(phi.args[latch]);
 		var step = next.op == Add && next.a == iv && inLoop(next.block) ? constOf(next.b) : null;
 		if (step == null || step < 1 || step > MAX_STEP) return false;
-		// the reads the copy takes: their arrays, and the indices they need
+		// the reads and stores the copy takes: their arrays, and the indices they need
 		var arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}> = [];
 		var taken:Array<MIns> = [];
-		for (g in gets) {
+		function take(g:MIns):Bool {
 			var off = offsetOf(g.b, iv, ahead);
 			var idxOk = off != null && g.block != h || outside(g.b);
-			if (!idxOk) continue;
+			if (!idxOk) return false;
 			var arr = arrayOf(g.a, inLoop, fieldsWritten);
-			if (arr == null) continue;
+			if (arr == null) return false;
 			var kind = MemLower.arrKind(g.info.t);
 			var found = null;
 			for (e in arrays)
 				if (e.arr.key == arr.key) found = e;
-			if (found != null && found.kind != kind) continue;
+			if (found != null && found.kind != kind) return false;
 			if (found == null) {
 				found = {arr: arr, kind: kind, upto: false, idx: []};
 				arrays.push(found);
 			}
 			if (off != null) found.upto = true else if (found.idx.indexOf(g.b) < 0) found.idx.push(g.b);
 			taken.push(g);
+			return true;
 		}
-		if (taken.length == 0) return false;
+		// (a store not taken keeps its slow path: a GC point, the header written)
+		for (s in sets)
+			if (!take(s)) return false;
+		for (g in gets)
+			take(g);
+		// the span checks of the counter against a length the loop cannot change
+		// (a NativeArray's, Bytes': it is tested once against the limit)
+		var spans:Array<{cmp:MIns, arr:Null<Arr>, len:Int}> = [];
+		for (c in checks) {
+			if (offsetOf(c.a, iv, ahead) == null || c.block == h) continue;
+			if (outside(c.b)) spans.push({cmp: c, arr: null, len: c.b}) else {
+				var l = v(c.b);
+				if (l.op != NArrayLength) continue;
+				var arr = arrayOf(l.a, inLoop, fieldsWritten);
+				if (arr != null) spans.push({cmp: c, arr: arr, len: -1});
+			}
+		}
+		if (taken.length == 0 && spans.length == 0) return false;
 		// (a reference read left with its slow path writes everything: no gain then)
 		for (g in gets)
 			if (taken.indexOf(g) < 0 && Opt.ptrElem(g.info.t)) return false;
-		version(h, members, inLoop, cfg, pre, start, limit, limitArr, arrays, taken);
+		var objs = objectsOf(members, inLoop, cfg, h.preds[pre]).filter(o -> !Lambda.exists(arrays, e -> e.arr.a == o.a));
+		version(h, members, inLoop, cfg, pre, start, limit, limitK, limitArr, arrays, taken, null, null, objs, spans);
 		return true;
 	}
 
-	// A loop without Array reads or calls (as try1's) that reads the length
-	// of a string from before the loop, not read before it: a copy entered
-	// when the string is not null, its length read in the test (the loop's
+	// A loop without Array reads or calls but calm ones (as try1's) that reads
+	// the length of a string, or a field or the length of an object, from
+	// before the loop, not read before it: a copy entered when the string or
+	// object is not null, its length or field read in the test (the loop's
 	// loads of the string's length and width then move out of the copy:
 	// Opt.licm, a load through an object dereferenced before the loop); a
 	// string whose width the loop reads: a byte per unit too (the copy's
@@ -257,6 +318,7 @@ class LoopVersion {
 					case Const | ConstF | SymAddr | Copy | Phi | Add | Sub | Mul | And | Or | Xor | Shl | Sar | Shr | Neg | Not | Div | Rem | UDiv | URem | Rotr | FAdd | FSub | FMul | FDiv | FNeg | FSqrt | FAbs | Cmp | SExt | ZExt | Trunc | I2F | F2I | BitsToF | FToBits | Select | Load | TlsLoad | Jmp | Br | Switch:
 					case NullCheck | GetField | FieldAddr | EnumTag | TypeTest | ArrayLength | NArrayLength | NArrayGet | NArraySet | SetField:
 					case Call if (i.sym != null && StringTools.startsWith(i.sym, MirBuild.SPECIAL) && !StringTools.startsWith(i.sym, MirBuild.SPECIAL + "atomic")):
+					case Call if (calm(i)):
 					case _:
 						return false;
 				}
@@ -278,10 +340,45 @@ class LoopVersion {
 			}
 			true;
 		});
-		if (strs.length == 0) return false;
-		version(h, members, inLoop, cfg, pre, -1, -1, null, [], [], strs, widths);
+		var objs = objectsOf(members, inLoop, cfg, preB).filter(o -> !Lambda.exists(strs, s -> s == o.a));
+		if (strs.length == 0 && objs.length == 0) return false;
+		version(h, members, inLoop, cfg, pre, -1, -1, null, null, [], [], strs, widths, objs);
 		return true;
 	}
+
+	// the objects from before the loop that it reads a field or a length of
+	// (one read of each), which nothing before the loop on every way to it
+	// dereferences (a copy entered once they are not null: LICM moves the
+	// reads out of it)
+	function objectsOf(members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, preB:MBlock):Array<MIns> {
+		var objs:Array<MIns> = [];
+		for (b in members)
+			for (i in b.ins)
+				if (!i.dead && (i.op == GetField && !i.info.t.match(TVoid) || i.op == ArrayLength || i.op == NArrayLength) && i.a >= 0
+					&& !inLoop(v(i.a).block) && !Lambda.exists(objs, o -> o.a == i.a))
+					objs.push(i);
+		var at = cfg.index(preB);
+		return objs.filter(o -> {
+			for (b in f.blocks) {
+				if (inLoop(b) || cfg.index(b) < 0 || !cfg.dominates(cfg.index(b), at)) continue;
+				for (i in b.ins)
+					if (!i.dead && (i.op == Load || i.op == Store || Opt.objDeref(i.op)) && i.a == o.a) return false;
+			}
+			true;
+		});
+	}
+
+	// a call the loop may keep (its callee's summary, Effects): it does not
+	// collect and writes no array's header (length, kind, storage); the
+	// fields it may write are those no array the copy reads may be in
+	static function calm(i:MIns):Bool
+		return !i.returnsTwice && !i.noReturn && i.kills != Effects.UNKNOWN && i.keepsFrame && Effects.call(i) & (1 << Opt.MHdr) == 0;
+
+	// (arrayOf: a phi of phis on the way only)
+	static final CYCLE:Arr = {key: "", a: -1, obj: -1, field: null};
+
+	// (fieldsWritten: a call may write the statics)
+	static inline var GLOBALS = -100;
 
 	static function fieldKey(o:OInfo):Int
 		return Opt.fieldOff(o);
@@ -301,8 +398,8 @@ class LoopVersion {
 		return d != null && d >= 0 && d <= ahead ? d : null;
 	}
 
-	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitArr:Null<Arr>,
-			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>) {
+	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitK:Null<Int>, limitArr:Null<Arr>,
+			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>, ?objs:Array<MIns>, ?spans:Array<{cmp:MIns, arr:Null<Arr>, len:Int}>) {
 		var preB = h.preds[pre];
 		// ---- the test before the loop: blocks failing to slow, which enters the loop as it was
 		var slow = newBlock();
@@ -339,6 +436,17 @@ class LoopVersion {
 			var a = before.get(e.key);
 			if (a != null) return a;
 			a = e.a;
+			if (e.load != null) {
+				// (its slot or static, read before the loop)
+				var l = add(gb, Load, I64);
+				l.a = e.load.a;
+				l.imm = e.load.imm;
+				l.imm2 = e.load.imm2;
+				l.size = 8;
+				l.mem = e.load.mem;
+				l.vty = e.load.vty;
+				a = l.id;
+			}
 			if (e.field != null) {
 				test(cmp(CNe, e.obj, lzero()));
 				var gf = add(gb, GetField, I64);
@@ -379,7 +487,16 @@ class LoopVersion {
 					test(cmp(CEq, w.id, iconst(Abi.T_STRING1)));
 				}
 			}
-		var lim = limitArr == null ? limit : lengthOf(arrayBefore(limitArr));
+		// the objects not null, a field or length of each read (Opt: dereferenced before the copy)
+		if (objs != null)
+			for (o in objs) {
+				test(cmp(CNe, o.a, lzero()));
+				var x = add(gb, o.op, o.ty);
+				x.a = o.a;
+				x.info = o.info.copy(null);
+				x.vty = o.vty;
+			}
+		var lim = limitK != null ? iconst(limitK) : limitArr == null ? limit : lengthOf(arrayBefore(limitArr));
 		for (e in arrays) {
 			var a = arrayBefore(e.arr);
 			var kind = add(gb, Load, I32);
@@ -394,8 +511,30 @@ class LoopVersion {
 			for (x in e.idx)
 				test(cmp(CULt, x, len));
 		}
+		if (spans != null)
+			for (s in spans) {
+				var len = s.len;
+				if (s.arr != null) {
+					// (the array first: its tests move gb on)
+					var a = arrayBefore(s.arr);
+					var l = add(gb, NArrayLength, I32);
+					l.a = a;
+					l.info = new OInfo();
+					len = l.id;
+				}
+				test(cmp(CLe, lim, len));
+			}
 		// gb: every test passed, into the copy
-		copyLoop(h, members, inLoop, cfg, (i, x) -> if (i.op == ArrayGet && taken.indexOf(i) >= 0) x.info.prechecked = true, h2 -> {
+		copyLoop(h, members, inLoop, cfg, (i, x) -> {
+			if ((i.op == ArrayGet || i.op == ArraySet) && taken.indexOf(i) >= 0) x.info.prechecked = true;
+			// (a span check the test before the loop made: in range)
+			if (spans != null && Lambda.exists(spans, s -> s.cmp == i)) {
+				x.op = Const;
+				x.imm = 1;
+				x.imm2 = 0;
+				x.a = x.b = x.c = -1;
+			}
+		}, h2 -> {
 			// ---- the edges: before -> tests; slow -> the loop; the last test -> the copy
 			retargetTerm(preB, h, first);
 			preB.succs[preB.succs.indexOf(h)] = first;
@@ -471,6 +610,7 @@ class LoopVersion {
 				x.noReturn = i.noReturn;
 				x.returnsTwice = i.returnsTwice;
 				x.keepsFrame = i.keepsFrame;
+				x.kills = i.kills;
 				x.variadic = i.variadic;
 				x.argTys = i.argTys;
 				x.cCall = i.cCall;

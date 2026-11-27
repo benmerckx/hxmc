@@ -1269,6 +1269,7 @@ class MirBuild extends MirWriter {
 				c.sym = p.funcSym(g);
 				c.keepsFrame = keepsFrame(c.sym);
 				c.keepsStatics = !g.writesStatics;
+				c.kills = g.writes;
 				c.args = xs;
 				c.argTys = g.args.mapToVector(a -> mty(a.ty) == Void ? I32 : mty(a.ty));
 				var id = add(c);
@@ -1282,6 +1283,7 @@ class MirBuild extends MirWriter {
 				i.sig = sig;
 				var c = obj(VirtualCall, mty(sig.ret), i);
 				c.args = xs;
+				c.kills = p.e.dispatchWrites(sel);
 				c.id;
 			case ECallClos(s, clos, args):
 				var c = ex(clos);

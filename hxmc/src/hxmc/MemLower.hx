@@ -973,6 +973,18 @@ class MemLower extends MirWriter {
 	function arrSet(o:OInfo, av:Int, iv:Int, vv:Int) {
 		var elem = o.t;
 		var k = arrKind(elem);
+		// (LoopVersion: of the kind and in range, tested before the loop; a number: no barrier)
+		if (o.prechecked && k != Abi.AK_PTR) {
+			var pre = o.ops >= 0;
+			var d = pre ? given(2) : loadM(Opt.MHdr, I64, 8, av, 8);
+			var ix = pre ? given(3) : op1(SExt, I64, iv);
+			storeM(Opt.MElem, elemSize(elem), d, 0, vv, ix, elemSize(elem));
+			var join = joinBlock();
+			jmp(join);
+			seal(join);
+			cur = join;
+			return;
+		}
 		var fast = newBlock(), slow = newBlock(), join = joinBlock(), chk = newBlock();
 		slow.cold = true;
 		var pre = o.ops >= 0;
