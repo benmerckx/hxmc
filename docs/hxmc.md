@@ -12,7 +12,7 @@ hxmc turns the typed program into machine code or WebAssembly with its own
 code generator and linkers.
 
 ```
-typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, Unroll, LoopVersion, Opt, Escape again, FrameAlloc, Frames)--> --(MemLower)--> Mir (SSA) --(Fold, DivConst)-->
+typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBuild)--> object-level Mir --(Inline, Escape, Sroa, LoopVersion, Opt, Frames)--> --(MemLower)--> Mir (SSA) --(Fold, DivConst)-->
     --(x64|a64 Isel)--> LIR --(Regalloc, Emit)--> Obj (per module, cached) | --(wasm/WasmGen)--> wasm
     --(DataGen: tables, strings)--> Obj --(Link: ELF | LinkPE | LinkMachO | LinkWasm)--> executable
 ```
@@ -27,11 +27,9 @@ typed AST --(ir.Lower)--> hxmc IR --(ir.Reach)--> --(Prep: ir.Facts)--> --(MirBu
 | `ir/Facts.hx`, `Prep.hx` | program-wide facts: names, layouts, type indices, field ids, no-GC functions, GC points |
 | `UpToDate.hx`, `Fingerprint.hx` | rebuilds: the whole build skipped when nothing changed, objects reused by fingerprint |
 | `Mir.hx`, `MirWriter.hx`, `MirBuild.hx`, `MemLower.hx` | the SSA IR at two levels. Object-level Mir has objects, fields, arrays, type tests, boxes, closures and virtual calls as operations. `MemLower` lowers it to memory-level Mir: layouts, allocation, barriers, inline caches, null tests, the shadow stack |
-| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement (again after value numbering answered reads of fields an allocation zeroed), value numbering, store forwarding, LICM (behind a guard: the loop rotated), unswitching, dead code, barriers (by a dataflow of young objects) and frame slots nothing needs |
-| `Effects.hx` | what each object-level operation and call may write (memory classes) and whether it may collect, in one place; program functions' summaries (`Facts.findEffects`: their stores and their callees', to a fixed point; virtual calls by their selector's implementations) and parameter fates (`Facts.findFates`) are on their calls (`MIns.kills`, `retains`) |
+| `Cfg.hx`, `Ssa.hx`, `Opt.hx`, `Inline.hx`, `Escape.hx`, `Sroa.hx`, `Frames.hx` | analyses and optimizations: inlining, escape analysis, scalar replacement, value numbering, store forwarding, LICM (behind a guard: the loop rotated), unswitching, dead code, barriers (by a dataflow of young objects) and frame slots nothing needs |
+| `Effects.hx` | what each object-level operation and call may write (memory classes) and whether it may collect, in one place; program functions' summaries (`Facts.findEffects`: their stores and their callees', to a fixed point; virtual calls by their selector's implementations) are on their calls (`MIns.kills`) |
 | `LoopVersion.hx` | counted loops over Arrays whose length and kind they cannot change: a copy whose Array reads, stores of numbers and span checks have no tests, entered when one test before the loop finds the arrays of the kind and long enough; and loops reading fields or lengths of objects from before them, entered once they are found not null |
-| `Unroll.hx` | loops of a few constant rounds as their copies in a row |
-| `FrameAlloc.hx` | class instances of scalar fields that only non-retaining callees see, in a slot of the frame |
 | `Fold.hx`, `DivConst.hx` | allocation folding; division by constants |
 | `SimdOps.hx` | `hxmc.simd`'s vector operations by their WebAssembly opcodes: what Mir's `VOp` carries and every back end implements ([interop.md](interop.md#simd-vectors), [plans/simd.md](plans/simd.md)) |
 | `Lir.hx`, `IselBase.hx`, `Regalloc.hx`, `x64/`, `a64/` | instruction selection, linear-scan register allocation, encoders (checked against llvm-mc: `EncCheck`), emission |
