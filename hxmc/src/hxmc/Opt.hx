@@ -176,7 +176,6 @@ class Opt {
 		ver = MFunc.ints(f.vals.length, 0);
 		newVer = new Map();
 		newInits = new Map();
-		newPriv = new Map();
 		// (functions with a try: a handler block, reached by setjmp's second
 		// return, starts with new memory versions, so no load from before
 		// is reused there; values computed before setjmp are immutable and
@@ -3398,7 +3397,6 @@ class Opt {
 	// after it, and the offsets of the fields it initializes
 	var newVer:Map<Int, Vector<Int>> = new Map();
 	var newInits:Map<Int, Array<Int>> = new Map();
-	var newPriv:Map<Int, Vector<Int>> = new Map(); // (the private versions it starts with)
 	// field reads an allocation answered with zero (gvn: Escape may then go further)
 	public var zeroReads = 0;
 
@@ -3450,18 +3448,9 @@ class Opt {
 				if (loopGc[h]) loopGc[parent[h]] = true;
 			}
 		var outs = new Vector<Vector<Int>>(n);
-		// objects allocated here, private until they escape (a bit each): the
-		// sites private at each block's end, their fields' versions there
-		var site = new Map<Int, Int>(), nsites = 0;
-		for (b in order)
-			for (i in b.ins)
-				if (!i.dead && i.op == New && i.info.name != OInfo.NEW_RAW && nsites < 30) site.set(i.id, nsites++);
-		var privOut = MFunc.ints(n, 0);
-		var pvOut = new Vector<Vector<Vector<Int>>>(n);
 		for (k in 0...n) {
 			var b = order[k];
 			var v:Vector<Int> = null;
-			var priv = nsites == 0 ? 0 : -1, pv = new Vector<Vector<Int>>(nsites), forward = 0;
 			var loop = false;
 			var entered = false;
 			// classes the forward predecessors disagree on, or the loop writes
@@ -3476,17 +3465,6 @@ class Opt {
 					if (!cfg.dominates(k, pk)) entered = true;
 					continue;
 				}
-				if (nsites > 0) {
-					priv &= privOut[pk];
-					var q = pvOut[pk];
-					for (x in 0...nsites)
-						if (priv & (1 << x) != 0) {
-							if (forward == 0) pv[x] = q[x].copy() else
-								for (c in 0...NV)
-									if (pv[x][c] != q[x][c]) pv[x][c] = next++;
-						}
-				}
-				forward++;
 				var o = outs[pk];
 				if (v == null) v = o.copy() else
 					for (c in 0...NCLS) {
@@ -3499,8 +3477,6 @@ class Opt {
 				mixed |= entered ? -1 : loopKill[k];
 				if (entered || loopGc[k]) mixedRef = -1;
 			}
-			// (a loop's header, a handler, the entry: none private)
-			if (loop || b.handler || forward == 0) priv = 0;
 			if (v == null || b.handler) {
 				v = new Vector<Int>(NV);
 				for (c in 0...NV)
@@ -3513,27 +3489,9 @@ class Opt {
 			}
 			for (i in b.ins) {
 				if (i.dead) continue;
-				// (what makes a private object escape; the calls it is passed to)
-				var passed = 0;
-				if (priv != 0) {
-					inline function use(x:Int, k:Int) {
-						var sx = x < 0 ? null : site.get(res(x));
-						if (sx != null && priv & (1 << sx) != 0) {
-							var r = privateUse(i, x, k);
-							if (r == 0) priv &= ~(1 << sx) else if (r == 2) passed |= 1 << sx;
-						}
-					}
-					use(i.a, -1);
-					use(i.b, -2);
-					use(i.c, -3);
-					for (k in 0...i.args.length)
-						use(i.args[k], k);
-				}
-				var ps = priv == 0 || i.a < 0 ? null : site.get(res(i.a));
-				if (ps != null && priv & (1 << ps) == 0) ps = null;
 				if (i.op == Load) ver[i.id] = v[refLoad(i, memClass(i))] else if (i.op == TlsLoad) ver[i.id] = v[tlsClass(i.sym)] else if (i.isObj()) {
 					var c = objLoadClass(i);
-					if (c >= 0) ver[i.id] = ps != null && i.op == GetField ? pv[ps][refLoad(i, c)] : v[refLoad(i, c)];
+					if (c >= 0) ver[i.id] = v[refLoad(i, c)];
 				}
 				var m = killMask(i);
 				if (m != 0)
@@ -3545,34 +3503,6 @@ class Opt {
 				if (Effects.collects(i))
 					for (c in 0...NCLS)
 						if (c != MConst) v[c + NCLS] = next++;
-				// (a private object: its stores, the calls it is passed to, collections
-				// for its references; nothing else reaches it)
-				if (priv != 0) {
-					var gc = Effects.collects(i);
-					for (x in 0...nsites) {
-						if (priv & (1 << x) == 0) continue;
-						var q = pv[x];
-						var pm = passed & (1 << x) != 0 ? m : ps == x && i.op == SetField ? 1 << storeCls(i) : 0;
-						if (pm != 0)
-							for (c in 0...NCLS)
-								if (pm & (1 << c) != 0) {
-									q[c] = next++;
-									q[c + NCLS] = next++;
-								}
-						if (gc)
-							for (c in 0...NCLS)
-								if (c != MConst) q[c + NCLS] = next++;
-					}
-				}
-				if (i.op == New && site.exists(i.id)) {
-					var x = site.get(i.id);
-					priv |= 1 << x;
-					var q = new Vector<Int>(NV);
-					for (c in 0...NV)
-						q[c] = next++;
-					pv[x] = q;
-					if (i.info.zero) newPriv.set(i.id, q.copy());
-				}
 				if (i.op == New && i.info.zero && i.info.name != OInfo.NEW_RAW) newVer.set(i.id, v.copy());
 				if (i.op == InitField) {
 					var l = newInits.get(res(i.a));
@@ -3580,36 +3510,10 @@ class Opt {
 					l.push(fieldOff(i.info));
 				}
 				// (a store: the version it leaves its memory in, that of the loads it can answer)
-				if (i.op == Store) ver[i.id] = v[refStore(i, memClass(i), i.c)] else if (objStore(i))
-					ver[i.id] = ps != null && priv & (1 << ps) != 0 ? pv[ps][refStore(i, storeCls(i), storedValue(i))] : v[refStore(i, storeCls(i), storedValue(i))];
+				if (i.op == Store) ver[i.id] = v[refStore(i, memClass(i), i.c)] else if (objStore(i)) ver[i.id] = v[refStore(i, storeCls(i), storedValue(i))];
 			}
 			outs[k] = v;
-			privOut[k] = priv;
-			var keep = new Vector<Vector<Int>>(nsites);
-			for (x in 0...nsites)
-				if (priv & (1 << x) != 0) keep[x] = pv[x].copy();
-			pvOut[k] = keep;
 		}
-	}
-
-	// how instruction i uses a private object, as operand x (k: -1 a, -2 b,
-	// -3 c, else its argument k): 0 it escapes, 1 it stays private, 2 a
-	// call that does not retain it gets it (it may write its fields: what
-	// the call writes). A store into its shadow-stack slot roots it: after a
-	// collection the code reads it again from there, not as this value
-	function privateUse(i:MIns, x:Int, k:Int):Int {
-		var s = res(x);
-		return switch i.op {
-			case GetField | NullCheck | TypeTest | EnumTag if (k == -1): 1;
-			case SetField | InitField if (k == -1 && res(i.b) != s): 1;
-			case Cmp: 1;
-			case Store if (k == -3 && i.mem == MFrame && res(i.a) != s): 1;
-			case Call | VirtualCall | ClosureCall if (k >= 0 && !(i.op == Call && i.a >= 0 && res(i.a) == s) && i.retains != -1 && k < 31
-				&& i.retains & (1 << k) == 0 && !i.returnsTwice):
-				2;
-			case New | NewDyn | ArraySet | ArrayPush | NewNArray | NArrayDyn if (k >= 0 && i.info.cold && k < i.info.nspill): 1;
-			case _: 0;
-		};
 	}
 
 	// (a store's version: that of the loads of its value's type)
@@ -3711,8 +3615,7 @@ class Opt {
 		var s = newVer.get(base);
 		if (s == null || i.info.t.match(TVoid) || i.ty == V128) return false;
 		var c = objLoadClass(i);
-		var q = newPriv.get(base);
-		if (c < 0 || s[refLoad(i, c)] != ver[i.id] && (q == null || q[refLoad(i, c)] != ver[i.id])) return false;
+		if (c < 0 || s[refLoad(i, c)] != ver[i.id]) return false;
 		var inits = newInits.get(base);
 		if (inits != null && inits.indexOf(fieldOff(i.info)) >= 0) return false;
 		i.op = i.ty == F64 ? ConstF : Const;
