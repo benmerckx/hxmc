@@ -35,12 +35,15 @@ using core.ds.VectorTools;
 // "Pipeline"): a field read (GetField) is a load of its field's
 // class, a field write (SetField, InitField) a store that answers it, an
 // array's length and elements loads of theirs; type tests and enum tags are
-// pure; an operation that may collect or call writes every class (a call's
-// effect); null tests dominated by one of the same value, or by a branch on
-// it, go. What the lowering of an operation reads that others read too
+// pure; what an operation or a call writes is what Effects declares (a
+// call: its callee's summary, else every class), and a point that may
+// collect renews the second versions, those of the loads that may yield a
+// reference (versions); null tests dominated by one of the same value, or
+// by a branch on it, go. What the lowering of an operation reads that others read too
 // becomes its operands first (operands: shared and hoisted as any value),
 // and a reference stored into an object allocated since the last point
-// where a collection may happen loses its write barrier (freshTargets).
+// where a collection may happen on every way there loses its write
+// barrier (freshTargets).
 // After MemLower only the CFG's cleanup, copies and dead code (lowered).
 class Opt {
 	// memory classes (MIns.mem)
