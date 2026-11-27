@@ -1197,7 +1197,9 @@ class MirBuild extends MirWriter {
 		return switch e {
 			case EInt(v): iconst(v);
 			case EF64(v): fconst(v);
-			case EStr(s):
+			case EStr(raw):
+				// (-D hxmc.paths: a frontend's strings too, which no typed AST made: helder's TypeScript)
+				var s = hxmc.ir.Lower.shown(raw);
 				var v = symAddr(p.strSym(s), 8);
 				strLits.set(v, s);
 				v;

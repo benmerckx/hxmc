@@ -34,6 +34,9 @@ package hxmc;
 //                                   lines (StackTable)
 //   -D hxmc.stacks                  the table and stacks in every program: an uncaught exception's
 //                                   report names the frames of its throw
+//   -D hxmc.paths=<dir>=<label>,... the program's strings name the sources under each dir by its label
+//                                   (a position's file in a check, a macro's string): a web build
+//                                   published shows no one where it was built (Lower.shown)
 //   -D hxmc.native-array-outofbounds=throws|silent
 //                                   NativeArray/Vector accesses out of bounds throw, or read the
 //                                   default and write nothing (default: not tested)
@@ -187,6 +190,7 @@ class Main {
 		// (genjs's order: `Hashtbl.fold (fun name data acc -> (name,data) :: acc) com.resources []`)
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		hxmc.ir.Lower.bounds = opts.bounds;
+		hxmc.ir.Lower.paths = opts.paths;
 		hxmc.ir.Lower.nullChecks = opts.nullChecks;
 		hxmc.ir.Lower.spanChecks = opts.spanChecks;
 		hxmc.ir.Lower.verifyTags = opts.verifyTags;

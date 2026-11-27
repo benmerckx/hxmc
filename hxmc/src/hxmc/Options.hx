@@ -90,6 +90,27 @@ class Options {
 	static final VARS = ["hxmc.stats", "hxmc.dump", "hxmc.reach-why", "hxmc.symbols", "hxmc.module-cache-log"];
 
 	// the variable of a flag (HXMC_STATS for hxmc.stats), or null
+	// -D hxmc.paths' pairs (dir=label, by commas), the longest dir first: a
+	// relative dir is the working directory's too, and each with either
+	// separator (a class path may be given any of these ways)
+	public static function parsePaths(v:String):Array<{dir:String, label:String}> {
+		var out = [];
+		for (pair in v.split(",")) {
+			var eq = pair.lastIndexOf("=");
+			if (eq <= 0 || eq == pair.length - 1) throw "hxmc: -D hxmc.paths=" + v + ": <dir>=<label>, by commas";
+			var dir = haxe.io.Path.removeTrailingSlashes(pair.substr(0, eq)), label = pair.substr(eq + 1);
+			var dirs = [dir];
+			if (!haxe.io.Path.isAbsolute(dir)) dirs.push(haxe.io.Path.removeTrailingSlashes(sys.FileSystem.absolutePath(dir)));
+			// (Windows: a path written with either separator)
+			for (d in dirs.copy())
+				for (other in [d.split("\\").join("/"), d.split("/").join("\\")])
+					if (!dirs.contains(other)) dirs.push(other);
+			for (d in dirs) out.push({dir: d, label: label});
+		}
+		out.sort((a, b) -> b.dir.length - a.dir.length);
+		return out;
+	}
+
 	public static function flagVar(name:String):Null<String> {
 		inline function has(p:String)
 			return StringTools.startsWith(name, p);
@@ -156,6 +177,10 @@ class Options {
 	// accesses out of bounds throw, or read the default and write nothing
 	// (default: not tested; hxmc.ir.Lower.bounds)
 	public var bounds = hxmc.ir.Lower.BOUNDS_UNCHECKED;
+	// -D hxmc.paths=<dir>=<label>,...: the program's strings name a source
+	// under dir as label/... (hxmc.ir.Lower.shown): a program built here and
+	// published shows no one where it was built
+	public var paths:Array<{dir:String, label:String}> = [];
 	// -D hxmc.null-checks=0|1: references tested against null before they
 	// are dereferenced (hxmc.ir.Lower.nullChecks); default: on WebAssembly,
 	// whose null accesses neither fault nor throw, off natively, where the
@@ -373,6 +398,8 @@ class Options {
 			o.wasmMemoryMaxMb = v;
 		}
 		o.libc = def("hxmc.libc");
+		var ps = def("hxmc.paths");
+		if (ps != null) o.paths = parsePaths(ps);
 		var oob = def("hxmc.native_array_outofbounds"); // (-D turns the dashes into underscores)
 		if (oob != null) o.bounds = switch oob {
 			case "throws": hxmc.ir.Lower.BOUNDS_THROWS;

@@ -1,0 +1,5 @@
+exit 0
+<cases>/SourcePaths.hx:12:color
+switch: by its label
+cases/SourcePaths.hx:12
+error at <cases>/SourcePaths.hx:25

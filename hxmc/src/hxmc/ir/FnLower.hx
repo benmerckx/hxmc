@@ -1153,7 +1153,7 @@ class FnLower {
 	function outOfBounds(a:Ex, i:Ex, p:core.Globals.Pos):Ex {
 		var d = fi.display != null ? fi.display : fi.name;
 		var dot = d.lastIndexOf(".");
-		var file = EStr(p.pfile), line = EInt(CInterop.lineOf(p.pfile, p.pmin)), cls = EStr(dot < 0 ? "" : d.substr(0, dot)), name = EStr(d.substr(dot + 1));
+		var file = EStr(Lower.shown(p.pfile)), line = EInt(CInterop.lineOf(p.pfile, p.pmin)), cls = EStr(dot < 0 ? "" : d.substr(0, dot)), name = EStr(d.substr(dot + 1));
 		return ECallHost("hx_narray_oob", vector(i, ECallHost("hxmc_narray_length", vector(a), TI32), file, line, cls, name), TRef(RAny));
 	}
 
@@ -1722,7 +1722,7 @@ class FnLower {
 		for (ci in 0...sw.switchCases.length)
 			for (p in sw.switchCases[ci].casePatterns) {
 				var h = switch strip(p).eexpr {
-					case TConst(TString(v)): strHash(v);
+					case TConst(TString(v)): strHash(Lower.shown(v));
 					case _: throw "unreachable";
 				}
 				var g = groups.get(h);
@@ -1883,7 +1883,7 @@ class FnLower {
 				var v = Std.parseFloat(StringTools.replace(f, "_", ""));
 				tyOf(e) == TF64 ? EF64(v) : coerce(EF64(v), TF64, tyOf(e));
 			case TConst(TBool(b)): coerce(EInt(b ? 1 : 0), TBool, tyOf(e));
-			case TConst(TString(s)): EStr(s);
+			case TConst(TString(s)): EStr(Lower.shown(s));
 			case TConst(TNull): nullOf(tyOf(e));
 			case TConst(TThis):
 				if (thisLocal == null) fail("this outside a method", e);
@@ -3777,7 +3777,7 @@ class FnLower {
 
 	// (errors) where e is, and the function
 	function spanWhere(e:TExpr):String
-		return where(e) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
+		return Lower.shown(where(e)) + " (" + (fi.display != null ? fi.display : fi.name) + ")";
 
 	// a field this function may assign: not final, written as a plain variable
 	// (default, null) only in its class or, through this, a subclass
