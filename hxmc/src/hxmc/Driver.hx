@@ -513,7 +513,6 @@ class Driver {
 				if (f.writes & ~(1 << Opt.MCallOnly) == 0) quiet++;
 			}
 		Sys.println('hxmc: effects: $known functions with a summary, $quiet of them writing nothing');
-		if (prep.e.closures != null) Sys.println('hxmc: closures: ' + prep.e.closures.known + ' of ' + prep.e.closures.sites + ' closure calls with their functions known');
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');

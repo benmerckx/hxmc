@@ -223,7 +223,6 @@ class Reach {
 		p.lambdas = [for (l in p.lambdas) if (live.exists(l.fn)) l];
 		p.shapes = [for (s in p.shapes) if (shapes.exists(s)) s];
 		p.liveSelectors = selLive;
-		p.computedNames = anyName != null;
 		// (the statics live code can reach through a class value: Type.getClassFields lists them)
 		for (cs in [p.classes, p.interfaces])
 			for (c in cs)

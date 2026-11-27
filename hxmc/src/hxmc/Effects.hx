@@ -136,7 +136,7 @@ class Effects {
 			case ArraySet | ArrayPush: ARRAY_STORE;
 			case RefStore: RAW_STORE;
 			// (its selector's implementations' summaries, MirBuild)
-			case VirtualCall | ClosureCall if (i.kills != UNKNOWN): i.kills | CALL_KILL;
+			case VirtualCall if (i.kills != UNKNOWN): i.kills | CALL_KILL;
 			case _: Opt.ALL;
 		};
 }
