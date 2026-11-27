@@ -43,31 +43,9 @@ class Effects {
 	public static inline function fieldOff(t:Ty, loc:Int, compact:Bool):Int
 		return t.match(TRef(_) | TF64 | TI64 | TId) && !compact ? 8 * loc : 4 * loc;
 
-	// The class of a field of a class instance: by the class that declares it
-	// and its offset (8 buckets), so that fields of unrelated classes at one
-	// offset are apart (a type-correct program reads a field as its
-	// declaring class laid it out; structural accesses are MField's); of
-	// other objects (enum values, closures, boxes, anonymous objects) by
-	// the offset alone
-	public static function fieldClassOf(cls:Null<ClassInfo>, off:Int):Int {
-		if (cls == null) return fieldAt(off);
-		var d = cls;
-		while (d.sup != null && hasOff(d.sup, off))
-			d = d.sup;
-		return Opt.MFieldAt + ((d.id * 5 + (off >> 3)) & 7);
-	}
-
-	static function hasOff(c:ClassInfo, off:Int):Bool {
-		for (k in 0...c.fields.length) {
-			var t = c.fields[k].ty, loc = c.locs[k];
-			if (!t.match(TVoid) && fieldOff(t, loc & ~hxmc.ir.Facts.COMPACT, loc & hxmc.ir.Facts.COMPACT != 0) == off) return true;
-		}
-		return false;
-	}
-
 	// what a store into a field writes
-	public static inline function fieldStore(cls:Null<ClassInfo>, t:Ty, loc:Int, compact:Bool):Int
-		return t.match(TVoid) ? 0 : (1 << fieldClassOf(cls, fieldOff(t, loc, compact))) | (1 << Opt.MField) | (1 << Opt.MOther);
+	public static inline function fieldStore(t:Ty, loc:Int, compact:Bool):Int
+		return t.match(TVoid) ? 0 : (1 << fieldAt(fieldOff(t, loc, compact))) | (1 << Opt.MField) | (1 << Opt.MOther);
 
 	// a structural store, at an offset only the object's shape knows
 	public static inline var ANY_FIELD = Opt.FIELD_BITS | (1 << Opt.MField) | (1 << Opt.MOther);
@@ -149,7 +127,7 @@ class Effects {
 			case ArrayGet: 0;
 			// (allocations: memory no load sees before them)
 			case New | NewDyn | NewArray | NewNArray | Box: 0;
-			case SetField: fieldStore(i.info.cls, i.info.t, i.info.loc, i.info.compact);
+			case SetField: fieldStore(i.info.t, i.info.loc, i.info.compact);
 			case AnonStore: ANY_FIELD;
 			case NArraySet | ArrayInit | NArrayInit: NARRAY_STORE;
 			// (LoopVersion's copy: in range, of the kind: its elements only)

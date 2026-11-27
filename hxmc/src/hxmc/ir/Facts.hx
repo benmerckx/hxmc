@@ -119,8 +119,8 @@ class Facts {
 				switch s {
 					case SSetField(c, idx, _, _):
 						var loc = c.locs[idx];
-						w |= hxmc.Effects.fieldStore(c, c.fields[idx].ty, loc & ~COMPACT, loc & COMPACT != 0);
-					case SBoxSet(t, _, _): w |= hxmc.Effects.fieldStore(null, t, 0, false);
+						w |= hxmc.Effects.fieldStore(c.fields[idx].ty, loc & ~COMPACT, loc & COMPACT != 0);
+					case SBoxSet(t, _, _): w |= hxmc.Effects.fieldStore(t, 0, false);
 					case SAnonSet(_): w |= hxmc.Effects.ANY_FIELD | (1 << hxmc.Opt.MCallOnly);
 					case SArrSet(_) | SArrPush(_): w |= hxmc.Effects.ARRAY_STORE;
 					case SSetGlobal(g, _):

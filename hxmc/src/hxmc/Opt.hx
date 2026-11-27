@@ -2622,9 +2622,8 @@ class Opt {
 	public static inline function fieldOff(o:OInfo):Int
 		return o.t.match(TRef(_) | TF64 | TI64 | TId) && !o.compact ? 8 * o.loc : 4 * o.loc;
 
-	// (Effects.fieldClassOf: by the declaring class and the offset)
 	static inline function fieldCls(o:OInfo):Int
-		return Effects.fieldClassOf(o.cls, fieldOff(o));
+		return MFieldAt + ((fieldOff(o) >> 3) & 7);
 
 	// an array element of this type is a reference (its slow path may box: a call)
 	public static inline function ptrElem(t:hxmc.ir.Ir.Ty):Bool
