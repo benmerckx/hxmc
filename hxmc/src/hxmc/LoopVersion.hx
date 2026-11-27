@@ -285,7 +285,8 @@ class LoopVersion {
 		// (a reference read left with its slow path writes everything: no gain then)
 		for (g in gets)
 			if (taken.indexOf(g) < 0 && Opt.ptrElem(g.info.t)) return false;
-		version(h, members, inLoop, cfg, pre, start, limit, limitK, limitArr, arrays, taken, null, null, null, spans);
+		var objs = objectsOf(members, inLoop, cfg, h.preds[pre]).filter(o -> !Lambda.exists(arrays, e -> e.arr.a == o.a));
+		version(h, members, inLoop, cfg, pre, start, limit, limitK, limitArr, arrays, taken, null, null, objs, spans);
 		return true;
 	}
 
@@ -308,7 +309,6 @@ class LoopVersion {
 		if (pre < 0) return false;
 		var size = 0;
 		var strs:Array<Int> = [], widths:Array<Int> = [];
-		var objs:Array<MIns> = []; // (a read of a field or a length of each object from before the loop)
 		for (b in members)
 			for (i in b.ins) {
 				if (i.dead) continue;
@@ -322,9 +322,6 @@ class LoopVersion {
 					case _:
 						return false;
 				}
-				if ((i.op == GetField && !i.info.t.match(TVoid) || i.op == ArrayLength || i.op == NArrayLength) && i.a >= 0 && !inLoop(v(i.a).block)
-					&& !Lambda.exists(objs, o -> o.a == i.a))
-					objs.push(i);
 				if (i.op == Load && i.mem == Opt.MConst && i.imm == 0 && i.size == 4 && i.b < 0 && i.ty == I32 && i.a >= 0 && !inLoop(v(i.a).block)
 					&& strs.indexOf(i.a) < 0)
 					strs.push(i.a);
@@ -343,17 +340,32 @@ class LoopVersion {
 			}
 			true;
 		});
-		objs = objs.filter(o -> {
+		var objs = objectsOf(members, inLoop, cfg, preB).filter(o -> !Lambda.exists(strs, s -> s == o.a));
+		if (strs.length == 0 && objs.length == 0) return false;
+		version(h, members, inLoop, cfg, pre, -1, -1, null, null, [], [], strs, widths, objs);
+		return true;
+	}
+
+	// the objects from before the loop that it reads a field or a length of
+	// (one read of each), which nothing before the loop on every way to it
+	// dereferences (a copy entered once they are not null: LICM moves the
+	// reads out of it)
+	function objectsOf(members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, preB:MBlock):Array<MIns> {
+		var objs:Array<MIns> = [];
+		for (b in members)
+			for (i in b.ins)
+				if (!i.dead && (i.op == GetField && !i.info.t.match(TVoid) || i.op == ArrayLength || i.op == NArrayLength) && i.a >= 0
+					&& !inLoop(v(i.a).block) && !Lambda.exists(objs, o -> o.a == i.a))
+					objs.push(i);
+		var at = cfg.index(preB);
+		return objs.filter(o -> {
 			for (b in f.blocks) {
 				if (inLoop(b) || cfg.index(b) < 0 || !cfg.dominates(cfg.index(b), at)) continue;
 				for (i in b.ins)
 					if (!i.dead && (i.op == Load || i.op == Store || Opt.objDeref(i.op)) && i.a == o.a) return false;
 			}
-			!Lambda.exists(strs, s -> s == o.a);
+			true;
 		});
-		if (strs.length == 0 && objs.length == 0) return false;
-		version(h, members, inLoop, cfg, pre, -1, -1, null, null, [], [], strs, widths, objs);
-		return true;
 	}
 
 	// a call the loop may keep (its callee's summary, Effects): it does not
