@@ -510,6 +510,9 @@ class Fingerprint {
 				args(xs);
 			case ECallClos(s, c, xs):
 				word(E_CALLCLOS);
+				// (the functions it may run: their summaries, Closures)
+				word(prep.e.closureWrites(c));
+				word(prep.e.closureRetains(c));
 				str(s.key);
 				ex(c);
 				args(xs);

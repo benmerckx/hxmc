@@ -65,6 +65,7 @@ class Facts {
 		collectNames();
 		assignNames();
 		findExits();
+		closures = new Closures(p, bodyNames, dispatchImpls());
 		findEffects();
 		findFates();
 	}
@@ -107,7 +108,10 @@ class Facts {
 					case ECallDispatch(sel, _, _):
 						var l = impls.get(sel);
 						if (l == null) w = hxmc.Effects.UNKNOWN else for (g in l) callee(g);
-					case ECallClos(_) | ECallAnon(_): w = hxmc.Effects.UNKNOWN;
+					case ECallClos(_, c, _):
+						var l = closures.callees(c);
+						if (l == null) w = hxmc.Effects.UNKNOWN else for (x in l) callee(x.fn);
+					case ECallAnon(_): w = hxmc.Effects.UNKNOWN;
 					// (a structural read's slow path: the inline caches, what only calls change)
 					case EAnonGet(_): w |= 1 << hxmc.Opt.MCallOnly;
 					case _:
@@ -207,6 +211,30 @@ class Facts {
 					grew = true;
 				}
 		}
+	}
+
+	// which functions closure calls may run (Closures)
+	public var closures:Closures;
+
+	// what a closure call through c may write (the union of its functions'
+	// summaries; Effects.UNKNOWN: not known)
+	public function closureWrites(c:Ex):Int {
+		var l = closures == null ? null : closures.callees(c);
+		if (l == null) return hxmc.Effects.UNKNOWN;
+		var w = 0;
+		for (x in l)
+			if (!exits.exists(x.fn)) w |= x.fn.writes;
+		return w;
+	}
+
+	// the arguments (the closure first) a closure call through c may retain
+	public function closureRetains(c:Ex):Int {
+		var l = closures == null ? null : closures.callees(c);
+		if (l == null) return -1;
+		var r = 0;
+		for (x in l)
+			r |= x.fn.retains;
+		return r;
 	}
 
 	// per selector, the functions its dispatch row holds (DataGen.dispatch:
@@ -325,6 +353,17 @@ class Facts {
 					calls(fateCallers, g, f);
 					for (k in 0...args.length)
 						use(args[k], !exits.exists(g) && (k > 30 || g.retains & (1 << k) != 0));
+				case ECallClos(_, c, args):
+					// (the closure is its functions' first parameter)
+					var l = closures.callees(c);
+					var r = 0;
+					if (l == null) r = -1 else for (x in l) {
+						calls(fateCallers, x.fn, f);
+						r |= x.fn.retains;
+					}
+					use(c, r & 1 != 0);
+					for (k in 0...args.length)
+						use(args[k], k > 29 || r & (1 << (k + 1)) != 0);
 				case ECallDispatch(sel, _, args):
 					var l = selCallers.get(sel);
 					if (l == null) selCallers.set(sel, l = []);

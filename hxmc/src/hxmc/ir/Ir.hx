@@ -550,6 +550,9 @@ class Program {
 	// (Reach) whether the program reads stacks (haxe.NativeStackTrace.toHaxe live, or -D hxmc.stacks): the table of its functions and lines (hxmc.StackTable)
 	public var stacks = false;
 	public var liveSelectors:Null<Vector<Bool>> = null;
+	// a name is computed somewhere (Reflect, structural access by a run-time
+	// name: Reach), so any field or method may be reached by name
+	public var computedNames = true;
 	// (Options.safepoints) polls added after the no-GC functions are known (hxmc.ir.Safepoints);
 	// null: when the program starts threads (Safepoints.on)
 	public var safepoints:Null<Bool> = false;

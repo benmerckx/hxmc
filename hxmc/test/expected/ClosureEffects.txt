@@ -1,0 +1,10 @@
+exit 0
+param: 12 6
+field: 42 48
+static: 0 48
+dynamic: 4807
+array: 7 18
+structure: 18 -1
+reflection: -1 42
+type parameter: 42 5
+cast: 5 9
