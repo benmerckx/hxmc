@@ -46,6 +46,13 @@ class Frames {
 		for (b in f.blocks)
 			for (i in b.ins)
 				if (i.op == Call && i.returnsTwice && !i.dead) return;
+		// (the entry's push is the function's own only when popped where it
+		// returns: in a function with no frame of its own, the first inlined
+		// copy's push may be the entry's, popped after the copy, which would
+		// release the frames merged into it while the rest still uses them)
+		for (b in f.blocks)
+			for (i in b.ins)
+				if (!i.dead && i.op == TlsStore && i.sym == "rt_sp" && i.a == r.id && !returns(b)) return;
 		// the pushes: an rt_sp read whose top (rt_sp + k) is stored into rt_sp
 		var topOf = MFunc.ints(vals.length, -1), baseOf = MFunc.ints(vals.length, -1);
 		var pushes:Array<MIns> = [];
@@ -118,6 +125,13 @@ class Frames {
 			}
 			if (k < ins.length) ins.resize(k);
 		}
+	}
+
+	static function returns(b:MBlock):Bool {
+		var k = b.ins.length;
+		while (k-- > 0)
+			if (!b.ins[k].dead) return b.ins[k].op == Ret;
+		return false;
 	}
 
 	// rt_sp_hw, or on wasm rt_sp_limit (MirWriter.raiseHw)
