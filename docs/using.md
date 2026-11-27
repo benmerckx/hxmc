@@ -319,6 +319,13 @@ this repository ([development.md](development.md)).
   ./node_modules/@hxmc/cli/dist`, or a `.haxerc` with
   `{"version": "./node_modules/@hxmc/cli/dist", "resolveLibs": "scoped"}`.
   lix's `haxe` shim then runs hxmc. CI checks this on Linux and macOS.
+- **lix, a build from npm**: this repository's lix (`tools/lix`, `make lix`)
+  installs a build from npm's registry itself, with no npm project and no
+  npm client: `lix install haxe hxmc` (the newest nightly, the same as
+  `hxmc-next`; any dist-tag works), `hxmc-a5a73c2` (a nightly's commit) or
+  `hxmc-0.1.0-nightly.20261125.a5a73c2`. `.haxerc` keeps the exact version.
+  Builds for `--custom-target hxmc` still go through the launcher, which
+  needs node.
 - **lix's npm package in the same project**: both packages declare a `haxe`
   bin, and npm links whichever comes last. Use lix's shim with the `dist/`
   version there.

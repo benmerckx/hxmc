@@ -150,6 +150,16 @@ class Cli {
                 println(highlight(v.hash) + v.published.format('  (%Y-%m-%d %H:%M)'));
             }
 
+            var h = hx.hxmcInstalled();
+            if (h.length > 0) {
+              println('');
+              println('hxmc builds:');
+              println('');
+
+              for (v in h)
+                println(highlight(v));
+            }
+
             println('');
           default:
             throw new Error('command `list` does expect arguments');

@@ -454,9 +454,13 @@ class Fs {
 	static public function link(target:String, path:String)
 		UvError.check(sync(LINK, target, path), 'link $path');
 
+	// uv_fs_symlink's flags (Windows: a directory's link, a junction)
+	static public inline var SYMLINK_DIR = 1;
+	static public inline var SYMLINK_JUNCTION = 2;
+
 	/** Creates a symbolic link at `path` pointing to `target`. **/
-	static public function symlink(target:String, path:String)
-		UvError.check(sync(SYMLINK, target, path), 'symlink $path');
+	static public function symlink(target:String, path:String, flags = 0)
+		UvError.check(sync(SYMLINK, target, path, flags), 'symlink $path');
 
 	static public function isSymlink(path:String):Bool
 		return N.available() && sync(READLINK, path) >= 0;
