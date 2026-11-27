@@ -357,8 +357,10 @@ class Fingerprint {
 				word(E_F64);
 				word(haxe.io.FPHelper.doubleLow(v));
 				word(haxe.io.FPHelper.doubleHigh(v));
-			case EStr(s):
-				// (collects the literal: DataGen defines every one, cached modules included)
+			case EStr(raw):
+				// (collects the literal: DataGen defines every one, cached modules included;
+				// as MirBuild names it, -D hxmc.paths' labels in it, the key with them)
+				var s = hxmc.ir.Lower.shown(raw);
 				literal(s, null);
 				word(E_STR);
 				str(s);

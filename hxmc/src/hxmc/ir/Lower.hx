@@ -233,6 +233,23 @@ class Lower {
 	// -D hxmc.native-array-outofbounds: what an access of a NativeArray
 	// (haxe.ds.Vector) at an index out of bounds does (FnLower.nativeRead)
 	public static var bounds = BOUNDS_UNCHECKED;
+	// -D hxmc.paths: the dirs whose sources the program's strings name by label (shown)
+	public static var paths:Array<{dir:String, label:String}> = [];
+
+	// a string of the program as it shows its sources: each dir of
+	// -D hxmc.paths (either separator after it) its label, wherever it is in
+	// the string (a macro's literal id, a check's file:line); unchanged
+	// without the define. The typed AST is left as it is: a compilation
+	// server's next build may have other defines
+	public static function shown(s:String):String {
+		if (paths.length == 0 || s == null) return s;
+		for (p in paths) {
+			if (s.indexOf(p.dir) < 0) continue;
+			s = s.split(p.dir + "/").join(p.label + "/").split(p.dir + "\\").join(p.label + "/");
+			if (s == p.dir) s = p.label;
+		}
+		return s;
+	}
 	public static inline var BOUNDS_UNCHECKED = 0; // not tested (unspecified)
 	public static inline var BOUNDS_THROWS = 1; // haxe.exceptions.ArgumentException (rt/NArray.outOfBounds)
 	public static inline var BOUNDS_SILENT = 2; // a read gives the element type's default, a write does nothing

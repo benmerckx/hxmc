@@ -50,6 +50,7 @@ lists the ones marked with *.
 | `-D hxmc.lines` | DWARF lines only |
 | `-D hxmc.no-stacks` | no call stacks: `haxe.CallStack` and exception stacks are empty |
 | `-D hxmc.stacks` | call stacks in every program, so an uncaught exception prints its frames |
+| `-D hxmc.paths=<dir>=<label>,...` | the program's strings name the sources under each dir by its label (`<project>/app.hx`): a position's file in a check's error or the call stacks, and any string a macro made of one. A program published (a web build) shows no one where it was built. The longest dir wins; a relative dir is the working directory's. Macros still see the real paths |
 | `-D hxmc.frame-pointers=0` | x86-64: no frame pointers (arm64 always keeps them) |
 | `-D hxmc.pac=0` | arm64 on Linux, Android and Windows: no signed return addresses in the functions whose frame C or raw memory writes reach ([Return addresses](hxmc.md#return-addresses)) |
 | `-D hxmc.checked` * | diagnostic build: enable NativeArray bounds, null, span and tagged-reference checks and disable Mir optimizations, including check elimination. Overrides the individual check switches. Raw operations in unsafe code remain unsafe. |

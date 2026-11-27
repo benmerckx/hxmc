@@ -500,7 +500,9 @@ class Corpus {
 		var result = [];
 		if (FileSystem.exists(src))
 			for (l in File.getContent(src).split("\n"))
-				if (l.trim().startsWith("// define: ")) result = result.concat(["-D", l.trim().substr(11)]);
+				// ($CASE_DIR: the case's directory, absolute: a define naming it whatever the compiler's working directory)
+				if (l.trim().startsWith("// define: "))
+					result = result.concat(["-D", l.trim().substr(11).split("$CASE_DIR").join(haxe.io.Path.directory(FileSystem.fullPath(src)))]);
 		return result;
 	}
 

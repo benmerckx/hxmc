@@ -151,7 +151,7 @@ class StackTable {
 			var off = 0, file = -1, line = 0;
 			k = 0;
 			while (k < kept.length) {
-				var f = str(x.files[kept[k + 1]]);
+				var f = str(hxmc.ir.Lower.shown(x.files[kept[k + 1]]));
 				rows.uleb(((kept[k] - off) << 1) | (f != file ? 1 : 0));
 				if (f != file) rows.uleb(f);
 				rows.sleb(kept[k + 2] - line);
