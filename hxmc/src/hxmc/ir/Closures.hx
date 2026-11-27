@@ -12,7 +12,10 @@ import hxmc.ir.Ir;
 // closures, and what is read from anywhere else is that set; so is what
 // code outside the program's sight passes or stores: the parameters of
 // lambdas and of functions called by name or from C, fields and statics
-// read or written by name, closures made where no body shows it. A set larger than MAX is unknown.
+// read or written by name, closures made where no body shows it. A place's
+// set lists its closures, and ANY for the escaped ones (a call takes those
+// of its signature from them: a closure is called at its own); a place with
+// more than MAX is ANY, its closures escaped.
 class Closures {
 	static inline var MAX = 48;
 
@@ -25,6 +28,9 @@ class Closures {
 	var keyed = new Map<String, Int>();
 	var rets = new Map<FuncInfo, Int>();
 	var lambdas = new Map<Int, LambdaInfo>();
+	// the escaped closures by their signature's key
+	var escaped = new Map<String, Array<LambdaInfo>>();
+	var isEscaped = new Map<Int, Bool>();
 	var changed = false;
 	// the places changed in this round, those the function being walked reads
 	var dirty = new Map<Int, Bool>();
@@ -37,6 +43,7 @@ class Closures {
 
 	static inline var ESCAPED = 0;
 	static inline var NONE = -1; // (a place no closure is in)
+	static inline var ANY = -2; // (in a set: every escaped closure)
 
 	public function new(p:Program, names:Map<String, Bool>, impls:Map<Int, Array<FuncInfo>>) {
 		this.p = p;
@@ -101,9 +108,9 @@ class Closures {
 				sets[k] = null;
 		function count(e:Ex) {
 			switch e {
-				case ECallClos(_, c, _):
+				case ECallClos(sig, c, _):
 					sites++;
-					if (callees(c) != null) known++;
+					if (callees(c, sig) != null) known++;
 				case _:
 			}
 			Facts.iterEx(count, e);
@@ -116,10 +123,42 @@ class Closures {
 	}
 
 	// what a closure call through e may run (null: unknown)
-	public function callees(e:Ex):Null<Array<LambdaInfo>> {
+	public function callees(e:Ex, sig:SigInfo):Null<Array<LambdaInfo>> {
 		var s = value(e, false);
-		if (s == null || s.length == 0) return null;
-		return [for (id in s) lambdas.get(id)];
+		if (s == null) return null;
+		var m = memo.get(s);
+		if (m == null) memo.set(s, m = new Map());
+		if (m.exists(sig.key)) return m.get(sig.key);
+		var r = expand(s, sig);
+		m.set(sig.key, r);
+		return r;
+	}
+
+	// (the answers by set and signature, once the flow settled: a call is
+	// asked by the summaries, the fates, MirBuild and the fingerprint)
+	var memo = new haxe.ds.ObjectMap<Array<Int>, Map<String, Null<Array<LambdaInfo>>>>();
+
+	// the closures of the signature a set holds (null: none, more than MAX, unknown)
+	function expand(s:Array<Int>, sig:SigInfo):Null<Array<LambdaInfo>> {
+		var r:Array<LambdaInfo> = [];
+		function one(id:Int):Bool {
+			var l = lambdas.get(id);
+			if (l == null) return false;
+			if (l.sig.key == sig.key && r.indexOf(l) < 0) r.push(l);
+			return true;
+		}
+		for (id in s)
+			if (id == ANY) {
+				if (sets[ESCAPED] == null) return null;
+				var e = escaped.get(sig.key);
+				if (e != null)
+					for (l in e)
+						if (r.indexOf(l) < 0) {
+							if (r.length >= MAX) return null;
+							r.push(l);
+						}
+			} else if (!one(id)) return null;
+		return r.length == 0 || r.length > MAX ? null : r;
 	}
 
 	// a method a computed or literal name may reach (Reflect, structural access)
@@ -156,6 +195,7 @@ class Closures {
 
 	inline function get(k:Int):Null<Array<Int>> {
 		if (k == NONE) return [];
+		if (k == ESCAPED) return [ANY];
 		if (read != null) {
 			while (stamps.length <= k)
 				stamps.push(0);
@@ -211,10 +251,18 @@ class Closures {
 			dirty.set(k, true);
 			return;
 		}
+		if (k != ESCAPED && t.length == 1 && t[0] == ANY) {
+			escape(s);
+			return;
+		}
 		for (x in s)
-			if (t.indexOf(x) < 0) {
-				if (t.length >= MAX) {
-					sets[k] = null;
+			if (!(k == ESCAPED && (x == ANY || isEscaped.exists(x))) && (k == ESCAPED || t.indexOf(x) < 0)) {
+				if (k == ESCAPED) isEscaped.set(x, true);
+				// (too many: the place is ANY, its closures escaped)
+				if (k != ESCAPED && t.length >= MAX) {
+					escape(t);
+					escape(s);
+					sets[k] = [ANY];
 					changed = true;
 					dirty.set(k, true);
 					return;
@@ -222,16 +270,30 @@ class Closures {
 				t.push(x);
 				changed = true;
 				dirty.set(k, true);
+				if (k == ESCAPED) {
+					var l = lambdas.get(x);
+					if (l != null) {
+						var e = escaped.get(l.sig.key);
+						if (e == null) escaped.set(l.sig.key, e = []);
+						e.push(l);
+					}
+				}
 			}
 	}
 
-	static function union(a:Null<Array<Int>>, b:Null<Array<Int>>):Null<Array<Int>> {
+	inline function escape(s:Array<Int>)
+		add(ESCAPED, s);
+
+	// (too many: ANY, its closures escaped when flowing)
+	function union(a:Null<Array<Int>>, b:Null<Array<Int>>, flow:Bool):Null<Array<Int>> {
 		if (a == null || b == null) return null;
 		if (b.length == 0) return a;
 		var r = a.copy();
 		for (x in b)
 			if (r.indexOf(x) < 0) r.push(x);
-		return r.length > MAX ? null : r;
+		if (r.length <= MAX) return r;
+		if (flow) escape(r);
+		return [ANY];
 	}
 
 	// what e is put where this flow does not follow
@@ -250,7 +312,7 @@ class Closures {
 				[l.id];
 			case ELocal(l): get(local(l));
 			// (to a closure from a type this flow does not follow: any escaped one too)
-			case ECast(t, x): holds(t) && !holds(Ir.typeOf(x)) ? union(value(x, flow), get(ESCAPED)) : value(x, flow);
+			case ECast(t, x): holds(t) && !holds(Ir.typeOf(x)) ? union(value(x, flow), get(ESCAPED), flow) : value(x, flow);
 			case EField(c, idx, o):
 				value(o, flow);
 				get(field(c, idx));
@@ -276,10 +338,10 @@ class Closures {
 				}
 				if (l == null) get(ESCAPED) else {
 					for (g in l)
-						r = union(r, get(ret(g)));
+						r = union(r, get(ret(g)), flow);
 					r;
 				}
-			case ECallClos(_, c, args):
+			case ECallClos(sig, c, args):
 				var s = value(c, flow);
 				var vs = [for (a in args) value(a, flow)];
 				// (a lambda's parameters take every escaped closure: callers
@@ -287,13 +349,12 @@ class Closures {
 				if (flow)
 					for (v in vs)
 						add(ESCAPED, v);
-				if (s == null) null else {
+				// (its result: what its functions return; any lambda's result escapes)
+				var l = s == null ? null : expand(s, sig);
+				if (l == null) get(ESCAPED) else {
 					var r:Null<Array<Int>> = [];
-					for (id in s) {
-						var l = lambdas.get(id);
-						if (l == null) return null;
-						r = union(r, get(ret(l.fn)));
-					}
+					for (x in l)
+						r = union(r, get(ret(x.fn)), flow);
 					r;
 				}
 			case ENull(_) | EInt(_) | EF64(_) | EStr(_) | EType(_) | ENewObj(_): [];
