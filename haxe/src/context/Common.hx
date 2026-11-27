@@ -461,6 +461,8 @@ typedef CommonContext = {
 	var features:Map<String, Bool>;
 	var modules:Array<ModuleDef>;
 	var types:Array<ModuleType>;
+	// port: type-order prerequisites from the final sort, for hxmc's initializer graph.
+	var staticInitDependencies:Null<Map<TClass, Array<TClass>>>;
 	var resources:core.ds.OcamlHashtbl<String, haxe.io.Bytes>;
 	// target-specific
 	var flashVersion:Float;
@@ -856,6 +858,7 @@ class Common {
 			packageRules: new haxe.ds.StringMap(),
 			file: "",
 			types: [],
+			staticInitDependencies: null,
 			callbacks: new CompilerCallbacks(),
 			globalMetadata: [],
 			modules: [],
@@ -982,6 +985,7 @@ class Common {
 		out.classPaths = new core.ClassPaths();
 		out.main = {mainPath: null, mainFile: null, mainExpr: null};
 		out.types = [];
+		out.staticInitDependencies = null;
 		out.callbacks = new CompilerCallbacks();
 		out.modules = [];
 		out.moduleLut = new ModuleLut();

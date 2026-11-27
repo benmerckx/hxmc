@@ -571,7 +571,12 @@ class Filters {
 		});
 		beforeDestruction();
 		/* Sort again: cached types hold the expressions saved above, new types held unfiltered ones during the first sort. */
-		com.types = Finalization.sortTypes(com, com.moduleLut, false).types;
+		// port: retain hxmc's existing ordering constraints when it adds dependencies from the lowered program.
+		com.staticInitDependencies = switch com.platform {
+			case CustomTarget("hxmc"): new Map();
+			case _: null;
+		};
+		com.types = Finalization.sortTypes(com, com.moduleLut, false, com.staticInitDependencies).types;
 		destruction(com, scom, ectx, detailTimes, rename, com.types, com.types.copy());
 	}
 }

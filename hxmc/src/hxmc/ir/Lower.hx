@@ -60,8 +60,9 @@ class Lower {
 			case NotCoro(t): t;
 		}
 
-	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
-		Lower.basic = basic;
+	public static function program(main:TClass, com:context.Common.CommonContext, ?l:Lower):Program {
+		Lower.basic = com.basic;
+		var types = com.types;
 		if (l == null) l = new Lower();
 		var initOrder = l.initOrder = new InitOrder(l.prog);
 		var mainField = main.clStatics.get("main");
@@ -98,7 +99,7 @@ class Lower {
 			c != null && order.exists(c) ? order.get(c) : types.length;
 		};
 		l.prog.inits.sort((a, b) -> pos(a) - pos(b));
-		initOrder.run(c -> l.classes.get(l.canonClass(c)));
+		initOrder.run(c -> l.classes.get(l.canonClass(c)), l.initOf, com.staticInitDependencies);
 		l.initOrder = null;
 		return l.prog;
 	}
