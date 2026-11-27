@@ -621,6 +621,15 @@ fault handler turns the fault into a throw. A fault that is not a null
 access still kills the process. On WebAssembly each access is tested
 instead.
 
+### Maps and threads
+
+A map used by several threads at once, one of them writing, needs a lock
+(a `sys.thread.Mutex`), as on every target. Without one, hxmc's maps
+throw where the race happens: `"concurrent map writes"`, `"concurrent map
+read and map write"` or `"concurrent map access"`, as Go's maps fail.
+They catch most such races, not all, and never read or write outside their
+own arrays ([hxmc.md](hxmc.md#maps-and-threads)).
+
 ## Known limitations
 
 - **WebAssembly**: no threads (creating one throws), sockets or processes;

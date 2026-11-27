@@ -10,6 +10,7 @@ package haxe.ds;
 
 import hxmc.rt.MapSlots;
 import hxmc.rt.MapSlots.RefSlots;
+import hxmc.rt.MapSlots.MapRace;
 
 /**
 	IntMap allows mapping of Int keys to arbitrary values.
@@ -30,6 +31,8 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	var used:Int; // entries appended, the removed ones included
 	var live:Int;
 	var mask:Int; // cap - 1
+	// a write under way (MapRace: threads using the map together)
+	var writing:Bool;
 
 	/**
 		Creates a new IntMap.
@@ -45,16 +48,20 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	inline function find(k:Int):Int {
 		if (live == 0) return -1;
 		var slots = this.slots, mask = this.mask;
+		// (the array read once, its size tested once: MapSlots)
+		if (slots == null || 2 * mask + 2 > slots.length) throw MapRace.TORN;
 		var i = hashOf(k) & mask;
-		var r = -1;
+		var r = -1, left = mask;
 		while (true) {
-			var e = slots[2 * i + 1];
+			var e = slots.at(2 * i + 1);
 			if (e == 0) break;
-			if (slots[2 * i] == k) {
+			if (slots.at(2 * i) == k) {
 				r = e - 1;
 				break;
 			}
 			i = (i + 1) & mask;
+			// (each slot once at most: an index without an empty slot is a race's, MapRace)
+			if (--left < 0) throw MapRace.TORN;
 		}
 		return r;
 	}
@@ -70,6 +77,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	// Int. On an IntMap they are inlined into a call of these, which take an
 	// Int: nothing allocated)
 	function getInt(k:Int):Null<T> {
+		if (writing) throw MapRace.READ_WRITE;
 		var e = find(k);
 		return e < 0 ? null : vs[e];
 	}
@@ -80,8 +88,19 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 	@:runtime public inline function exists(k:Int):Bool
 		return existsInt(k);
 
-	function existsInt(k:Int):Bool
+	function existsInt(k:Int):Bool {
+		if (writing) throw MapRace.READ_WRITE;
 		return find(k) >= 0;
+	}
+
+	// a write begins (another under way: a race, MapRace), and ends
+	inline function begin() {
+		if (writing) throw MapRace.WRITES;
+		writing = true;
+	}
+
+	inline function end()
+		writing = false;
 
 	/**
 		See `Map.set`
@@ -90,13 +109,15 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		setInt(k, v);
 
 	function setInt(k:Int, v:T):Void {
+		begin();
 		var e = find(k);
-		if (e >= 0) {
+		if (e >= 0)
 			vs[e] = v;
-			return;
+		else {
+			if (used >= (mask + 1) >> 1) grow();
+			add(k, v);
 		}
-		if (used >= (mask + 1) >> 1) grow();
-		add(k, v);
+		end();
 	}
 
 	// appends an entry (there is room for it) and indexes it
@@ -106,30 +127,35 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		slots[2 * (mask + 1) + n] = k;
 		vs[n] = v;
 		live++;
-		var i = hashOf(k) & mask;
-		while (slots[2 * i + 1] != 0)
+		if (2 * mask + 2 > slots.length) throw MapRace.TORN;
+		var i = hashOf(k) & mask, left = mask;
+		while (slots.at(2 * i + 1) != 0) {
 			i = (i + 1) & mask;
-		slots[2 * i] = k;
-		slots[2 * i + 1] = n + 1;
+			if (--left < 0) throw MapRace.TORN;
+		}
+		slots.put(2 * i, k);
+		slots.put(2 * i + 1, n + 1);
 	}
 
 	// empties slot i, moving back the slots after it whose probe chain
 	// passes through it (backward-shift deletion)
 	function unindex(i:Int) {
 		var slots = this.slots, mask = this.mask;
-		var j = i;
+		if (i < 0 || i > mask || 2 * mask + 2 > slots.length) throw MapRace.TORN;
+		var j = i, left = mask;
 		while (true) {
 			j = (j + 1) & mask;
-			var e = slots[2 * j + 1];
+			if (--left < 0) throw MapRace.TORN;
+			var e = slots.at(2 * j + 1);
 			if (e == 0) break;
-			var home = hashOf(slots[2 * j]) & mask;
+			var home = hashOf(slots.at(2 * j)) & mask;
 			// (j stays where it is when its home is cyclically in (i, j])
 			if (i <= j ? (i < home && home <= j) : (i < home || home <= j)) continue;
-			slots[2 * i] = slots[2 * j];
-			slots[2 * i + 1] = e;
+			slots.put(2 * i, slots.at(2 * j));
+			slots.put(2 * i + 1, e);
 			i = j;
 		}
-		slots[2 * i + 1] = 0;
+		slots.put(2 * i + 1, 0);
 	}
 
 	/**
@@ -139,10 +165,21 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		return removeInt(k);
 
 	function removeInt(k:Int):Bool {
-		if (live == 0) return false;
+		if (live == 0) {
+			if (writing) throw MapRace.READ_WRITE;
+			return false;
+		}
+		begin();
+		var r = removeEntry(k);
+		end();
+		return r;
+	}
+
+	function removeEntry(k:Int):Bool {
 		var slots = this.slots, mask = this.mask;
-		var i = hashOf(k) & mask;
+		var i = hashOf(k) & mask, left = mask;
 		while (true) {
+			if (--left < -1) throw MapRace.TORN;
 			var e = slots[2 * i + 1];
 			if (e == 0) return false;
 			if (slots[2 * i] == k) {
@@ -204,6 +241,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		See `Map.copy`
 	**/
 	public function copy():IntMap<T> {
+		if (writing) throw MapRace.READ_WRITE;
 		var m = new IntMap<T>();
 		for (j in 0...used)
 			if (dead == null || !dead[j]) m.set(slots[2 * (mask + 1) + j], vs[j]);
@@ -214,6 +252,7 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		See `Map.toString`
 	**/
 	public function toString():String {
+		if (writing) throw MapRace.READ_WRITE;
 		var b = new StringBuf();
 		b.add("[");
 		var first = true;
@@ -233,12 +272,14 @@ class IntMap<T> implements haxe.Constraints.IMap<Int, T> {
 		See `Map.clear`
 	**/
 	public function clear():Void {
+		begin();
 		slots = null;
 		vs = null;
 		dead = null;
 		used = 0;
 		live = 0;
 		mask = -1;
+		end();
 	}
 
 	public function size():Int
@@ -268,6 +309,7 @@ private class IntMapIterator<T> {
 		return i < m.used;
 
 	public function next():Dynamic {
+		if (m.writing) throw MapRace.READ_WRITE;
 		if (i >= m.used) return null; // (past the end)
 		var r:Dynamic = keys ? m.slots[2 * (m.mask + 1) + i] : m.vs[i];
 		i++;

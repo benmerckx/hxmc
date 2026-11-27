@@ -17,6 +17,7 @@ package haxe.ds;
 
 import hxmc.rt.MapSlots;
 import hxmc.rt.MapSlots.RefSlots;
+import hxmc.rt.MapSlots.MapRace;
 
 /**
 	StringMap allows mapping of String keys to arbitrary values.
@@ -42,6 +43,8 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	var live:Int;
 	var room:Int; // the entries that fit before the next growth
 	var mask:Int; // cap - 1 with an index, else 0
+	// a write under way (MapRace: threads using the map together)
+	var writing:Bool;
 
 	/**
 		Creates a new StringMap.
@@ -58,13 +61,15 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	// (a removed entry's key is null and its hash 1, never the null key's 0:
 	// the scan passes it)
 	inline function find(k:String, h:Int):Int {
-		var slots = this.slots, mask = this.mask;
+		var slots = this.slots, kvs = this.kvs, mask = this.mask;
 		var r = -1;
 		if (mask == 0) {
 			var n = used;
+			// (the arrays read once, their sizes tested once: MapSlots)
+			if (n > 0 && (slots == null || kvs == null || n > slots.length || 2 * n > kvs.length)) throw MapRace.TORN;
 			var j = 0;
 			while (j < n) {
-				if (slots[j] == h && (kvs[2 * j] : String) == k) {
+				if (slots.at(j) == h && (kvs.at(2 * j) : String) == k) {
 					r = j;
 					break;
 				}
@@ -72,11 +77,20 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 			}
 		} else {
 			var ix = room;
-			var i = h & mask;
+			if (ix + 2 * mask + 2 > slots.length) throw MapRace.TORN;
+			var i = h & mask, left = mask;
 			while (true) {
-				var e = slots[ix + 2 * i + 1];
+				// (each slot once at most: an index without an empty slot is a race's, MapRace)
+				if (--left < -1) throw MapRace.TORN;
+				var e = slots.at(ix + 2 * i + 1);
 				if (e == 0) break;
-				if (slots[ix + 2 * i] == h && (kvs[2 * e - 2] : String) == k) {
+				// (an entry the index names: tested, its key and its value)
+				if (slots.at(ix + 2 * i) == h) {
+					if (e < 0 || e > kvs.length >> 1) throw MapRace.TORN;
+					if ((kvs.at(2 * e - 2) : String) != k) {
+						i = (i + 1) & mask;
+						continue;
+					}
 					r = e - 1;
 					break;
 				}
@@ -90,28 +104,43 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		See `Map.get`
 	**/
 	public function get(k:String):Null<T> {
+		if (writing) throw MapRace.READ_WRITE;
 		var e = find(k, hashOf(k));
-		return e < 0 ? null : kvs[2 * e + 1];
+		// (find tested the entry)
+		return e < 0 ? null : kvs.at(2 * e + 1);
 	}
 
 	/**
 		See `Map.exists`
 	**/
-	public function exists(k:String):Bool
+	public function exists(k:String):Bool {
+		if (writing) throw MapRace.READ_WRITE;
 		return find(k, hashOf(k)) >= 0;
+	}
+
+	// a write begins (another under way: a race, MapRace), and ends
+	inline function begin() {
+		if (writing) throw MapRace.WRITES;
+		writing = true;
+	}
+
+	inline function end()
+		writing = false;
 
 	/**
 		See `Map.set`
 	**/
 	public function set(k:String, v:T):Void {
+		begin();
 		var h = hashOf(k);
 		var e = find(k, h);
-		if (e >= 0) {
-			kvs[2 * e + 1] = v;
-			return;
+		if (e >= 0)
+			kvs.put(2 * e + 1, v); // (find tested the entry)
+		else {
+			if (used >= room) grow();
+			add(k, v, h);
 		}
-		if (used >= room) grow();
-		add(k, v, h);
+		end();
 	}
 
 	// appends an entry (there is room for it) and indexes it
@@ -124,11 +153,14 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		live++;
 		if (mask != 0) {
 			var ix = room;
-			var i = h & mask;
-			while (slots[ix + 2 * i + 1] != 0)
+			if (ix + 2 * mask + 2 > slots.length) throw MapRace.TORN;
+			var i = h & mask, left = mask;
+			while (slots.at(ix + 2 * i + 1) != 0) {
 				i = (i + 1) & mask;
-			slots[ix + 2 * i] = h;
-			slots[ix + 2 * i + 1] = n + 1;
+				if (--left < 0) throw MapRace.TORN;
+			}
+			slots.put(ix + 2 * i, h);
+			slots.put(ix + 2 * i + 1, n + 1);
 		}
 	}
 
@@ -136,26 +168,38 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	// passes through it (backward-shift deletion)
 	function unindex(i:Int) {
 		var slots = this.slots, mask = this.mask, ix = room;
-		var j = i;
+		if (i < 0 || i > mask || ix + 2 * mask + 2 > slots.length) throw MapRace.TORN;
+		var j = i, left = mask;
 		while (true) {
 			j = (j + 1) & mask;
-			var e = slots[ix + 2 * j + 1];
+			if (--left < 0) throw MapRace.TORN;
+			var e = slots.at(ix + 2 * j + 1);
 			if (e == 0) break;
-			var home = slots[ix + 2 * j] & mask;
+			var home = slots.at(ix + 2 * j) & mask;
 			// (j stays where it is when its home is cyclically in (i, j])
 			if (i <= j ? (i < home && home <= j) : (i < home || home <= j)) continue;
-			slots[ix + 2 * i] = slots[ix + 2 * j];
-			slots[ix + 2 * i + 1] = e;
+			slots.put(ix + 2 * i, slots.at(ix + 2 * j));
+			slots.put(ix + 2 * i + 1, e);
 			i = j;
 		}
-		slots[ix + 2 * i + 1] = 0;
+		slots.put(ix + 2 * i + 1, 0);
 	}
 
 	/**
 		See `Map.remove`
 	**/
 	public function remove(k:String):Bool {
-		if (live == 0) return false;
+		if (live == 0) {
+			if (writing) throw MapRace.READ_WRITE;
+			return false;
+		}
+		begin();
+		var r = removeEntry(k);
+		end();
+		return r;
+	}
+
+	function removeEntry(k:String):Bool {
 		var h = hashOf(k);
 		var e = -1;
 		if (mask == 0) {
@@ -163,8 +207,9 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 			if (e < 0) return false;
 		} else {
 			var slots = this.slots, mask = this.mask, ix = room;
-			var i = h & mask;
+			var i = h & mask, left = mask;
 			while (true) {
+				if (--left < -1) throw MapRace.TORN;
 				var f = slots[ix + 2 * i + 1];
 				if (f == 0) return false;
 				if (slots[ix + 2 * i] == h && (kvs[2 * f - 2] : String) == k) {
@@ -209,7 +254,11 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 			while (r < n)
 				r *= 2;
 		}
-		if (r > room && r > used) rebuild(r);
+		if (r > room && r > used) {
+			begin();
+			rebuild(r);
+			end();
+		}
 	}
 
 	// the table with room for r entries (and an index of 2 * r slots past
@@ -261,6 +310,7 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 	**/
 	public function copy():StringMap<T> {
 		// (sized once; the keys are unique and their hashes kept: appended, not looked up)
+		if (writing) throw MapRace.READ_WRITE;
 		var m = new StringMap<T>();
 		if (live == 0) return m;
 		m.reserve(live);
@@ -273,6 +323,7 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		See `Map.toString`
 	**/
 	public function toString():String {
+		if (writing) throw MapRace.READ_WRITE;
 		var b = new StringBuf();
 		b.add("[");
 		var first = true;
@@ -292,6 +343,7 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		See `Map.clear`
 	**/
 	public function clear():Void {
+		begin();
 		slots = null;
 		kvs = null;
 		dead = null;
@@ -299,6 +351,7 @@ class StringMap<T> implements haxe.Constraints.IMap<String, T> {
 		live = 0;
 		room = 0;
 		mask = 0;
+		end();
 	}
 
 	public function size():Int
@@ -328,6 +381,7 @@ private class StringMapIterator<T> {
 		return i < m.used;
 
 	public function next():Dynamic {
+		if (m.writing) throw MapRace.READ_WRITE;
 		if (i >= m.used) return null; // (past the end)
 		var r:Dynamic = m.kvs[2 * i + at];
 		i++;
