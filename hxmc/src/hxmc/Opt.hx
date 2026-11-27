@@ -3560,6 +3560,20 @@ class Opt {
 							continue;
 						}
 					}
+					// (an Int converted to a Float and back: the Int; to an I64: extended)
+					if (op == F2I && i.a >= 0) {
+						var w = vals[res(i.a)];
+						if (w.op == I2F && w.a >= 0 && vals[res(w.a)].ty == I32) {
+							if (i.ty == I32) {
+								repl[i.id] = res(w.a);
+								i.dead = true;
+								continue;
+							}
+							i.op = SExt;
+							i.a = res(w.a);
+							op = SExt;
+						}
+					}
 					// (comparisons are recomputed: they fuse with their branch;
 					// those of constants are folded)
 					if (op == Cmp) {
@@ -3696,6 +3710,47 @@ class Opt {
 				&& ((x.op == SymAddr || x.op == StackAddr) && plain(y) && y.imm == 0 && y.imm2 == 0
 					|| (y.op == SymAddr || y.op == StackAddr) && plain(x) && x.imm == 0 && x.imm2 == 0)):
 				return set(i.imm == (CNe : Int) ? 1 : 0, 0);
+			// (a Float that is an Int converted: no NaN, in the Int range; two
+			// such compare as their Ints, one against a constant outside the range
+			// or itself is decided: Std.int's range test, MirBuild.f2i)
+			case Cmp if (i.imm >= (FEq : Int) && y != null && (isIntF(x) || isIntF(y))):
+				var c:Cond = i.imm;
+				if (res(i.a) == res(i.b))
+					return set(c == FEq || c == FLe || c == FGe ? 1 : 0, 0);
+				if (isIntF(x) && isIntF(y)) {
+					i.a = res(x.a);
+					i.b = res(y.a);
+					i.imm = switch c {
+						case FEq: CEq;
+						case FNe: CNe;
+						case FLt: CLt;
+						case FLe: CLe;
+						case FGt: CGt;
+						case _: CGe;
+					};
+					return false;
+				}
+				var k = isIntF(x) ? y : x;
+				if (k.op != ConstF || k.f != k.f) return false;
+				// (the Int's range against the constant, the Int on the left)
+				if (!isIntF(x))
+					c = switch c {
+						case FLt: FGt;
+						case FGt: FLt;
+						case FLe: FGe;
+						case FGe: FLe;
+						case o: o;
+					};
+				var lo = -2147483648.0, hi = 2147483647.0, v = k.f;
+				var r = switch c {
+					case FLt: hi < v ? 1 : lo >= v ? 0 : -1;
+					case FLe: hi <= v ? 1 : lo > v ? 0 : -1;
+					case FGt: lo > v ? 1 : hi <= v ? 0 : -1;
+					case FGe: lo >= v ? 1 : hi < v ? 0 : -1;
+					case FEq: v < lo || v > hi || v != Math.ffloor(v) ? 0 : -1;
+					case _: v < lo || v > hi || v != Math.ffloor(v) ? 1 : -1;
+				};
+				return r >= 0 ? set(r, 0) : false;
 			case Cmp if (plain(x) && plain(y) && x.ty == y.ty && i.imm < (FEq : Int)):
 				// (signed and unsigned order of two words, 32 or 64 bits)
 				var a = x.ty == I64 ? haxe.Int64.make(x.imm2, x.imm) : haxe.Int64.ofInt(x.imm);
@@ -3755,6 +3810,10 @@ class Opt {
 				return false;
 		}
 	}
+
+	// an Int converted to a Float (I2F of an I32: exact, never NaN)
+	inline function isIntF(v:MIns):Bool
+		return v.op == I2F && v.a >= 0 && f.vals[res(v.a)].ty == I32;
 
 	function rewrite() {
 		for (b in f.blocks)

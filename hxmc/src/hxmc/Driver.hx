@@ -116,6 +116,7 @@ class Driver {
 	var escRemoved = 0;
 	var escFolds = 0;
 	var loopsVersioned = 0; // (LoopVersion)
+	var floatCounters = 0; // (FloatCounters)
 	var allocsFolded = 0; // (Fold)
 	var rootStores = 0; // (Frames)
 	var freshStores = 0; // (Opt.freshTargets)
@@ -276,6 +277,15 @@ class Driver {
 			// lowering only allocation folding, the CFG's cleanup and
 			// dead code
 			if (o.opt) new Sroa(mf).run();
+			// (Float counters of Int ranges: Ints, before the loop passes)
+			if (o.opt && (interp == null || !interp.wants(fn))) {
+				var c = FloatCounters.run(mf);
+				if (c > 0) {
+					lock.acquire();
+					floatCounters += c;
+					lock.release();
+				}
+			}
 			// (Array reads in counted loops tested once before them)
 			if (o.opt && (interp == null || !interp.wants(fn))) {
 				var lv = new LoopVersion(mf);
@@ -474,6 +484,7 @@ class Driver {
 		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');
 		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
+		Sys.println('hxmc: $floatCounters Float counters made Ints (FloatCounters)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
 		Sys.println('hxmc: frames: $rootStores root stores and $framesRemoved frames removed, $framesMerged inlined frames merged; $freshStores write barriers of objects just allocated left out; $devirtualized virtual calls made direct');
