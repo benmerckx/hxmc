@@ -3,7 +3,7 @@
 The rules for every change to the port (`haxe/src`), for contributors.
 The port must behave exactly like the reference compiler of the pinned
 upstream commit, apart from the [divergences](#divergences-from-the-reference)
-listed below.
+listed below and [product hooks](#product-hooks-hxmc) used by hxmc-only features.
 
 ## The reference
 
@@ -39,6 +39,24 @@ listed below.
 - A ported file starts with its upstream module's license header.
 - Every other comment in `haxe/src` starts with `// port:` (continuation
   lines `// ...`) and stays true.
+
+## Product hooks (hxmc)
+
+hxmc-only products extend the port through **nullable hook types** in
+`haxe/src`: call sites check the hook (and usually a define), then delegate.
+Implementation lives under `hxmc/` and is wired at startup. Do not import
+`hxmc` from ported modules or grow large product branches inline; add a hook
+field or a short guarded branch with a `// port:` note instead.
+
+| Hook | Call sites | Wired from |
+| --- | --- | --- |
+| `generators.EsmHook` | `compiler/Generate.hx` (Js backend) | `hxmc/EsmInstall.hx` |
+| `generators.EsmHotEmit` | `filters/Filters.hx`, `generators/Genjs.hx` | `hxmc/esm/EsmHotInstall.hx` |
+| `typing.TypeloadCacheHook` | `typing/TypeloadModule.hx`, macros, display | `hxmc/ModuleCache.hx` |
+
+ESM behaviour is documented in [esm.md](esm.md). On the reference port,
+`-D esm`, `-D esm.hot`, and `-D esm.prod` fail in `Generate.hx` when
+`EsmHook.generate` is null.
 
 ## OCaml semantics that reach the output
 

@@ -99,6 +99,14 @@ class JsCtx {
 	/* the features read while generating a type in parallel: they do not
 		change then (those added are read once all types are generated) */
 	public var featureCache:Null<StringMap<Bool>>;
+	// port: hxmc Genesm (-D esm) keeps each module in ctx.buf; skip incremental flush to com.file
+	public var noFlush:Bool;
+	// port: hxmc esm.hot — skip hot-closure emit inside class static initializers
+	public var inClassStatic:Bool;
+	// port: hxmc GenesmProd — cyclic module check (deferred super/static).
+	public var cyclicCheck:Null<String -> Bool> = null;
+	// port: hxmc GenesmProd — cross-module package static field reference.
+	public var moduleFieldRef:Null<(ModuleDef, TClassField) -> String> = null;
 
 	public function new() {}
 }
@@ -254,7 +262,7 @@ class Genjs {
 	static function unsupported(p:Pos):Dynamic return Error.abort("This expression cannot be compiled to Javascript", p);
 
 	public static function flush(ctx:JsCtx):Void {
-		if (ctx.packageMarks != null) return;
+		if (ctx.noFlush || ctx.packageMarks != null) return;
 		var chan = switch ctx.chan {
 			case null:
 				var chan = sys.io.File.write(ctx.com.file, true);
@@ -633,6 +641,17 @@ class Genjs {
 		return loop(e);
 	}
 
+	// port: hxmc esm.hot — delegate closure TMeta to EsmHotEmit.tryEmitClosure
+	public static function tryGenHotClosure(ctx:JsCtx, e:TExpr):Bool {
+		return switch e.eexpr {
+			case TMeta(m, {eexpr: TFunction(f)}) if (!ctx.inClassStatic && EsmHotEmit.tryEmitClosure != null
+				&& EsmHotEmit.tryEmitClosure(ctx, m, f, e.epos)):
+				true;
+			case _:
+				false;
+		}
+	}
+
 	public static function genExpr(ctx:JsCtx, e:TExpr):Void {
 		var mapping = JsSourcemap.addMapping(ctx.smap, e);
 		switch e.eexpr {
@@ -725,7 +744,14 @@ class Genjs {
 			case TField(x, FInstance(_, _, f) | FStatic(_, f) | FAnon(f)) if (Meta.has(Meta.SelfCall, f.cfMeta)):
 				genValue(ctx, x);
 			case TField(_, FStatic({clKind: KModuleFields(m)}, f)):
-				spr(ctx, moduleField(m, f));
+				var mf = moduleField(m, f);
+				// port: hxmc GenesmProd — module statics use static import bindings
+				if (generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm()
+					&& ctx.moduleFieldRef != null)
+					spr(ctx, ctx.moduleFieldRef(m, f));
+				// port: hxmc Genesm (-D esm) — module statics publish on $global
+				else if (core.Define.rawDefined(ctx.com.defines, "esm")) spr(ctx, "$global." + mf);
+				else spr(ctx, mf);
 			case TField(x, f):
 				function skip(e:TExpr):TExpr {
 					return switch e.eexpr {
@@ -756,6 +782,7 @@ class Genjs {
 					case _:
 						die("", "genjs.ml");
 				}
+			case _ if (tryGenHotClosure(ctx, e)):
 			case TMeta(_, e):
 				genExpr(ctx, e);
 			case TReturn(eo):
@@ -1057,6 +1084,7 @@ class Genjs {
 			case TConst(_) | TLocal(_) | TArray(_) | TBinop(_) | TField(_) | TEnumParameter(_) | TEnumIndex(_) | TTypeExpr(_) | TParenthesis(_) |
 				TObjectDecl(_) | TArrayDecl(_) | TNew(_) | TUnop(_) | TFunction(_) | TIdent(_):
 				genExpr(ctx, e);
+			case _ if (tryGenHotClosure(ctx, e)):
 			case TMeta(_, e1):
 				genValue(ctx, e1);
 			case TCall(e, el):
@@ -1411,11 +1439,20 @@ class Genjs {
 			case e:
 				switch e.eexpr {
 					case TFunction(_):
+						// port: hxmc GenesmHot swappable static bodies when -D esm.hot
+						if (EsmHotEmit.tryEmitClassStatic != null && EsmHotEmit.tryEmitClassStatic(ctx, c, clPath, f)) {
+							newline(ctx);
+							return;
+						}
+						if (EsmHotEmit.prepareFieldCells != null) EsmHotEmit.prepareFieldCells(ctx, c, f);
 						var path = (sPath(ctx, clPath)) + (staticField(ctx, c, f));
 						ctx.idCounter = 0;
 						print(ctx, path + " = ");
 						processExpose(f.cfMeta, () -> (dotPath(clPath)) + "." + f.cfName, s -> print(ctx, "$hx_exports" + pathToBrackets(s) + " = "));
+						var wasStatic = ctx.inClassStatic;
+						ctx.inClassStatic = true;
 						genValue(ctx, e);
+						ctx.inClassStatic = wasStatic;
 						newline(ctx);
 					case _:
 						ctx.statics.unshift({c: c, f: f, e: e});
@@ -1558,14 +1595,24 @@ class Genjs {
 			&& (c.clSuper != null || c.clFields.length > 0 || c.clConstructor != null);
 		var hasPrototype = c.clSuper != null || hasClass || Lambda.exists(c.clFields, f -> canGenClassField(ctx, f));
 		if (hasPrototype) {
+			var cyclicSup = false;
 			switch c.clSuper {
 				case null:
 					print(ctx, p + ".prototype = {");
 				case {cls: csup}:
 					var psup = ctx.typeAccessor(TClassDecl(csup));
+					var supMod = Globals.sTypePath(csup.clModule.mPath);
+					var homeMod = Globals.sTypePath(c.clModule.mPath);
+					// port: hxmc GenesmProd — defer prototype wiring for cyclic std/user module edges
+					cyclicSup = generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm() && supMod != homeMod
+						&& (!(generators.EsmHook.isProdEsmStd != null && generators.EsmHook.isProdEsmStd(supMod))
+							|| (ctx.cyclicCheck != null && ctx.cyclicCheck(supMod)));
 					print(ctx, p + ".__super__ = " + psup);
 					newline(ctx);
-					print(ctx, p + ".prototype = $extend(" + psup + ".prototype,{");
+					if (cyclicSup)
+						print(ctx, "$hx.deferProto(" + p + ",function(){return " + psup + ";},function(sup){return $extend(sup.prototype,{");
+					else
+						print(ctx, p + ".prototype = $extend(" + psup + ".prototype,{");
 			}
 
 			var bend = openBlock(ctx);
@@ -1593,6 +1640,7 @@ class Genjs {
 			print(ctx, "\n}");
 			switch c.clSuper {
 				case null: ctx.separator = true;
+				case _ if (cyclicSup): print(ctx, ");});");
 				case _: print(ctx, ")");
 			}
 			newline(ctx);
@@ -1614,7 +1662,12 @@ class Genjs {
 
 		if (c.clSuper != null) {
 			var psup = ctx.typeAccessor(TClassDecl(c.clSuper.cls));
-			print(ctx, " extends " + psup);
+			var supMod = Globals.sTypePath(c.clSuper.cls.clPath);
+			if (generators.EsmHook.isProdEsm != null && generators.EsmHook.isProdEsm() && ctx.cyclicCheck != null
+				&& ctx.cyclicCheck(supMod))
+				print(ctx, " extends $hx.inherits(() => " + psup + ",true)");
+			else
+				print(ctx, " extends " + psup);
 		}
 
 		spr(ctx, " {");
@@ -1863,6 +1916,8 @@ class Genjs {
 
 	public static function generateStatic(ctx:JsCtx, s:{c:TClass, f:TClassField, e:TExpr}):Void {
 		var c = s.c, f = s.f, e = s.e;
+		var wasStatic = ctx.inClassStatic;
+		ctx.inClassStatic = true;
 		switch c.clKind {
 			case KModuleFields(m):
 				print(ctx, "var " + moduleField(m, f) + " = ");
@@ -1873,6 +1928,7 @@ class Genjs {
 				print(ctx, sPath(ctx, clPath) + staticField(ctx, c, f) + " = ");
 		}
 		genValue(ctx, e);
+		ctx.inClassStatic = wasStatic;
 		newline(ctx);
 	}
 

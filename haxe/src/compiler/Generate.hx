@@ -207,7 +207,14 @@ class Generate {
 					generate = generators.Genneko.generate.bind(com.nekoLibPaths);
 					name = "neko";
 				case Js:
-					generate = generators.Genjs.generate.bind(com.jsGen);
+					// port: hxmc ESM (-D esm / esm.hot) is only on the npm compiler (EsmHook).
+					if (core.Define.rawDefined(com.defines, "esm") || core.Define.rawDefined(com.defines, "esm.hot")
+						|| core.Define.rawDefined(com.defines, "esm.prod")) {
+						if (generators.EsmHook.generate == null)
+							throw 'The reference compiler does not support -D esm (use the hxmc npm compiler)';
+						generate = generators.EsmHook.generate;
+					} else
+						generate = generators.Genjs.generate.bind(com.jsGen);
 					name = "js";
 				case Lua:
 					generate = generators.Genlua.generate;

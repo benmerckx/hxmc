@@ -14,6 +14,16 @@ bin/hxmc/hxmc dev build.hxml       # the repository's tool
 The arguments are the build's. The output (`--custom-target hxmc=<out>`)
 is the program the dev server runs.
 
+## ESM hot on JavaScript
+
+The same **`haxe --dev`** entry also drives **`-js`** builds with **`-D esm`**
+(multi-file ESM and in-process hot patches on Node or in the browser).
+`packages/cli/hxmc/bootstrap/dev.mjs` picks the backend from the build:
+**`--custom-target hxmc=<out>`** → **`dev-hxmc.mjs`** (sections below);
+**`-js … -D esm`** → **`dev-esm.mjs`**, which keeps a compilation server,
+watches sources, injects **`-D esm.hot`**, and pushes patch manifests. See
+[esm.md](esm.md) for output layout, **`@:esm.hot.*`** metadata, and tests.
+
 ## What happens
 
 - **The compiler stays resident.** The dev server

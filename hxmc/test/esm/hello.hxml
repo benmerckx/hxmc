@@ -1,0 +1,7 @@
+# Minimal prod ESM sample (run from repo root after `make hxmc`):
+#   bin/hxmc/hxmc hxmc/test/esm/hello.hxml
+#   node hxmc/test/esm/out/main.mjs
+-cp hxmc/test/esm/src
+-main Main
+-D esm
+-js hxmc/test/esm/out/main.mjs

@@ -29,4 +29,22 @@ class Defines {
 			flags: [core.DefineRegistry.DefineParameter.HasParam("module prefixes")]
 		});
 	}
+
+	public static function addEsmDefine():Void {
+		core.DefineRegistry.all.push({
+			key: "esm",
+			doc: "Emit idiomatic ECMAScript modules with --js (hxmc Genesm). Defines js. -D esm.hot enables hot dev (implicit swappable bodies; docs/esm.md).",
+			flags: []
+		});
+		core.DefineRegistry.all.push({
+			key: "esm.hot",
+			doc: "Hot-reload dev flavor for -D esm: $h registry, tier-1 body swaps, -dce no.",
+			flags: []
+		});
+		core.DefineRegistry.all.push({
+			key: "esm.prod",
+			doc: "Prod idiomatic ESM (phase 3); not supported with esm.hot.",
+			flags: []
+		});
+	}
 }

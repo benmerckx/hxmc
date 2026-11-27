@@ -127,7 +127,7 @@ endef
 
 .DEFAULT_GOAL := help
 .PHONY: help rt rt-build rt-target rt-layouts hxmc bootstrap fixpoint stage0 crosshost portable-check port release npm site site-check \
-	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites corpus-stage corpus-verify \
+	lix lix-dist reference test test-fuzz test-libraries test-module-cache upstream-suites esm corpus-stage corpus-verify \
 	units native-check mir-check dev-check \
 	bench bench-compile bench-micro bench-simd measure quick check clean distclean
 
@@ -176,6 +176,8 @@ help:
 ##               print what hxmc's builds print (hxmc/test/PortableCheck.hx)
 ##   upstream-suites  upstream's runtime suites (tests/unit, sys, threads) built by hxmc and run
 ##               (hxmc/test/UpstreamSuites.hx; SUITES: a subset, SUITES_TARGET=native|wasm32-wasi)
+##   esm           Genesm + upstream unit (-D esm) + hot-reload harnesses (hxmc/test/Esm.hx; ESM_ARGS:
+##               lane ids or harness names to run a subset, default all)
 ##   test-module-cache  the module cache's gate: the same outputs with and without it, for hxmc and
 ##               JS (hxmc/test/ModuleCacheCheck.hx; PORT=1 adds the port itself)
 ##   dev-check   the dev loop: `hxmc dev` through edits and a compile error, the compilation server's
@@ -498,6 +500,11 @@ test-module-cache: $(TOOL) $(STD) $(HOST_RT) bin/npm/native/$(HOST)/haxe
 # unit on wasm32-wasi; SUITES and SUITES_TARGET narrow it (CI: a job per target)
 SUITES ?=
 SUITES_TARGET ?=
+# ESM (Genesm, -D esm / -D esm.hot): npm-style compiler; utest via lix (docs/testing.md)
+ESM_ARGS ?=
+esm: $(TOOL) $(STD) $(HOST_HAXE) bin/lix/lix
+	$(SCRIPT) Esm --haxe $(HOST_HAXE) $(ESM_ARGS)
+
 upstream-suites: $(TOOL) $(STD) $(HOST_RT) bin/lix/lix
 	@failed=; \
 	$(if $(filter wasm32-wasi,$(SUITES_TARGET)),,$(SCRIPT) UpstreamSuites $(SUITES) || failed="$$failed native";) \

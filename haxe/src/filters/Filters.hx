@@ -498,6 +498,9 @@ class Filters {
 				run: SafeFilters.markSwitchBreakLoops
 			}
 		];
+		// port: hxmc esm.hot — mark cells and closures while local metadata is intact
+		if (generators.EsmHotEmit.beforeRename != null && core.Define.rawDefined(com.defines, "esm.hot"))
+			generators.EsmHotEmit.beforeRename(com);
 		Parallel.runWithPool(com.sctx.pool, function(pool) {
 			var castPool = Common.defined(com, Define.EnableParallelAbstractCast) ? pool : null;
 			Parallel.ParallelArray.iter(castPool, mt -> SafeCom.runExpressionFiltersSafe(scom, detailTimes, beforeInlining, mt), newTypes);
@@ -512,6 +515,8 @@ class Filters {
 			Parallel.ParallelArray.iter(pool, mt -> SafeCom.runExpressionFiltersSafe(scom, detailTimes, afterAnalyzer, mt), newTypes);
 			Dump.maybeGenerateDump(com, AfterSanitizing);
 		});
+		if (generators.EsmHotEmit.afterRename != null && core.Define.rawDefined(com.defines, "esm.hot"))
+			generators.EsmHotEmit.afterRename(com);
 	}
 
 	public static function run(com:CommonContext, ectx:Null<ExceptionContext>, beforeDestruction:Void->Void):Void {

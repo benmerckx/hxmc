@@ -9,3 +9,4 @@
 /packages/cli/dist/std
 /packages/cli/dist/platform.txt
 /packages/cli/dist/haxe.exe
+hxmc/test/esm/out/

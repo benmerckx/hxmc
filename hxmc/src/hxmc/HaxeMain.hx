@@ -57,6 +57,7 @@ class HaxeMain {
 				Sys.putEnv("HXMC_STD", boot + "/hxmc-std");
 		}
 		Defines.install();
+		EsmInstall.install();
 		if (args[0] == "--dev") return dev(args.slice(1));
 		// the engines: -D hxmc.macros=mir|eval for macros, -D hxmc.run=mir|eval
 		// for --interp and --run (both Eval by default)
@@ -85,8 +86,10 @@ class HaxeMain {
 		var failed = null;
 		// hxmc's std, given last (a custom target gets no std of its own)
 		var hxmcStd = Sys.getEnv("HXMC_STD");
+		var esmStd = EsmInstall.esmStdPath();
 		if (hxmcStd != null) {
 			if (selectsHxmc(args, 0)) args = args.concat(["-cp", hxmcStd]);
+			else if (EsmInstall.selectsEsm(args, 0) && esmStd != null) args = args.concat(["-cp", esmStd]);
 			// (another target: hxmc's spans over Bytes, MkStd's hxmc-portable,
 			// docs/interop.md, "Spans on other targets"; first: after --run come
 			// the program's arguments)

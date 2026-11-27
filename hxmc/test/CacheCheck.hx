@@ -67,8 +67,15 @@ class CacheCheck {
 				if (n.startsWith("m") && !n.endsWith(".used")) d + "/i/" + n
 		];
 
-	static function backdate(path:String, ago:String)
-		exec(["touch", "-d", ago, path]);
+	static function backdate(path:String, ago:String) {
+		if (exec(["sh", "-c", "command -v gtouch >/dev/null"]).code == 0)
+			exec(["gtouch", "-d", ago, path]);
+		else {
+			var ts = exec(["gdate", "-d", ago, "+%Y%m%d%H%M.%S"]);
+			if (ts.code == 0) exec(["touch", "-t", ts.out.trim(), path]);
+			else exec(["touch", "-d", ago, path]);
+		}
+	}
 
 	public static function run():Int {
 		dir = FileSystem.fullPath("bin") + "/hxmc-t/cache";

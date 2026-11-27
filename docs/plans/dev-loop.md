@@ -1,7 +1,8 @@
 # Plans: the dev loop
 
-Open work on `haxe --dev`: the dev server, swap hosts and snapshots. What
-is built: [dev.md](../dev.md).
+Open work on `haxe --dev`: the dev server, swap hosts and snapshots. ESM Js
+hot reload shares the same **`--dev`** entry but a separate patch backend;
+see [esm-dev.md](esm-dev.md). What is built: [dev.md](../dev.md).
 
 ## Principles
 
