@@ -25,6 +25,10 @@ class Regex {
 	var icase:Bool;
 	var multiline:Bool;
 	var dotall:Bool;
+	// (PCRE2 without UCP, as Neko's: \d \w \s \b and the POSIX classes ASCII;
+	// asciiCase: without UTF either, caseless matching ASCII alone)
+	var ascii = false;
+	var asciiCase = false;
 
 	public var ngroups(default, null):Int; // including group 0
 	public var caps:Array<Int>; // start, end per group (-1: unset)
@@ -45,8 +49,10 @@ class Regex {
 	// lock-free: a new map is published whole, never changed afterwards)
 	static var cache:Map<String, Regex> = new Map();
 
-	public function new(pattern:String, opt:String) {
-		var key = opt + "/" + pattern;
+	public function new(pattern:String, opt:String, ucp = true, unicodeCase = true) {
+		ascii = !ucp;
+		asciiCase = !unicodeCase;
+		var key = (ascii ? "A" : "") + (asciiCase ? "C" : "") + opt + "/" + pattern;
 		var c = cache.get(key);
 		if (c == null) {
 			parse(pattern, opt);
@@ -288,12 +294,12 @@ class Regex {
 		var c = peek();
 		p++;
 		return switch c {
-			case "d".code: RSet(RegexUnicode.DIGIT, false);
-			case "D".code: RSet(RegexUnicode.DIGIT, true);
-			case "w".code: RSet(RegexUnicode.WORD, false);
-			case "W".code: RSet(RegexUnicode.WORD, true);
-			case "s".code: RSet(RegexUnicode.SPACE, false);
-			case "S".code: RSet(RegexUnicode.SPACE, true);
+			case "d".code: RSet(ascii ? ASCII_DIGIT : RegexUnicode.DIGIT, false);
+			case "D".code: RSet(ascii ? ASCII_DIGIT : RegexUnicode.DIGIT, true);
+			case "w".code: RSet(ascii ? ASCII_WORD : RegexUnicode.WORD, false);
+			case "W".code: RSet(ascii ? ASCII_WORD : RegexUnicode.WORD, true);
+			case "s".code: RSet(ascii ? ASCII_SPACE : RegexUnicode.SPACE, false);
+			case "S".code: RSet(ascii ? ASCII_SPACE : RegexUnicode.SPACE, true);
 			case "b".code if (!inClass): RWordB(false);
 			case "B".code if (!inClass): RWordB(true);
 			case "b".code: RChar(8);
@@ -399,14 +405,14 @@ class Regex {
 				var name = src.substring(p + 1, end);
 				p = end + 2;
 				var r = switch name {
-					case "alpha": RegexUnicode.ALPHA;
-					case "digit": RegexUnicode.DIGIT;
-					case "alnum": RegexUnicode.ALNUM;
-					case "space": RegexUnicode.SPACE;
-					case "upper": RegexUnicode.UPPER;
-					case "lower": RegexUnicode.LOWER;
+					case "alpha": ascii ? [65, 90, 97, 122] : RegexUnicode.ALPHA;
+					case "digit": ascii ? ASCII_DIGIT : RegexUnicode.DIGIT;
+					case "alnum": ascii ? [48, 57, 65, 90, 97, 122] : RegexUnicode.ALNUM;
+					case "space": ascii ? ASCII_SPACE : RegexUnicode.SPACE;
+					case "upper": ascii ? [65, 90] : RegexUnicode.UPPER;
+					case "lower": ascii ? [97, 122] : RegexUnicode.LOWER;
 					case "xdigit": [48, 57, 65, 70, 97, 102];
-					case "word": RegexUnicode.WORD;
+					case "word": ascii ? ASCII_WORD : RegexUnicode.WORD;
 					case "punct": [33, 47, 58, 64, 91, 96, 123, 126];
 					case _: throw "Invalid regular expression class " + name;
 				};
@@ -448,6 +454,14 @@ class Regex {
 	inline function code(pos:Int):Int
 		return StringTools.fastCodeAt(s, pos);
 
+	static final ASCII_DIGIT = [48, 57];
+	static final ASCII_WORD = [48, 57, 65, 90, 95, 95, 97, 122];
+	static final ASCII_SPACE = [9, 13, 32, 32];
+
+	// lower, or (asciiCase) ASCII letters alone
+	inline function fold(c:Int):Int
+		return asciiCase && c >= 128 ? c : lower(c);
+
 	// the representative of c's caseless set (ASCII letters: the upper case one)
 	static function lower(c:Int):Int {
 		if (c < 128) return c >= "a".code && c <= "z".code ? c - 32 : c;
@@ -481,6 +495,9 @@ class Regex {
 		return sets.get(lower(c));
 	}
 
+	inline function wordAt(c:Int):Bool
+		return ascii ? c < 128 && isWord(c) : isWord(c);
+
 	static function isWord(c:Int):Bool
 		return c < 128 ? c >= "0".code && c <= "9".code || c >= "A".code && c <= "Z".code || c >= "a".code && c <= "z".code
 			|| c == "_".code : inRanges(RegexUnicode.WORD, c);
@@ -505,7 +522,7 @@ class Regex {
 
 	function inSet(ranges:Array<Int>, c:Int):Bool {
 		if (inRanges(ranges, c)) return true;
-		if (icase) {
+		if (icase && !(asciiCase && c >= 128)) {
 			var set = caseSet(c);
 			if (set != null)
 				for (o in set)
@@ -517,7 +534,7 @@ class Regex {
 	// does the single-unit node n match at pos (pos < limit)?
 	function single(n:RNode, pos:Int):Bool {
 		return switch n {
-			case RChar(c): var x = code(pos); x == c || icase && lower(x) == lower(c);
+			case RChar(c): var x = code(pos); x == c || icase && fold(x) == fold(c);
 			case RAny: dotall || code(pos) != 10;
 			case RSet(r, neg): inSet(r, code(pos)) != neg;
 			case _: false;
@@ -542,7 +559,7 @@ class Regex {
 				case REnd:
 					if (!(pos == limit || (multiline || pos == limit - 1) && code(pos) == 10)) return false; // PCRE: also before a final newline
 				case RWordB(neg):
-					var a = pos > 0 && isWord(code(pos - 1)), b = pos < limit && isWord(code(pos));
+					var a = pos > 0 && wordAt(code(pos - 1)), b = pos < limit && wordAt(code(pos));
 					if ((a != b) == neg) return false;
 				case RBackRef(g):
 					var st = caps[2 * g], en = caps[2 * g + 1];
@@ -551,7 +568,7 @@ class Regex {
 						if (pos + l > limit) return false;
 						for (j in 0...l) {
 							var x = code(st + j), y = code(pos + j);
-							if (x != y && !(icase && lower(x) == lower(y))) return false;
+							if (x != y && !(icase && fold(x) == fold(y))) return false;
 						}
 						pos += l;
 					}
