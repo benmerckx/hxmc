@@ -1,0 +1,5 @@
+exit 0
+through the parent: 1 10 10
+through a callee: 20 20
+apart: 110 8 20.25
+in a loop: 86 24

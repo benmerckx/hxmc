@@ -135,7 +135,7 @@ class LoopVersion {
 		if (a.op == Load && a.b < 0 && a.ty == I64 && a.size == 8 && a.a >= 0 && !inLoop(v(a.a).block)
 			&& (a.mem == Opt.MFrame || a.mem == Opt.MGlobal && !fieldsWritten.exists(GLOBALS)))
 			return {key: "m" + a.mem + ":" + a.a + ":" + a.imm, a: id, obj: -1, field: null, load: a};
-		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && !fieldsWritten.exists(-1 - ((fieldKey(a.info) >> 3) & 7)) && a.info.t.match(TRef(_)))
+		if (a.op == GetField && !inLoop(v(a.a).block) && !fieldsWritten.exists(fieldKey(a.info)) && !fieldsWritten.exists(-1 - (Effects.fieldClassOf(a.info.cls, fieldKey(a.info)) - Opt.MFieldAt)) && a.info.t.match(TRef(_)))
 			return {key: "f" + a.a + ":" + fieldKey(a.info), a: id, obj: a.a, field: a};
 		return null;
 	}
