@@ -83,7 +83,7 @@ class MirRun {
 		hxmc.ir.Lower.resources = com.resources.fold((name, data, acc:Array<{name:String, data:haxe.io.Bytes}>) -> [{name: name, data: data}].concat(acc), []);
 		var t0 = haxe.Timer.stamp();
 		var l = new hxmc.ir.Lower();
-		var prog = hxmc.ir.Lower.program(mainClass, com.types, com.basic, l);
+		var prog = hxmc.ir.Lower.program(mainClass, com, l);
 		// (what a native build keeps: reflection sees the same methods)
 		hxmc.ir.Reach.run(prog, o.stats);
 		var d = new Driver(prog, "", o);

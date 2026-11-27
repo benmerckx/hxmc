@@ -135,7 +135,8 @@ class Finalization {
 	// ... when the module was typed (cf null: the class's init); always null in the compiler itself.
 	public static var sortExprHook:Null<(c:TClass, cf:Null<TClassField>, e:TExpr) -> TExpr> = null;
 
-	public static function sortTypes(com:CommonContext, modules:ModuleLut, warn:Bool = true):{types:Array<ModuleType>, modules:Array<ModuleDef>} {
+	public static function sortTypes(com:CommonContext, modules:ModuleLut, warn:Bool = true,
+			?dependencies:Map<TClass, Array<TClass>>):{types:Array<ModuleType>, modules:Array<ModuleDef>} {
 		inline function sortExpr(c:TClass, cf:Null<TClassField>, e:TExpr):TExpr return sortExprHook == null ? e : sortExprHook(c, cf, e);
 		var types:Array<ModuleType> = [];
 		var states:Map<String, FinalizationState> = [];
@@ -144,9 +145,18 @@ class Finalization {
 		inline function key(p:GlobalTypePath):String return p.hashKey();
 		inline function staticKey(c:TClass, name:String):String return key(c.clPath) + ":" + name;
 		var loop:ModuleType->Void = null;
-		var walkExpr:GlobalTypePath->TExpr->Void = null;
-		inline function loopClass(p:GlobalTypePath, c:TClass):Void {
-			if (key(c.clPath) != key(p)) loop(TClassDecl(c));
+		// port: pass the owner class so the recorded dependency survives native renaming.
+		var walkExpr:TClass->TExpr->Void = null;
+		inline function loopClass(owner:TClass, c:TClass):Void {
+			if (key(c.clPath) != key(owner.clPath)) {
+				loop(TClassDecl(c));
+				// port: remember the class edges this sort satisfies, excluding back edges in cycles.
+				if (dependencies != null && states.get(key(c.clPath)) == Done) {
+					var deps = dependencies.get(owner);
+					if (deps == null) dependencies.set(owner, deps = []);
+					if (deps.indexOf(c) < 0) deps.push(c);
+				}
+			}
 		}
 		inline function loopEnum(p:GlobalTypePath, e:TEnum):Void {
 			if (key(e.ePath) != key(p)) loop(TEnumDecl(e));
@@ -154,54 +164,54 @@ class Finalization {
 		inline function loopAbstract(p:GlobalTypePath, a:TAbstract):Void {
 			if (key(a.aPath) != key(p)) loop(TAbstractDecl(a));
 		}
-		inline function walkStaticField(p:GlobalTypePath, c:TClass, cf:TClassField):Void {
+		inline function walkStaticField(owner:TClass, c:TClass, cf:TClassField):Void {
 			// port: (hxmc) a body typed when it is asked for (TypeBinding.lazyBodies): its dependencies
 			if (typing.TypeloadFields.TypeBinding.lazyBodies.exists(cf)) lazyType(typing.TypeloadFields.TypeBinding.lazyBodies.get(cf).r);
 			if (cf.cfExpr != null && !statics.exists(staticKey(c, cf.cfName))) {
 				statics.set(staticKey(c, cf.cfName), true);
-				walkExpr(p, sortExpr(c, cf, cf.cfExpr));
+				walkExpr(owner, sortExpr(c, cf, cf.cfExpr));
 			}
 		}
-		walkExpr = function(p, e) {
+		walkExpr = function(owner, e) {
 			switch e.eexpr {
 				case TTypeExpr(t):
 					switch t {
-						case TClassDecl(c): loopClass(p, c);
-						case TEnumDecl(e): loopEnum(p, e);
-						case TAbstractDecl(a): loopAbstract(p, a);
+						case TClassDecl(c): loopClass(owner, c);
+						case TEnumDecl(e): loopEnum(owner.clPath, e);
+						case TAbstractDecl(a): loopAbstract(owner.clPath, a);
 						case TTypeDecl(_): throw "Typedef in static initialization";
 					}
 				case TNew(c, _, _):
-					Texpr.iter(e1 -> walkExpr(p, e1),
+					Texpr.iter(e1 -> walkExpr(owner, e1),
 						e); // port: not iterWith: a typed closure passed to its generic parameter is wrapped per call
-					loopClass(p, c);
+					loopClass(owner, c);
 					function walkConstructor(c:TClass):Void {
 						var k = staticKey(c, "new");
 						if (statics.exists(k)) return;
 						statics.set(k, true);
-						if (c.clConstructor != null && c.clConstructor.cfExpr != null) walkExpr(p, sortExpr(c, c.clConstructor, c.clConstructor.cfExpr));
+						if (c.clConstructor != null && c.clConstructor.cfExpr != null) walkExpr(owner, sortExpr(c, c.clConstructor, c.clConstructor.cfExpr));
 						if (c.clSuper != null) walkConstructor(c.clSuper.cls);
 					}
 					walkConstructor(c);
 				case TField(e1, FStatic(c, cf)):
-					walkExpr(p, e1);
-					walkStaticField(p, c, cf);
+					walkExpr(owner, e1);
+					walkStaticField(owner, c, cf);
 				case _:
-					Texpr.iter(e1 -> walkExpr(p, e1),
+					Texpr.iter(e1 -> walkExpr(owner, e1),
 						e); // port: not iterWith: a typed closure passed to its generic parameter is wrapped per call
 			}
 		};
-		inline function walkClass(p:GlobalTypePath, c:TClass):Void {
-			if (c.clSuper != null) loopClass(p, c.clSuper.cls);
-			for (parent in c.clImplements) loopClass(p, parent.cls);
+		inline function walkClass(c:TClass):Void {
+			if (c.clSuper != null) loopClass(c, c.clSuper.cls);
+			for (parent in c.clImplements) loopClass(c, parent.cls);
 			var init = TClassTools.getClInit(c);
-			if (init != null) walkExpr(p, sortExpr(c, null, init));
+			if (init != null) walkExpr(c, sortExpr(c, null, init));
 			// port: upstream PMap.iter is key-ordered, not insertion/hash order.
 			for (f in c.clStatics.byName) {
 				if (f.cfExpr != null) switch f.cfExpr.eexpr {
 					case TFunction(_):
 					case _:
-						walkExpr(p, sortExpr(c, f, f.cfExpr));
+						walkExpr(c, sortExpr(c, f, f.cfExpr));
 				}
 			}
 		}
@@ -216,7 +226,7 @@ class Finalization {
 				case NotYet:
 					states.set(k, Generating);
 					switch t {
-						case TClassDecl(c): walkClass(p, c);
+						case TClassDecl(c): walkClass(c);
 						case _:
 					}
 					states.set(k, Done);

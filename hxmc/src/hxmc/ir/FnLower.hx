@@ -255,6 +255,7 @@ class FnLower {
 			switch cf.cfKind {
 				case Var(_) if (cf.cfExpr != null):
 					var g = l.staticVar(c, cf);
+					l.initializedGlobal(g, fi);
 					var t = l.globalTy(g);
 					var sc = structOf(cf.cfType);
 					if (sc != null) {
@@ -329,7 +330,7 @@ class FnLower {
 			}
 		}
 		var xs = Vector.fromArrayCopy(args);
-		var call = dispatch != null ? ECallDispatch(dispatch.sel, dispatch.sig, xs) : ECall(f, xs);
+		var call = dispatch != null ? l.dispatch(dispatch.sel, dispatch.sig, xs, dispatch.cls) : ECall(f, xs);
 		var ret = f != null ? f.ret : dispatch.sig.ret;
 		if (fi.sret) {
 			// (the closure's result address is the function's: its last argument)
@@ -3180,10 +3181,10 @@ class FnLower {
 					if (sig.ret.match(TStruct(_))) {
 						// (a struct result: the address of a slot here, last)
 						var s = newSlot(sig.ret, true);
-						out.push(SExpr(ECallDispatch(l.selector(cf.cfName, sig), sig, VectorTools.cons(o, xs).snoc(ELocal(s)))));
+						out.push(SExpr(l.dispatch(l.selector(cf.cfName, sig), sig, VectorTools.cons(o, xs).snoc(ELocal(s)), c)));
 						return coerce(ELocal(s), sig.ret, rt);
 					}
-					return coerceRhs(ECallDispatch(l.selector(cf.cfName, sig), sig, VectorTools.cons(o, xs)), d.ret, rt);
+					return coerceRhs(l.dispatch(l.selector(cf.cfName, sig), sig, VectorTools.cons(o, xs), c), d.ret, rt);
 				}
 				var impl = l.lookupMethod(c, cf.cfName);
 				if (impl == null) fail("no implementation of " + cf.cfName, e);

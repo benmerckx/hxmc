@@ -234,7 +234,7 @@ class Main {
 		hxmc.ir.HeaderCheck.start(headerCheck);
 		var t0 = haxe.Timer.stamp();
 		hxmc.ir.KernelCheck.seconds = 0;
-		var prog = hxmc.ir.Lower.program(mainClass, com.types, com.basic);
+		var prog = hxmc.ir.Lower.program(mainClass, com);
 		if (opts.stats) {
 			Sys.println('hxmc: lowering ${Std.int((haxe.Timer.stamp() - t0) * 1000)} ms (since start ${Std.int((t0 - start) * 1000)} ms)');
 			Sys.println('hxmc: raw memory check ${Std.int(hxmc.ir.RawCheck.seconds * 1000)} ms, kernel check ${Std.int(hxmc.ir.KernelCheck.seconds * 1000)} ms, availability check ${Std.int(hxmc.ir.AvailCheck.seconds * 1000)} ms');

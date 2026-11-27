@@ -60,9 +60,11 @@ class Lower {
 			case NotCoro(t): t;
 		}
 
-	public static function program(main:TClass, types:Array<core.TType.ModuleType>, basic:core.TType.BasicTypes, ?l:Lower):Program {
-		Lower.basic = basic;
+	public static function program(main:TClass, com:context.Common.CommonContext, ?l:Lower):Program {
+		Lower.basic = com.basic;
+		var types = com.types;
 		if (l == null) l = new Lower();
+		var initOrder = l.initOrder = new InitOrder(l.prog);
 		var mainField = main.clStatics.get("main");
 		l.prog.main = l.staticFunc(main, mainField);
 		// (haxe.EntryPoint.run after main, as Finalization.maybeAddEntrypoint adds
@@ -97,7 +99,21 @@ class Lower {
 			c != null && order.exists(c) ? order.get(c) : types.length;
 		};
 		l.prog.inits.sort((a, b) -> pos(a) - pos(b));
+		initOrder.run(c -> l.classes.get(l.canonClass(c)), l.initOf, com.staticInitDependencies);
+		l.initOrder = null;
 		return l.prog;
+	}
+
+	var initOrder:Null<InitOrder>;
+
+	public function dispatch(sel:Int, sig:SigInfo, args:Vector<Ex>, receiver:Null<TClass>):Ex {
+		var call = ECallDispatch(sel, sig, args);
+		if (initOrder != null && receiver != null) initOrder.setReceiver(call, receiver);
+		return call;
+	}
+
+	public function initializedGlobal(g:Int, init:FuncInfo) {
+		if (initOrder != null) initOrder.initializers.set(g, init);
 	}
 
 	// statements carry their source lines (Stmt.SPos): native builds but with
@@ -426,7 +442,11 @@ class Lower {
 				xs == args ? e : ECall(f, xs);
 			case ECallDispatch(sel, s, args):
 				var xs = exs(args);
-				xs == args ? e : ECallDispatch(sel, s, xs);
+				if (xs == args) e else {
+					var call = ECallDispatch(sel, s, xs);
+					if (initOrder != null) initOrder.copyReceiver(e, call);
+					call;
+				}
 			case ECallClos(s, c, args):
 				var x = ex(c), xs = exs(args);
 				x == c && xs == args ? e : ECallClos(s, x, xs);
