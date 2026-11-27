@@ -174,8 +174,6 @@ class Opt {
 					i.dead = true;
 				}
 		ver = MFunc.ints(f.vals.length, 0);
-		newVer = new Map();
-		newInits = new Map();
 		// (functions with a try: a handler block, reached by setjmp's second
 		// return, starts with new memory versions, so no load from before
 		// is reused there; values computed before setjmp are immutable and
@@ -3393,12 +3391,6 @@ class Opt {
 	}
 
 	var next = 1; // the next fresh version
-	// (versions) per allocation whose slots read as zeros: the versions right
-	// after it, and the offsets of the fields it initializes
-	var newVer:Map<Int, Vector<Int>> = new Map();
-	var newInits:Map<Int, Array<Int>> = new Map();
-	// field reads an allocation answered with zero (gvn: Escape may then go further)
-	public var zeroReads = 0;
 
 	// the memory versions: per block in reverse postorder, from its
 	// predecessors' (a loop header: new versions of what the loop writes),
@@ -3503,12 +3495,6 @@ class Opt {
 				if (Effects.collects(i))
 					for (c in 0...NCLS)
 						if (c != MConst) v[c + NCLS] = next++;
-				if (i.op == New && i.info.zero && i.info.name != OInfo.NEW_RAW) newVer.set(i.id, v.copy());
-				if (i.op == InitField) {
-					var l = newInits.get(res(i.a));
-					if (l == null) newInits.set(res(i.a), l = []);
-					l.push(fieldOff(i.info));
-				}
 				// (a store: the version it leaves its memory in, that of the loads it can answer)
 				if (i.op == Store) ver[i.id] = v[refStore(i, memClass(i), i.c)] else if (objStore(i)) ver[i.id] = v[refStore(i, storeCls(i), storedValue(i))];
 			}
@@ -3606,26 +3592,6 @@ class Opt {
 	// initialization too: the same object, field and memory version)
 	function answersObj(st:MIns, l:MIns):Bool
 		return l.op == GetField && cres(st.a) == cres(l.a) && fieldOff(st.info) == fieldOff(l.info) && ver[st.id] == ver[l.id] && f.vals[res(st.b)].ty == l.ty;
-	// A read of a field of an object allocated here (New) whose slots read as
-	// zeros, that the allocation does not initialize, in the version the
-	// allocation left its class in (nothing wrote it since): zero. The
-	// read becomes the constant.
-	function zeroRead(i:MIns):Bool {
-		var base = res(i.a);
-		var s = newVer.get(base);
-		if (s == null || i.info.t.match(TVoid) || i.ty == V128) return false;
-		var c = objLoadClass(i);
-		if (c < 0 || s[refLoad(i, c)] != ver[i.id]) return false;
-		var inits = newInits.get(base);
-		if (inits != null && inits.indexOf(fieldOff(i.info)) >= 0) return false;
-		i.op = i.ty == F64 ? ConstF : Const;
-		i.a = i.b = i.c = -1;
-		i.imm = i.imm2 = 0;
-		i.f = 0;
-		i.info = null;
-		zeroReads++;
-		return true;
-	}
 
 	// value numbering in a preorder walk of the dominator tree, with a
 	// scoped table (entries made in a subtree are undone after it); a store
@@ -3688,10 +3654,6 @@ class Opt {
 					}
 					// (a division may trap: not pure, but of constants folded)
 					if ((op == UDiv || op == URem) && fold(i)) continue;
-					// (a field of an object made here whose slots read as zeros, not
-					// initialized and not written since: zero, before Escape looks at
-					// what the object's tests leave)
-					if (op == GetField && zeroRead(i)) continue;
 					if (!(pure(op) || op == Load || op == TlsLoad || objPure(op) || objLoadClass(i) >= 0)) continue;
 					// (a vector constant folded is still numbered: one for its copies)
 					if (fold(i) && i.op != VConst) continue;

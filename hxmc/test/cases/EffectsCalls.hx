@@ -3,7 +3,7 @@
 // reloads what it may write, through other aliases, statics, arrays and
 // its own callees; a collection keeps the Ints and Floats loaded before it
 // and never a reference; a field an allocation zeroed reads as zero until
-// it is written (Opt.zeroRead), and the object then may not escape.
+// it is written.
 class Cell {
 	public var n:Int;
 	public var f:Float;

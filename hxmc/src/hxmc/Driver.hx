@@ -114,7 +114,6 @@ class Driver {
 	}
 	var raRounds = 0;
 	var escRemoved = 0;
-	var escAgain = 0; // (of them, after the optimizer answered reads of zeroed fields)
 	var escFolds = 0;
 	var loopsVersioned = 0; // (LoopVersion)
 	var allocsFolded = 0; // (Fold)
@@ -290,22 +289,6 @@ class Driver {
 			if (o.opt) {
 				var op = new Opt(mf);
 				op.run();
-				// (reads of fields allocations zeroed answered, and the branches on
-				// them decided: the objects' slow arms gone, Escape once more on
-				// what is left, and the optimizer on what it replaced)
-				if (op.zeroReads > 0 && mf.allocs > 0 && (interp == null || !interp.wants(fn))) {
-					var es = new Escape(mf);
-					es.run();
-					if (es.removed > 0) {
-						lock.acquire();
-						escRemoved += es.removed;
-						escAgain += es.removed;
-						lock.release();
-						new Sroa(mf).run();
-						op = new Opt(mf);
-						op.run();
-					}
-				}
 				// (slots whose address the optimizer made one again, as a phi of
 				// the slots of a branch it decided: promoted, and optimized again)
 				var s2 = new Sroa(mf);
@@ -496,7 +479,7 @@ class Driver {
 		Sys.println('hxmc: prepare ${ms(t1 - t0)}, codegen ${ms(t2 - t1)} (cpu: mir ${ms(tm[0])}, isel ${ms(tm[1])}, regalloc ${ms(tm[2])}, emit ${ms(tm[3])})');
 		Sys.println('hxmc: regalloc: $raFuncs functions, $raRounds rounds, $raInsns instructions');
 		Sys.println('hxmc: MIR value table: $mirBefore -> $mirAfter entries before backends');
-		Sys.println('hxmc: escape: $escRemoved allocation sites replaced ($escAgain after reads of zeroed fields folded), $escFolds type tests folded (cpu ${ms(escTime)})');
+		Sys.println('hxmc: escape: $escRemoved allocation sites replaced, $escFolds type tests folded (cpu ${ms(escTime)})');
 		Sys.println('hxmc: $allocsFolded allocations folded into the one before them (Fold)');
 		Sys.println('hxmc: $loopsVersioned loops versioned (LoopVersion)');
 		if (o.llvm != null) Sys.println('hxmc: llvm: $llvmFuncs functions; native: ' + [for (k => v in llvmWhy) '$v ($k)'].join(", "));
