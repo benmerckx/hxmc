@@ -5,6 +5,13 @@ import hxmc.Obj;
 import haxe.ds.Vector;
 import core.ds.VectorTools.vector;
 
+private enum abstract FixupKind(Int) {
+	var Branch26; // b/bl
+	var Cond19; // b.cond, cbz/cbnz
+	var Test14; // tbz/tbnz
+	var Adr21;
+}
+
 // AArch64 instruction encoder. Registers: 0-30 the general registers
 // (x0-x30; 31 is sp or the zero register depending on the instruction:
 // SP and ZR below), 32-63 the floating-point registers (d0-d31). `x`:
@@ -37,7 +44,7 @@ class Asm {
 	public var b:Buf;
 	public var sec:Null<Section>;
 	var labels:Array<Int> = [];
-	var fixups:Array<{at:Int, label:Int, kind:Int}> = []; // kind: 0 b/bl (imm26), 1 b.cond/cbz (imm19), 2 adr (imm21)
+	var fixups:Array<{at:Int, label:Int, kind:FixupKind}> = [];
 
 	public function new(?sec:Section) {
 		this.sec = sec;
@@ -74,25 +81,104 @@ class Asm {
 	public inline function pos():Int
 		return b.len;
 
-	public function finish() {
+	// The added B follows its original instruction, so labels and other
+	// offsets at the branch itself still point to the conditional instruction.
+	static function addedBefore(expanded:Array<Int>, at:Int):Int {
+		var lo = 0, hi = expanded.length;
+		while (lo < hi) {
+			var mid = (lo + hi) >> 1;
+			if (expanded[mid] < at) lo = mid + 1 else hi = mid;
+		}
+		return lo * 4;
+	}
+
+	static inline function fits(d:Int, limit:Int):Bool
+		return d >= -limit && d < limit;
+
+	function relax(start:Int):Null<Int->Int> {
+		var expanded:Array<Int> = [];
+		while (true) {
+			// Fixups are in emission order. Inserting instructions can only
+			// increase the distance between the two ends of a branch.
+			var next = [];
+			for (f in fixups) {
+				var limit = switch f.kind {
+					case Cond19: 1 << 20;
+					case Test14: 1 << 15;
+					case _: continue;
+				}
+				var target = labels[f.label];
+				var d = target - f.at;
+				if (expanded.length != 0) d += addedBefore(expanded, target) - addedBefore(expanded, f.at);
+				if (!fits(d, limit)) next.push(f.at);
+			}
+			if (next.length == expanded.length) break;
+			expanded = next;
+		}
+		if (expanded.length == 0) return null;
+
+		var oldLen = b.len;
+		var first = expanded[0];
+		var old = b.b.sub(first, oldLen - first);
+		var src = first, i = 0;
+		b.len = first;
 		for (f in fixups) {
-			var t = labels[f.label];
-			if (t < 0) throw "hxmc: unbound label";
-			var d = t - f.at;
+			var at = f.at;
+			if (i < expanded.length && at == expanded[i]) {
+				b.bytes(old, src - first, at - src);
+				var w = old.getInt32(at - first);
+				// b.cond inverts the condition field's low bit. cbz/cbnz
+				// and tbz/tbnz toggle bit 24. Each skips the following B.
+				w ^= (w & 0xff000000) == 0x54000000 ? 1 : 1 << 24;
+				b.u32(w | (2 << 5));
+				f.at = b.len;
+				f.kind = Branch26;
+				b.u32(0x14000000);
+				src = at + 4;
+				i++;
+			} else {
+				f.at = at + i * 4;
+			}
+		}
+		b.bytes(old, src - first, oldLen - src);
+		var map = (at:Int) -> at + addedBefore(expanded, at);
+		for (i in 0...labels.length)
+			if (labels[i] >= 0) labels[i] = map(labels[i]);
+		if (sec != null) {
+			// This function's relocations are at the end of the section's list.
+			var i = sec.relocs.length;
+			while (i-- > 0 && sec.relocs[i].offset >= start)
+				sec.relocs[i].offset = map(sec.relocs[i].offset);
+		}
+		return map;
+	}
+
+	// Patch local references and return the offset map if the code grew.
+	public function finish(start:Int, name:String):Null<Int->Int> {
+		for (f in fixups)
+			if (labels[f.label] < 0) throw "hxmc: unbound label in " + name;
+		var map = relax(start);
+		for (f in fixups) {
+			var d = labels[f.label] - f.at;
+			if (f.kind != Adr21 && (d & 3) != 0) throw "hxmc: unaligned branch target in " + name;
 			var w = b.get32(f.at);
 			switch f.kind {
-				case 0:
+				case Branch26:
+					if (!fits(d, 1 << 27)) throw "hxmc: branch out of range in " + name;
 					w |= (d >> 2) & 0x3ffffff;
-				case 1:
-					if (d >= (1 << 20) || d < -(1 << 20)) throw "hxmc: conditional branch out of range";
-					w |= ((d >> 2) & 0x7ffff) << 5;
-				case _:
+				case Cond19 | Test14:
+					var bits = f.kind == Cond19 ? 19 : 14;
+					if (!fits(d, 1 << (bits + 1))) throw "hxmc: conditional branch out of range in " + name;
+					w |= ((d >> 2) & ((1 << bits) - 1)) << 5;
+				case Adr21:
+					if (!fits(d, 1 << 20)) throw "hxmc: adr target out of range in " + name;
 					w |= (d & 3) << 29;
 					w |= ((d >> 2) & 0x7ffff) << 5;
 			}
 			b.set32(f.at, w);
 		}
 		fixups = [];
+		return map;
 	}
 
 	public function reloc(kind:RelKind, s:Symbol, addend:Int) {
@@ -302,27 +388,35 @@ class Asm {
 	// ---- branches
 
 	public function bl(l:Int) {
-		fixups.push({at: b.len, label: l, kind: 0});
+		fixups.push({at: b.len, label: l, kind: Branch26});
 		w(0x94000000);
 	}
 
 	public function bLabel(l:Int) {
-		fixups.push({at: b.len, label: l, kind: 0});
+		fixups.push({at: b.len, label: l, kind: Branch26});
 		w(0x14000000);
 	}
 
 	public function bcond(cond:Int, l:Int) {
-		fixups.push({at: b.len, label: l, kind: 1});
-		w(0x54000000 | cond);
+		// Both AL and NV are always taken on AArch64.
+		if (cond == AL || cond == 15) bLabel(l) else {
+			fixups.push({at: b.len, label: l, kind: Cond19});
+			w(0x54000000 | cond);
+		}
 	}
 
 	public function cbz(x:Bool, r:Int, l:Int, nz = false) {
-		fixups.push({at: b.len, label: l, kind: 1});
+		fixups.push({at: b.len, label: l, kind: Cond19});
 		w(sf(x) | (nz ? 0x35000000 : 0x34000000) | r);
 	}
 
+	public function tbz(r:Int, bit:Int, l:Int, nz = false) {
+		fixups.push({at: b.len, label: l, kind: Test14});
+		w(sf(bit >= 32) | (nz ? 0x37000000 : 0x36000000) | ((bit & 31) << 19) | r);
+	}
+
 	public function adrLabel(d:Int, l:Int) {
-		fixups.push({at: b.len, label: l, kind: 2});
+		fixups.push({at: b.len, label: l, kind: Adr21});
 		w(0x10000000 | d);
 	}
 

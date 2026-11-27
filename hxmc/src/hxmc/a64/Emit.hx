@@ -225,11 +225,21 @@ class Emit implements hxmc.Target.Emitter {
 		}
 		for (t in tables) {
 			a.bind(t.label);
-			var at = text.buf.len;
-			for (e in t.entries)
-				text.buf.u32(a.labelPos(e.label) - at);
+			text.buf.zeros(t.entries.length * 4);
 		}
-		a.finish();
+		var map = a.finish(start, f.display ?? f.name);
+		for (t in tables) {
+			var at = a.labelPos(t.label);
+			for (i in 0...t.entries.length)
+				text.buf.set32(at + 4 * i, a.labelPos(t.entries[i].label) - at);
+		}
+		if (map != null) {
+			var k = 1;
+			while (k < ops.length) {
+				ops[k] = map(start + ops[k]) - start;
+				k += 4;
+			}
+		}
 		var sym = obj.define(f.name, text, start, text.buf.len - start, global);
 		var r = new FuncRec(sym, Vector.fromArrayCopy(ops));
 		if (lines != null) {
@@ -244,7 +254,7 @@ class Emit implements hxmc.Target.Emitter {
 					obj.files.push(p.file);
 					fileIndex.set(p.file, fi);
 				}
-				rows[j++] = lines[k];
+				rows[j++] = map == null ? lines[k] : map(start + lines[k]) - start;
 				rows[j++] = fi;
 				rows[j++] = p.line;
 				k += 2;
