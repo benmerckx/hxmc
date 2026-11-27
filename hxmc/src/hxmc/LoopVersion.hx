@@ -173,6 +173,7 @@ class LoopVersion {
 		var size = 0;
 		var gets:Array<MIns> = [];
 		var sets:Array<MIns> = [];
+		var checks:Array<MIns> = []; // (span element checks, MIns.SPAN_CHECK)
 		var fieldsWritten = new Map<Int, Bool>();
 		for (b in members)
 			for (i in b.ins) {
@@ -199,7 +200,10 @@ class LoopVersion {
 						return false;
 				}
 			}
-		if (size > MAX_SIZE || gets.length + sets.length == 0) return false;
+		for (b in members)
+			for (i in b.ins)
+				if (!i.dead && i.op == Cmp && i.imm2 == MIns.SPAN_CHECK && i.imm == (CULt : Int)) checks.push(i);
+		if (size > MAX_SIZE || gets.length + sets.length + checks.length == 0) return false;
 		// the test: counter < limit to stay (cmp lt), counter >= limit to leave (cmp ge)
 		var c = v(t.a);
 		if (c.op != Cmp || c.block != h) return false;
@@ -265,11 +269,23 @@ class LoopVersion {
 			if (!take(s)) return false;
 		for (g in gets)
 			take(g);
-		if (taken.length == 0) return false;
+		// the span checks of the counter against a length the loop cannot change
+		// (a NativeArray's, Bytes': it is tested once against the limit)
+		var spans:Array<{cmp:MIns, arr:Null<Arr>, len:Int}> = [];
+		for (c in checks) {
+			if (offsetOf(c.a, iv, ahead) == null || c.block == h) continue;
+			if (outside(c.b)) spans.push({cmp: c, arr: null, len: c.b}) else {
+				var l = v(c.b);
+				if (l.op != NArrayLength) continue;
+				var arr = arrayOf(l.a, inLoop, fieldsWritten);
+				if (arr != null) spans.push({cmp: c, arr: arr, len: -1});
+			}
+		}
+		if (taken.length == 0 && spans.length == 0) return false;
 		// (a reference read left with its slow path writes everything: no gain then)
 		for (g in gets)
 			if (taken.indexOf(g) < 0 && Opt.ptrElem(g.info.t)) return false;
-		version(h, members, inLoop, cfg, pre, start, limit, limitK, limitArr, arrays, taken);
+		version(h, members, inLoop, cfg, pre, start, limit, limitK, limitArr, arrays, taken, null, null, null, spans);
 		return true;
 	}
 
@@ -371,7 +387,7 @@ class LoopVersion {
 	}
 
 	function version(h:MBlock, members:Array<MBlock>, inLoop:Null<MBlock>->Bool, cfg:Cfg<MBlock>, pre:Int, start:Int, limit:Int, limitK:Null<Int>, limitArr:Null<Arr>,
-			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>, ?objs:Array<MIns>) {
+			arrays:Array<{arr:Arr, kind:Int, upto:Bool, idx:Array<Int>}>, taken:Array<MIns>, ?strs:Array<Int>, ?widths:Array<Int>, ?objs:Array<MIns>, ?spans:Array<{cmp:MIns, arr:Null<Arr>, len:Int}>) {
 		var preB = h.preds[pre];
 		// ---- the test before the loop: blocks failing to slow, which enters the loop as it was
 		var slow = newBlock();
@@ -483,8 +499,30 @@ class LoopVersion {
 			for (x in e.idx)
 				test(cmp(CULt, x, len));
 		}
+		if (spans != null)
+			for (s in spans) {
+				var len = s.len;
+				if (s.arr != null) {
+					// (the array first: its tests move gb on)
+					var a = arrayBefore(s.arr);
+					var l = add(gb, NArrayLength, I32);
+					l.a = a;
+					l.info = new OInfo();
+					len = l.id;
+				}
+				test(cmp(CLe, lim, len));
+			}
 		// gb: every test passed, into the copy
-		copyLoop(h, members, inLoop, cfg, (i, x) -> if ((i.op == ArrayGet || i.op == ArraySet) && taken.indexOf(i) >= 0) x.info.prechecked = true, h2 -> {
+		copyLoop(h, members, inLoop, cfg, (i, x) -> {
+			if ((i.op == ArrayGet || i.op == ArraySet) && taken.indexOf(i) >= 0) x.info.prechecked = true;
+			// (a span check the test before the loop made: in range)
+			if (spans != null && Lambda.exists(spans, s -> s.cmp == i)) {
+				x.op = Const;
+				x.imm = 1;
+				x.imm2 = 0;
+				x.a = x.b = x.c = -1;
+			}
+		}, h2 -> {
 			// ---- the edges: before -> tests; slow -> the loop; the last test -> the copy
 			retargetTerm(preB, h, first);
 			preB.succs[preB.succs.indexOf(h)] = first;

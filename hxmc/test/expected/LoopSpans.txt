@@ -1,0 +1,5 @@
+exit 0
+sum: 6048 135 0
+copy: 90 7
+past the end: OutsideBounds after 32
+sum past the end: OutsideBounds
