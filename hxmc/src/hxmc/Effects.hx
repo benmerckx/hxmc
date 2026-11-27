@@ -68,8 +68,9 @@ class Effects {
 		if (StringTools.startsWith(n, "hxmc_narray_set_")) return NARRAY_STORE;
 		// (allocations: memory nothing reads before; a collection apart)
 		if (StringTools.startsWith(n, "hxmc_unsafe_Mem_alloc") || n == "hxmc_narray_new" || n == "hxmc_narray_lit") return 0;
-		// (reads: a header's type index, a NativeArray seen as Dynamic, boxed)
-		if (n == "hxmc_unsafe_Mem_typeIndexOf" || n == "hxmc_narray_dget") return 0;
+		// (reads: a header's type index, a NativeArray seen as Dynamic, boxed;
+		// the frame's address)
+		if (n == "hxmc_unsafe_Mem_typeIndexOf" || n == "hxmc_narray_dget" || n == "hxmc_unsafe_Mem_frame") return 0;
 		if (n == "hxmc_narray_dset") return NARRAY_STORE;
 		if (n == "StringBuf_addChar") return RAW_STORE;
 		var c = C.get(n);
