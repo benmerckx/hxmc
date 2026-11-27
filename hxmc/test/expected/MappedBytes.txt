@@ -13,7 +13,9 @@ none none
 7 12345678 9 true true
 file unchanged: true true
 7 0
+true
 6 héllo OutsideBounds
 0
 Could not read file mappedbytes-small.tmp
+through a pipe
 deleted: true

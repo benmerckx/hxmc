@@ -771,8 +771,9 @@ drops), or the address in `@:hxmc.unsafe` code (`hxmc.unsafe.BytesPtr`).
 [using.md](using.md#mapped-files)) has ordinary `T_BYTES` storage whose
 header and bytes live outside the heap. `Os.mapFile` reserves a page plus
 the file's size, keeps the first page anonymous and maps the file over the
-rest (`MAP_PRIVATE | MAP_FIXED`, read and write). Windows uses 64 KB
-committed, then a `FILE_MAP_COPY` view, through `WinRt.mapFile`.
+rest (`MAP_PRIVATE | MAP_FIXED`, read and write). Windows reserves 64 KB,
+commits its last page, then maps a `FILE_MAP_COPY` view after it, through
+`WinRt.mapFile`.
 `hxmc.rt.Bytes.external` writes the header in the last 8 bytes before the
 data. To the collector this is the image's static objects again: an address
 outside the nursery and the old space is never copied, scanned or counted,

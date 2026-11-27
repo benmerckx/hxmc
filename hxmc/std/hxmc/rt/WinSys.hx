@@ -351,7 +351,11 @@ class WinSys {
 		var p = wide(path);
 		var fd = Win32._wopen(p, 0x8000 | 0x80, 0);
 		LibC.free(p);
-		if (fd < 0) return null;
+		return fd < 0 ? null : readAll(fd);
+	}
+
+	// the bytes of fd from where it is to its end, then fd closed; null on an error
+	@:hxmc.unsafe(gc) static function readAll(fd:Int):Dynamic {
 		var cap = 65536, n = 0;
 		var st = Mem.stack(64);
 		if (Win32._fstat64(fd, st) == 0 && (stMode(st) & 0xF000) == 0x8000) cap = Mem.getI64(st, 24).toInt() + 1;
@@ -379,8 +383,11 @@ class WinSys {
 
 	// hxmc.MappedFile's (PosixSys.fileMap's): opened shared for deletion too,
 	// so the file can be deleted while it is mapped, as elsewhere (not
-	// truncated: Windows refuses that of a mapped file)
+	// truncated: Windows refuses that of a mapped file); what is not mapped
+	// is read through the handle it opened (a named pipe's instance: another
+	// connection may find none free)
 	@:hxmc.unsafe(gc) public static function fileMap(path:String):Dynamic {
+		if (Gc.compactRefs()) return fileContent(path);
 		var p = wide(path);
 		// GENERIC_READ, FILE_SHARE_READ | WRITE | DELETE, OPEN_EXISTING
 		var h = Win32.CreateFileW(p, 0x80000000, 7, Ptr.nil(), 3, 0x80, Ptr.nil());
@@ -389,9 +396,16 @@ class WinSys {
 		var size = Mem.stack(8);
 		// (FILE_TYPE_DISK: not a pipe or a console)
 		var n:I64 = Win32.GetFileType(h) == 1 && K.GetFileSizeEx(h, size) != 0 ? Mem.getI64(size, 0) : 0;
-		var d = n > 0 && n < 0x7FFFFFFF && !Gc.compactRefs() ? WinRt.mapFile(h, n) : Ptr.nil();
+		var d = Os.mappable(n) ? WinRt.mapFile(h, n) : Ptr.nil();
+		if (d.isNull()) {
+			// (_O_BINARY | _O_NOINHERIT; the descriptor owns the handle)
+			var fd = Win32._open_osfhandle(h, 0x8000 | 0x80);
+			if (fd >= 0) return readAll(fd);
+			Win32.CloseHandle(h);
+			return null;
+		}
 		Win32.CloseHandle(h);
-		return d.isNull() ? fileContent(path) : Bytes.external(d, n.toInt());
+		return Bytes.external(d, n.toInt());
 	}
 
 	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {

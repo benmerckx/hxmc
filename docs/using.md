@@ -525,17 +525,19 @@ font.getUInt16(4);   // an ordinary Bytes: get, sub, getString, blit, ...
   map a file once and keep the Bytes. `getData()` hands out the storage
   itself, and the collector does not follow pointers outside its heap, so
   nothing can tell when the storage becomes unreachable.
-- **Do not truncate a mapped file.** On Linux and macOS, reading a page that
-  is no longer in the file kills the program (`SIGBUS`), and other changes
-  to the file may show in pages the program has not written. Windows
-  refuses to truncate a mapped file. A mapped file can be deleted on every
-  system.
+- **Do not truncate a mapped file**, nor a file while it is being mapped.
+  The Bytes keeps the length the file had when it was mapped. On Linux and
+  macOS, reading a page that is no longer in the file kills the program
+  (`SIGBUS`), and other changes to the file may show in pages the program
+  has not written. Windows refuses to truncate a mapped file. A mapped file
+  can be deleted on every system.
 - **Where it reads instead.** In some cases the file is read into the heap,
   as `getBytes` does, and the result behaves the same: on wasm32-wasi
   (no mmap), in macro code, in a program with compressed references
   (`@:hxmc.compact`: their fields reach only addresses below 32 GB, and the
-  heap takes that range), and for anything but a regular file under 2 GB
-  that is not empty (pipes, empty files, `/proc`'s files).
+  heap takes that range), for files under 64 KB (a mapping's pages are
+  never freed, a copy in the heap is) or of 2 GB or more, and for what is
+  not a regular file (pipes, `/proc`'s files).
 - **On Windows**, the view counts in the commit charge, not in the working
   set.
 

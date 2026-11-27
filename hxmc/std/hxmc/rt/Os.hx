@@ -159,6 +159,13 @@ class Os {
 
 	static inline var MAP_FIXED = 0x10; // (Linux's and macOS's)
 
+	// whether a file of `bytes` bytes is mapped (hxmc.MappedFile): from 64 KB,
+	// where the page for the header and the last page's rest, never freed,
+	// cost little next to a copy in the heap, which a collection can free;
+	// below 2 GB, a Bytes' length
+	public static inline function mappable(bytes:I64):Bool
+		return bytes >= (64 << 10) && bytes < 0x7FFFFFFF;
+
 	// the first `bytes` bytes (> 0) of the open file fd mapped copy-on-write
 	// (writes reach a private copy of their page, never the file), after
 	// memory of the program's own (8 bytes at least, writable: a header);

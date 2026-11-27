@@ -9,8 +9,8 @@ package hxmc;
 // the collector does not follow outside its heap, so nothing tells when it
 // is unreachable. Read into the heap instead (as File.getBytes): on
 // WebAssembly, in macro code, in a program with compressed references
-// (@:hxmc.compact), and for anything but a regular file under 2 GB that is
-// not empty.
+// (@:hxmc.compact), for files under 64 KB or of 2 GB or more, and for what
+// is not a regular file (a pipe is read from the descriptor opened, once).
 class MappedFile {
 	public static function bytes(path:String):haxe.io.Bytes {
 		#if macro

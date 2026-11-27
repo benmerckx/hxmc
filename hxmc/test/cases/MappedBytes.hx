@@ -3,8 +3,10 @@
 // are read into it), through collections that move everything around them;
 // writes reach the program's copy and never the file; sub, blit, compare,
 // getString and the multi-byte accessors as on any Bytes, and their range
-// tests too; the file deleted while mapped; a small file, an empty one, a
-// missing one.
+// tests too; the file deleted while mapped; a file of 64 KB (the smallest
+// mapped), a small one (read), an empty one, a missing one; a FIFO, read
+// from the descriptor opened (Linux and macOS: opening it twice lost what its
+// writer wrote, and the second open waited for another).
 import haxe.io.Bytes;
 import hxmc.GcStats;
 import hxmc.MappedFile;
@@ -56,7 +58,7 @@ class MappedBytes {
 
 	static function main() {
 		var wasi = Sys.systemName() == "Wasi";
-		var path = "mappedbytes.tmp", small = "mappedbytes-small.tmp", empty = "mappedbytes-empty.tmp";
+		var path = "mappedbytes.tmp", small = "mappedbytes-small.tmp", empty = "mappedbytes-empty.tmp", least = "mappedbytes-64k.tmp";
 		var w = Bytes.alloc(SIZE);
 		for (i in 0...SIZE)
 			w.set(i, at(i));
@@ -99,7 +101,13 @@ class MappedBytes {
 		Sys.println("file unchanged: " + (File.getBytes(path).compare(g) == 0) + " " + (again.compare(g) == 0));
 		g.blit(0, m, 0, 16);
 		Sys.println(g.get(0) + " " + again.get(0));
-		// a small file, an empty one, a missing one
+		// the smallest file mapped, a small file, an empty one, a missing one
+		var b64 = Bytes.alloc(64 << 10);
+		for (i in 0...b64.length)
+			b64.set(i, at(i * 3));
+		File.saveBytes(least, b64);
+		Sys.println(MappedFile.bytes(least).compare(b64) == 0);
+		FileSystem.deleteFile(least);
 		File.saveContent(small, "héllo");
 		var s = MappedFile.bytes(small);
 		Sys.println(s.length + " " + s.toString() + " " + outside(() -> s.get(6)));
@@ -112,6 +120,16 @@ class MappedBytes {
 		} catch (e:String) {
 			Sys.println(e);
 		}
+		var system = Sys.systemName();
+		if (system != "Windows" && system != "Wasi") {
+			var fifo = "mappedbytes.fifo";
+			if (FileSystem.exists(fifo)) FileSystem.deleteFile(fifo);
+			Sys.command("mkfifo", [fifo]);
+			Sys.command("sh", ["-c", "echo through a pipe > " + fifo + " &"]);
+			Sys.print(MappedFile.bytes(fifo).toString());
+			FileSystem.deleteFile(fifo);
+		} else
+			Sys.println("through a pipe");
 		FileSystem.deleteFile(path);
 		NativeGc.collect(true);
 		Sys.println("deleted: " + (m.get(0) == 7 && m.get(12345) == at(12345) && again.get(SIZE - 1) == at(SIZE - 1)));
