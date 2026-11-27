@@ -377,6 +377,23 @@ class WinSys {
 		return b;
 	}
 
+	// hxmc.MappedFile's (PosixSys.fileMap's): opened shared for deletion too,
+	// so the file can be deleted while it is mapped, as elsewhere (not
+	// truncated: Windows refuses that of a mapped file)
+	@:hxmc.unsafe(gc) public static function fileMap(path:String):Dynamic {
+		var p = wide(path);
+		// GENERIC_READ, FILE_SHARE_READ | WRITE | DELETE, OPEN_EXISTING
+		var h = Win32.CreateFileW(p, 0x80000000, 7, Ptr.nil(), 3, 0x80, Ptr.nil());
+		LibC.free(p);
+		if (h.toI64() == -1) return null;
+		var size = Mem.stack(8);
+		// (FILE_TYPE_DISK: not a pipe or a console)
+		var n:I64 = Win32.GetFileType(h) == 1 && K.GetFileSizeEx(h, size) != 0 ? Mem.getI64(size, 0) : 0;
+		var d = n > 0 && n < 0x7FFFFFFF && !Gc.compactRefs() ? WinRt.mapFile(h, n) : Ptr.nil();
+		Win32.CloseHandle(h);
+		return d.isNull() ? fileContent(path) : Bytes.external(d, n.toInt());
+	}
+
 	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = wide(path);
 		var fd = Win32._wopen(p, 1 | 0x100 | 0x8000 | 0x80 | (append ? 8 : 0x200), 0x180);

@@ -767,6 +767,24 @@ range: the BytesData's indexing, a NativeArray's, which
 (`ReadOnlySpan.ofBytes`, whose element checks `-D hxmc.span-checks=0`
 drops), or the address in `@:hxmc.unsafe` code (`hxmc.unsafe.BytesPtr`).
 
+**Storage outside the heap.** A mapped file's Bytes (`hxmc.MappedFile`,
+[using.md](using.md#mapped-files)) has ordinary `T_BYTES` storage whose
+header and bytes live outside the heap. `Os.mapFile` reserves a page plus
+the file's size, keeps the first page anonymous and maps the file over the
+rest (`MAP_PRIVATE | MAP_FIXED`, read and write). Windows uses 64 KB
+committed, then a `FILE_MAP_COPY` view, through `WinRt.mapFile`.
+`hxmc.rt.Bytes.external` writes the header in the last 8 bytes before the
+data. To the collector this is the image's static objects again: an address
+outside the nursery and the old space is never copied, scanned or counted,
+in minor and major collections, the parallel ones, the census and
+`objsize`. So the representation and every Bytes access stay the same, with
+no flag and no indirection. `BytesReadBench` builds to the same machine
+code with this change or without it. Nothing tracks whether such storage is
+still reachable, so it is never unmapped. A program with compressed
+references reads the file into the heap instead: its fields hold only
+addresses below 32 GB, and the heap takes that range (`PosixSys.fileMap`,
+`WinSys.fileMap`). The case `MappedBytes` checks all of this.
+
 ## Values of type parameters
 
 A value of a type parameter is a tagged 64-bit word (issue #127,

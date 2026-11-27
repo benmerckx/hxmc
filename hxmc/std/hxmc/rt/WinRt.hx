@@ -30,6 +30,9 @@ class WinRt {
 	static inline var MEM_RELEASE = 0x8000;
 	static inline var MEM_TOP_DOWN = 0x100000;
 	static inline var PAGE_READWRITE = 4;
+	static inline var PAGE_WRITECOPY = 8;
+	static inline var FILE_MAP_COPY = 1;
+	static inline var GRANULARITY = 64 << 10;
 	static inline var EXCEPTION_ACCESS_VIOLATION = 0xC0000005;
 	static inline var EXCEPTION_CONTINUE_EXECUTION = -1;
 	static inline var EXCEPTION_CONTINUE_SEARCH = 0;
@@ -158,6 +161,30 @@ class WinRt {
 		K.VirtualFree(p, bytes, MEM_DECOMMIT);
 	}
 
+	// Os.mapFile on Windows (WinSys.fileMap): the file h's first `bytes` bytes
+	// as a copy-on-write view (PAGE_WRITECOPY, FILE_MAP_COPY), after 64 KB
+	// committed for its header, else null. A view starts at a multiple of the
+	// allocation granularity (64 KB), so the address is found free, released
+	// and taken again, where another thread may take it first: then the
+	// search is repeated.
+	@:hxmc.unsafe static function mapFile(h:Ptr, bytes:I64):Ptr {
+		var m = K.CreateFileMappingW(h, Ptr.nil(), PAGE_WRITECOPY, 0, 0, Ptr.nil());
+		if (m.isNull()) return m;
+		var d = Ptr.nil();
+		for (_ in 0...8) {
+			var p = K.VirtualAlloc(Ptr.nil(), bytes + GRANULARITY, MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE);
+			if (p.isNull()) break;
+			K.VirtualFree(p, 0, MEM_RELEASE);
+			if (K.VirtualAlloc(p, GRANULARITY, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE).isNull()) continue;
+			d = K.MapViewOfFileEx(m, FILE_MAP_COPY, 0, 0, bytes, p.add(GRANULARITY));
+			if (!d.isNull()) break;
+			K.VirtualFree(p, 0, MEM_RELEASE);
+		}
+		// (the view keeps the mapping open)
+		K.CloseHandle(m);
+		return d;
+	}
+
 	@:hxmc.host("rt_win_decommit") @:hxmc.unsafe static function decommit(p:Ptr, bytes:I64):Void {
 		if (bytes != (0 : I64)) K.VirtualFree(p, bytes, MEM_DECOMMIT);
 	}
@@ -239,6 +266,9 @@ class WinRt {
 	static function GetSystemInfo(si:Ptr):Void;
 	static function VirtualAlloc(p:Ptr, size:I64, type:Int, protect:Int):Ptr;
 	static function VirtualFree(p:Ptr, size:I64, type:Int):Int;
+	@:hxmc.header("windows.h") @:hxmc.cif("defined(_WIN32)") static function CreateFileMappingW(h:Ptr, sa:Ptr, protect:Int, sizeHigh:Int, sizeLow:Int, name:Ptr):Ptr;
+	@:hxmc.header("windows.h") @:hxmc.cif("defined(_WIN32)") static function MapViewOfFileEx(m:Ptr, access:Int, offHigh:Int, offLow:Int, bytes:I64, at:Ptr):Ptr;
+	@:hxmc.header("windows.h") @:hxmc.cif("defined(_WIN32)") static function CloseHandle(h:Ptr):Int;
 	static function AddVectoredExceptionHandler(first:Int, handler:Ptr):Ptr;
 	static function AcquireSRWLockShared(l:Ptr):Void;
 	static function ReleaseSRWLockShared(l:Ptr):Void;

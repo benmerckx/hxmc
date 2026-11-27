@@ -159,6 +159,27 @@ class Os {
 
 	static inline var MAP_FIXED = 0x10; // (Linux's and macOS's)
 
+	// the first `bytes` bytes (> 0) of the open file fd mapped copy-on-write
+	// (writes reach a private copy of their page, never the file), after
+	// memory of the program's own (8 bytes at least, writable: a header);
+	// null when not mapped. Never unmapped (hxmc.MappedFile). Linux and
+	// macOS: Windows' is WinRt.mapFile.
+	@:hxmc.unsafe public static function mapFile(fd:Int, bytes:I64):Ptr {
+		// (a reservation whose first page stays anonymous, the file mapped
+		// over the rest: mmap's offset 0 starts a page, so the header needs
+		// a page before it)
+		var page:I64 = pageSize();
+		var size = page + ((bytes + page - 1) & ~(page - 1));
+		var p = reserve(size);
+		if (p.isNull()) return p;
+		var d = C.mmap(p.addL(page), bytes, L.PROT_READ | L.PROT_WRITE, L.MAP_PRIVATE | MAP_FIXED, fd, 0);
+		if (d.toI64() == -1) {
+			release(p, size);
+			return Ptr.nil();
+		}
+		return d;
+	}
+
 	@:hxmc.unsafe public static function release(p:Ptr, bytes:I64)
 		#if (!hxmc.os || hxmc.os == "windows") if (windows()) WinRt.release(p, bytes) else #end C.munmap(p, bytes);
 

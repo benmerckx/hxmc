@@ -132,6 +132,13 @@ class NativeSys {
 		return d == null ? null : haxe.io.Bytes.ofData(d);
 	}
 
+	// hxmc.MappedFile's: the bytes mapped where the runtime can (PosixSys.fileMap,
+	// WinSys.fileMap), read into the heap on WebAssembly (no mmap)
+	public static inline function fileMap(path:String):Null<haxe.io.Bytes> {
+		var d:Null<haxe.io.BytesData> = #if (hxmc.target == "wasm32-wasi") WasiSys.fileContent(path) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.fileMap(path) : #end PosixSys.fileMap(path) #end;
+		return d == null ? null : haxe.io.Bytes.ofData(d);
+	}
+
 	public static inline function fileSave(path:String, b:haxe.io.Bytes, append:Bool):Bool
 		return #if (hxmc.target == "wasm32-wasi") WasiSys.fileSave(path, b.getData(), append) #else #if (!hxmc.os || hxmc.os == "windows") Platform.os() == 2 ? WinSys.fileSave(path, b.getData(), append) : #end PosixSys.fileSave(path, b.getData(), append) #end;
 

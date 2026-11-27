@@ -413,6 +413,22 @@ class PosixSys {
 		return b;
 	}
 
+	// hxmc.MappedFile's: a regular file's bytes mapped (Os.mapFile), else read
+	// (fileContent: a pipe, an empty file, as /proc's report themselves, one
+	// of 2 GB or more, one mmap refuses; with compressed references, whose
+	// fields reach no address above 32 GB, and the heap takes what is below)
+	@:hxmc.unsafe(gc) public static function fileMap(path:String):Dynamic {
+		var p = cstr(path);
+		var fd = Posix.open(p, oCloexec(), 0);
+		LibC.free(p);
+		if (fd < 0) return null;
+		var st = Mem.stack(256);
+		var n:I64 = doFstat(fd, Span.unsafeOf((st : Ptr<UInt8>), 256)) == 0 && isReg(stMode(st)) ? stSize(st) : 0;
+		var d = n > 0 && n < 0x7FFFFFFF && !Gc.compactRefs() ? Os.mapFile(fd, n) : Ptr.nil();
+		Posix.close(fd);
+		return d.isNull() ? fileContent(path) : Bytes.external(d, n.toInt());
+	}
+
 	@:hxmc.unsafe(gc) public static function fileSave(path:String, b:Dynamic, append:Bool):Bool {
 		var p = cstr(path);
 		var fd = Posix.open(p, 1 | oCreat() | oCloexec() | (append ? oAppend() : oTrunc()), 438);
