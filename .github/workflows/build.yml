@@ -49,6 +49,9 @@
 # - upstream-suites: upstream's runtime suites (tests/unit, sys, threads)
 #   built by hxmc and run, natively and (unit) as a wasm32-wasi module under
 #   node (with its own tool from the stage0; make upstream-suites).
+# - jsgen: hxmc's JavaScript generator, its cases and upstream's tests/unit as
+#   es, es-modules and TypeScript (make jsgen-check jsgen-suites; no release
+#   waits for it).
 # - test: on each target's machine, the release binary's smoke test (with a
 #   TLS handshake and libuv), lix, hxmc's corpus and the port's self-compile;
 #   then on Linux x86-64 the Mir lane (MirCheck, as make mir-check: the
@@ -880,6 +883,37 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: failure()
         with: {name: upstream-suites, path: "bin/test/upstream-suites/*/*/*.log", retention-days: 7, if-no-files-found: ignore}
+
+  # hxmc's JavaScript generator (bin/jsgen/haxe): its cases (make jsgen-check) and upstream's tests/unit as es,
+  # es-modules and TypeScript (make jsgen-suites: tsc, then node, which runs `.ts` as it is from 23.6); no release
+  # waits for it
+  jsgen:
+    needs: [changes, rt]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.rt.result == 'success' || needs.rt.result == 'skipped') && needs.changes.outputs.all == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.rt_hit != 'true'
+        with: {name: rt, path: bin/hxmc/rt}
+      - name: Runtime objects, the tool, lix and the generator
+        run: |
+          set -ex
+          make rt && touch bin/hxmc/rt/*/*.o
+          make hxmc lix jsgen
+      - name: The generator's cases
+        run: make jsgen-check
+      - name: Upstream's unit suite as es, es-modules and TypeScript
+        run: make jsgen-suites
+        timeout-minutes: 30
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with: {name: jsgen-suites, path: "bin/test/upstream-suites/*/*/*.log", retention-days: 7, if-no-files-found: ignore}
 
   # on a machine of each target: the release binary, lix, hxmc's corpus and
   # the port's self-compile; the scripts run on the release binary's Eval

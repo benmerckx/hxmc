@@ -11,6 +11,7 @@ what, why, and the approach decided. What comes next and in which order:
 | [io.md](io.md) | completion-based I/O (io_uring, IOCP): off-heap buffers, system calls, blocking calls |
 | [heap-layout.md](heap-layout.md) | the object header, Bytes, strings and arrays |
 | [codegen.md](codegen.md) | escape analysis, allocation folding, debugging information |
+| [esgen.md](esgen.md) | the ES generator (docs/js.md): modules importable on their own, `.d.ts` beside modules, `strictNullChecks`, caching, npm, hot reload |
 | [llvm.md](llvm.md) | experimental: Mir through LLVM (`-D hxmc.llvm`), the mapping, status and next steps |
 | [native-perf.md](native-perf.md) | the native back end as fast as LLVM: the gap harness, measurements, missed transformations |
 | [targets.md](targets.md) | WebAssembly, Android, iOS, Windows, Linux, macOS |

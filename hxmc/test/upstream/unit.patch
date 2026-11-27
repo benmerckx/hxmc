@@ -10,6 +10,13 @@ targets whose behaviour hxmc shares, where a conditional names them one by one:
   on jvm and eval): `arr != vec.toData()` does not type.
 - teststd/TestType.hx: Type.typeof(1.0) is TFloat, as on Eval (hl, cpp and jvm say
   TInt for an integral Float); haxe.Serializer writes such a Float as a Float.
+- issues/Issue10746.hx (hxmc.js): the test deletes the `String.prototype.__class__` it
+  sets. Genjs defines that property itself, not enumerable, which the assignment
+  keeps; hxmc.js has none, and the property it makes is enumerable: Issue10410,
+  which runs after it in a directory's order, finds it.
+- issues/Issue4526.hx (hxmc.js): the empty struct init `{}` calls the constructor without
+  its trailing nulls (the generator drops them: Haxe has no undefined), so its fields
+  are undefined, which `+` prints as such.
 
 --- a/src/unit/TestExceptions.hx
 +++ b/src/unit/TestExceptions.hx
@@ -46,6 +53,16 @@ targets whose behaviour hxmc shares, where a conditional names them one by one:
  
  		var s1:Struct1 = { x: 12, y: 13 };
  		eq("12 13", s1.get());
+@@ -57,7 +57,8 @@
+ 		var s3:Struct3 = { y: 13 };
+ 		eq(fieldNull + " 13", s3.get());
+ 		var s3:Struct3 = { };
+-		eq(fieldNull + " " + fieldNull, s3.get());
++		// (hxmc.js: the call drops its trailing nulls, the fields stay undefined, which `+` prints)
++		eq(#if hxmc.js "undefined undefined" #else fieldNull + " " + fieldNull #end, s3.get());
+ 	}
+ 
+ 	function testOrder() {
 --- a/src/unit/teststd/TestType.hx
 +++ b/src/unit/teststd/TestType.hx
 @@ -130,7 +130,7 @@
@@ -68,3 +85,15 @@ targets whose behaviour hxmc shares, where a conditional names them one by one:
  		t(arr != vec.toData());
  		#end
  		eq(vec.length, 3);
+--- a/src/unit/issues/Issue10746.hx
++++ b/src/unit/issues/Issue10746.hx
+@@ -6,6 +6,9 @@
+ 
+ 	function test() {
+ 		js.Syntax.code("String.prototype.__class__ = String");
++		#if hxmc.js
++		js.Syntax.code("delete String.prototype.__class__");
++		#end
+ 		t(true);
+ 	}
+ #end
