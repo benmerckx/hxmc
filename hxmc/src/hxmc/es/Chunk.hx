@@ -2282,7 +2282,8 @@ class Chunk {
 		var ctor:Array<{m:Member, names:Map<Sym, Bool>}> = [];
 		var ctorText = new StringBuf();
 		inline function one(m:Member) return print(() -> p.classDecl({name: d.name, superClass: null, members: [m]}));
-		for (m in d.members) switch m {
+		// (a private member's TypeScript `protected`, `readonly`: not JavaScript's, the member as it is)
+		for (m in d.members.map(bare)) switch m {
 			case MMethod(_, _, _, MkConstructor):
 				var x = one(m);
 				ctor.push({m: m, names: x.names});
@@ -2790,15 +2791,17 @@ class Chunk {
 	// the abstracts whose implementations stay classes (their types `A.Self`)
 	final abstractClasses = new haxe.ds.ObjectMap<TAbstract, Bool>();
 
+	// a member without its TypeScript modifiers (`protected`, `readonly`)
+	static function bare(m:Member):Member return switch m {
+		case MProtected(x) | MReadonly(x): bare(x);
+		case _: m;
+	}
+
 	// an implementation's members as an object's properties, or null: one an object cannot have; its statics' values but
 	// constants assigned after it (`after`: a value may call its functions, as a class's static initializer may), in order
 	static function objectOf(members:Array<Member>, after:Array<Prop>, ?consts:Map<String, Ex>):Null<Array<Prop>> {
 		var out:Array<Prop> = [];
-		for (m in members) {
-			while (m.match(MProtected(_) | MReadonly(_))) m = switch m {
-				case MProtected(x) | MReadonly(x): x;
-				case _: m;
-			}
+		for (m in members.map(bare)) {
 			switch m {
 				case MComment(_):
 				case MMethod(KPrivate(_), _, _, _) | MField(KPrivate(_), _, _, _): return null;
