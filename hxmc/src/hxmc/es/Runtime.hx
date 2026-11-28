@@ -176,6 +176,9 @@ class Runtime {
 		},
 	];
 
+	// (-D hxmc.js.hot) `bind`: js.Hot's, which a patch's methods reach (hxmc-es/js/Hot.hx)
+	public static final HOT_BIND = "function (o, name) {\n\treturn {js.Hot}.bind(o, name);\n}";
+
 	// (TypeScript) the runtime's type: its symbols unique (a class's computed keys), the base of enums' values (exported:
 	// the files that name it import it), `declareEnum`'s; the rest `any`
 	public static final TS = "declare namespace Hx {

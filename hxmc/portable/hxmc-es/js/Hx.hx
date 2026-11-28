@@ -24,9 +24,17 @@ import js.lib.Symbol;
 	static final classes:haxe.DynamicAccess<Dynamic>;
 	static final enums:haxe.DynamicAccess<Dynamic>;
 	static final EnumValue:Dynamic;
+	// a method as a value's cache, on its object
+	static final closures:Symbol;
+
+	// an enum's object: its constructors (`spec`: of each, a function of its parameters, or null)
+	static function declareEnum(spec:Dynamic, ?meta:Dynamic, ?names:Array<String>):Dynamic;
 
 	// o[s]
 	static inline function get(o:Dynamic, s:Symbol):Dynamic return untyped o[s];
+
+	// o[k] = v
+	static inline function set(o:Dynamic, k:Dynamic, v:Dynamic):Void untyped o[k] = v;
 
 	// o's own o[s], or null
 	static inline function own(o:Dynamic, s:Symbol):Dynamic return js.lib.Object.prototype.hasOwnProperty.call(o, s) ? get(o, s) : null;

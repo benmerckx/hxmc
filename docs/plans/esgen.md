@@ -24,5 +24,10 @@ Genjs bound to its output and its runtime. What it is and does:
   lowering depends on its post-filter types and the build's options only.
 - **npm packages** from es-modules: later, once modules have proven
   themselves (bundled output plus `-D dts` is the way to publish until then).
-- **Hot reload**: later. Its constraint for now: classes keep their
-  identity, so that a reload can patch prototypes and statics in place.
+- **Hot reload** (`-D hxmc.js.hot`, docs/js.md, Hot reload): classes'
+  methods, constructors, variables, statics and super classes, enums'
+  constructors added, abstracts' and modules' functions are patched. Open: a
+  driver (`haxe --dev`: watch, build, push the patch over a WebSocket); a
+  class added to a module the program has (the patch declaring it, later
+  patches importing it from there); lambdas the old code created running the
+  new code (their captured variables kept shared: not #206's copies).
